@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,18 +33,18 @@ public class TxIDCurrentFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testPrefixedTxIDCurrentFunc() throws Exception {
         assertMemoryLeak(
-                () -> assertSql(
-                        "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n", "select pg_catalog.txid_current();"
-                )
+                () -> assertQuery("select pg_catalog.txid_current();")
+                        .noLeakCheck()
+                        .returnsOnce("txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n")
         );
     }
 
     @Test
     public void testTxIDCurrentFunc() throws Exception {
         assertMemoryLeak(
-                () -> assertSql(
-                        "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n", "select txid_current();"
-                )
+                () -> assertQuery("select txid_current();")
+                        .noLeakCheck()
+                        .returnsOnce("txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n")
         );
     }
 }

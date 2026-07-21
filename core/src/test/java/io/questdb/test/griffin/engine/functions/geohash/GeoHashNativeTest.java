@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions.geohash;
 
-import io.questdb.cairo.BitmapIndexFwdReader;
-import io.questdb.cairo.BitmapIndexWriter;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.table.LatestByArguments;
@@ -69,7 +69,7 @@ public class GeoHashNativeTest extends AbstractCairoTest {
         final DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST);
         long argsAddress = LatestByArguments.allocateMemoryArray(1);
 
-        PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(1);
+        PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(0L);
 
         try {
             BitmapIndexTest.create(configuration, path, "x", 64);

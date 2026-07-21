@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -163,6 +163,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         task = Misc.free(task);
         Misc.free(materializer);
         Misc.free(materializerColumnData);
+        releaseExportEntry();
         createParquetOp = Misc.free(createParquetOp);
         writeCallback.of(null, null);
     }

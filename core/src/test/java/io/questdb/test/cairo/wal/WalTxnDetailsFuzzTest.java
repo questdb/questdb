@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalWriter;
@@ -81,14 +82,14 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         commitWalRows(tableToken, 200, "2022-02-24T08:00", "2022-02-24T13");
         commitWalRows(tableToken, 200, "2022-02-24T09:00", "2022-02-24T13");
-        commitWalPartitionDrop(tableToken, "2022-01-01");
+        commitWalPartitionDrop(tableToken);
         commitWalRows(tableToken, 200, "2022-02-24T10:00", "2022-02-24T15");
         commitWalRows(tableToken, 200, "2022-02-24T12:05", "2022-02-24T16");
         commitWalRows(tableToken, 200, "2022-02-24T13:00", "2022-02-24T18");
 
         try (TableWriter writer = getWriter(tableToken)) {
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
                 int startTxn = (int) writer.getAppliedSeqTxn();
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
 
@@ -108,7 +109,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         commitWalRows(tableToken, 2, "2022-02-24T02:00", "2022-02-24T12");
         commitWalRows(tableToken, 3, "2022-02-24T10:00", "2022-02-24T11");
-        commitWalPartitionDrop(tableToken, "2022-01-01");
+        commitWalPartitionDrop(tableToken);
         commitWalRows(tableToken, 4, "2022-02-24T09:00", "2022-02-24T13"); // 4
         commitWalRows(tableToken, 5, "2022-02-24T10:00", "2022-02-24T12"); // 5
         commitWalRows(tableToken, 6, "2022-02-24T13:00", "2022-02-24T14"); // 6
@@ -117,7 +118,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         try (TableWriter writer = getWriter(tableToken)) {
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
                 long startTxn = writer.getAppliedSeqTxn();
 
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
@@ -174,7 +175,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         for (int i = 0; i < txnCount; i++) {
             boolean isDdl = rnd.nextDouble() < ddlProb;
             if (isDdl) {
-                commitWalPartitionDrop(tableToken, "2022-01-01");
+                commitWalPartitionDrop(tableToken);
                 minMaxTimestamps.add(Long.MAX_VALUE);
                 minMaxTimestamps.add(Long.MAX_VALUE);
             } else {
@@ -189,7 +190,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         try (TableWriter writer = getWriter(tableToken)) {
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
                 int startTxn = (int) writer.getAppliedSeqTxn();
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
                 for (int i = 0; i < startTxn + txnCount; i++) {
@@ -233,7 +234,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         commitWalRows(tableToken, 200, "2022-02-24T08", "2022-02-24T13");
         commitWalRows(tableToken, 200, "2022-02-24T09", "2022-02-24T13");
         commitWalRows(tableToken, 200, "2022-02-24T10", "2022-02-24T15");
-        commitWalPartitionDrop(tableToken, "2022-01-01");
+        commitWalPartitionDrop(tableToken);
         commitWalRows(tableToken, 200, "2022-02-24T12:05", "2022-02-24T16");
         commitWalRows(tableToken, 200, "2022-02-24T13", "2022-02-24T18");
         int startTxn;
@@ -242,7 +243,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
             startTxn = (int) writer.getAppliedSeqTxn();
 
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
 
                 Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 1));
@@ -257,12 +258,12 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         commitWalRows(tableToken, 200, "2022-02-24T15", "2022-02-24T18");
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
             // Force 1 by 1 commit application
-            walApplyJob.run(0);
+            walApplyJob.run();
         }
 
         try (TableWriter writer = getWriter(tableToken)) {
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn() + 5)) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
 
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
                 Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 2));
@@ -283,7 +284,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         commitWalRows(tableToken, 200, "2022-02-24T08", "2022-02-24T13");
         commitWalRows(tableToken, 200, "2022-02-24T09", "2022-02-24T13");
-        commitWalPartitionDrop(tableToken, "2022-01-01");
+        commitWalPartitionDrop(tableToken);
         commitWalRows(tableToken, 200, "2022-02-24T10", "2022-02-24T15");
         commitWalRows(tableToken, 200, "2022-02-24T12:05", "2022-02-24T16");
         commitWalRows(tableToken, 200, "2022-02-24T13", "2022-02-24T18");
@@ -292,7 +293,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
             int startTxn = (int) writer.getAppliedSeqTxn();
 
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
 
                 Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 1));
@@ -307,7 +308,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
             commitWalRows(tableToken, 200, "2022-02-24T15", "2022-02-24T18");
 
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn() + 5)) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
 
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
                 Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 1));
@@ -348,14 +349,14 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private void commitWalPartitionDrop(TableToken tableToken, String partition) {
+    private void commitWalPartitionDrop(TableToken tableToken) {
         try (WalWriter ww = engine.getWalWriter(tableToken)) {
             AlterOperationBuilder builder = new AlterOperationBuilder();
             builder.ofDropPartition(0, tableToken, tableToken.getTableId())
-                    .addPartitionToList(parseFloorPartialTimestamp(partition), 0);
+                    .addPartitionToList(parseFloorPartialTimestamp("2022-01-01"), 0);
 
             AlterOperation alterOp = builder.build();
-            alterOp.withContext(new SqlExecutionContextImpl(engine, 1));
+            alterOp.withContext(new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE));
             ww.apply(alterOp, true);
         }
     }
@@ -377,6 +378,23 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         TableModel model = defaultModel(tableName);
         return TestUtils.createTable(engine, model);
+    }
+
+    private void readWalTxnDetailsFuzzy(TableWriter writer, TransactionLogCursor cursor) {
+        if (rnd.nextBoolean()) {
+            writer.readWalTxnDetails(cursor);
+            return;
+        }
+        // Force the deadline branch with random jitter. Loop until everything is loaded
+        // so deterministic assertions are unaffected by partial loads.
+        long maxTxn = cursor.getMaxTxn();
+        int safety = 10_000;
+        do {
+            if (--safety < 0) {
+                throw new AssertionError("readWalTxnDetails did not finish loading");
+            }
+            writer.readWalTxnDetails(cursor, configuration.getMicrosecondClock().getTicks() + rnd.nextLong(50));
+        } while (writer.getWalTnxDetails().getLastSeqTxn() < maxTxn);
     }
 
     public enum SequencerType {

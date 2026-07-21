@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
@@ -34,9 +35,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -48,6 +52,7 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
     private PageFrameRecordCursorImpl cursor;
     private ReadParquetPageFrameCursor pageFrameCursor;
     private Path path;
+    private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
 
     public ReadParquetPageFrameRecordCursorFactory(
             @Transient Path path,
@@ -70,9 +75,9 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
             );
         }
         if (pageFrameCursor == null) {
-            pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata());
+            pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata(), pushdownFilterConditions);
         }
-        pageFrameCursor.of(path.$());
+        pageFrameCursor.of(path.$(), executionContext);
         try {
             cursor.of(pageFrameCursor, executionContext);
             return cursor;
@@ -87,15 +92,25 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
         assert order != ORDER_DESC;
         if (pageFrameCursor == null) {
             final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
-            pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata());
+            pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata(), pushdownFilterConditions);
         }
-        pageFrameCursor.of(path.$());
+        pageFrameCursor.of(path.$(), executionContext);
         return pageFrameCursor;
+    }
+
+    @Override
+    public boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
+        return true;
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+        this.pushdownFilterConditions = pushdownFilterConditions;
     }
 
     @Override
@@ -111,8 +126,21 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        Misc.free(pageFrameCursor);
-        path = Misc.free(path);
+        final PageFrameRecordCursorImpl cursor = this.cursor;
+        this.cursor = null;
+        final ReadParquetPageFrameCursor pageFrameCursor = this.pageFrameCursor;
+        this.pageFrameCursor = null;
+        final Path path = this.path;
+        this.path = null;
+        final ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions = this.pushdownFilterConditions;
+        this.pushdownFilterConditions = null;
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, pageFrameCursor);
+        failure = Misc.freeBestEffort(failure, path);
+        failure = Misc.freeObjListBestEffort(failure, pushdownFilterConditions);
+        if (pushdownFilterConditions != null) {
+            pushdownFilterConditions.clear();
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

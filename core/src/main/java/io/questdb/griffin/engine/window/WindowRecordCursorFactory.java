@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
@@ -35,6 +36,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -44,12 +46,12 @@ import io.questdb.std.ObjList;
  * - all functions and their framing clause do support stream-ed processing (single pass)
  */
 public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final WindowRecordCursor cursor;
-    private final ObjList<Function> functions;
     private final ObjList<WindowFunction> windowFunctions;
     private final int windowFunctionsCount;
+    private RecordCursorFactory base;
     private boolean closed = false;
+    private WindowRecordCursor cursor;
+    private ObjList<Function> functions;
 
     public WindowRecordCursorFactory(
             RecordCursorFactory base,
@@ -88,8 +90,14 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        cursor.of(baseCursor, executionContext);
-        return cursor;
+        try {
+            cursor.of(baseCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // free partial allocations under the still-bound per-query tracker on a failed open
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -131,10 +139,17 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         if (closed) {
             return;
         }
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.freeObjList(functions);
         closed = true;
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final WindowRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<Function> functions = this.functions;
+        this.functions = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeObjListBestEffort(failure, functions);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     class WindowRecordCursor extends AbstractVirtualFunctionRecordCursor {
@@ -144,7 +159,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public WindowRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
             super(functions, supportsRandomAccess);
-            this.isOpen = true;
+            // Start closed so the first of() binds the per-query tracker on each
+            // window function and reopens its (lazy) per-partition map under it.
+            this.isOpen = false;
         }
 
         @Override
@@ -179,7 +196,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             // we can't skip to an arbitrary result set point because current window function value might depend
             // on values in other rows that could be located anywhere
             RecordCursor.skipRows(this, rowCount);
@@ -198,12 +215,14 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
                 isOpen = true;
-                try {
-                    reopen(functions);
-                } catch (Throwable t) {
-                    close();
-                    throw t;
+                // Bind the per-query tracker on each window function's per-partition
+                // map before reopen() allocates the map backing under it. A breach here (or
+                // in Function.init below) propagates to getCursor, which closes the cursor.
+                final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                for (int i = 0; i < windowFunctionsCount; i++) {
+                    windowFunctions.getQuick(i).setMemoryTracker(memoryTracker);
                 }
+                reopen(functions);
             }
             Function.init(functions, baseCursor, executionContext, null);
         }

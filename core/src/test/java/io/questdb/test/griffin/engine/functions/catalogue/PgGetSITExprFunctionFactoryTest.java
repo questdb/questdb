@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,27 +31,23 @@ public class PgGetSITExprFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgGetSITExprFunc() throws Exception {
-        assertQuery(
-                "pg_get_expr\n" +
-                        "\n",
-                "select pg_get_expr('abc', 42, true);",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select pg_get_expr('abc', 42, true);")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        pg_get_expr
+                        
+                        """);
     }
 
     @Test
     public void testPrefixedPgGetSITExprFunc() throws Exception {
-        assertQuery(
-                "pg_get_expr\n" +
-                        "\n",
-                "select pg_catalog.pg_get_expr('abc', 42, true);",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select pg_catalog.pg_get_expr('abc', 42, true);")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        pg_get_expr
+                        
+                        """);
     }
 }

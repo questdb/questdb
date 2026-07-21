@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -142,8 +142,6 @@ public final class Unordered8MapCursor implements MapRecordCursor {
         this.count = count;
         this.zeroKeyAddress = zeroKeyAddress;
         toTop();
-        recordA.setLimit(memLimit);
-        recordB.setLimit(memLimit);
         return this;
     }
 }

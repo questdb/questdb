@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -35,11 +35,6 @@ public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecut
     @Override
     public boolean checkConnection() {
         return true;
-    }
-
-    @Override
-    public int getBufferSize() {
-        return 64;
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -42,7 +42,7 @@ public class PageFrameRowCursorFactory implements RowCursorFactory {
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        if (baseOrder == PartitionFrameCursorFactory.ORDER_ASC || baseOrder == PartitionFrameCursorFactory.ORDER_ANY) {
+        if (isForwardScan()) {
             if (fwdCursor == null) {
                 fwdCursor = new PageFrameFwdRowCursor();
             }
@@ -58,6 +58,11 @@ public class PageFrameRowCursorFactory implements RowCursorFactory {
     @Override
     public boolean isEntity() {
         return true;
+    }
+
+    @Override
+    public boolean isForwardScan() {
+        return baseOrder == PartitionFrameCursorFactory.ORDER_ASC || baseOrder == PartitionFrameCursorFactory.ORDER_ANY;
     }
 
     @Override

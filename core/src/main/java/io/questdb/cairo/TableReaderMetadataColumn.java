@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,7 +34,7 @@ public class TableReaderMetadataColumn extends TableColumnMetadata {
     public TableReaderMetadataColumn(
             String name,
             int type,
-            boolean indexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata,
@@ -43,12 +43,13 @@ public class TableReaderMetadataColumn extends TableColumnMetadata {
             int denseSymbolIndex,
             int stableIndex,
             boolean symbolIsCached,
-            int symbolCapacity
+            int symbolCapacity,
+            int originalWriterIndex
     ) {
         super(
                 name,
                 type,
-                indexed,
+                indexType,
                 indexValueBlockCapacity,
                 symbolTableStatic,
                 metadata,
@@ -56,7 +57,8 @@ public class TableReaderMetadataColumn extends TableColumnMetadata {
                 dedupKeyFlag,
                 0,
                 symbolIsCached,
-                symbolCapacity
+                symbolCapacity,
+                originalWriterIndex
         );
         this.denseSymbolIndex = denseSymbolIndex;
         this.stableIndex = stableIndex;

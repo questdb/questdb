@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -279,6 +279,7 @@ public abstract class HttpClient implements QuietCloseable {
         private static final int STATE_URL_DONE = 2;
         private BinarySequenceAdapter binarySequenceAdapter;
         private int contentLengthHeaderReserved = 0;
+        private int[] ryuE10;
         private int state;
         private boolean urlEncode = false;
 
@@ -373,7 +374,7 @@ public abstract class HttpClient implements QuietCloseable {
         @Override
         public Request put(byte b) {
             checkCapacity(1);
-            Unsafe.getUnsafe().putByte(ptr, b);
+            Unsafe.putByte(ptr, b);
             ptr++;
             return this;
         }
@@ -427,21 +428,21 @@ public abstract class HttpClient implements QuietCloseable {
         @Override
         public void putDouble(double value) {
             checkCapacity(Double.BYTES);
-            Unsafe.getUnsafe().putDouble(ptr, value);
+            Unsafe.putDouble(ptr, value);
             ptr += Double.BYTES;
         }
 
         @Override
         public void putInt(int value) {
             checkCapacity(Integer.BYTES);
-            Unsafe.getUnsafe().putInt(ptr, value);
+            Unsafe.putInt(ptr, value);
             ptr += Integer.BYTES;
         }
 
         @Override
         public void putLong(long value) {
             checkCapacity(Long.BYTES);
-            Unsafe.getUnsafe().putLong(ptr, value);
+            Unsafe.putLong(ptr, value);
             ptr += Long.BYTES;
         }
 
@@ -494,6 +495,14 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
+        }
+
         public ResponseHeaders send() {
             return send(defaultTimeout);
         }
@@ -530,7 +539,7 @@ public abstract class HttpClient implements QuietCloseable {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
             if (socket == null || socket.isClosed()) {
                 connect(host, port);
-            } else if (fixBrokenConnection && nf.testConnection(socket.getFd(), responseParserBufLo, 1)) {
+            } else if (fixBrokenConnection && nf.testConnection(socket.getFd(), 0, 0)) {
                 socket.close();
                 connect(host, port);
             } else if (!Chars.equalsNc(host, HttpClient.this.host) || (port != HttpClient.this.port)) {

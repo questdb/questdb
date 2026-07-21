@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,14 +25,14 @@
 package io.questdb.network;
 
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class NetworkError extends Error implements Sinkable, FlyweightMessageContainer {
-    private static final ThreadLocal<NetworkError> tlException = new ThreadLocal<>(NetworkError::new);
+    private static final CarrierLocal<NetworkError> tlException = new CarrierLocal<>(NetworkError::new);
     private final StringSink message = new StringSink();
     private int errno;
 

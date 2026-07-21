@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,17 +31,23 @@ public class PgExtensionFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgExtensionFunction() throws Exception {
-        assertMemoryLeak(() -> assertQuery("oid\textname\textowner\textnamespace\textrelocatable\textversion\textconfig\textcondition\n" +
-                        "1\tquestdb\t1\t1\tfalse\t[DEVELOPMENT]\t\t\n",
-                "select * from pg_extension",
-                null, false, true));
+        assertMemoryLeak(() -> assertQuery("select * from pg_extension")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        oid\textname\textowner\textnamespace\textrelocatable\textversion\textconfig\textcondition
+                        1\tquestdb\t1\t1\tfalse\t[DEVELOPMENT]\t\t
+                        """));
     }
 
     @Test
     public void testPrefixedPgExtensionFunction() throws Exception {
-        assertMemoryLeak(() -> assertQuery("oid\textname\textowner\textnamespace\textrelocatable\textversion\textconfig\textcondition\n" +
-                        "1\tquestdb\t1\t1\tfalse\t[DEVELOPMENT]\t\t\n",
-                "select * from pg_catalog.pg_extension",
-                null, false, true));
+        assertMemoryLeak(() -> assertQuery("select * from pg_catalog.pg_extension")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        oid\textname\textowner\textnamespace\textrelocatable\textversion\textconfig\textcondition
+                        1\tquestdb\t1\t1\tfalse\t[DEVELOPMENT]\t\t
+                        """));
     }
 }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,11 +24,18 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -92,11 +99,13 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (arr double[]);");
             execute("alter table x drop column arr;");
-            assertSql("\n", "x;");
-            assertSql(
-                    "column\ttype\n",
-                    "select \"column\", \"type\" from table_columns('x')"
-            );
+            assertQuery("x;")
+                    .noLeakCheck()
+                    .returns("\n");
+            assertQuery("select \"column\", \"type\" from table_columns('x')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("column\ttype\n");
         });
     }
 
@@ -164,6 +173,63 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropColumnReadonlyFailsAtExecutionTime() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1).with(
+                    AllowAllSecurityContext.INSTANCE,
+                    bindVariableService,
+                    null,
+                    -1,
+                    null
+            );
+            SqlExecutionContext readOnlyContext = new SqlExecutionContextImpl(engine, 1).with(
+                    ReadOnlySecurityContext.INSTANCE,
+                    bindVariableService,
+                    null,
+                    -1,
+                    null
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery cq = compiler.compile("ALTER TABLE x DROP COLUMN l, m", allowAllContext);
+                Assert.assertEquals(CompiledQuery.ALTER, cq.getType());
+                try {
+                    cq.execute(readOnlyContext, null, false);
+                    Assert.fail();
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
+                }
+            }
+
+            // verify columns were not dropped
+            assertQuery("SELECT \"column\" FROM table_columns('x')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column
+                            i
+                            sym
+                            amt
+                            timestamp
+                            b
+                            c
+                            d
+                            e
+                            f
+                            g
+                            ik
+                            j
+                            k
+                            l
+                            m
+                            n
+                            """);
+        });
+    }
+
+    @Test
     public void testExpectActionKeyword() throws Exception {
         assertFailure("alter table x", 13, SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }
@@ -202,7 +268,7 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                select(sql);
+                select(sql).close();
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -212,7 +278,7 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
         });
     }
 
-    private void createX() throws SqlException {
+    private void createX() throws Exception {
         execute(
                 "create table x as (" +
                         "select" +

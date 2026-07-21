@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -50,11 +50,17 @@ import io.questdb.cutlass.pgwire.PGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGHexTestsCircuitBreakRegistry;
 import io.questdb.cutlass.pgwire.PGServer;
+import io.questdb.cutlass.qwp.server.LinuxMMQwpUdpReceiver;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Services {
     public static final Services INSTANCE = new Services();
@@ -68,6 +74,16 @@ public class Services {
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
     ) {
+        return createHttpServer(serverConfiguration, cairoEngine, workerPoolManager, new AtomicBoolean(true));
+    }
+
+    @Nullable
+    public HttpServer createHttpServer(
+            ServerConfiguration serverConfiguration,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
+            AtomicBoolean acceptOpen
+    ) {
         HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
             return null;
@@ -80,7 +96,8 @@ public class Services {
                 serverConfiguration,
                 cairoEngine,
                 workerPoolManager.getSharedPoolNetwork(httpServerConfiguration, Requester.HTTP_SERVER),
-                workerPoolManager.getSharedQueryWorkerCount()
+                workerPoolManager.getSharedQueryWorkerCount(),
+                acceptOpen
         );
     }
 
@@ -91,6 +108,17 @@ public class Services {
             WorkerPool networkSharedPool,
             int sharedQueryWorkerCount
     ) {
+        return createHttpServer(serverConfiguration, cairoEngine, networkSharedPool, sharedQueryWorkerCount, new AtomicBoolean(true));
+    }
+
+    @Nullable
+    public HttpServer createHttpServer(
+            ServerConfiguration serverConfiguration,
+            CairoEngine cairoEngine,
+            WorkerPool networkSharedPool,
+            int sharedQueryWorkerCount,
+            AtomicBoolean acceptOpen
+    ) {
         final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
             return null;
@@ -99,7 +127,8 @@ public class Services {
         final HttpServer server = new HttpServer(
                 httpServerConfiguration,
                 networkSharedPool,
-                httpServerConfiguration.getFactoryProvider().getHttpSocketFactory()
+                httpServerConfiguration.getFactoryProvider().getHttpSocketFactory(),
+                acceptOpen
         );
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
@@ -136,30 +165,113 @@ public class Services {
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
     ) {
+        return createLineTcpReceiver(config, cairoEngine, workerPoolManager, new AtomicBoolean(true));
+    }
+
+    @Nullable
+    public LineTcpReceiver createLineTcpReceiver(
+            LineTcpReceiverConfiguration config,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
+            AtomicBoolean acceptOpen
+    ) {
         if (!config.isEnabled()) {
             return null;
         }
 
-        // The ioPool is:
-        // - DEDICATED when PropertyKey.LINE_TCP_IO_WORKER_COUNT is > 0
-        // - DEDICATED (2 worker) when ^ ^ is not set and host has 8 < cpus < 17
-        // - DEDICATED (6 worker) when ^ ^ is not set and host has > 16 cpus
-        // - SHARED otherwise
-
-        // The sharedPoolWrite is:
-        // - DEDICATED when PropertyKey.LINE_TCP_WRITER_WORKER_COUNT is > 0
-        // - DEDICATED (1 worker) when ^ ^ is not set
-        // - SHARED otherwise
-
+        // ILP TCP IO and Writer Jobs key per-worker state by the workerId they
+        // are constructed with, so they require legacy worker pools (no
+        // continuation wrapping, assign(int worker, Job) permitted). Wrap the
+        // user-supplied configurations to force isLegacy=true and ensure
+        // dedicated pools are always created (getWorkerCount() >= 1), since
+        // the shared pools host continuations and would reject the per-worker
+        // assignments.
         final WorkerPool sharedPoolNetwork = workerPoolManager.getSharedPoolNetwork(
-                config.getNetworkWorkerPoolConfiguration(),
+                asLegacy(config.getNetworkWorkerPoolConfiguration(), "line-tcp-io"),
                 Requester.LINE_TCP_IO
         );
         final WorkerPool sharedPoolWrite = workerPoolManager.getSharedPoolWrite(
-                config.getWriterWorkerPoolConfiguration(),
+                asLegacy(config.getWriterWorkerPoolConfiguration(), "line-tcp-writer"),
                 Requester.LINE_TCP_WRITER
         );
-        return new LineTcpReceiver(config, cairoEngine, sharedPoolNetwork, sharedPoolWrite);
+        return new LineTcpReceiver(config, cairoEngine, sharedPoolNetwork, sharedPoolWrite, acceptOpen);
+    }
+
+    private static io.questdb.mp.WorkerPoolConfiguration asLegacy(
+            io.questdb.mp.WorkerPoolConfiguration delegate,
+            String defaultPoolName
+    ) {
+        return new io.questdb.mp.WorkerPoolConfiguration() {
+            @Override
+            public io.questdb.Metrics getMetrics() {
+                return delegate.getMetrics();
+            }
+
+            @Override
+            public long getNapThreshold() {
+                return delegate.getNapThreshold();
+            }
+
+            @Override
+            public String getPoolName() {
+                String n = delegate.getPoolName();
+                return n != null && !n.isEmpty() ? n : defaultPoolName;
+            }
+
+            @Override
+            public long getSleepThreshold() {
+                return delegate.getSleepThreshold();
+            }
+
+            @Override
+            public long getSleepTimeout() {
+                return delegate.getSleepTimeout();
+            }
+
+            @Override
+            public int[] getWorkerAffinity() {
+                return delegate.getWorkerAffinity();
+            }
+
+            @Override
+            public int getWorkerCount() {
+                // Force a dedicated pool: WorkerPoolManager falls back to the
+                // shared (non-legacy) pool when workerCount < 1, which would
+                // reject ILP's per-worker assign() calls.
+                int n = delegate.getWorkerCount();
+                return n > 0 ? n : 2;
+            }
+
+            @Override
+            public long getYieldThreshold() {
+                return delegate.getYieldThreshold();
+            }
+
+            @Override
+            public boolean haltOnError() {
+                return delegate.haltOnError();
+            }
+
+            @Override
+            public boolean isDaemonPool() {
+                return delegate.isDaemonPool();
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return delegate.isEnabled();
+            }
+
+            @Override
+            public boolean isLegacy() {
+                return true;
+            }
+
+            @Override
+            public int workerPoolPriority() {
+                return delegate.workerPoolPriority();
+            }
+        };
     }
 
     @Nullable
@@ -168,15 +280,25 @@ public class Services {
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
     ) {
+        return createLineUdpReceiver(config, cairoEngine, workerPoolManager, new AtomicBoolean(true));
+    }
+
+    @Nullable
+    public AbstractLineProtoUdpReceiver createLineUdpReceiver(
+            LineUdpReceiverConfiguration config,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
+            AtomicBoolean acceptOpen
+    ) {
         if (!config.isEnabled()) {
             return null;
         }
 
         // The pool is always the SHARED pool
         if (Os.isLinux()) {
-            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork());
+            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork(), acceptOpen);
         }
-        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork());
+        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork(), acceptOpen);
     }
 
     @Nullable
@@ -252,6 +374,15 @@ public class Services {
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
     ) {
+        return createPGWireServer(configuration, cairoEngine, workerPoolManager, new AtomicBoolean(true));
+    }
+
+    public PGServer createPGWireServer(
+            PGConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
+            AtomicBoolean acceptOpen
+    ) {
         if (!configuration.isEnabled()) {
             return null;
         }
@@ -275,6 +406,40 @@ public class Services {
                 () -> new SqlExecutionContextImpl(
                         cairoEngine,
                         workerPoolManager.getSharedQueryWorkerCount()
-                ));
+                ),
+                acceptOpen);
+    }
+
+    public QwpUdpReceiver createQwpUdpReceiver(
+            QwpUdpReceiverConfiguration config,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager
+    ) {
+        return createQwpUdpReceiver(config, cairoEngine, workerPoolManager, new AtomicBoolean(true));
+    }
+
+    public QwpUdpReceiver createQwpUdpReceiver(
+            QwpUdpReceiverConfiguration config,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
+            AtomicBoolean acceptOpen
+    ) {
+        if (!config.isEnabled()) {
+            return null;
+        }
+        WorkerPool workerPool = workerPoolManager.getSharedPoolNetwork();
+        QwpUdpReceiver receiver;
+        if (Os.isLinux()) {
+            receiver = new LinuxMMQwpUdpReceiver(config, cairoEngine, workerPool, acceptOpen);
+        } else {
+            receiver = new QwpUdpReceiver(config, cairoEngine, workerPool, acceptOpen);
+        }
+        try {
+            receiver.start();
+        } catch (Throwable th) {
+            Misc.free(receiver);
+            throw th;
+        }
+        return receiver;
     }
 }

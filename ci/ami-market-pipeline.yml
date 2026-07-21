@@ -2,10 +2,10 @@ trigger: none
 
 pr: none
 
-pool:
-  vmImage: ubuntu-latest
+pool: hetzner-incus
 
 steps:
+  - template: templates/use-hetzner-apt-mirrors.yml
   - script: |
       sudo apt-get update
       sudo apt-get install awscli

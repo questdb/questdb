@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,29 +26,42 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final int argColumnIndex;
     private int valueIndex;
 
     public SumDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.DOUBLE);
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
-        if (count > 0) {
-            final double value = Vect.sumDouble(ptr, count);
-            mapValue.putDouble(valueIndex, value);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final double batchSum = Vect.sumDouble(dataAddr, rowCount);
+            if (!Double.isNaN(batchSum)) {
+                final double existing = mapValue.getDouble(valueIndex);
+                if (!Double.isNaN(existing)) {
+                    mapValue.putDouble(valueIndex, existing + batchSum);
+                } else {
+                    mapValue.putDouble(valueIndex, batchSum);
+                }
+            }
         }
     }
 
@@ -59,11 +72,49 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct double column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final double value = Unsafe.getDouble(argAddr + (rowIndex << 3));
+                if (!Double.isNaN(value)) {
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final double current = Unsafe.getDouble(addr);
+                    Unsafe.putDouble(addr, !Double.isNaN(current) ? current + value : value);
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final double value = arg.getDouble(record);
+                if (!Double.isNaN(value)) {
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final double current = Unsafe.getDouble(addr);
+                    Unsafe.putDouble(addr, !Double.isNaN(current) ? current + value : value);
+                }
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (Numbers.isFinite(value)) {
+        if (!Double.isNaN(value)) {
             final double sum = mapValue.getDouble(valueIndex);
-            if (Numbers.isFinite(sum)) {
+            if (!Double.isNaN(sum)) {
                 mapValue.putDouble(valueIndex, sum + value);
             } else {
                 mapValue.putDouble(valueIndex, value);
@@ -120,9 +171,9 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final double srcSum = srcValue.getDouble(valueIndex);
-        if (Numbers.isFinite(srcSum)) {
+        if (!Double.isNaN(srcSum)) {
             final double destSum = destValue.getDouble(valueIndex);
-            if (Numbers.isFinite(destSum)) {
+            if (!Double.isNaN(destSum)) {
                 destValue.putDouble(valueIndex, destSum + srcSum);
             } else {
                 destValue.putDouble(valueIndex, srcSum);

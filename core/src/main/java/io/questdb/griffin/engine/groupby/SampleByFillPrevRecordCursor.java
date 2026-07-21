@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -87,7 +87,9 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
         this.keyMapSink = keyMapSink;
         mapCursor = map.getCursor();
         record.of(map.getRecord());
-        isOpen = true;
+        // Lazy map (openOnInit=false): start closed so the factory's reopen()
+        // allocates the backing under the bound MemoryTracker on the first cursor.
+        isOpen = false;
     }
 
     @Override

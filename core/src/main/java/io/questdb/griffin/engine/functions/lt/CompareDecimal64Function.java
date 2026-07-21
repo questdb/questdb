@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -50,8 +50,11 @@ public abstract class CompareDecimal64Function extends NegatableBooleanFunction 
     @Override
     public boolean getBool(Record rec) {
         decimalLeft.ofRaw(left.getDecimal64(rec));
-        decimalLeft.setScale(leftScale);
         decimalRight.ofRaw(right.getDecimal64(rec));
+        if (decimalLeft.isNull() || decimalRight.isNull()) {
+            return negated && decimalLeft.isNull() == decimalRight.isNull();
+        }
+        decimalLeft.setScale(leftScale);
         decimalRight.setScale(rightScale);
         return negated != exec();
     }

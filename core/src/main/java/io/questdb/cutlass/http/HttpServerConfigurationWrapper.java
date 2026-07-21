@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -283,11 +283,6 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     @Override
     public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
         return getDelegate().getStaticContentProcessorConfiguration();
-    }
-
-    @Override
-    public int getTestConnectionBufferSize() {
-        return getDelegate().getTestConnectionBufferSize();
     }
 
     @Override

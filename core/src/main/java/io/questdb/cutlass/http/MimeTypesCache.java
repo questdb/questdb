@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -101,7 +101,7 @@ public final class MimeTypesCache extends Utf8SequenceObjHashMap<CharSequence> {
             CharSequence contentType = null;
 
             while (p < hi) {
-                char b = (char) Unsafe.getUnsafe().getByte(p++);
+                char b = (char) Unsafe.getByte(p++);
 
                 switch (b) {
                     case '#':

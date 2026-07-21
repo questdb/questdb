@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -68,7 +68,7 @@ public final class ColumnType {
     public static final int GEOSHORT_MAX_BITS = 15;
     public static final int GEOSHORT_MIN_BITS = 8;
     public static final int LEGACY_VAR_SIZE_AUX_SHL = 3;
-    public static final int MIGRATION_VERSION = 426;
+    public static final int MIGRATION_VERSION = 429;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
     // our type system is absolutely ordered ranging
@@ -134,7 +134,8 @@ public final class ColumnType {
     public static final short ARRAY_STRING = REGPROCEDURE + 1; // = 37;
     public static final short PARAMETER = ARRAY_STRING + 1;    // = 38;
     public static final short INTERVAL = PARAMETER + 1;        // = 39;
-    public static final short NULL = INTERVAL + 1;          // = 40; ALWAYS the last
+    public static final short VARCHAR_SLICE = INTERVAL + 1;    // = 40;
+    public static final short NULL = VARCHAR_SLICE + 1;        // = 41; ALWAYS the last
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
@@ -170,34 +171,37 @@ public final class ColumnType {
     }
 
     public static int commonWideningType(int typeA, int typeB) {
+        // VARCHAR_SLICE is a transient in-memory type that must never appear in union results.
+        if (typeA == VARCHAR_SLICE) typeA = VARCHAR;
+        if (typeB == VARCHAR_SLICE) typeB = VARCHAR;
         return (typeA == typeB && typeA != SYMBOL) ? typeA
                 : (isStringyType(typeA) && isStringyType(typeB)) ? STRING
-                : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
-                : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
+                  : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
+                    : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
 
-                // NULL casts to any other nullable type, except for symbols which can't cross symbol tables.
-                : ((typeA == NULL) && isCastableFromNull(typeB) && (typeB != SYMBOL)) ? typeB
-                : ((typeB == NULL) && isCastableFromNull(typeA) && (typeA != SYMBOL)) ? typeA
+                      // NULL casts to any other nullable type, except for symbols which can't cross symbol tables.
+                      : ((typeA == NULL) && isCastableFromNull(typeB) && (typeB != SYMBOL)) ? typeB
+                        : ((typeB == NULL) && isCastableFromNull(typeA) && (typeA != SYMBOL)) ? typeA
 
-                // cast long and timestamp to timestamp in unions instead of longs.
-                : ((isTimestamp(typeA)) && (typeB == LONG)) ? typeA
-                : ((typeA == LONG) && (isTimestamp(typeB))) ? typeB
-                : (isTimestamp(typeA) && (isTimestamp(typeB))) ? getHigherPrecisionTimestampType(typeA, typeB)
+                          // cast long and timestamp to timestamp in unions instead of longs.
+                          : ((isTimestamp(typeA)) && (typeB == LONG)) ? typeA
+                            : ((typeA == LONG) && (isTimestamp(typeB))) ? typeB
+                              : (isTimestamp(typeA) && (isTimestamp(typeB))) ? getHigherPrecisionTimestampType(typeA, typeB)
 
-                // cast long and date to date in unions instead of longs.
-                : ((typeA == LONG) && (typeB == DATE)) ? DATE
-                : ((typeA == DATE) && (typeB == LONG)) ? DATE
+                                // cast long and date to date in unions instead of longs.
+                                : ((typeA == LONG) && (typeB == DATE)) ? DATE
+                                  : ((typeA == DATE) && (typeB == LONG)) ? DATE
 
-                // Varchars take priority over strings, but strings over most types.
-                : (typeA == VARCHAR || typeB == VARCHAR) ? VARCHAR
-                : ((typeA == STRING) || (typeB == STRING)) ? STRING
+                                    // Varchars take priority over strings, but strings over most types.
+                                    : (isVarchar(typeA) || isVarchar(typeB)) ? VARCHAR
+                                      : ((typeA == STRING) || (typeB == STRING)) ? STRING
 
-                // cast booleans vs anything other than varchars to strings.
-                : ((typeA == BOOLEAN) || (typeB == BOOLEAN)) ? STRING
+                                        // cast booleans vs anything other than varchars to strings.
+                                        : ((typeA == BOOLEAN) || (typeB == BOOLEAN)) ? STRING
 
-                : (isToSameOrWider(typeB, typeA) && typeA != SYMBOL && typeA != CHAR) ? typeA
-                : (isToSameOrWider(typeA, typeB) && typeB != SYMBOL && typeB != CHAR) ? typeB
-                : STRING;
+                                          : (isToSameOrWider(typeB, typeA) && typeA != SYMBOL && typeA != CHAR) ? typeA
+                                            : (isToSameOrWider(typeA, typeB) && typeB != SYMBOL && typeB != CHAR) ? typeB
+                                              : STRING;
     }
 
     public static int decodeArrayDimensionality(int encodedType) {
@@ -342,7 +346,7 @@ public final class ColumnType {
         return switch (tagOf(columnType)) {
             case STRING -> StringTypeDriver.INSTANCE;
             case BINARY -> BinaryTypeDriver.INSTANCE;
-            case VARCHAR -> VarcharTypeDriver.INSTANCE;
+            case VARCHAR, VARCHAR_SLICE -> VarcharTypeDriver.INSTANCE;
             case ARRAY -> ArrayTypeDriver.INSTANCE;
             default -> throw CairoException.critical(0).put("no driver for type: ").put(columnType);
         };
@@ -402,7 +406,7 @@ public final class ColumnType {
     public static int getTimestampType(int type) {
         return switch (tagOf(type)) {
             case TIMESTAMP -> type;
-            case VARCHAR, STRING, SYMBOL -> TIMESTAMP_NANO;
+            case VARCHAR, VARCHAR_SLICE, STRING, SYMBOL -> TIMESTAMP_NANO;
             case DATE -> TIMESTAMP_MICRO;
             // Long, Int etc.
             default -> UNDEFINED;
@@ -554,6 +558,17 @@ public final class ColumnType {
         return columnType == NULL;
     }
 
+    /**
+     * Returns true for fixed-size types that have no dedicated NULL sentinel value, i.e. every
+     * bit pattern is a valid value (BOOLEAN, BYTE, SHORT, CHAR). Such columns cannot represent
+     * NULL on the data vector, so a column top over them reads as leading default values rather
+     * than NULLs.
+     */
+    public static boolean isNoNullSentinelFixedType(int columnType) {
+        final int tag = tagOf(columnType);
+        return tag == BOOLEAN || tag == BYTE || tag == SHORT || tag == CHAR;
+    }
+
     public static boolean isParseableType(int colType) {
         return isTimestamp(colType) || colType == LONG256;
     }
@@ -583,7 +598,7 @@ public final class ColumnType {
     }
 
     public static boolean isStringyType(int colType) {
-        return colType == VARCHAR || colType == STRING;
+        return colType == VARCHAR || colType == VARCHAR_SLICE || colType == STRING;
     }
 
     public static boolean isSupportedArrayElementType(int typeTag) {
@@ -599,7 +614,7 @@ public final class ColumnType {
     }
 
     public static boolean isSymbolOrStringOrVarchar(int columnType) {
-        return columnType == SYMBOL || columnType == STRING || columnType == VARCHAR;
+        return columnType == SYMBOL || columnType == STRING || columnType == VARCHAR || columnType == VARCHAR_SLICE;
     }
 
     public static boolean isTimestamp(int columnType) {
@@ -636,15 +651,16 @@ public final class ColumnType {
         return columnType == STRING
                 || columnType == BINARY
                 || columnType == VARCHAR
+                || columnType == VARCHAR_SLICE
                 || tagOf(columnType) == ARRAY;
     }
 
     public static boolean isVarchar(int columnType) {
-        return columnType == VARCHAR;
+        return columnType == VARCHAR || columnType == VARCHAR_SLICE;
     }
 
     public static boolean isVarcharOrString(int columnType) {
-        return columnType == VARCHAR || columnType == STRING;
+        return columnType == VARCHAR || columnType == VARCHAR_SLICE || columnType == STRING;
     }
 
     public static void makeUtf16DefaultString() {
@@ -769,7 +785,7 @@ public final class ColumnType {
                 || fromTag == NULL
                 || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can be converted to SHORT
                 || ((fromTag == TIMESTAMP || fromTag == DATE) && toTag == LONG)  // Temporal to long
-                || ((fromTag == STRING || fromTag == VARCHAR) && (toTag >= BYTE && toTag <= DOUBLE));  // String-ish parsing to numeric
+                || ((fromTag == STRING || fromTag == VARCHAR || fromTag == VARCHAR_SLICE) && (toTag >= BYTE && toTag <= DOUBLE));  // String-ish parsing to numeric
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
@@ -795,14 +811,14 @@ public final class ColumnType {
     }
 
     private static boolean isIPv4Cast(int fromType, int toType) {
-        return (fromType == STRING || fromType == VARCHAR) && toType == IPv4;
+        return (fromType == STRING || fromType == VARCHAR || fromType == VARCHAR_SLICE) && toType == IPv4;
     }
 
     private static boolean isImplicitParsingCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
         return switch (fromType) {
             case CHAR -> (toTag == GEOBYTE && getGeoHashBits(toType) < 6) || (toTag == DATE || toTag == TIMESTAMP);
-            case STRING, VARCHAR -> switch (toTag) {
+            case STRING, VARCHAR, VARCHAR_SLICE -> switch (toTag) {
                 case GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256 -> true;
                 default -> false;
             };
@@ -860,7 +876,10 @@ public final class ColumnType {
                 || (fromType == VARCHAR && toType == STRING)
                 || (fromType == SYMBOL && toType == VARCHAR)
                 || (fromType == CHAR && toType == VARCHAR)
-                || (fromType == UUID && toType == VARCHAR);
+                || (fromType == UUID && toType == VARCHAR)
+                || (fromType == VARCHAR_SLICE && toType == VARCHAR)
+                || (fromType == VARCHAR_SLICE && toType == STRING)
+                || (fromType == VARCHAR_SLICE && toType == SYMBOL);
     }
 
     private static int mkGeoHashType(int bits, short baseType) {
@@ -876,12 +895,12 @@ public final class ColumnType {
         //
         // All types must be mentioned at all times.
         //
-        /// Note that the overload rule here must align with the corresponding function implementation, or specific
-        /// rules specified by {@link io.questdb.griffin.FunctionParser}, which add explicit cast function(like uuid -> string).
-        /// For instance, in {@link io.questdb.griffin.engine.functions.SymbolFunction},
-        /// apart from getChar(), getStr(), getTimestamp(), getVarchar(), and getInt(),
-        /// all other getxxx methods throw an UnSupportException. Therefore, the Symbol datatype only supports
-        /// overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
+        // Note that the overload rule here must align with the corresponding function implementation, or specific
+        // rules specified by {@link io.questdb.griffin.FunctionParser}, which add explicit cast function(like uuid -> string).
+        // For instance, in {@link io.questdb.griffin.engine.functions.SymbolFunction},
+        // apart from getChar(), getStr(), getTimestamp(), getVarchar(), and getInt(),
+        // all other getxxx methods throw an UnSupportException. Therefore, the Symbol datatype only supports
+        // overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
 
         OVERLOAD_PRIORITY = new short[][]{
                 /* 0 UNDEFINED   */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
@@ -924,7 +943,8 @@ public final class ColumnType {
                 /* 37 unused     */, {}
                 /* 38 unused     */, {}
                 /* 39 INTERVAL   */, {INTERVAL, STRING}
-                /* 40 NULL       */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
+                /* 40 VARCHAR_SLICE */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
+                /* 41 NULL       */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
@@ -943,6 +963,11 @@ public final class ColumnType {
         OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + STRING] = OVERLOAD_FULL;
         // Do the same for symbol -> avoids weird null behaviour
         OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + SYMBOL] = OVERLOAD_FULL;
+        // A NULL literal is a scalar, never a cursor (scalar sub-query). Without this a bare
+        // `null` matches a CURSOR argument at distance 0, so `col <= null` (i.e. not(col > null))
+        // binds to a `>(?C)` cursor-comparison factory and blows up calling getRecordCursorFactory()
+        // on the NULL constant. Force no overload so scalar null-comparison factories are used.
+        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + CURSOR] = OVERLOAD_NONE;
 
         GEO_TYPE_SIZE_POW2 = new int[GEOLONG_MAX_BITS + 1];
         for (int bits = 1; bits <= GEOLONG_MAX_BITS; bits++) {
@@ -982,6 +1007,7 @@ public final class ColumnType {
         typeNameMap.put(INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
         typeNameMap.put(INTERVAL_TIMESTAMP_NANO, "INTERVAL");
         typeNameMap.put(DECIMAL, "DECIMAL");
+        typeNameMap.put(VARCHAR_SLICE, "VARCHAR_SLICE");
         typeNameMap.put(NULL, "NULL");
 
 //        arrayTypeSet.add(BOOLEAN);
@@ -1083,6 +1109,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[DECIMAL128] = 4;
         TYPE_SIZE_POW2[DECIMAL256] = 5;
         TYPE_SIZE_POW2[INTERVAL] = 4;
+        TYPE_SIZE_POW2[VARCHAR_SLICE] = VARCHAR_AUX_SHL;
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -1120,6 +1147,7 @@ public final class ColumnType {
         TYPE_SIZE[DECIMAL128] = 2 * Long.BYTES;
         TYPE_SIZE[DECIMAL256] = 4 * Long.BYTES;
         TYPE_SIZE[INTERVAL] = 2 * Long.BYTES;
+        TYPE_SIZE[VARCHAR_SLICE] = 0;
 
         nonPersistedTypes.add(UNDEFINED);
         nonPersistedTypes.add(INTERVAL);
@@ -1131,6 +1159,7 @@ public final class ColumnType {
         nonPersistedTypes.add(REGCLASS);
         nonPersistedTypes.add(REGPROCEDURE);
         nonPersistedTypes.add(ARRAY_STRING);
+        nonPersistedTypes.add(VARCHAR_SLICE);
 
         addArrayTypeName(sink, ColumnType.BOOLEAN);
         addArrayTypeName(sink, ColumnType.BYTE);

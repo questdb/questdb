@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -37,7 +38,7 @@ import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -53,20 +54,20 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     private final int columnIndex;
     private final Comparator<SymbolFunctionRowCursorFactory> comparator;
     private final Comparator<SymbolFunctionRowCursorFactory> comparatorDesc;
-    private final PageFrameRecordCursorImpl cursor;
     private final ObjList<SymbolFunctionRowCursorFactory> cursorFactories;
     // Points at the next factory to be reused.
     private final int[] cursorFactoriesIdx; // used to disable unneeded factories if there are duplicate excluded keys
     private final boolean dynamicExcludedKeys;
     private final IntHashSet excludedKeys = new IntHashSet();
-    private final Function filter;
     private final boolean followedOrderByAdvice;
     private final boolean heapCursorUsed;
     private final IntHashSet includedKeys = new IntHashSet();
     private final int indexDirection;
-    private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
     private final int maxSymbolNotEqualsCount;
     private final int orderDirection;
+    private PageFrameRecordCursorImpl cursor;
+    private Function filter;
+    private ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
     private StaticSymbolTable symbolMapReader;
 
     public FilterOnExcludedValuesRecordCursorFactory(
@@ -178,7 +179,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             // sorting values makes no sense for heap row cursor
             if (!heapCursorUsed) {
                 // sorting here can produce order of cursorFactories different from one shown by explain command
-                if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
+                if (followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING) {
                     cursorFactories.sort(0, cursorFactoriesIdx[0], comparator);
                 } else {
                     cursorFactories.sort(0, cursorFactoriesIdx[0], comparatorDesc);
@@ -198,7 +199,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnExcludedValues");
         if (!heapCursorUsed) { // sorting symbols makes no sense for heap factory
-            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
+            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
         }
         sink.attr("symbolFilter").putBaseColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
         sink.optAttr("filter", filter);
@@ -227,13 +228,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             return;
         }
 
-        // Create a new factory.
         final SymbolFunctionRowCursorFactory rowCursorFactory;
         if (filter == null) {
             rowCursorFactory = new SymbolIndexRowCursorFactory(
                     columnIndex,
                     symbolKey,
-                    false,
                     indexDirection,
                     null
             );
@@ -242,7 +241,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
                     columnIndex,
                     symbolKey,
                     filter,
-                    false,
                     indexDirection,
                     null
             );
@@ -253,10 +251,24 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(filter);
-        Misc.free(cursor);
-        Misc.freeObjList(keyExcludedValueFunctions);
+        final PageFrameRecordCursorImpl cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final ObjList<Function> keyExcludedValueFunctions = this.keyExcludedValueFunctions;
+        this.keyExcludedValueFunctions = null;
+        final var rowCursorFactory = cursor != null ? cursor.getRowCursorFactory() : null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, rowCursorFactory);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeObjListBestEffort(failure, keyExcludedValueFunctions);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

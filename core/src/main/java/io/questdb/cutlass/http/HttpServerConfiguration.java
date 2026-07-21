@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,6 +30,12 @@ import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.ObjHashSet;
 
 public interface HttpServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
+
+    default ObjHashSet<String> getContextPathLifecycle() {
+        return new ObjHashSet<>() {{
+            add("/lifecycle");
+        }};
+    }
 
     default ObjHashSet<String> getContextPathMetrics() {
         return new ObjHashSet<>() {{

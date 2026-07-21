@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -161,7 +161,7 @@ public class SendAndReceiveRequestBuilder {
             int n = nf.recvRaw(fd, ptr + received, len - received);
             if (n > 0) {
                 for (int i = 0; i < n; i++) {
-                    receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i) & 0xff);
+                    receivedByteList.add(Unsafe.getByte(ptr + received + i) & 0xff);
                 }
                 received += n;
                 if (listener != null) {
@@ -278,7 +278,7 @@ public class SendAndReceiveRequestBuilder {
             int n = nf.recvRaw(fd, ptr + received, len - received);
             if (n > 0) {
                 for (int i = 0; i < n; i++) {
-                    receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i));
+                    receivedByteList.add(Unsafe.getByte(ptr + received + i));
                 }
                 received += n;
                 if (listener != null) {

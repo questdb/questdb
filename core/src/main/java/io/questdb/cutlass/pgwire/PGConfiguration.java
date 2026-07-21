@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -89,17 +89,11 @@ public interface PGConfiguration extends IODispatcherConfiguration, WorkerPoolCo
 
     String getServerVersion();
 
-    int getUpdateCacheBlockCount();
-
-    int getUpdateCacheRowCount();
-
     boolean isInsertCacheEnabled();
 
     boolean isReadOnlyUserEnabled();
 
     boolean isSelectCacheEnabled();
-
-    boolean isUpdateCacheEnabled();
 
     boolean readOnlySecurityContext();
 }

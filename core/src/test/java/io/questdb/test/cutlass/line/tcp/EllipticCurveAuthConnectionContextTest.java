@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -76,7 +76,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
                 int nSent = Math.min(bufferLen, maxSendBytes);
                 sentBytes = new byte[nSent];
                 for (int n = 0; n < nSent; n++) {
-                    sentBytes[n] = Unsafe.getUnsafe().getByte(buffer + n);
+                    sentBytes[n] = Unsafe.getByte(buffer + n);
                 }
                 return nSent;
             }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -191,9 +191,18 @@ class AbstractViewTest extends AbstractCairoTest {
     }
 
     void assertQueryAndPlan(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, String expectedPlan, String... expectedReferencedViews) throws Exception {
-        assertQueryNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize);
+        assertQuery(query)
+                .noLeakCheck()
+                .timestamp(expectedTimestamp)
+                .supportsRandomAccess(supportsRandomAccess)
+                .expectSize(expectSize)
+                .returns(expected);
         assertReferencedViews(query, expectedReferencedViews);
-        assertQueryNoLeakCheck(expectedPlan, "explain " + query, null, false, true);
+        assertQuery("explain " + query)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(expectedPlan);
     }
 
     void assertView1AlterFailure(String newViewQuery) {

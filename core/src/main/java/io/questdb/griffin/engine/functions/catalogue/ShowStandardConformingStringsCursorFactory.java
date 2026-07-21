@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -44,8 +44,7 @@ public class ShowStandardConformingStringsCursorFactory extends AbstractRecordCu
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.toTop();
-        return cursor;
+        return cursor.of(executionContext.getCircuitBreaker());
     }
 
     @Override

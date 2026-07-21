@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -66,6 +66,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
     private final CairoConfiguration configuration;
     private final MessageBus messageBus;
+    // Borrowed non-group-by views into recordFunctions; the factory owns and closes the functions.
+    private final ObjList<Function> nonGroupByFunctions;
     private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker; // used to signal cancellation to merge shard workers
     private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
     private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
@@ -78,6 +80,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private boolean isDataMapBuilt;
     private boolean isOpen;
     private MapRecordCursor mapCursor;
+    private Map ownerMap;
+    private ObjList<Map> shards;
 
     public AsyncGroupByRecordCursor(
             @NotNull CairoEngine engine,
@@ -87,10 +91,15 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         this.configuration = engine.getConfiguration();
         this.messageBus = messageBus;
         this.recordFunctions = recordFunctions;
+        this.nonGroupByFunctions = GroupByUtils.extractNonGroupByFunctions(recordFunctions);
         recordA = new VirtualRecord(recordFunctions);
         recordB = new VirtualRecord(recordFunctions);
         postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
-        isOpen = true;
+        // Start closed so the first of() runs atom.reopen(), which opens the lazy
+        // (openOnInit=false) allocators and binds the per-query tracker before any
+        // allocation. Skipping reopen() on the first cursor would leave the allocator's
+        // chunk index unallocated.
+        isOpen = false;
     }
 
     @Override
@@ -188,8 +197,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     private void buildMap() {
+        // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         final AsyncGroupByAtom atom = frameSequence.getAtom();
@@ -197,11 +208,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         final GroupByShardingContext shardingCtx = atom.getShardingContext();
         if (!atom.isSharded()) {
             // No sharding was necessary, so the maps are small, and we merge them ourselves.
-            final Map dataMap = shardingCtx.mergeOwnerMap();
-            mapCursor = dataMap.getCursor();
+            ownerMap = shardingCtx.mergeOwnerMap();
+            mapCursor = ownerMap.getCursor();
+            shards = null;
         } else {
             // We had to shard the maps, so they must be big.
-            final ObjList<Map> shards = shardingCtx.mergeShards(
+            shards = shardingCtx.mergeShards(
                     messageBus,
                     frameSequence.getWorkStealingStrategy(),
                     circuitBreaker,
@@ -215,17 +227,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             // The shards contain non-intersecting row groups, so we can return what's in the shards without merging them.
             shardedCursor.of(shards);
             mapCursor = shardedCursor;
+            ownerMap = null;
         }
 
         recordA.of(mapCursor.getRecord());
         recordB.of(mapCursor.getRecordB());
         isDataMapBuilt = true;
-    }
-
-    private void buildMapConditionally() {
-        if (!isDataMapBuilt) {
-            buildMap();
-        }
     }
 
     private void parallelLongTopK(DirectLongLongSortedList destList, Function longFunc) {
@@ -250,7 +257,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 while (true) {
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
                         if (workStealingStrategy.shouldSteal(processedCount)) {
                             final Map shard = atom.getDestShards().getQuick(shardIndex);
@@ -335,7 +342,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         LOG.debug().$("parallel long top K done [total=").$(total)
                 .$(", ownCount=").$(ownCount)
                 .$(", reclaimed=").$(reclaimed)
-                .$(", queuedCount=").$(queuedCount).I$();
+                .$(", queuedCount=").$(queuedCount)
+                .I$();
     }
 
     private void throwTimeoutException() {
@@ -346,15 +354,50 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
     }
 
+    void buildMapConditionally() {
+        if (!isDataMapBuilt) {
+            buildMap();
+        }
+    }
+
+    MapRecordCursor initSharedMapCursor(ShardedMapCursor reusableSharded, MapRecordCursor cachedNonSharded) {
+        final AsyncGroupByAtom atom = frameSequence.getAtom();
+        if (atom.isSharded()) {
+            reusableSharded.ofShared(shards);
+            return reusableSharded;
+        } else if (cachedNonSharded != null) {
+            ownerMap.initCursor(cachedNonSharded);
+            return cachedNonSharded;
+        } else {
+            return ownerMap.newCursor();
+        }
+    }
+
+    void longTopK(DirectLongLongSortedList list, Function recordFunction, MapRecordCursor sharedMapCursor) {
+        final AsyncGroupByAtom atom = frameSequence.getAtom();
+        if (recordFunction.isThreadSafe() && atom.isSharded() && sharedMapCursor.size() > configuration.getGroupByParallelTopKThreshold()) {
+            parallelLongTopK(list, recordFunction);
+        } else {
+            sharedMapCursor.longTopK(list, recordFunction);
+        }
+    }
+
     void of(UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
+        // Assign before reopen() so close() can drain a partially reopened atom on a breach.
+        this.frameSequence = frameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.frameSequence = frameSequence;
         this.circuitBreaker = executionContext.getCircuitBreaker();
-        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
+        // Skip the group by functions: the atom initializes them in init(), before any frame is
+        // dispatched, and donates the owner state to the per-worker clones. Re-initializing them
+        // here would re-run stateful initialization, such as a cursor comparison re-executing its
+        // scalar sub-query, and could diverge from the state the workers observe. The constructor
+        // pre-filters the non-group-by functions once, so cached re-executions skip the
+        // per-function classification scan.
+        Function.init(nonGroupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isDataMapBuilt = false;
     }
 }

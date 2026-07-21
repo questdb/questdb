@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -47,15 +47,15 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
 public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final CairoConfiguration configuration;
-    private final PageFrameRecordCursor cursor;
-    private final Function filter;
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
-    private final RowCursorFactory rowCursorFactory;
     private final boolean singleRowFactory;
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
+    private PageFrameRecordCursor cursor;
+    private Function filter;
+    private RowCursorFactory rowCursorFactory;
     private TimeFrameCursorImpl timeFrameCursor;
 
     public PageFrameRecordCursorFactory(
@@ -138,7 +138,13 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             if (timeFrameCursor == null) {
                 timeFrameCursor = new TimeFrameCursorImpl(configuration, getMetadata());
             }
-            return timeFrameCursor.of(pageFrameCursor);
+            return timeFrameCursor.of(
+                    pageFrameCursor,
+                    executionContext.getPageFrameMinRows(),
+                    executionContext.getPageFrameMaxRows(),
+                    1, // used for single-threaded exec plans
+                    executionContext.getMemoryTracker()
+            );
         }
         return null;
     }
@@ -191,40 +197,64 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
-        Misc.free(filter);
-        Misc.free(fwdPageFrameCursor);
-        Misc.free(bwdPageFrameCursor);
-        Misc.free(timeFrameCursor);
+        final TablePageFrameCursor bwdPageFrameCursor = this.bwdPageFrameCursor;
+        this.bwdPageFrameCursor = null;
+        final PageFrameRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final TablePageFrameCursor fwdPageFrameCursor = this.fwdPageFrameCursor;
+        this.fwdPageFrameCursor = null;
+        final RowCursorFactory rowCursorFactory = this.rowCursorFactory;
+        this.rowCursorFactory = null;
+        final TimeFrameCursorImpl timeFrameCursor = this.timeFrameCursor;
+        this.timeFrameCursor = null;
+
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, fwdPageFrameCursor);
+        if (bwdPageFrameCursor != fwdPageFrameCursor) {
+            failure = Misc.freeBestEffort(failure, bwdPageFrameCursor);
+        }
+        failure = Misc.freeBestEffort(failure, timeFrameCursor);
+        failure = Misc.freeBestEffort(failure, rowCursorFactory);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     protected PageFrameCursor initBwdPageFrameCursor(
             PartitionFrameCursor partitionFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         if (bwdPageFrameCursor == null) {
             bwdPageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    partitionFrameCursorFactory.getPushdownFilterConditions(),
                     executionContext.getSharedQueryWorkerCount()
             );
         }
-        return bwdPageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return bwdPageFrameCursor.of(executionContext, partitionFrameCursor);
     }
 
     protected PageFrameCursor initFwdPageFrameCursor(
             PartitionFrameCursor partitionFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         if (fwdPageFrameCursor == null) {
             fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    partitionFrameCursorFactory.getPushdownFilterConditions(),
                     executionContext.getSharedQueryWorkerCount()
             );
         }
-        return fwdPageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return fwdPageFrameCursor.of(executionContext, partitionFrameCursor);
     }
 
     @Override

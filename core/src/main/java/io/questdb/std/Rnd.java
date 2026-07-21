@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -36,6 +36,10 @@ import io.questdb.std.str.Utf8s;
 import java.util.Collections;
 import java.util.List;
 
+/**
+ * Pseudo-random number generator. This class is not thread-safe;
+ * each thread must use its own instance.
+ */
 public class Rnd {
     private static final double DOUBLE_UNIT = 0x1.0p-53; // 1.0 / (1L << 53)
     private static final float FLOAT_UNIT = 1 / ((float) (1 << 24));
@@ -96,7 +100,7 @@ public class Rnd {
 
     public void nextChars(final long address, int len) {
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(address + i * 2L, nextChar());
+            Unsafe.putChar(address + i * 2L, nextChar());
         }
     }
 

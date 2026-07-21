@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,7 +30,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 
 
-public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
+public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet implements CharSequenceObjMap<V> {
     private final ObjList<CharSequence> list;
     private V[] values;
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -62,7 +62,7 @@ public class StaticChallengeResponseMatcher implements ChallengeResponseMatcher 
         Chars.base64Decode(signatureFlyweight.asAsciiCharSequence(), signatureBuffer);
         signatureBuffer.flip();
         for (int i = 0; i < challengeLen; i++) {
-            challengeBytes[i] = Unsafe.getUnsafe().getByte(challengePtr + i);
+            challengeBytes[i] = Unsafe.getByte(challengePtr + i);
         }
         try {
             return AuthUtils.isSignatureMatch(publicKey, challengeBytes, signatureBuffer);

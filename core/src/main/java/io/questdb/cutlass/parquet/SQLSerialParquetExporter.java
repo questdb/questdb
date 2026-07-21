@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -47,6 +48,7 @@ import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -66,6 +68,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class SQLSerialParquetExporter extends BaseParquetExporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SQLSerialParquetExporter.class);
+    private final DirectIntList bloomFilterColumnIndexes = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
     private final CairoConfiguration configuration;
     private final StringSink exportPath = new StringSink(128);
     private final FilesFacade ff;
@@ -91,6 +94,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
 
     @Override
     public void close() {
+        Misc.free(bloomFilterColumnIndexes);
         Misc.free(fromParquet);
         Misc.free(streamBuffers);
         Misc.free(streamColumnData);
@@ -169,13 +173,29 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             }
 
             try (TableReader reader = cairoEngine.getReader(tableToken)) {
-                // Enable streaming mode to use MADV_SEQUENTIAL/DONTNEED hints,
-                // releasing page cache after each partition is processed
-                reader.setStreamingMode(true);
+                // SEQUENTIAL_EVICT: MADV_SEQUENTIAL/DONTNEED hints to release
+                // page cache after each partition, plus a hard cleanup
+                // backstop -- closeExcessPartitions(keepOpen=0) on pool
+                // return ensures the pooled reader doesn't accumulate
+                // mappings across exports.
+                reader.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                 final int timestampType = reader.getMetadata().getTimestampType();
                 final int partitionCount = reader.getPartitionCount();
                 final int partitionBy = reader.getPartitionedBy();
                 entry.setTotalPartitionCount(partitionCount);
+
+                long bloomFilterIndexesPtr = 0;
+                int bloomFilterCount = 0;
+                double bloomFilterFpp = Double.isNaN(task.getBloomFilterFpp()) ? 0.01 : task.getBloomFilterFpp();
+                CharSequence bloomFilterColumns = task.getBloomFilterColumns();
+                if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
+                    bloomFilterColumnIndexes.reopen();
+                    CopyExportRequestTask.parseBloomFilterColumnIndexes(bloomFilterColumns, reader.getMetadata(), bloomFilterColumnIndexes, task.getBloomFilterColumnsPosition());
+                    if (bloomFilterColumnIndexes.size() > 0) {
+                        bloomFilterIndexesPtr = bloomFilterColumnIndexes.getAddress();
+                        bloomFilterCount = (int) bloomFilterColumnIndexes.size();
+                    }
+                }
 
                 if (partitionCount > 0) {
                     int fromParquetBaseLen = 0;
@@ -244,6 +264,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                             LOG.info().$("converting partition to parquet temp file [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
                                     .$(", partition=").$(nameSink).$();
 
+
                             PartitionEncoder.encodeWithOptions(
                                     partitionDescriptor,
                                     tempPath,
@@ -252,7 +273,13 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                                     task.isRawArrayEncoding(),
                                     task.getRowGroupSize(),
                                     task.getDataPageSize(),
-                                    task.getParquetVersion()
+                                    task.getParquetVersion(),
+                                    bloomFilterIndexesPtr,
+                                    bloomFilterCount,
+                                    bloomFilterFpp,
+                                    0.0,
+                                    -1,
+                                    -1L
                             );
                             long parquetFileSize = ff.length(tempPath.$());
                             LOG.info().$("converted partition to parquet temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
@@ -410,12 +437,16 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             if (isPageFrameBacked) {
                 VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) factory;
                 pfc = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
-                pfc.setStreamingMode(true);
+                pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                 streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
                 exporter.setUp(streamBuffers.getAdjustedMetadata(), pfc, streamBuffers.getBaseColumnMap());
             } else {
                 cursor = factory.getCursor(sqlExecutionContext);
-                streamBuffers.setUp(factory.getMetadata());
+                if (factory instanceof VirtualRecordCursorFactory vf) {
+                    streamBuffers.setUpCursorBacked(vf);
+                } else {
+                    streamBuffers.setUp(factory.getMetadata());
+                }
                 exporter.setUp(streamBuffers.getAdjustedMetadata());
             }
 
@@ -473,7 +504,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             switch (mode) {
                 case DIRECT_PAGE_FRAME -> {
                     try (PageFrameCursor pfc = baseFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
-                        pfc.setStreamingMode(true);
+                        pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                         RecordMetadata meta = baseFactory.getMetadata();
                         int colCount = meta.getColumnCount();
                         if (identityColumnMap.size() != colCount) {

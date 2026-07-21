@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -95,7 +95,10 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
         this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-        this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+        // Lazy variant: the allocator's chunk index is not allocated until the
+        // first cursor's of() binds a MemoryTracker and calls reopen(), keeping
+        // per-query alloc/free accounting symmetric from the very first cursor.
+        this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
         GroupByUtils.setAllocator(groupByFunctions, allocator);
     }
 
@@ -124,11 +127,14 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         parseParams(baseCursor, executionContext);
         topNextDst = nextDstUtc;
         circuitBreaker = executionContext.getCircuitBreaker();
+        // Consult the breaker at open, so an empty base scan (whose row loops never run) stays cancellable.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
         sampleFromFunc.init(baseCursor, executionContext);
         sampleToFunc.init(baseCursor, executionContext);
+        allocator.setMemoryTracker(executionContext.getMemoryTracker());
         allocator.reopen();
     }
 
@@ -251,11 +257,16 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
     protected void nextSamplePeriod(long timestamp) {
         localEpoch = timestampSampler.round(timestamp);
-        // Sometimes rounding, especially around Days can throw localEpoch
-        // to the "before" previous DST. When this happens we need to compensate for
-        // tzOffset subtraction at the time of delivery of the timestamp to client
-        if (localEpoch - tzOffset < prevDst) {
-            localEpoch += tzOffset;
+        // After a DST transition, rounding down (common for multi-hour or day units) can place
+        // the new bucket's boundary at a local time whose UTC instant lies before the transition
+        // we just crossed. TimestampFunc emits `sampleLocalEpoch - tzOffset`, so if we leave
+        // localEpoch as-is, we'd back-convert with the post-transition offset even though the
+        // bucket start belongs to the pre-transition offset. Shift localEpoch by the delta
+        // between the current offset and the one valid at the bucket boundary so the emitted
+        // UTC timestamp lands on the correct side of the transition.
+        if (rules != null && localEpoch - tzOffset < prevDst) {
+            final long boundaryTzOffset = rules.getOffset(localEpoch - tzOffset);
+            localEpoch += (tzOffset - boundaryTzOffset);
         }
         GroupByUtils.toTop(groupByFunctions);
     }

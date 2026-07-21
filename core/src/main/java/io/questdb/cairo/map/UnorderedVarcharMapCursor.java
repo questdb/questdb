@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -127,8 +127,6 @@ public final class UnorderedVarcharMapCursor implements MapRecordCursor {
         this.memLimit = memLimit;
         this.count = count;
         toTop();
-        recordA.setLimit(memLimit);
-        recordB.setLimit(memLimit);
         return this;
     }
 }

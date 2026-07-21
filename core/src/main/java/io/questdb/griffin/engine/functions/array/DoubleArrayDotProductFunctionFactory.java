@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -156,7 +156,7 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
             if (atDeepestDim) {
                 for (int i = 0; i < count; i++) {
                     double leftVal = left.getDouble(flatIndexLeft);
-                    double rightVal = right.getDouble(flatIndexLeft);
+                    double rightVal = right.getDouble(flatIndexRight);
                     if (Numbers.isFinite(leftVal) && Numbers.isFinite(rightVal)) {
                         sum += leftVal * rightVal;
                     }

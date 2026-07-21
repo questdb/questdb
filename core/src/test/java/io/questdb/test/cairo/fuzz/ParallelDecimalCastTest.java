@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -301,7 +301,12 @@ public class ParallelDecimalCastTest extends AbstractCairoTest {
                                 ddl,
                                 sqlExecutionContext
                         );
-                        TestUtils.assertSql(engine, sqlExecutionContext, sql, sink, expected);
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(expected);
                     },
                     configuration,
                     LOG

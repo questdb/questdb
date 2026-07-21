@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -152,7 +152,8 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
         mapValue.putLong(valueIndex + 1, 0);
     }
 
+    @Override
     public boolean supportsParallelism() {
-        return true;
+        return UnaryFunction.super.supportsParallelism();
     }
 }

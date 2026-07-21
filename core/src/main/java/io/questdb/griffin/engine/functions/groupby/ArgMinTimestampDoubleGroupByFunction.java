@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -43,8 +43,8 @@ public class ArgMinTimestampDoubleGroupByFunction extends TimestampFunction impl
     private final Function valueArg;
     private int valueIndex;
 
-    public ArgMinTimestampDoubleGroupByFunction(@NotNull Function valueArg, @NotNull Function keyArg) {
-        super(ColumnType.TIMESTAMP);
+    public ArgMinTimestampDoubleGroupByFunction(@NotNull Function valueArg, @NotNull Function keyArg, int timestampType) {
+        super(timestampType);
         this.valueArg = valueArg;
         this.keyArg = keyArg;
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -111,7 +111,7 @@ public class UpdateFuzzTest extends AbstractCairoTest {
                 lastType = ColumnType.SYMBOL;
                 drainWalQueue();
                 try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
-                    purgeJob.run(0);
+                    purgeJob.run();
                 }
             }
 
@@ -119,7 +119,7 @@ public class UpdateFuzzTest extends AbstractCairoTest {
                 update("UPDATE up SET x = '2' WHERE ts > '2022-02-25'");
                 drainWalQueue();
                 try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
-                    purgeJob.run(0);
+                    purgeJob.run();
                 }
             }
 
@@ -128,7 +128,7 @@ public class UpdateFuzzTest extends AbstractCairoTest {
                 drainWalQueue();
                 lastType = ColumnType.VARCHAR;
                 try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
-                    purgeJob.run(0);
+                    purgeJob.run();
                 }
             }
 
@@ -144,7 +144,7 @@ public class UpdateFuzzTest extends AbstractCairoTest {
                 drainWalQueue();
                 lastType = ColumnType.STRING;
                 try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
-                    purgeJob.run(0);
+                    purgeJob.run();
                 }
             }
 
@@ -152,7 +152,7 @@ public class UpdateFuzzTest extends AbstractCairoTest {
                 execute("alter table up alter column x type symbol");
                 drainWalQueue();
                 try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
-                    purgeJob.run(0);
+                    purgeJob.run();
                 }
             }
 

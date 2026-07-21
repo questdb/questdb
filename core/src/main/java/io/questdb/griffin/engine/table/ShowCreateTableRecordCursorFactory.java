@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,9 +30,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -41,10 +43,14 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -53,7 +59,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
     private static final RecordMetadata METADATA;
     protected final TableToken tableToken;
     protected final int tokenPosition;
-    private final ShowCreateTableCursor cursor = new ShowCreateTableCursor();
+    private ShowCreateTableCursor cursor = new ShowCreateTableCursor();
 
     public ShowCreateTableRecordCursorFactory(TableToken tableToken, int tokenPosition) {
         super(METADATA);
@@ -80,6 +86,28 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             } else {
                 sink.put(alias);
             }
+        }
+    }
+
+    // Emits a stored view/mat-view body with surrounding whitespace removed. The body is always a
+    // complete SELECT, where leading/trailing whitespace is never significant, so this only normalizes
+    // the dump's indentation; a trailing string or identifier literal ends in a quote (> ' '), so no
+    // character inside a literal is ever stripped.
+    public static void putTrimmed(Utf8Sink sink, CharSequence text) {
+        int lo = 0;
+        int hi = text.length();
+        while (lo < hi && text.charAt(lo) <= ' ') {
+            lo++;
+        }
+        while (hi > lo && text.charAt(hi - 1) <= ' ') {
+            hi--;
+        }
+        sink.put(text, lo, hi);
+    }
+
+    public static void tableFormatToSink(int format, CharSink<?> sink) {
+        if (format == TableUtils.TABLE_FORMAT_PARQUET) {
+            sink.putAscii(" FORMAT PARQUET");
         }
     }
 
@@ -114,6 +142,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext, tableToken, tokenPosition);
     }
 
@@ -130,8 +159,16 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final ShowCreateTableCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public static class ShowCreateTableCursor implements NoRandomAccessRecordCursor {
@@ -172,6 +209,12 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         ) throws SqlException {
             this.tableToken = tableToken;
             this.executionContext = executionContext;
+            // The token is resolved from the synchronously loaded registry, but the
+            // metadata cache is hydrated lazily; hydrate this table on demand so we do
+            // not report a registered-but-not-yet-cached table as non-existent during
+            // the startup hydration window (or before any catalogue query has warmed an
+            // embedded engine).
+            executionContext.getCairoEngine().getMetadataCache().hydrateTableOnDemand(tableToken);
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.table = metadataRO.getTable(tableToken);
                 if (this.table == null) {
@@ -181,6 +224,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     throw TableReferenceOutOfDateException.of(this.tableToken);
                 }
             }
+            // SHOW CREATE TABLE rejects views and materialized views during parsing
+            // (see SqlParserCallback.getTableToken); guard against any future caller that bypasses it.
+            assert !tableToken.isView() && !tableToken.isMatView();
 
             toTop();
             return this;
@@ -202,10 +248,6 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             hasRun = false;
         }
 
-        private void putTtl() {
-            ttlToSink(table.getTtlHoursOrMonths(), sink);
-        }
-
         private void showCreateTable(CairoConfiguration config) {
             // CREATE TABLE table_name
             putCreateTable();
@@ -217,7 +259,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 // PARTITION BY unit
                 putPartitionBy();
                 // TTL n unit
-                putTtl();
+                ttlToSink(sink);
+                // FORMAT PARQUET (only emitted when not the default NATIVE)
+                tableFormatToSink(table.getTableFormat(), sink);
                 // (BYPASS) WAL
                 putWal();
             }
@@ -247,9 +291,69 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 }
 
                 if (column.isIndexed()) {
-                    // INDEX CAPACITY value
-                    sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
+                    byte idxType = column.getIndexType();
+                    if (idxType == IndexType.BITMAP) {
+                        sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
+                    } else {
+                        sink.putAscii(" INDEX TYPE ");
+                        IndexType.putName(sink, idxType);
+                        IntList coveringCols = column.getCoveringColumnIndices();
+                        // Drop tombstoned entries (dense -1 left behind by
+                        // DROP COLUMN). If no survivor remains, skip the
+                        // INCLUDE clause entirely — emitting "INCLUDE ()"
+                        // produces invalid DDL that the parser rejects.
+                        int survivors = countCoveringSurvivors(coveringCols, table);
+                        if (survivors > 0) {
+                            sink.putAscii(" INCLUDE (");
+                            int emitted = 0;
+                            for (int ci = 0, cn = coveringCols.size(); ci < cn; ci++) {
+                                int denseIdx = coveringCols.getQuick(ci);
+                                if (denseIdx < 0) {
+                                    continue;
+                                }
+                                CairoColumn covCol = table.getColumnQuiet(denseIdx);
+                                if (covCol != null) {
+                                    if (emitted > 0) {
+                                        sink.putAscii(", ");
+                                    }
+                                    sink.put(covCol.getName());
+                                    emitted++;
+                                }
+                            }
+                            sink.putAscii(')');
+                        }
+                    }
                 }
+            }
+
+            int parquetConfig = column.getParquetEncodingConfig();
+            if (TableUtils.isParquetConfigExplicit(parquetConfig)) {
+                int encoding = TableUtils.getParquetConfigEncoding(parquetConfig);
+                int compression = TableUtils.getParquetConfigCompression(parquetConfig);
+                int level = TableUtils.getParquetConfigCompressionLevel(parquetConfig);
+                boolean hasBloomFilter = TableUtils.isParquetConfigBloomFilter(parquetConfig);
+                sink.putAscii(" PARQUET(");
+                if (encoding > 0 || compression > 0) {
+                    if (encoding > 0) {
+                        sink.put(ParquetEncoding.getEncodingName(encoding));
+                    } else {
+                        sink.putAscii("default");
+                    }
+                    if (compression > 0) {
+                        sink.putAscii(", ").put(ParquetCompression.getCompressionName(compression - 1));
+                        if (level > 0) {
+                            sink.putAscii('(').put(level - 1).putAscii(')');
+                        }
+                    }
+                    if (hasBloomFilter) {
+                        sink.putAscii(", bloom_filter");
+                    }
+                } else if (hasBloomFilter) {
+                    sink.putAscii("bloom_filter");
+                } else {
+                    sink.putAscii("default");
+                }
+                sink.putAscii(')');
             }
         }
 
@@ -310,6 +414,25 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 sink.putAscii(" BYPASS");
                 sink.putAscii(" WAL");
             }
+        }
+
+        // overridden in ent, do not remove!
+        protected void ttlToSink(CharSink<?> sink) {
+            ShowCreateTableRecordCursorFactory.ttlToSink(table.getTtlHoursOrMonths(), sink);
+        }
+
+        private static int countCoveringSurvivors(IntList coveringCols, CairoTable table) {
+            if (coveringCols == null || coveringCols.size() == 0) {
+                return 0;
+            }
+            int survivors = 0;
+            for (int ci = 0, cn = coveringCols.size(); ci < cn; ci++) {
+                int denseIdx = coveringCols.getQuick(ci);
+                if (denseIdx >= 0 && table.getColumnQuiet(denseIdx) != null) {
+                    survivors++;
+                }
+            }
+            return survivors;
         }
 
         public class ShowCreateTableRecord implements Record {

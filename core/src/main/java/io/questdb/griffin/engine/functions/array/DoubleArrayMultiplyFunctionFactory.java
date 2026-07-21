@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -113,6 +113,13 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                 return arrayOut;
             }
 
+            // A previous row's ofNull() wiped arrayOut's type and shape; restore
+            // the declared array type before reusing the buffer, otherwise
+            // copyShapeFrom()/applyShape() see zero dimensions and fail when a
+            // null array row precedes a non-null one.
+            if (arrayOut.getType() != type) {
+                arrayOut.setType(type);
+            }
             if (left.shapeDiffers(right)) {
                 DerivedArrayView.computeBroadcastShape(left, right, arrayOut.getShape(), leftArgPos);
                 if (left.shapeDiffers(arrayOut)) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,20 +25,13 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.jit.CompiledFilter;
-import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntHashSet;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -62,33 +55,18 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
             @NotNull CairoConfiguration configuration,
             @NotNull RecordCursorFactory slaveFactory,
             int masterTimestampColumnIndex,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             int valueCount,
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
             @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
-            @Transient @Nullable ColumnTypes masterAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter masterAsOfJoinColumnFilter,
-            @Transient @Nullable ColumnTypes slaveAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter slaveAsOfJoinColumnFilter,
-            @Transient @Nullable BitSet asOfWriteSymbolAsString,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharMaster,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharSlave,
-            @Transient @Nullable BitSet writeTimestampAsNanosMaster,
-            @Transient @Nullable BitSet writeTimestampAsNanosSlave,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
-            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function ownerFilter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            AsyncHorizonJoinResources resources,
             long masterTsScale,
             long slaveTsScale,
             int workerCount
@@ -102,28 +80,13 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
                 asOfJoinKeyTypes,
                 masterAsOfJoinMapSinkClass,
                 slaveAsOfJoinMapSinkClass,
-                masterAsOfJoinColumnTypes,
-                masterAsOfJoinColumnFilter,
-                slaveAsOfJoinColumnTypes,
-                slaveAsOfJoinColumnFilter,
-                asOfWriteSymbolAsString,
-                asOfWriteStringAsVarcharMaster,
-                asOfWriteStringAsVarcharSlave,
-                writeTimestampAsNanosMaster,
-                writeTimestampAsNanosSlave,
                 masterColumnCount,
                 masterSymbolKeyColumnIndices,
                 slaveSymbolKeyColumnIndices,
                 columnSources,
                 columnIndexes,
                 ownerGroupByFunctions,
-                perWorkerGroupByFunctions,
-                compiledFilter,
-                bindVarMemory,
-                bindVarFunctions,
-                ownerFilter,
-                filterUsedColumnIndexes,
-                perWorkerFilters,
+                resources,
                 masterTsScale,
                 slaveTsScale,
                 workerCount
@@ -140,7 +103,7 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
             // Initialize values to empty state
             resetMapValues();
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }

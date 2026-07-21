@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,8 +24,10 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursor;
@@ -35,13 +37,15 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final SortedRecordCursor cursor;
-
     private final ListColumnFilter sortColumnFilter;
+    private RecordCursorFactory base;
+    private SortedRecordCursor cursor;
 
     public SortedRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -52,18 +56,39 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
-        RecordTreeChain chain = new RecordTreeChain(
-                metadata,
-                recordSink,
-                comparator,
-                configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
-                configuration.getSqlSortValuePageSize(),
-                configuration.getSqlSortValueMaxPages()
-        );
         this.base = base;
-        this.cursor = new SortedRecordCursor(chain);
         this.sortColumnFilter = sortColumnFilter;
+        RecordTreeChain chain = null;
+        ObjList<DirectIntList> rankMaps = null;
+        try {
+            // Lazy variant: the chain skeleton is constructed but the
+            // MemoryPages key heap is not allocated until the first cursor's
+            // of() binds a MemoryTracker and calls reopen(). RecordChain is
+            // lazy by construction. This keeps malloc/free symmetric on the
+            // per-query counter from the very first cursor.
+            chain = new RecordTreeChain(
+                    metadata,
+                    recordSink,
+                    comparator,
+                    configuration.getSqlSortKeyPageSize(),
+                    configuration.getSqlSortKeyMaxBytes(),
+                    configuration.getSqlSortValuePageSize(),
+                    configuration.getSqlSortValueMaxBytes(),
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath(),
+                    false
+            );
+            // Hoist rankMaps into a named local so the catch can free the
+            // (native-memory-owning) list if the cursor ctor below throws after
+            // createRankMaps succeeds. On success, ownership passes to the cursor.
+            rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
+            this.cursor = new SortedRecordCursor(chain, comparator, rankMaps);
+        } catch (Throwable th) {
+            Misc.free(chain);
+            Misc.freeObjList(rankMaps);
+            close();
+            throw th;
+        }
     }
 
     public static int getScanDirection(ListColumnFilter sortColumnFilter) {
@@ -125,7 +150,12 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        base.close();
-        cursor.close();
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final SortedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

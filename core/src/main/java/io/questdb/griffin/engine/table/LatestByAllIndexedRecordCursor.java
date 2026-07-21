@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,10 +25,10 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -81,7 +81,16 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     @Override
+    public void close() {
+        // The shared rows list is freed here, under the per-query tracker bound in of();
+        // prefixes is bounded and stays factory-owned (freed at factory close).
+        rows.close();
+        super.close();
+    }
+
+    @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTripped();
         if (!isTreeMapBuilt) {
             buildTreeMap();
             isTreeMapBuilt = true;
@@ -107,13 +116,14 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         bus = executionContext.getMessageBus();
         // If the worker count is 0
         sharedQueryWorkerCount = executionContext.getSharedQueryWorkerCount();
-        rows.clear();
+        rows.setMemoryTracker(executionContext.getMemoryTracker());
+        rows.reopen();
         keyCount = -1;
         argumentsAddress = 0;
         isFrameCacheBuilt = false;
         isTreeMapBuilt = false;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override
@@ -222,7 +232,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             int frameIndex = 0;
             frameCursor.toTop();
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
-                final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+                final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
                 final long partitionLo = frame.getPartitionLo();
                 final long partitionHi = frame.getPartitionHi() - 1;
 
@@ -295,7 +305,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 // process our own queue
                 // this should fix deadlock with 1 worker configuration
                 while (!doneLatch.done(queuedCount)) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     long seq = subSeq.next();
                     if (seq > -1) {
                         try {

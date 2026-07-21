@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,6 +32,41 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class TextPlanSinkTest {
+
+    @Test
+    public void testListMetadataModeRestoredAfterException() {
+        final TextPlanSink sink = new TextPlanSink();
+        final ObjList<Plannable> values = new ObjList<>();
+        values.add(_ -> {
+            throw new RuntimeException("expected");
+        });
+        sink.useBaseMetadata(true);
+
+        try {
+            sink.optAttr("values", values, false);
+            Assert.fail();
+        } catch (RuntimeException e) {
+            Assert.assertEquals("expected", e.getMessage());
+        }
+        Assert.assertTrue(sink.getUseBaseMetadata());
+    }
+
+    @Test
+    public void testPlannableMetadataModeRestoredAfterException() {
+        final TextPlanSink sink = new TextPlanSink();
+        sink.useBaseMetadata(true);
+
+        try {
+            sink.optAttr("value", planSink -> {
+                Assert.assertFalse(planSink.getUseBaseMetadata());
+                throw new RuntimeException("expected");
+            }, false);
+            Assert.fail();
+        } catch (RuntimeException e) {
+            Assert.assertEquals("expected", e.getMessage());
+        }
+        Assert.assertTrue(sink.getUseBaseMetadata());
+    }
 
     @Test
     public void testSink() {

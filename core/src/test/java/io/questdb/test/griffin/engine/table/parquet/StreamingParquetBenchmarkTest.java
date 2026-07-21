@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -65,6 +65,7 @@ import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
  */
 @Ignore
 public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
+    private static final boolean CPU_TIME_SUPPORTED;
     // Sentinel value indicating CPU time measurement is not supported
     private static final long CPU_TIME_UNSUPPORTED = -1;
     private static final int DATA_PAGE_SIZE = 1024 * 1024;  // 1MB
@@ -77,19 +78,6 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
     private static final boolean STATISTICS_ENABLED = true;
     private static final String TABLE_NAME = "benchmark_table";
     private static final ThreadMXBean THREAD_MX_BEAN = ManagementFactory.getThreadMXBean();
-    private static final boolean CPU_TIME_SUPPORTED;
-
-    static {
-        boolean supported = THREAD_MX_BEAN.isCurrentThreadCpuTimeSupported();
-        if (supported && !THREAD_MX_BEAN.isThreadCpuTimeEnabled()) {
-            try {
-                THREAD_MX_BEAN.setThreadCpuTimeEnabled(true);
-            } catch (UnsupportedOperationException | SecurityException e) {
-                supported = false;
-            }
-        }
-        CPU_TIME_SUPPORTED = supported;
-    }
 
     /**
      * Pure read benchmark - reads all data without Parquet encoding.
@@ -232,7 +220,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
 
                 // Pre-allocate 4KB buffer for memcpy
                 final int BUFFER_SIZE = 4096;
-                long buffer = Unsafe.getUnsafe().allocateMemory(BUFFER_SIZE);
+                long buffer = Unsafe.allocateMemory(BUFFER_SIZE);
 
                 LOG.info().$("Starting pure read benchmark (no Parquet, no Rust)...").$();
 
@@ -253,10 +241,10 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                                 // Copy in 4KB chunks
                                 for (long offset = 0; offset < pageSize; offset += BUFFER_SIZE) {
                                     long chunkSize = Math.min(BUFFER_SIZE, pageSize - offset);
-                                    Unsafe.getUnsafe().copyMemory(pageAddress + offset, buffer, chunkSize);
+                                    Unsafe.copyMemory(pageAddress + offset, buffer, chunkSize);
                                 }
                                 // Read one value to prevent optimization
-                                totalSum += Unsafe.getUnsafe().getLong(buffer);
+                                totalSum += Unsafe.getLong(buffer);
                                 totalBytesRead += pageSize;
                             }
 
@@ -266,9 +254,9 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                             if (auxPageAddress > 0 && auxPageSize > 0) {
                                 for (long offset = 0; offset < auxPageSize; offset += BUFFER_SIZE) {
                                     long chunkSize = Math.min(BUFFER_SIZE, auxPageSize - offset);
-                                    Unsafe.getUnsafe().copyMemory(auxPageAddress + offset, buffer, chunkSize);
+                                    Unsafe.copyMemory(auxPageAddress + offset, buffer, chunkSize);
                                 }
-                                totalSum += Unsafe.getUnsafe().getLong(buffer);
+                                totalSum += Unsafe.getLong(buffer);
                                 totalBytesRead += auxPageSize;
                             }
                         }
@@ -277,7 +265,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                         frameCount++;
                     }
                 } finally {
-                    Unsafe.getUnsafe().freeMemory(buffer);
+                    Unsafe.freeMemory(buffer);
                 }
 
                 long elapsedNs = System.nanoTime() - startTime;
@@ -347,9 +335,9 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                         if (!symbolTable.containsNullValue()) {
                             symbolColumnType |= 1 << 31;
                         }
-                        columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | symbolColumnType);
+                        columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | (symbolColumnType & 0xFFFFFFFFL));
                     } else {
-                        columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | columnType);
+                        columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | (columnType & 0xFFFFFFFFL));
                     }
                 }
 
@@ -367,7 +355,11 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                         RAW_ARRAY_ENCODING,
                         ROW_GROUP_SIZE,
                         DATA_PAGE_SIZE,
-                        PARQUET_VERSION
+                        PARQUET_VERSION,
+                        0,
+                        0,
+                        0,
+                        0.0
                 );
 
                 try {
@@ -392,8 +384,14 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                             long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
                             for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
-                                long localColTop = frame.getPageAddress(i) > 0 ? 0 : frameRowCount;
                                 int columnType = metadata.getColumnType(i);
+                                long pageAddress = frame.getPageAddress(i);
+                                long localColTop;
+                                if (ColumnType.isVarSize(columnType)) {
+                                    localColTop = frame.getAuxPageAddress(i) > 0 ? 0 : frameRowCount;
+                                } else {
+                                    localColTop = pageAddress > 0 ? 0 : frameRowCount;
+                                }
 
                                 if (ColumnType.isSymbol(columnType)) {
                                     SymbolMapReader symbolMapReader = (SymbolMapReader) pageFrameCursor.getSymbolTable(i);
@@ -421,7 +419,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                             // Write chunk - returns buffer when row group is complete
                             long buffer = writeStreamingParquetChunk(streamWriter, columnData.getAddress(), frameRowCount);
                             while (buffer != 0) {
-                                long dataSize = Unsafe.getUnsafe().getLong(buffer);
+                                long dataSize = Unsafe.getLong(buffer);
                                 totalBytesWritten += dataSize;
                                 rowGroupCount++;
 
@@ -437,7 +435,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                     // Finish writing (flush remaining data)
                     long buffer = finishStreamingParquetWrite(streamWriter);
                     while (buffer != 0) {
-                        long dataSize = Unsafe.getUnsafe().getLong(buffer);
+                        long dataSize = Unsafe.getLong(buffer);
                         totalBytesWritten += dataSize;
                         rowGroupCount++;
                         buffer = writeStreamingParquetChunk(streamWriter, 0, 0);
@@ -484,5 +482,17 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    static {
+        boolean supported = THREAD_MX_BEAN.isCurrentThreadCpuTimeSupported();
+        if (supported && !THREAD_MX_BEAN.isThreadCpuTimeEnabled()) {
+            try {
+                THREAD_MX_BEAN.setThreadCpuTimeEnabled(true);
+            } catch (UnsupportedOperationException | SecurityException e) {
+                supported = false;
+            }
+        }
+        CPU_TIME_SUPPORTED = supported;
     }
 }

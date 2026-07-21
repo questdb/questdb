@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -115,6 +115,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         totalBytesSent = 0;
         headersSent = false;
         chunkedRequestDone = false;
+        deflateBeforeSend = false;
         simpleResponse.clear();
         resetZip();
     }
@@ -239,8 +240,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         boolean finished = chunkedRequestDone && ret == Zip.Z_STREAM_END;
         if (finished) {
             long p = compressOutBuffer.getWriteAddress(0);
-            Unsafe.getUnsafe().putInt(p, crc); // crc
-            Unsafe.getUnsafe().putInt(p + 4, (int) total); // total
+            Unsafe.putInt(p, crc); // crc
+            Unsafe.putInt(p + 4, (int) total); // total
             compressOutBuffer.onWrite(8);
             compressionComplete = true;
         }
@@ -334,6 +335,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     private class ChunkUtf8Sink implements Utf8Sink, Closeable, Mutable {
+
         // the last chunk is a chunk with size zero. it happens to have exactly 8 ascii chars so it fits to long nicely: \r\n00\r\n\r\n
         private static final long EOF_CHUNK_LONG = (long) '\r' << 56 | (long) '\n' << 48 | (long) '0' << 40 | (long) '0' << 32 | (long) '\r' << 24 | (long) '\n' << 16 | (long) '\r' << 8 | (long) '\n';
         private static final long EOF_CHUNK_LONG_BE = Numbers.bswap(EOF_CHUNK_LONG);
@@ -343,6 +345,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         private long bufSize;
         private long bufStart;
         private long bufStartOfData;
+        private int[] ryuE10;
 
         private ChunkUtf8Sink(int bufSize) {
             this.bufSize = bufSize;
@@ -363,7 +366,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(byte b) {
-            Unsafe.getUnsafe().putByte(getWriteAddress(1), b);
+            Unsafe.putByte(getWriteAddress(1), b);
             onWrite(1);
             return this;
         }
@@ -397,6 +400,14 @@ public class HttpResponseSink implements Closeable, Mutable {
                 bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
                 clear();
             }
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         void clearAndPrepareToWriteToBuffer() {
@@ -462,15 +473,15 @@ public class HttpResponseSink implements Closeable, Mutable {
                 // safety: unchecked store, but we reserve space for the last chunk -> this is sound as long as all
                 //         other writes use getWriteAddress() which does not allow anyone else to use the space reserved
                 //         for the last chunk.
-                Unsafe.getUnsafe().putLong(_wptr, EOF_CHUNK_LONG_BE);
+                Unsafe.putLong(_wptr, EOF_CHUNK_LONG_BE);
                 _wptr += Long.BYTES;
                 LOG.debug().$("end chunk sent [fd=").$(getFd()).I$();
             }
         }
 
         void write64BitZeroPadding() {
-            Unsafe.getUnsafe().putLong(bufStartOfData - 8, 0);
-            Unsafe.getUnsafe().putLong(_wptr, 0);
+            Unsafe.putLong(bufStartOfData - 8, 0);
+            Unsafe.putLong(_wptr, 0);
         }
     }
 
@@ -574,6 +585,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         private final MillisecondClock clock;
         private boolean chunked;
         private int code;
+        private int[] ryuE10;
 
         public HttpResponseHeaderImpl(MillisecondClock clock) {
             this.clock = clock;
@@ -596,7 +608,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(byte b) {
-            Unsafe.getUnsafe().putByte(buffer.getWriteAddress(1), b);
+            Unsafe.putByte(buffer.getWriteAddress(1), b);
             buffer.onWrite(1);
             return this;
         }
@@ -615,6 +627,14 @@ public class HttpResponseSink implements Closeable, Mutable {
         public Utf8Sink putNonAscii(long lo, long hi) {
             buffer.putNonAscii(lo, hi);
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         @Override
@@ -667,6 +687,8 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     private class ResponseSinkImpl implements Utf8Sink {
 
+        private int[] ryuE10;
+
         @Override
         public Utf8Sink put(@Nullable Utf8Sequence us) {
             buffer.put(us);
@@ -701,6 +723,14 @@ public class HttpResponseSink implements Closeable, Mutable {
         public Utf8Sink putNonAscii(long lo, long hi) {
             buffer.putNonAscii(lo, hi);
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         public void status(int status, CharSequence contentType) {
@@ -880,6 +910,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     static {
         httpStatusMap.put(HTTP_OK, new Utf8String("OK"));
+        httpStatusMap.put(HTTP_ACCEPTED, new Utf8String("Accepted"));
         httpStatusMap.put(HTTP_NO_CONTENT, new Utf8String("OK"));
         httpStatusMap.put(HTTP_PARTIAL, new Utf8String("Partial content"));
         httpStatusMap.put(HTTP_MOVED_PERM, new Utf8String("Moved Permanently"));

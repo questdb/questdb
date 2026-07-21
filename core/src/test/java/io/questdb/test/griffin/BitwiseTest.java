@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -140,9 +140,10 @@ public class BitwiseTest extends AbstractCairoTest {
     }
 
     private void assertBitwiseOp(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        expected, sql
-        ));
+        assertMemoryLeak(() -> assertQuery(sql)
+                .noLeakCheck()
+                .expectSize()
+                .returns("column\n" +
+                        expected));
     }
 }

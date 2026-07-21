@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -76,8 +76,8 @@ public class GrowOnlyTableNameRegistryStore implements Closeable {
         final int tableType =
                 tableToken.isView() ? TABLE_TYPE_VIEW
                         : tableToken.isMatView() ? TABLE_TYPE_MAT
-                        : tableToken.isWal() ? TABLE_TYPE_WAL
-                        : TABLE_TYPE_NON_WAL;
+                          : tableToken.isWal() ? TABLE_TYPE_WAL
+                            : TABLE_TYPE_NON_WAL;
         tableNameMemory.putInt(tableType);
 
         if (operation != OPERATION_REMOVE) {

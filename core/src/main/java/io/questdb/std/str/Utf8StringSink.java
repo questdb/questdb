@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,6 +39,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
     private boolean ascii;
     private byte[] buffer;
     private int pos;
+    private int[] ryuE10;
 
     public Utf8StringSink() {
         this(32);
@@ -133,7 +134,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
         ascii = false;
         checkCapacity(Bytes.checkedLoHiSize(lo, hi, pos));
         for (long p = lo; p < hi; p++) {
-            buffer[pos++] = Unsafe.getUnsafe().getByte(p);
+            buffer[pos++] = Unsafe.getByte(p);
         }
         return this;
     }
@@ -160,6 +161,14 @@ public class Utf8StringSink implements MutableUtf8Sink {
     public void resetCapacity() {
         this.buffer = new byte[initialCapacity];
         clear();
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     @Override

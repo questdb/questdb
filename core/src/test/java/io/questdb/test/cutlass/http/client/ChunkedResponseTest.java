@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -251,7 +251,7 @@ public class ChunkedResponseTest {
                         n = bufRemaining;
                     }
                     for (int i = 0; i < n; i++) {
-                        Unsafe.getUnsafe().putByte(bufLo + i, (byte) frag.charAt(o + i));
+                        Unsafe.putByte(bufLo + i, (byte) frag.charAt(o + i));
                     }
                     return n;
                 }
@@ -262,7 +262,7 @@ public class ChunkedResponseTest {
             rsp.begin(mem, mem);
             while ((fragment = rsp.recv()) != null) {
                 for (long p = fragment.lo(); p < fragment.hi(); p++) {
-                    sink.put((char) Unsafe.getUnsafe().getByte(p));
+                    sink.put((char) Unsafe.getByte(p));
                 }
             }
             TestUtils.assertEquals(expected, sink);

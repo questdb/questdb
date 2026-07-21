@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,10 +25,10 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 
 public class LimitOverflowException extends CairoException {
-    private static final ThreadLocal<LimitOverflowException> tlException = new ThreadLocal<>(LimitOverflowException::new);
+    private static final CarrierLocal<LimitOverflowException> tlException = new CarrierLocal<>(LimitOverflowException::new);
 
     public static LimitOverflowException instance() {
         LimitOverflowException ex = tlException.get();

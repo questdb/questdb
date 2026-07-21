@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,7 +31,7 @@ import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -60,16 +60,16 @@ public abstract class WorkerPoolManager implements Target {
         config.getMetrics().addScrapable(this);
     }
 
-    public WorkerPool getSharedPoolNetwork(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
-        return getWorkerPool(config, requester, sharedPoolNetwork);
+    public WorkerPool getSharedPoolNetwork(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName) {
+        return getWorkerPool(config, requesterName, sharedPoolNetwork);
     }
 
     public WorkerPool getSharedPoolNetwork() {
         return sharedPoolNetwork;
     }
 
-    public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
-        return getWorkerPool(config, requester, sharedPoolWrite);
+    public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName) {
+        return getWorkerPool(config, requesterName, sharedPoolWrite);
     }
 
     public int getSharedQueryWorkerCount() {
@@ -77,13 +77,13 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     @NotNull
-    public WorkerPool getWorkerPool(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester, WorkerPool sharedPool) {
+    public WorkerPool getWorkerPool(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName, WorkerPool sharedPool) {
         if (running.get() || closed.get()) {
             throw new IllegalStateException("can only get instance before start");
         }
 
         if (config.getWorkerCount() < 1) {
-            LOG.info().$("default thread pool [requester=").$(requester)
+            LOG.info().$("default thread pool [requester=").$(requesterName)
                     .$(", workers=").$(sharedPool.getWorkerCount())
                     .$(", pool=").$(sharedPool.getPoolName())
                     .I$();
@@ -97,7 +97,7 @@ public abstract class WorkerPoolManager implements Target {
             dedicatedPools.put(poolName, pool);
         }
         LOG.info().$("custom thread pool [name=").$(poolName)
-                .$(", requester=").$(requester)
+                .$(", requester=").$(requesterName)
                 .$(", workers=").$(pool.getWorkerCount())
                 .$(", priority=").$(config.workerPoolPriority())
                 .I$();
@@ -105,20 +105,34 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     public void halt() {
+        halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+    }
+
+    /**
+     * Halts every managed pool, bounding the combined wait by an absolute deadline.
+     * <p>
+     * The deadline is shared across all pools: each pool gets the time remaining until the deadline,
+     * so a single wedged pool cannot reset the budget for the next one. This keeps server shutdown
+     * bounded even when a worker thread is stuck. See {@link WorkerPool#halt(long)} for the
+     * log-and-proceed behaviour and its tradeoff.
+     *
+     * @param deadlineNanos absolute deadline from {@link System#nanoTime()} by which all pools should be halted
+     */
+    public void halt(long deadlineNanos) {
         // halt is idempotent, and start may have not been called, still
         // we want to free pool resources, so we do not check the closed
         // flag, but we ensure it is true at the end.
-        ObjList<CharSequence> poolNames = dedicatedPools.keys();
+        ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
         for (int i = 0, limit = poolNames.size(); i < limit; i++) {
             CharSequence name = poolNames.getQuick(i);
             WorkerPool pool = dedicatedPools.get(name);
-            closePool(pool, "closing dedicated pool [name=");
+            closePool(pool, "closing dedicated pool [name=", deadlineNanos);
         }
         dedicatedPools.clear();
 
-        closePool(sharedPoolNetwork, "closing shared Network pool [name=");
-        closePool(sharedPoolQuery, "closing shared Query pool [name=");
-        closePool(sharedPoolWrite, "closing shared Write pool [name=");
+        closePool(sharedPoolNetwork, "closing shared Network pool [name=", deadlineNanos);
+        closePool(sharedPoolQuery, "closing shared Query pool [name=", deadlineNanos);
+        closePool(sharedPoolWrite, "closing shared Write pool [name=", deadlineNanos);
 
         closed.set(true);
     }
@@ -131,7 +145,7 @@ public abstract class WorkerPoolManager implements Target {
             sharedPoolQuery.updateWorkerMetrics(now);
         }
         sharedPoolWrite.updateWorkerMetrics(now);
-        ObjList<CharSequence> poolNames = dedicatedPools.keys();
+        ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
         for (int i = 0, limit = poolNames.size(); i < limit; i++) {
             dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics(now);
         }
@@ -143,7 +157,7 @@ public abstract class WorkerPoolManager implements Target {
             startWorkerPool(sharedPoolLog, sharedPoolQuery, "started shared pool [name=");
             startWorkerPool(sharedPoolLog, sharedPoolWrite, "started shared pool [name=");
 
-            ObjList<CharSequence> poolNames = dedicatedPools.keys();
+            ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
                 CharSequence name = poolNames.get(i);
                 WorkerPool pool = dedicatedPools.get(name);
@@ -162,12 +176,14 @@ public abstract class WorkerPoolManager implements Target {
         }
     }
 
-    private void closePool(WorkerPool p, String message) {
+    private void closePool(WorkerPool p, String message, long deadlineNanos) {
         if (p != null) {
             LOG.debug().$(message).$(p.getPoolName())
                     .$(", workers=").$(p.getWorkerCount())
                     .I$();
-            p.halt();
+            // Hand the pool only the time remaining until the shared deadline so the bound holds
+            // across all pools rather than restarting per pool.
+            p.halt(Math.max(1, deadlineNanos - System.nanoTime()));
         }
     }
 
@@ -180,7 +196,11 @@ public abstract class WorkerPoolManager implements Target {
             final WorkerPool sharedPoolWrite
     );
 
-    public enum Requester {
+    public interface RequesterName {
+        String toString();
+    }
+
+    public enum Requester implements RequesterName {
 
         HTTP_SERVER("http"),
         HTTP_MIN_SERVER("min-http"),

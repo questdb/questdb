@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -249,6 +249,16 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         }
         Arrays.fill(buffer, index, index + length, defaultValue);
         pos += length;
+    }
+
+    public T popLast() {
+        assert pos > 0 : "index out of bounds, " + pos;
+
+        int last = pos - 1;
+        T item = buffer[last];
+        buffer[last] = null;
+        pos = last;
+        return item;
     }
 
     public void remove(int index) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -47,5 +47,10 @@ public class Long128 {
 
     public static boolean isNull(long lo, long hi) {
         return hi == Numbers.LONG_NULL && lo == Numbers.LONG_NULL;
+    }
+
+    public static void putLong128(long lo, long hi, long addr) {
+        Unsafe.putLong(addr, lo);
+        Unsafe.putLong(addr + Long.BYTES, hi);
     }
 }

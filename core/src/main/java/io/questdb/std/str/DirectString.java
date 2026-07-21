@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -46,7 +46,7 @@ public class DirectString extends AbstractCharSequence implements DirectCharSequ
 
     @Override
     public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(lo + ((long) index << 1));
+        return Unsafe.getChar(lo + ((long) index << 1));
     }
 
     @Override
@@ -63,7 +63,7 @@ public class DirectString extends AbstractCharSequence implements DirectCharSequ
 
         int h = 0;
         for (long p = lo; p < hi; p += 2) {
-            h = 31 * h + Unsafe.getUnsafe().getChar(p);
+            h = 31 * h + Unsafe.getChar(p);
         }
         return h;
     }

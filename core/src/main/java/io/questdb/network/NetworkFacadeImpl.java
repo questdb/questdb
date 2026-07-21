@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -282,8 +282,6 @@ public class NetworkFacadeImpl implements NetworkFacade {
         if (fd == -1) {
             return true;
         }
-
-        final int nRead = Net.peek(fd, buffer, bufferSize);
-        return nRead < 0;
+        return Net.isPeerDisconnected(fd);
     }
 }

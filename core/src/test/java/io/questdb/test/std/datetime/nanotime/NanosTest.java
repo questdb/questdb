@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -102,6 +102,24 @@ public class NanosTest {
         assertNanos(
                 "2015-01-01T00:00:00.988765341Z",
                 Nanos.addYears(parseNSecUTC("2014-01-01T00:00:00.988765341Z"), 1)
+        );
+    }
+
+    @Test
+    public void testAddYearsLeapFeb29Backward() {
+        // Feb 29 in leap year - 1y clamps to Feb 28 in non-leap year
+        assertNanos(
+                "2023-02-28T12:30:00.123456789Z",
+                Nanos.addYears(parseNSecUTC("2024-02-29T12:30:00.123456789Z"), -1)
+        );
+    }
+
+    @Test
+    public void testAddYearsLeapFeb29Forward() {
+        // Feb 29 in leap year + 1y clamps to Feb 28 in non-leap year
+        assertNanos(
+                "2025-02-28T12:30:00.123456789Z",
+                Nanos.addYears(parseNSecUTC("2024-02-29T12:30:00.123456789Z"), 1)
         );
     }
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -119,6 +119,9 @@ public class CopyImportFactory extends AbstractRecordCursorFactory {
                 );
                 copyRequestPubSeq.done(processingCursor);
                 record.setValue(importIdSink);
+                // The import task is already published (the background job is launched) at this point, so
+                // keep this ack cursor on the no-op breaker: a CANCEL QUERY or a tripped deadline must not
+                // suppress the import-id row while the data-movement operation keeps running.
                 cursor.toTop();
                 return cursor;
             } catch (Throwable ex) {

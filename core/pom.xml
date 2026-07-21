@@ -32,11 +32,11 @@
         <maven.javadoc.skip>false</maven.javadoc.skip>
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
-        <javac.target>17</javac.target>
-        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC</argLine>
+        <javac.target>25</javac.target>
+        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=io.questdb</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>1.2.0</web.console.version>
+        <web.console.version>2.0.0</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
 
@@ -45,11 +45,10 @@
         -->
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
 
-        <!-- Java ILP client version - override with -Dquestdb.client.version=1.0.1-SNAPSHOT for local dev -->
-        <questdb.client.version>1.0.1</questdb.client.version>
+        <questdb.client.version>1.3.6-SNAPSHOT</questdb.client.version>
     </properties>
 
-    <version>9.3.4-SNAPSHOT</version>
+    <version>9.4.4-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -78,6 +77,19 @@
 
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>${project.basedir}/..</directory>
+                <targetPath>META-INF</targetPath>
+                <includes>
+                    <include>LICENSE.txt</include>
+                    <include>THIRD_PARTY_LICENSES.txt</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -87,6 +99,8 @@
                     <compilerArgs>
                         <arg>-J-XX:-TieredCompilation</arg>
                         <arg>-J-XX:TieredStopAtLevel=1</arg>
+                        <arg>--add-exports=java.base/jdk.internal.vm=io.questdb</arg>
+                        <arg>--add-exports=java.base/jdk.internal.vm=io.questdb.test</arg>
                     </compilerArgs>
                     <fork>true</fork>
                     <source>${javac.compile.source}</source>
@@ -213,7 +227,7 @@
                             tcp::addr=localhost:9002;user=testUser1;token=UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=;
                         </QDB_CLIENT_CONF>
                         <!-- Used by cargo when running a test with code coverage -->
-                        <LLVM_PROFILE_FILE>questdbr-junit-%p-%m.profraw</LLVM_PROFILE_FILE>
+                        <LLVM_PROFILE_FILE>questdbr-junit.profraw</LLVM_PROFILE_FILE>
                     </environmentVariables>
                 </configuration>
             </plugin>
@@ -222,9 +236,35 @@
 
     <profiles>
         <profile>
+            <!-- CI gives every surefire fork (and any replacement fork that reuses a slot) its own
+                 test log path, so a dead fork's lingering Windows file handle cannot make the next
+                 fork die reopening a shared tests.log with ERROR_SHARING_VIOLATION (errno=32).
+                 Active only when QDB_LOG_W_FILE_LOCATION is exported (CI); local runs are unchanged.
+                 forkNumber separates concurrent forks, %p (the JVM pid) separates fork generations. -->
+            <id>per-fork-test-log</id>
+            <activation>
+                <property>
+                    <name>env.QDB_LOG_W_FILE_LOCATION</name>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <environmentVariables>
+                                <QDB_LOG_W_FILE_LOCATION>${env.QDB_LOG_W_FILE_LOCATION}.fork-${surefire.forkNumber}.pid-%p</QDB_LOG_W_FILE_LOCATION>
+                            </environmentVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
             <id>local-client</id>
             <properties>
-                <questdb.client.version>1.0.1-SNAPSHOT</questdb.client.version>
+                <questdb.client.version>1.3.6-SNAPSHOT</questdb.client.version>
             </properties>
         </profile>
         <profile>
@@ -248,6 +288,9 @@
                             <sourceFileExcludes>
                                 <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>
+                            <additionalOptions>
+                                <additionalOption>--add-exports java.base/jdk.internal.vm=io.questdb</additionalOption>
+                            </additionalOptions>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -274,6 +317,9 @@
                             <sourceFileExcludes>
                                 <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>
+                            <additionalOptions>
+                                <additionalOption>--add-exports java.base/jdk.internal.vm=io.questdb</additionalOption>
+                            </additionalOptions>
                         </configuration>
                     </plugin>
                     <plugin>
@@ -595,7 +641,7 @@
                     <plugin>
                         <groupId>org.jacoco</groupId>
                         <artifactId>jacoco-maven-plugin</artifactId>
-                        <version>0.8.8</version>
+                        <version>0.8.14</version>
                         <executions>
                             <execution>
                                 <id>default-prepare-agent</id>
@@ -616,10 +662,10 @@
             </build>
         </profile>
         <profile>
-            <id>java17+</id>
+            <id>java25+</id>
             <properties>
-                <jdk.version>17</jdk.version>
-                <java.enforce.version>17</java.enforce.version>
+                <jdk.version>25</jdk.version>
+                <java.enforce.version>25</java.enforce.version>
                 <questdb.artifactid>questdb</questdb.artifactid>
                 <excludePattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludePattern1>
                 <excludeTestPattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludeTestPattern1>
@@ -627,7 +673,7 @@
                 <javac.compile.target>${javac.target}</javac.compile.target>
             </properties>
             <activation>
-                <jdk>(17,)</jdk>
+                <jdk>(24,)</jdk>
             </activation>
             <dependencies>
                 <dependency>
@@ -677,13 +723,13 @@
                                 <goals>
                                     <goal>test</goal>
                                 </goals>
-                                <phase>test</phase>
+                                <phase>none</phase>
                                 <configuration>
                                     <path>rust/qdbr</path>
                                     <release>${qdbr.release}</release>
                                     <environmentVariables>
                                         <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
-                                        <LLVM_PROFILE_FILE>questdbr-cargo-test-%p-%m.profraw</LLVM_PROFILE_FILE>
+                                        <LLVM_PROFILE_FILE>questdbr-cargo-test.profraw</LLVM_PROFILE_FILE>
                                     </environmentVariables>
                                 </configuration>
                             </execution>

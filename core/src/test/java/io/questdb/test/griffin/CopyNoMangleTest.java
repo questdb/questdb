@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -54,13 +54,10 @@ public class CopyNoMangleTest extends AbstractCairoTest {
                 sqlExecutionContext
         );
 
-        CopyImportTest.CopyRunnable test = () -> assertQueryNoLeakCheck(
-                "message\ncould not remove import work directory because it points to one of main directories\n",
-                "select left(message, 83) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
-                null,
-                true,
-                true
-        );
+        CopyImportTest.CopyRunnable test = () -> assertQuery("select left(message, 83) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("message\ncould not remove import work directory because it points to one of main directories\n");
 
         CopyImportTest.testCopy(stmt, test);
 

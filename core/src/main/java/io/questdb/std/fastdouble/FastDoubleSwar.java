@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -51,7 +51,7 @@ import io.questdb.std.Unsafe;
  */
 public class FastDoubleSwar {
     public static long getChunk(byte[] a, int offset) {
-        return Unsafe.getUnsafe().getLong(a, Unsafe.BYTE_OFFSET + offset);
+        return Unsafe.getLong(a, Unsafe.BYTE_OFFSET + offset);
     }
 
     /**

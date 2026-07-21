@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -266,7 +266,7 @@ public class ConcurrentQueue<T> implements Queue<T> {
         }
     }
 
-    private static class ValueHolderManipulator<T extends ValueHolder<T>> implements ConcurrentSegmentManipulator<T> {
+    static class ValueHolderManipulator<T extends ValueHolder<T>> implements ConcurrentSegmentManipulator<T> {
         @Override
         public T dequeue(ConcurrentQueueSegment.Slot<T>[] slots, int slotsIndex, T target) {
             slots[slotsIndex].item.copyTo(target);

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -155,7 +155,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
             clearExportResources();
             copyExportContext.updateStatus(
                     phase,
-                    circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
+                    CopyExportRequestTask.classifyFailureStatus(circuitBreaker),
                     null,
                     Numbers.INT_NULL,
                     message,
@@ -287,5 +287,4 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
                 .$(", totalRows=").$(totalRows)
                 .$(']').$();
     }
-
 }

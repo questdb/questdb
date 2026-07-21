@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -301,7 +301,7 @@ public class CopyExportContext {
             }
 
             // serial insert to copy_export_log table to avoid table busy
-            try (TableWriter statusTableWriter = engine.getWriter(statusTableToken, "QuestDB system")) {
+            try (TableWriter statusTableWriter = engine.getWriter(statusTableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON)) {
                 try {
                     MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                     TableWriter.Row row = statusTableWriter.newRow(microsecondClock.getTicks());
@@ -352,7 +352,9 @@ public class CopyExportContext {
             int partitionBy,
             String tableName,
             String sqlText,
-            int tableOrSelectTextPos
+            int tableOrSelectTextPos,
+            @Nullable CharSequence bloomFilterColumns,
+            int bloomFilterColumnsPosition
     ) throws SqlException {
         CreateTableOperationImpl createOp = null;
         final CairoEngine engine = executionContext.getCairoEngine();
@@ -379,6 +381,7 @@ public class CopyExportContext {
                 createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
                 createOp.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
                 createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata(), rcf.getScanDirection());
+                CopyExportRequestTask.validateBloomFilterColumns(bloomFilterColumns, rcf.getMetadata(), bloomFilterColumnsPosition - tableOrSelectTextPos);
             }
         } catch (SqlException ex) {
             ex.setPosition(ex.getPosition() + tableOrSelectTextPos);

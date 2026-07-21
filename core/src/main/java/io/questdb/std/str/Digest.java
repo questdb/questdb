@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -35,29 +35,16 @@ import java.security.NoSuchAlgorithmException;
 
 
 public class Digest implements Utf8Sink {
-    public enum DigestAlgorithm {
-        MD5,
-        SHA1,
-        SHA256,
-    }
-
-    private final MessageDigest digest;
     private final byte[] buffer;
+    private final MessageDigest digest;
+    private int[] ryuE10;
 
     public Digest(@NotNull DigestAlgorithm algorithm) {
-        String algo;
-        switch (algorithm) {
-            case MD5:
-                algo = "MD5";
-                break;
-            case SHA1:
-                algo = "SHA-1";
-                break;
-            case SHA256:
-            default:
-                algo = "SHA-256";
-                break;
-        }
+        String algo = switch (algorithm) {
+            case MD5 -> "MD5";
+            case SHA1 -> "SHA-1";
+            default -> "SHA-256";
+        };
         try {
             this.digest = MessageDigest.getInstance(algo);
         } catch (NoSuchAlgorithmException e) {
@@ -71,30 +58,6 @@ public class Digest implements Utf8Sink {
             throw new RuntimeException("unreachable");
         }
         this.buffer = new byte[digest.getDigestLength()];
-    }
-
-    @Override
-    public Utf8Sink put(@Nullable Utf8Sequence us) {
-        if (us != null) {
-            for (int i = 0, n = us.size(); i < n; i++) {
-                this.digest.update(us.byteAt(i));
-            }
-        }
-        return this;
-    }
-
-    @Override
-    public Utf8Sink put(byte b) {
-        this.digest.update(b);
-        return this;
-    }
-
-    @Override
-    public Utf8Sink putNonAscii(long lo, long hi) {
-        for (long p = lo; p < hi; p++) {
-            this.digest.update(Unsafe.getUnsafe().getByte(p));
-        }
-        return this;
     }
 
     public void hash(@NotNull BinarySequence sequence, @NotNull CharSink<?> sink) {
@@ -132,11 +95,49 @@ public class Digest implements Utf8Sink {
         hexencode(sink);
     }
 
+    @Override
+    public Utf8Sink put(byte b) {
+        this.digest.update(b);
+        return this;
+    }
+
+    @Override
+    public Utf8Sink put(@Nullable Utf8Sequence us) {
+        if (us != null) {
+            for (int i = 0, n = us.size(); i < n; i++) {
+                this.digest.update(us.byteAt(i));
+            }
+        }
+        return this;
+    }
+
+    @Override
+    public Utf8Sink putNonAscii(long lo, long hi) {
+        for (long p = lo; p < hi; p++) {
+            this.digest.update(Unsafe.getByte(p));
+        }
+        return this;
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
+    }
+
     private void hexencode(@NotNull CharSink<?> sink) {
         char[] hexChars = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
         for (byte b : this.buffer) {
             sink.put(hexChars[(0xf0 & b) >> 4]);
             sink.put(hexChars[0x0f & b]);
         }
+    }
+
+    public enum DigestAlgorithm {
+        MD5,
+        SHA1,
+        SHA256,
     }
 }

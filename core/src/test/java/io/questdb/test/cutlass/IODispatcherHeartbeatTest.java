@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -101,13 +101,13 @@ public class IODispatcherHeartbeatTest {
 
                 long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                 try {
-                    Unsafe.getUnsafe().putByte(buf, (byte) '.');
+                    Unsafe.putByte(buf, (byte) '.');
 
                     for (int i = 0; i < fds.length; i++) {
                         Net.connect(fds[i], sockAddr);
                     }
                     while (connected.get() != fds.length) {
-                        dispatcher.run(0);
+                        dispatcher.run();
                         dispatcher.processIOQueue(processor);
                     }
 
@@ -117,7 +117,7 @@ public class IODispatcherHeartbeatTest {
                             int idx = rnd.nextInt(fds.length);
                             Assert.assertEquals(1, Net.send(fds[idx], buf, 1));
                         }
-                        dispatcher.run(0);
+                        dispatcher.run();
                         dispatcher.drainIOQueue(processor);
                     }
                 } finally {
@@ -183,13 +183,13 @@ public class IODispatcherHeartbeatTest {
                         Net.connect(fds[i], sockAddr);
                     }
                     while (connected.get() != fds.length) {
-                        dispatcher.run(0);
+                        dispatcher.run();
                         dispatcher.processIOQueue(processor);
                     }
 
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
-                        dispatcher.run(0);
+                        dispatcher.run();
                         dispatcher.drainIOQueue(processor);
                     }
 

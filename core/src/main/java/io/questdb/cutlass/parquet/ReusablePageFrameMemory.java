@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,6 +26,7 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -119,13 +120,29 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     }
 
     @Override
+    public PageFrameMemoryPool getPool() {
+        // Not backed by a PageFrameMemoryPool; records bound from here always rebind.
+        return null;
+    }
+
+    @Override
     public long getRowIdOffset() {
         return rowIdOffset;
     }
 
     @Override
+    public int getSourceColumnType(int columnIndex) {
+        return -1;
+    }
+
+    @Override
     public boolean hasColumnTops() {
         return hasColumnTops;
+    }
+
+    @Override
+    public boolean hasColumnTypeCasts() {
+        return false;
     }
 
     public void of(PageFrame frame) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -46,6 +46,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -94,11 +95,11 @@ public class LogFactory implements Closeable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ObjList<DeferredLogger> deferredLoggers = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
+    private final WorkerPool loggingWorkerPool;
     private final AtomicBoolean running = new AtomicBoolean();
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final StringSink sink = new StringSink();
-    private final WorkerPool loggingWorkerPool;
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
@@ -254,7 +255,7 @@ public class LogFactory implements Closeable {
                     if (job != null && flush) {
                         try {
                             // noinspection StatementWithEmptyBody
-                            while (job.run(0, Job.TERMINATING_STATUS)) {
+                            while (job.run(Job.TERMINATING_STATUS)) {
                                 // Keep running the job until it returns false to log all the buffered messages
                             }
                         } catch (Exception th) {
@@ -523,7 +524,7 @@ public class LogFactory implements Closeable {
                             Field f = cl.getDeclaredField(p);
                             if (f.getType() == String.class) {
                                 String value = getProperty(properties, n);
-                                Unsafe.getUnsafe().putObject(w1, Unsafe.getUnsafe().objectFieldOffset(f), value);
+                                Unsafe.putObject(w1, Unsafe.objectFieldOffset(f), value);
                             }
                         } catch (Exception e) {
                             throw new LogError("Unknown property: " + n, e);
@@ -691,7 +692,7 @@ public class LogFactory implements Closeable {
     }
 
     private ScopeConfiguration find(CharSequence key) {
-        ObjList<CharSequence> keys = scopeConfigMap.keys();
+        ReadOnlyObjList<CharSequence> keys = scopeConfigMap.keys();
         CharSequence k = null;
 
         for (int i = 0, n = keys.size(); i < n; i++) {
@@ -913,6 +914,7 @@ public class LogFactory implements Closeable {
     }
 
     private static class NoOpLogRecord implements LogRecord {
+        private int[] ryuE10;
 
         @Override
         public void $() {
@@ -1076,6 +1078,14 @@ public class LogFactory implements Closeable {
         @Override
         public LogRecord putNonAscii(long lo, long hi) {
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         @Override

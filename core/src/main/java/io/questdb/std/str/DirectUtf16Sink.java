@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -38,6 +38,7 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
     private long hi;
     private long lo;
     private long ptr;
+    private int[] ryuE10;
     private FloatingCharSequence subSequence;
 
     public DirectUtf16Sink(long capacity) {
@@ -50,7 +51,7 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
 
     @Override
     public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(ptr + index * 2L);
+        return Unsafe.getChar(ptr + index * 2L);
     }
 
     @Override
@@ -93,7 +94,7 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
                 resize(Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
             }
             for (int i = 0; i < l; i++) {
-                Unsafe.getUnsafe().putChar(lo + i * 2L, cs.charAt(i));
+                Unsafe.putChar(lo + i * 2L, cs.charAt(i));
             }
             this.lo += l2;
         }
@@ -105,7 +106,7 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
         if (lo == hi) {
             resize(this.capacity * 2);
         }
-        Unsafe.getUnsafe().putChar(lo, c);
+        Unsafe.putChar(lo, c);
         lo += 2;
         return this;
     }
@@ -117,7 +118,7 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
             resize((int) Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
         }
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(lo + i * 2L, chars[i + start]);
+            Unsafe.putChar(lo + i * 2L, chars[i + start]);
         }
         this.lo += l2;
         return this;
@@ -130,7 +131,7 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
             resize(Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
         }
         for (int i = 0; i < l; i++) {
-            Unsafe.getUnsafe().putChar(lo + i * 2L, (char) us.byteAt(i));
+            Unsafe.putChar(lo + i * 2L, (char) us.byteAt(i));
         }
         this.lo += l2;
         return this;
@@ -139,6 +140,14 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
     public void resetCapacity() {
         resize(initialCapacity);
         clear();
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     @Override
@@ -175,7 +184,7 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
 
         @Override
         public char charAt(int index) {
-            return Unsafe.getUnsafe().getChar(ptr + (startIndex + index) * 2L);
+            return Unsafe.getChar(ptr + (startIndex + index) * 2L);
         }
 
         @Override

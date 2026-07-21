@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -454,7 +454,12 @@ public class JsonExtractFunction implements Function {
 
     @Override
     public boolean isRuntimeConstant() {
-        return pointer == null;
+        // 'path' is frozen into 'pointer' at init(), so per-row variability comes only from 'json'.
+        // Derive the report from 'json' (not the init-populated 'pointer') so it is stable from compile
+        // time on: a per-row column reports false, keeping callers that fold/cache the value once via
+        // getXxx(null) - the runtime-const wrapper and the half-runtime-const eq factories - reading it
+        // per row instead of dereferencing a null record.
+        return json.isRuntimeConstant();
     }
 
     @Override

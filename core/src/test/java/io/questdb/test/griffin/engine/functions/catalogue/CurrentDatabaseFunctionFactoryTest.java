@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,27 +31,23 @@ public class CurrentDatabaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCurrentDatabaseFunc() throws Exception {
-        assertQuery(
-                "current_database\n" +
-                        "qdb\n",
-                "select current_database();",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select current_database();")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        current_database
+                        qdb
+                        """);
     }
 
     @Test
     public void testPrefixedCurrentDatabaseFunc() throws Exception {
-        assertQuery(
-                "current_database\n" +
-                        "qdb\n",
-                "select pg_catalog.current_database();",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select pg_catalog.current_database();")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        current_database
+                        qdb
+                        """);
     }
 }

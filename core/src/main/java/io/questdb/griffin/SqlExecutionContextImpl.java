@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,7 +31,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
@@ -47,6 +49,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjStack;
 import io.questdb.std.Rnd;
@@ -89,6 +92,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean containsSecret;
     private int intervalFunctionType;
     private int jitMode;
+    private MemoryTracker memoryTracker;
     private long nowMicros;
     private long nowNanos;
     // Timestamp type only for now() function, used by NowFunctionFactory
@@ -98,14 +102,17 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
     private boolean parallelReadParquetEnabled;
+    private boolean parquetRowGroupPruningEnabled;
     private boolean parallelTopKEnabled;
     private boolean parallelHorizonJoinEnabled;
     private boolean parallelWindowJoinEnabled;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
+    private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
+    private SecurityContext validationSecurityContext;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int sharedQueryWorkerCount) {
         assert sharedQueryWorkerCount >= 0;
@@ -123,6 +130,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelHorizonJoinEnabled = cairoConfiguration.isSqlParallelHorizonJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelWindowJoinEnabled = cairoConfiguration.isSqlParallelWindowJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled() && sharedQueryWorkerCount > 0;
+        parquetRowGroupPruningEnabled = cairoConfiguration.isSqlParquetRowGroupPruningEnabled();
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
         // default set to micro
@@ -256,6 +264,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public @Nullable MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
+    @Override
     public long getMicrosecondTimestamp() {
         return clockUseNow ? nowMicros : microClock.getTicks();
     }
@@ -301,13 +314,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public ResourcePoolSupervisor<TableReader> getReaderPoolSupervisor() {
+        return readerPoolSupervisor;
+    }
+
+    @Override
     public long getRequestFd() {
         return requestFd;
     }
 
     @Override
     public @NotNull SecurityContext getSecurityContext() {
-        return securityContext;
+        return validationOnly ? validationSecurityContext : securityContext;
     }
 
     @Override
@@ -353,6 +371,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean isParallelReadParquetEnabled() {
         return parallelReadParquetEnabled;
+    }
+
+    @Override
+    public boolean isParquetRowGroupPruningEnabled() {
+        return parquetRowGroupPruningEnabled;
     }
 
     @Override
@@ -427,6 +450,15 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cacheHit = false;
         this.allowNonDeterministicFunction = true;
         this.validationOnly = false;
+        this.validationSecurityContext = null;
+        // QueryRegistry owns the tracker lifecycle; null it defensively so an error
+        // unwinding between register() and unregister() cannot leak it into reuse.
+        this.memoryTracker = null;
+        // Defensive: a query reusing this per-connection context must never inherit a
+        // stale supervisor from a prior query. QueryProgress restores it in the finally of
+        // cursor open; reset() is a backstop for reused per-connection contexts if that
+        // restore is ever bypassed.
+        this.readerPoolSupervisor = null;
         this.timestampRequiredStack.clear();
         this.hasIntervalStack.clear();
         this.intervalModelObjStack.clear();
@@ -471,6 +503,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
+    }
+
+    @Override
     public void setNowAndFixClock(long now, int nowTimestampType) {
         TimestampDriver driver = ColumnType.getTimestampDriver(nowTimestampType);
         this.nowMicros = driver.toMicros(now);
@@ -499,6 +536,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled) {
+        this.parquetRowGroupPruningEnabled = parquetRowGroupPruningEnabled;
+    }
+
+    @Override
     public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
         this.parallelTopKEnabled = parallelTopKEnabled;
     }
@@ -519,12 +561,29 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+        this.readerPoolSupervisor = supervisor;
+    }
+
+    @Override
     public void setUseSimpleCircuitBreaker(boolean value) {
         this.useSimpleCircuitBreaker = value;
     }
 
     public void setValidationOnly(boolean validationOnly) {
         this.validationOnly = validationOnly;
+        if (validationOnly) {
+            // During validation the compiler must check syntax only, not authorization.
+            // Route all authorization through a no-op view of the security context.
+            validationSecurityContext = securityContext.asValidationContext();
+        }
+    }
+
+    @Override
+    public boolean shouldLogSql() {
+        // Validation only compiles the SQL to check it; suppress query progress logging
+        // so the validation endpoint does not pollute the log with every validated statement.
+        return !validationOnly;
     }
 
     @Override

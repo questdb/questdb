@@ -198,7 +198,9 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
      *       still pointing to a rotated session), and grace period has expired</li>
      * </ol>
      *
-     * <p>For old rotated IDs, the eviction time is calculated as:
+     * <p>For old rotated IDs, {@link SessionInfo#isEvictableOldSessionId(CharSequence, long, long)}
+     * makes the decision over an atomic snapshot of the (sessionId, rotateAt) pair, with the
+     * eviction time calculated as:
      * {@code evictRotatedAt = sessionInfo.rotateAt - rotatedSessionEvictionTime}
      * <p>
      * This works because {@code rotateAt} stores when the <i>next</i> rotation should occur.
@@ -225,15 +227,9 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
                 // expired session
                 iterator.remove();
                 LOG.info().$("expired session evicted [principal=").$(sessionInfo.getPrincipal()).$(']').$();
-            } else if (!Chars.equals(sessionId, sessionInfo.getSessionId())) {
-                // Old rotated session ID - the map key doesn't match the current session ID
-                // Calculate when this old ID should be evicted by working backwards from next rotation
-                final long evictRotatedAt = sessionInfo.getRotateAt() - rotatedSessionEvictionTime;
-                if (evictRotatedAt < currentMicros) {
-                    // Grace period expired, remove old ID from map
-                    iterator.remove();
-                    LOG.info().$("rotated session id evicted [principal=").$(sessionInfo.getPrincipal()).$(']').$();
-                }
+            } else if (sessionInfo.isEvictableOldSessionId(sessionId, rotatedSessionEvictionTime, currentMicros)) {
+                iterator.remove();
+                LOG.info().$("rotated session id evicted [principal=").$(sessionInfo.getPrincipal()).$(']').$();
             }
         }
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -287,11 +287,6 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public long getSymbolCacheWaitBeforeReload() {
         return getDelegate().getSymbolCacheWaitBeforeReload();
-    }
-
-    @Override
-    public int getTestConnectionBufferSize() {
-        return getDelegate().getTestConnectionBufferSize();
     }
 
     @Override

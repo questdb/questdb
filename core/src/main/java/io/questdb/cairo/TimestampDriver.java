@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -316,6 +316,17 @@ public interface TimestampDriver {
      * @return the ISO year, or Numbers.INT_NULL if timestamp is null
      */
     int getIsoYear(long timestamp);
+
+    /**
+     * Returns the largest value a designated timestamp column of this type can hold. The write
+     * path ({@code TableWriter}/{@code WalWriter} via {@link #validateBounds(long)}) rejects any
+     * larger value, so no partition ever stores a timestamp above this ceiling. Micros are capped
+     * at {@code 9999-12-31}; nanos have no cap below the {@code long} range, so this returns
+     * {@code Long.MAX_VALUE}.
+     *
+     * @return the inclusive maximum storable designated timestamp
+     */
+    long getMaxDesignatedTimestamp();
 
     /**
      * Gets the microseconds within the millisecond from a timestamp value.

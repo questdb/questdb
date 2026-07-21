@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -50,7 +50,7 @@ public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursor
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         collectMetrics(values);
-        cursor.of(KEYS, values);
+        cursor.of(KEYS, values, executionContext.getCircuitBreaker());
         return cursor;
     }
 

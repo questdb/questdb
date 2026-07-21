@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -320,23 +320,8 @@ public class PGConfigurationWrapper implements PGConfiguration {
     }
 
     @Override
-    public int getTestConnectionBufferSize() {
-        return getDelegate().getTestConnectionBufferSize();
-    }
-
-    @Override
     public long getTimeout() {
         return getDelegate().getTimeout();
-    }
-
-    @Override
-    public int getUpdateCacheBlockCount() {
-        return getDelegate().getUpdateCacheBlockCount();
-    }
-
-    @Override
-    public int getUpdateCacheRowCount() {
-        return getDelegate().getUpdateCacheRowCount();
     }
 
     @Override
@@ -382,11 +367,6 @@ public class PGConfigurationWrapper implements PGConfiguration {
     @Override
     public boolean isSelectCacheEnabled() {
         return getDelegate().isSelectCacheEnabled();
-    }
-
-    @Override
-    public boolean isUpdateCacheEnabled() {
-        return getDelegate().isUpdateCacheEnabled();
     }
 
     @Override

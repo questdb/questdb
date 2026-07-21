@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,8 +30,10 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -45,6 +47,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     private final boolean updateQuery;
     private final String viewName;
     private final int viewPosition;
+    private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
 
     AbstractPartitionFrameCursorFactory(
             TableToken tableToken,
@@ -64,6 +67,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
 
     @Override
     public void close() {
+        Misc.freeObjList(pushdownFilterConditions);
     }
 
     @Override
@@ -72,8 +76,31 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     }
 
     @Override
+    public @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> getPushdownFilterConditions() {
+        return pushdownFilterConditions;
+    }
+
+    @Override
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    @Override
+    public boolean hasParquetFormatPartitions(SqlExecutionContext executionContext) {
+        // The token is resolved from the synchronously loaded registry, but the metadata
+        // cache is hydrated lazily; hydrate on demand so parquet row-group pruning is not
+        // silently skipped for a registered-but-not-yet-cached table during the startup
+        // hydration window.
+        executionContext.getCairoEngine().getMetadataCache().hydrateTableOnDemand(tableToken);
+        try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
+            CairoTable table = metadataRO.getTable(tableToken);
+            return table != null && table.hasParquetPartitions();
+        }
+    }
+
+    @Override
+    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+        this.pushdownFilterConditions = pushdownFilterConditions;
     }
 
     @Override
@@ -109,11 +136,15 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
 
             // columns not referenced by the view require explicit permission
             final LowerCaseCharSequenceHashSet depCols = viewDefinition.getDependencies().get(tableToken.getTableName());
-            if (!depCols.contains("*")) {
+            // A null depCols means the view's persisted dependency map has no entry for this base
+            // table - either a dependency-collector gap missed the reference, or the base table was
+            // renamed after the view was created. Fail safe: treat the table as not covered by the
+            // view, so every column read here requires explicit per-column SELECT on the base table.
+            if (depCols == null || !depCols.contains("*")) {
                 columnNames.clear();
                 for (int i = 0, n = columnIndexes.size(); i < n; i++) {
                     final String columnName = metadata.getColumnName(columnIndexes.getQuick(i));
-                    if (!depCols.contains(columnName)) {
+                    if (depCols == null || !depCols.contains(columnName)) {
                         columnNames.add(columnName);
                     }
                 }

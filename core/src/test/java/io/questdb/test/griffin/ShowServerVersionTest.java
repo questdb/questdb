@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -35,12 +35,9 @@ public class ShowServerVersionTest extends AbstractCairoTest {
     public void testShowServerVersion() throws Exception {
         final String expected = "server_version\n" +
                 SERVER_VERSION + "\n";
-        assertQuery(
-                expected,
-                "show server_version",
-                null,
-                false,
-                true
-        );
+        assertQuery("show server_version")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 }

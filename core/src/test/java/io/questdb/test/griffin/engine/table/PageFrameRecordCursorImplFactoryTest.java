@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
@@ -36,6 +35,8 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
@@ -65,6 +66,12 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
+    }
 
     @Test
     public void testFactory_FullPartitionFrameCursorFactory() throws Exception {
@@ -115,11 +122,10 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     symbolKey = reader.getSymbolMapReader(columnIndex).keyOf(value);
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
-                SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
+                RowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
                         columnIndex,
                         symbolKey,
-                        true,
-                        BitmapIndexReader.DIR_FORWARD,
+                        IndexReader.DIR_FORWARD,
                         null
                 );
                 try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
@@ -457,6 +463,62 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory_openStart() throws Exception {
+        // many partitions
+        // open lower bound (ts < X), interval spans multiple partitions.
+        // The backward interval cursor's calculateSize() once stopped after the
+        // first (newest) partition for this shape and undercounted by one.
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60 * 60;
+        final long intervalHi = 1000000L * 60 * 60 * 24 * 3;
+        final int skip = 0;
+        final long expectedNumOfRows = 24 * 3 + 1;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{Long.MIN_VALUE, intervalHi}), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory_openStart_skip() throws Exception {
+        // many partitions
+        // open lower bound (ts < X), interval spans multiple partitions, with a
+        // partial iteration before calculateSize() to exercise the mid-scan path.
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60 * 60;
+        final long intervalHi = 1000000L * 60 * 60 * 24 * 3;
+        final int skip = 10;
+        final long expectedNumOfRows = 24 * 3 + 1;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{Long.MIN_VALUE, intervalHi}), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory_openEnd() throws Exception {
+        // many partitions
+        // open upper bound (ts > X), interval spans most partitions. Forward and
+        // backward calculateSize() must both walk every partition in the range.
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60 * 60;
+        final long intervalLo = 1000000L * 60 * 60 * 24 * 3;
+        final int skip = 0;
+        final long expectedNumOfRows = numOfRows - 24 * 3;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{intervalLo, Long.MAX_VALUE}), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory_openEnd_skip() throws Exception {
+        // many partitions
+        // open upper bound (ts > X) with a partial iteration before calculateSize().
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60 * 60;
+        final long intervalLo = 1000000L * 60 * 60 * 24 * 3;
+        final int skip = 10;
+        final long expectedNumOfRows = numOfRows - 24 * 3;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{intervalLo, Long.MAX_VALUE}), skip, expectedNumOfRows);
+    }
+
+    @Test
     public void testFactory_IntervalPartitionFrameCursorFactory2() throws Exception {
         // many partitions
         // interval is 3 partitions
@@ -787,9 +849,9 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 int sIndex = -1;
                 for (int i = 0; i < rowCount; i++) {
                     if (i == startTopAt) {
-                        writer.addColumn("j", ColumnType.LONG);
+                        writer.addColumn("j", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
                         jIndex = writer.getColumnIndex("j");
-                        writer.addColumn("s", ColumnType.STRING);
+                        writer.addColumn("s", ColumnType.STRING, AllowAllSecurityContext.INSTANCE);
                         sIndex = writer.getColumnIndex("s");
                     }
 
@@ -855,13 +917,13 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                                 long dStrColAddr = frame.getPageAddress(3);
 
                                 for (long i = len - 1; i > -1; i--) {
-                                    Assert.assertEquals(rndInts[rowIndex], Unsafe.getUnsafe().getInt(intColAddr + i * 4L));
-                                    Assert.assertEquals(ts -= increment, Unsafe.getUnsafe().getLong(tsColAddr + i * 8L));
+                                    Assert.assertEquals(rndInts[rowIndex], Unsafe.getInt(intColAddr + i * 4L));
+                                    Assert.assertEquals(ts -= increment, Unsafe.getLong(tsColAddr + i * 8L));
 
                                     if (startTopAt > 0 && rowIndex >= startTopAt) {
-                                        Assert.assertEquals(rndLongs[rowIndex], Unsafe.getUnsafe().getLong(longColAddr + i * 8L));
-                                        final long strOffset = Unsafe.getUnsafe().getLong(iStrColAddr + i * 8);
-                                        dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getUnsafe().getLong(iStrColAddr + i * 8 + 8));
+                                        Assert.assertEquals(rndLongs[rowIndex], Unsafe.getLong(longColAddr + i * 8L));
+                                        final long strOffset = Unsafe.getLong(iStrColAddr + i * 8);
+                                        dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getLong(iStrColAddr + i * 8 + 8));
                                         TestUtils.assertEquals(rndStrs[rowIndex], dcs);
                                     }
                                     rowIndex--;
@@ -1015,11 +1077,10 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     symbolKey = reader.getSymbolMapReader(columnIndex).keyOf(value);
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
-                SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
+                RowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
                         columnIndex,
                         symbolKey,
-                        true,
-                        BitmapIndexReader.DIR_FORWARD,
+                        IndexReader.DIR_FORWARD,
                         null
                 );
                 try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
@@ -1109,52 +1170,76 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     timestampIndex = reader.getMetadata().getTimestampIndex();
                 }
 
-                final RuntimeIntervalModel intervalModel = new RuntimeIntervalModel(
-                        ColumnType.getTimestampDriver(timestampType),
-                        PartitionBy.DAY,
-                        intervals,
-                        new ObjList<>()
-                );
-                final RowCursorFactory rowFactory = new PageFrameRowCursorFactory(ORDER_ASC);
-                try (IntervalPartitionFrameCursorFactory frameFactory = new IntervalPartitionFrameCursorFactory(
-                        tableToken, TableUtils.ANY_TABLE_VERSION, intervalModel, timestampIndex, metadata, ORDER_ASC, null, 0, false
-                )) {
-                    final IntList columnIndexes = new IntList();
-                    final IntList columnSizes = new IntList();
-                    populateColumnTypes(metadata, columnIndexes, columnSizes);
-                    PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
-                            configuration,
-                            metadata,
-                            frameFactory,
-                            rowFactory,
-                            false,
-                            null,
-                            false,
-                            columnIndexes,
-                            columnSizes,
-                            true,
-                            false
-                    );
-                    try (
-                            SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
-                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-                    ) {
-                        RecordCursor.Counter counter = new RecordCursor.Counter();
-
-                        if (skip > 0) {
-                            Record record = cursor.getRecord();
-                            while (counter.get() < skip && cursor.hasNext()) {
-                                Assert.assertEquals(intervals.getQuick(0) + counter.get() * increment, record.getTimestamp(3));
-                                counter.inc();
-                            }
-                        }
-
-                        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
-                        Assert.assertEquals(expectedNumOfRows, counter.get());
-                    }
-                }
+                // Exercise both scan directions. calculateSize() must agree with the
+                // materialized row count regardless of order; the backward interval
+                // cursor in particular once stopped after the first partition.
+                assertIntervalCalculateSize(engine, tableToken, metadata, timestampType, timestampIndex, intervals, increment, skip, expectedNumOfRows, ORDER_ASC);
+                assertIntervalCalculateSize(engine, tableToken, metadata, timestampType, timestampIndex, intervals, increment, skip, expectedNumOfRows, ORDER_DESC);
             }
         });
+    }
+
+    private void assertIntervalCalculateSize(
+            CairoEngine engine,
+            TableToken tableToken,
+            GenericRecordMetadata metadata,
+            int timestampType,
+            int timestampIndex,
+            LongList intervals,
+            long increment,
+            int skip,
+            long expectedNumOfRows,
+            int order
+    ) throws SqlException {
+        final RuntimeIntervalModel intervalModel = new RuntimeIntervalModel(
+                ColumnType.getTimestampDriver(timestampType),
+                PartitionBy.DAY,
+                intervals,
+                new ObjList<>()
+        );
+        final RowCursorFactory rowFactory = new PageFrameRowCursorFactory(order);
+        try (IntervalPartitionFrameCursorFactory frameFactory = new IntervalPartitionFrameCursorFactory(
+                tableToken, TableUtils.ANY_TABLE_VERSION, intervalModel, timestampIndex, metadata, order, null, 0, false
+        )) {
+            final IntList columnIndexes = new IntList();
+            final IntList columnSizes = new IntList();
+            populateColumnTypes(metadata, columnIndexes, columnSizes);
+            PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
+                    configuration,
+                    metadata,
+                    frameFactory,
+                    rowFactory,
+                    false,
+                    null,
+                    false,
+                    columnIndexes,
+                    columnSizes,
+                    true,
+                    false
+            );
+            try (
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+
+                if (skip > 0) {
+                    Record record = cursor.getRecord();
+                    while (counter.get() < skip && cursor.hasNext()) {
+                        // Per-row timestamp check only holds for a forward scan with a
+                        // closed lower bound; an open lower bound (Long.MIN_VALUE) starts
+                        // at the first data row, not at the interval bound.
+                        if (order == ORDER_ASC && intervals.getQuick(0) >= 0) {
+                            Assert.assertEquals(intervals.getQuick(0) + counter.get() * increment, record.getTimestamp(3));
+                        }
+                        counter.inc();
+                    }
+                }
+
+                cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                Assert.assertEquals(expectedNumOfRows, counter.get());
+            }
+        }
     }
 
     private void testFwdPageFrameCursor(int rowCount, int minSize, int maxSize, int startTopAt) throws Exception {
@@ -1178,9 +1263,9 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 int sIndex = -1;
                 for (int i = 0; i < rowCount; i++) {
                     if (i == startTopAt) {
-                        writer.addColumn("j", ColumnType.LONG);
+                        writer.addColumn("j", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
                         jIndex = writer.getColumnIndex("j");
-                        writer.addColumn("s", ColumnType.STRING);
+                        writer.addColumn("s", ColumnType.STRING, AllowAllSecurityContext.INSTANCE);
                         sIndex = writer.getColumnIndex("s");
                     }
 
@@ -1244,13 +1329,13 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                                 long dStrColAddr = frame.getPageAddress(3);
 
                                 for (long i = 0; i < len; i++, rowIndex++) {
-                                    Assert.assertEquals(rnd.nextInt(), Unsafe.getUnsafe().getInt(intColAddr + i * 4L));
-                                    Assert.assertEquals(ts += increment, Unsafe.getUnsafe().getLong(tsColAddr + i * 8L));
+                                    Assert.assertEquals(rnd.nextInt(), Unsafe.getInt(intColAddr + i * 4L));
+                                    Assert.assertEquals(ts += increment, Unsafe.getLong(tsColAddr + i * 8L));
 
                                     if (startTopAt > 0 && rowIndex >= startTopAt) {
-                                        Assert.assertEquals(rnd.nextLong(), Unsafe.getUnsafe().getLong(longColAddr + i * 8L));
-                                        final long strOffset = Unsafe.getUnsafe().getLong(iStrColAddr + i * 8);
-                                        dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getUnsafe().getLong(iStrColAddr + i * 8 + 8));
+                                        Assert.assertEquals(rnd.nextLong(), Unsafe.getLong(longColAddr + i * 8L));
+                                        final long strOffset = Unsafe.getLong(iStrColAddr + i * 8);
+                                        dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getLong(iStrColAddr + i * 8 + 8));
                                         TestUtils.assertEquals(rnd.nextChars(32), dcs);
                                     }
                                 }

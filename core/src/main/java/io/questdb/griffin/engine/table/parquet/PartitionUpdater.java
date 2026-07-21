@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,11 +25,6 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableUtils;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -38,12 +33,33 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
 public class PartitionUpdater implements QuietCloseable {
-    private static final Log LOG = LogFactory.getLog(PartitionUpdater.class);
-    private final FilesFacade ff;
     private long ptr;
 
-    public PartitionUpdater(FilesFacade ff) {
-        this.ff = ff;
+    public PartitionUpdater() {
+    }
+
+    public void addRowGroup(int position, PartitionDescriptor descriptor) {
+        final int columnCount = descriptor.getColumnCount();
+        final long rowCount = descriptor.getPartitionRowCount();
+        final int timestampIndex = descriptor.getTimestampIndex();
+        try {
+            assert ptr != 0;
+            insertRowGroup(
+                    ptr,
+                    descriptor.tableName.size(),
+                    descriptor.tableName.ptr(),
+                    position,
+                    columnCount,
+                    descriptor.getColumnNamesPtr(),
+                    descriptor.getColumnNamesLen(),
+                    descriptor.getColumnDataPtr(),
+                    descriptor.getColumnDataLen(),
+                    timestampIndex,
+                    rowCount
+            );
+        } finally {
+            descriptor.clear();
+        }
     }
 
     @Override
@@ -51,16 +67,77 @@ public class PartitionUpdater implements QuietCloseable {
         destroy();
     }
 
+    /**
+     * Publishes the new {@code _pm} snapshot and makes it durable: patches the
+     * committed {@code parquet_meta_file_size} into the header (the MVCC commit
+     * signal), then fsyncs. The caller MUST invoke this after
+     * {@link #updateFileMetadata()} and the index build, and before the matching
+     * {@code _txn} commit. The header patch is the last {@code _pm} write, so a
+     * failure before it leaves the committed header and footer intact; the fsync
+     * (skipped when {@code sync} is false, i.e. NOSYNC commit mode) stops a power
+     * loss from leaving {@code _txn} pointing at a footer the page cache lost.
+     */
+    public void commitParquetMeta(boolean sync) {
+        assert ptr != 0;
+        commitParquetMeta(ptr, sync);
+    }
+
+    public void copyRowGroup(int rowGroupIndex) {
+        assert ptr != 0;
+        copyRowGroup(ptr, rowGroupIndex);
+    }
+
+    /**
+     * Copies a row group from the source file, appending null column chunks
+     * for columns present in the target schema but missing from the source.
+     *
+     * @param rowGroupIndex   index of the row group to copy
+     * @param nullColDescAddr native memory address of flat array: pairs of
+     *                        [targetSchemaPosition (long), columnType (long)]
+     * @param nullColCount    number of null columns
+     */
+    public void copyRowGroupWithNullColumns(int rowGroupIndex, long nullColDescAddr, int nullColCount) {
+        assert ptr != 0;
+        copyRowGroupWithNullColumns(ptr, rowGroupIndex, nullColDescAddr, nullColCount);
+    }
+
+    public long getResultParquetMetaFileSize() {
+        assert ptr != 0;
+        return getResultParquetMetaFileSize(ptr);
+    }
+
+    public long getResultUnusedBytes() {
+        assert ptr != 0;
+        return getResultUnusedBytes(ptr);
+    }
+
+    /**
+     * Binds this updater to the source/target fds and sizes for an in-place
+     * {@code _pm} update. Three easily-confused sizes: {@code parquetMetaFileSize}
+     * is the parse anchor (the committed head from {@code _txn}, not the raw
+     * header a rolled-back update may leave ahead); {@code appendBase} is the
+     * header offset where new footer bytes land (equals the anchor outside the
+     * crash window); {@code existingParquetFileSize} is the {@code data.parquet}
+     * size, with {@code <= 0} selecting the full-create path.
+     */
     public void of(
             @Transient LPSZ srcPath,
-            int fileOpenOpts,
-            long fileSize,
+            int readerFd,
+            long readFileSize,
+            int writerFd,
+            long writeFileSize,
             int timestampIndex,
             long compressionCodec,
             boolean statisticsEnabled,
             boolean rawArrayEncoding,
             long rowGroupSize,
-            long dataPageSize
+            long dataPageSize,
+            double bloomFilterFpp,
+            double minCompressionRatio,
+            int parquetMetaFd,
+            long parquetMetaFileSize,
+            long appendBase,
+            long existingParquetFileSize
     ) {
         final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         destroy();
@@ -68,25 +145,58 @@ public class PartitionUpdater implements QuietCloseable {
                 allocator,
                 srcPath.size(),
                 srcPath.ptr(),
-                Files.detach(TableUtils.openRW(ff, srcPath, LOG, fileOpenOpts)),
-                fileSize,
+                readerFd,
+                readFileSize,
+                writerFd,
+                writeFileSize,
                 timestampIndex,
                 compressionCodec,
                 statisticsEnabled,
                 rawArrayEncoding,
                 rowGroupSize,
-                dataPageSize
+                dataPageSize,
+                bloomFilterFpp,
+                minCompressionRatio,
+                parquetMetaFd,
+                parquetMetaFileSize,
+                appendBase,
+                existingParquetFileSize
+        );
+    }
+
+    /**
+     * Sets the target schema for the output file. Call this after {@link #of}
+     * when the table schema differs from the source parquet file schema
+     * (e.g., after ADD COLUMN or DROP COLUMN).
+     *
+     * @param descriptor a PartitionDescriptor containing the full target
+     *                   schema (column names, IDs, types). Data pointers are
+     *                   not required — only schema metadata is used.
+     */
+    public void setTargetSchema(PartitionDescriptor descriptor) {
+        assert ptr != 0;
+        setTargetSchema(
+                ptr,
+                descriptor.tableName.ptr(),
+                descriptor.tableName.size(),
+                descriptor.getColumnCount(),
+                descriptor.getColumnNamesPtr(),
+                descriptor.getColumnNamesLen(),
+                descriptor.getColumnDataPtr(),
+                descriptor.getColumnDataLen(),
+                descriptor.getTimestampIndex()
         );
     }
 
     // call to this method will update file metadata
     // MUST be called after all row groups have been updated
-    public void updateFileMetadata() {
+    // returns the final file size
+    public long updateFileMetadata() {
         assert ptr != 0;
-        updateFileMetadata(ptr);
+        return updateFileMetadata(ptr);
     }
 
-    public void updateRowGroup(short rowGroupId, PartitionDescriptor descriptor) {
+    public void updateRowGroup(int rowGroupId, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
         final int timestampIndex = descriptor.getTimestampIndex();
@@ -110,30 +220,82 @@ public class PartitionUpdater implements QuietCloseable {
         }
     }
 
+    private static native void commitParquetMeta(long impl, boolean sync) throws CairoException;
+
+    private static native void copyRowGroup(
+            long impl,
+            int rowGroupIndex
+    ) throws CairoException;
+
+    private static native void copyRowGroupWithNullColumns(
+            long impl,
+            int rowGroupIndex,
+            long nullColDescAddr,
+            int nullColCount
+    ) throws CairoException;
+
     private static native long create(
             long allocator,
             int srcPathLen,
             long srcPathPtr,
-            int fd,
-            long fileSize,
+            int readerFd,
+            long readFileSize,
+            int writerFd,
+            long writeFileSize,
             int timestampIndex,
             long compressionCodec,
             boolean statisticsEnabled,
             boolean rawArrayEncoding,
             long rowGroupSize,
-            long dataPageSize
+            long dataPageSize,
+            double bloomFilterFpp,
+            double minCompressionRatio,
+            int parquetMetaFd,
+            long parquetMetaFileSize,
+            long appendBase,
+            long existingParquetFileSize
     ) throws CairoException;
 
     private static native void destroy(long impl);
 
-    // throws CairoException on error
-    private static native void updateFileMetadata(long impl);
+    private static native long getResultParquetMetaFileSize(long impl);
+
+    private static native long getResultUnusedBytes(long impl);
+
+    private static native void setTargetSchema(
+            long impl,
+            long tableNamePtr,
+            int tableNameLen,
+            int colCount,
+            long colNamesPtr,
+            int colNamesLen,
+            long colDataPtr,
+            long colDataLen,
+            int timestampIndex
+    ) throws CairoException;
+
+    private static native void insertRowGroup(
+            long impl,
+            int tableNameLen,
+            long tableNamePtr,
+            int position,
+            int columnCount,
+            long columnNamesPtr,
+            int columnNamesSize,
+            long columnDataPtr,
+            long columnDataSize,
+            int timestampIndex,
+            long rowCount
+    ) throws CairoException;
+
+    // throws CairoException on error, returns file size
+    private static native long updateFileMetadata(long impl);
 
     private static native void updateRowGroup(
             long impl,
             int tableNameLen,
             long tableNamePtr,
-            short rowGroupId,
+            int rowGroupId,
             int columnCount,
             long columnNamesPtr,
             int columnNamesSize,

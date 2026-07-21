@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,11 +34,13 @@ import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.EpollFacadeImpl;
@@ -197,7 +199,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
         Assert.assertTrue(configuration.getCairoConfiguration().getCircuitBreakerConfiguration().isEnabled());
         Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
-        Assert.assertEquals(64, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getBufferSize());
 
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
@@ -207,11 +208,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getViewLexerPoolCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
+        Assert.assertFalse(configuration.getCairoConfiguration().isMatViewCoveringIndexEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
-        Assert.assertEquals(200, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
-        Assert.assertTrue(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
         Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
         Assert.assertEquals(Micros.YEAR_MICROS_NONLEAP, configuration.getCairoConfiguration().getMatViewMaxRefreshStepUs());
         Assert.assertEquals(15_000, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
@@ -229,7 +229,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getCairoConfiguration().getBindVariablePoolSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getQueryRegistryPoolSize());
         Assert.assertEquals(3, configuration.getCairoConfiguration().getCountDistinctCapacity());
-        Assert.assertEquals(0.5, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
+        Assert.assertEquals(0.7, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
 
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
@@ -249,11 +249,14 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlModelPoolCapacity());
         Assert.assertEquals(10_000, configuration.getCairoConfiguration().getSqlMaxNegativeLimit());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlSortKeyPageSize());
-        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortKeyMaxPages());
+        Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortKeyMaxBytes());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlSortLightValuePageSize());
-        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortLightValueMaxPages());
+        Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortLightValueMaxBytes());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlHashJoinValuePageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlHashJoinValueMaxPages());
+        Assert.assertEquals(131_072, configuration.getCairoConfiguration().getSqlHorizonJoinBwdScanAbsoluteThreshold());
+        Assert.assertEquals(1_024, configuration.getCairoConfiguration().getSqlHorizonJoinBwdScanMinGap());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlHorizonJoinBwdScanSwitchFactor());
         Assert.assertEquals(10_000, configuration.getCairoConfiguration().getSqlHorizonJoinMaxOffsets());
         Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlLatestByRowCount());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlHashJoinLightValuePageSize());
@@ -262,7 +265,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortValuePageSize());
-        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortValueMaxPages());
+        Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortValueMaxBytes());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getWorkStealTimeoutNanos());
         Assert.assertTrue(configuration.getCairoConfiguration().isParallelIndexingEnabled());
         Assert.assertEquals(16 * 1024, configuration.getCairoConfiguration().getSqlJoinMetadataPageSize());
@@ -270,11 +273,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getCairoConfiguration().getWindowColumnPoolCapacity());
         Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlWindowMaxRecursion());
         Assert.assertEquals(512 * 1024, configuration.getCairoConfiguration().getSqlWindowTreeKeyPageSize());
-        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlWindowTreeKeyMaxPages());
+        Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlWindowTreeKeyMaxBytes());
         Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlWindowStorePageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlWindowStoreMaxPages());
+        Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlWindowCacheMaxBytes());
         Assert.assertEquals(512 * 1024, configuration.getCairoConfiguration().getSqlWindowRowIdPageSize());
-        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlWindowRowIdMaxPages());
+        Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlWindowRowIdMaxBytes());
         Assert.assertEquals(128, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertModelPoolCapacity());
@@ -308,13 +312,15 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowJoinEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParquetRowGroupPruningEnabled());
+        Assert.assertEquals(256L * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParquetCacheMemorySize());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getSqlParallelWorkStealingThreshold());
         Assert.assertEquals(50_000, configuration.getCairoConfiguration().getSqlParallelWorkStealingSpinTimeout());
-        Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlParquetFrameCacheCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
+        Assert.assertEquals(2048, configuration.getCairoConfiguration().getGroupByBatchSize());
         Assert.assertEquals(10_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
         Assert.assertTrue(configuration.getCairoConfiguration().isGroupByPresizeEnabled());
         Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxCapacity());
@@ -322,7 +328,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getGroupByAllocatorDefaultChunkSize());
         Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getGroupByParallelTopKThreshold());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlOrderBySortEnabled());
-        Assert.assertEquals(600, configuration.getCairoConfiguration().getSqlOrderByRadixSortThreshold());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
@@ -342,7 +347,6 @@ public class PropServerConfigurationTest {
         Assert.assertSame(NetworkFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getNetworkFacade());
         Assert.assertSame(EpollFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getEpollFacade());
         Assert.assertSame(SelectFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getSelectFacade());
-        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getTestConnectionBufferSize());
         Assert.assertTrue(FilesFacadeImpl.class.isAssignableFrom(configuration.getCairoConfiguration().getFilesFacade().getClass()));
         Assert.assertSame(MillisecondClockImpl.INSTANCE, configuration.getCairoConfiguration().getMillisecondClock());
         Assert.assertSame(MicrosecondClockImpl.INSTANCE, configuration.getCairoConfiguration().getMicrosecondClock());
@@ -378,7 +382,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(5000, configuration.getLineTcpReceiverConfiguration().getQueueTimeout());
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getInterestQueueCapacity());
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getListenBacklog());
-        Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(8, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_NANOS, configuration.getLineTcpReceiverConfiguration().getTimestampUnit());
         Assert.assertEquals(131072, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
@@ -404,7 +407,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(500, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().getSampleByDefaultAlignmentCalendar());
-        Assert.assertEquals(32, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
+        Assert.assertEquals(256, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
         Assert.assertEquals(2048, configuration.getCairoConfiguration().getWriterCommandQueueSlotSize());
         Assert.assertEquals(500, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
         Assert.assertEquals(30_000, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
@@ -424,6 +427,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
+        Assert.assertEquals(60_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
         Assert.assertFalse(configuration.getCairoConfiguration().isQueryTracingEnabled());
 
         Assert.assertEquals(4, configuration.getCairoConfiguration().getQueryCacheEventQueueCapacity());
@@ -443,7 +448,6 @@ public class PropServerConfigurationTest {
         // PG wire
         Assert.assertEquals(64, configuration.getPGWireConfiguration().getLimit());
         Assert.assertEquals(500, configuration.getPGWireConfiguration().getAcceptLoopTimeout());
-        Assert.assertEquals(64, configuration.getPGWireConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
         Assert.assertEquals(32, configuration.getPGWireConfiguration().getConcurrentCacheConfiguration().getBlocks());
@@ -451,9 +455,6 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getPGWireConfiguration().isInsertCacheEnabled());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheRowCount());
-        Assert.assertTrue(configuration.getPGWireConfiguration().isUpdateCacheEnabled());
-        Assert.assertEquals(4, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
-        Assert.assertEquals(4, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
         Assert.assertFalse(configuration.getPGWireConfiguration().readOnlySecurityContext());
         Assert.assertEquals("quest", configuration.getPGWireConfiguration().getDefaultPassword());
         Assert.assertEquals("admin", configuration.getPGWireConfiguration().getDefaultUsername());
@@ -755,6 +756,28 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testDeprecatedMatViewOomRetryTimeoutKey() throws Exception {
+        // cairo.mat.view.refresh.oom.retry.timeout is a removed live setting kept as a deprecated no-op
+        // so that an existing server.conf carrying it still validates and starts, even under strict
+        // validation. It must not throw and must not affect the live busy-retry backoff that supersedes it.
+        Properties properties = new Properties();
+        properties.setProperty("config.validation.strict", "true");
+        properties.setProperty("cairo.mat.view.refresh.oom.retry.timeout", "200");
+        properties.setProperty("cairo.mat.view.refresh.busy.retry.timeout", "5000");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        // The deprecated key is inert: only the live busy-retry timeout takes effect.
+        Assert.assertEquals(5000, configuration.getCairoConfiguration().getMatViewRefreshBusyRetryTimeout());
+
+        PropServerConfiguration.ValidationResult result = validate(properties);
+        Assert.assertNotNull(result);
+        Assert.assertFalse(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("Deprecated settings"));
+        Assert.assertNotEquals(-1, result.message().indexOf("cairo.mat.view.refresh.oom.retry.timeout"));
+        Assert.assertNotEquals(-1, result.message().indexOf("`cairo.mat.view.refresh.busy.retry.timeout`"));
+    }
+
+    @Test
     public void testDeprecatedValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("http.net.rcv.buf.size", "10000");
@@ -764,6 +787,257 @@ public class PropServerConfigurationTest {
         Assert.assertNotEquals(-1, result.message().indexOf("Deprecated settings"));
         Assert.assertNotEquals(-1, result.message().indexOf(
                 "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`"));
+    }
+
+    @Test
+    public void testDeprecatedMaxPagesDerivesMaxBytes() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.sort.key.page.size", "128k");
+        properties.setProperty("cairo.sql.sort.key.max.pages", "10");
+        // The older analytic.* aliases still derive the new max.bytes defaults too.
+        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
+        properties.setProperty("cairo.sql.analytic.tree.max.pages", "200");
+        properties.setProperty("cairo.sql.window.rowid.page.size", "256k");
+        properties.setProperty("cairo.sql.analytic.rowid.max.pages", "50");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(10L * 128 * 1024, cairo.getSqlSortKeyMaxBytes());
+        Assert.assertEquals(200L * 512 * 1024, cairo.getSqlWindowTreeKeyMaxBytes());
+        Assert.assertEquals(50L * 256 * 1024, cairo.getSqlWindowRowIdMaxBytes());
+        // Keys whose deprecated max.pages remained unset stay uncapped.
+        Assert.assertEquals(Long.MAX_VALUE, cairo.getSqlSortValueMaxBytes());
+        Assert.assertEquals(Long.MAX_VALUE, cairo.getSqlWindowCacheMaxBytes());
+    }
+
+    @Test
+    public void testDeprecatedMaxPagesAndAliasBothExplicitMainWins() throws Exception {
+        // When both the modern deprecated key (cairo.sql.window.tree.max.pages) and the
+        // older analytic.* alias are set with conflicting values, the modern key wins.
+        // This matches the pre-PR behaviour where the alias only served as a default for
+        // the modern key.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
+        properties.setProperty("cairo.sql.analytic.tree.max.pages", "100");
+        properties.setProperty("cairo.sql.window.tree.max.pages", "200");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(200L * 512 * 1024, cairo.getSqlWindowTreeKeyMaxBytes());
+    }
+
+    @Test
+    public void testDeprecatedMaxPagesHonorsExplicitIntegerMaxValue() throws Exception {
+        // An explicit deprecated *.max.pages value must carry over as a byte cap rather than
+        // collapsing back to the uncapped default.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.sort.key.page.size", "128k");
+        properties.setProperty("cairo.sql.sort.key.max.pages", Integer.toString(Integer.MAX_VALUE));
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(128L * 1024 * Integer.MAX_VALUE, cairo.getSqlSortKeyMaxBytes());
+    }
+
+    @Test
+    public void testDeprecatedMaxPagesAcceptsSizeSuffix() throws Exception {
+        // The deprecated sort.* max.pages keys were historically read with getIntSize, so size-suffixed
+        // values like "2k" parsed. The byte-cap derivation must preserve that, else a previously valid
+        // config fails to start.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.sort.key.page.size", "128k");
+        properties.setProperty("cairo.sql.sort.key.max.pages", "2k");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // 2k (2048) pages of 128k.
+        Assert.assertEquals(2048L * 128 * 1024, cairo.getSqlSortKeyMaxBytes());
+    }
+
+    @Test
+    public void testDeprecatedMaxPagesAcceptsUnderscore() throws Exception {
+        // The deprecated window.* max.pages keys were historically read with getInt, so underscore-
+        // separated values like "1_000_000" parsed. The byte-cap derivation must preserve that.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
+        properties.setProperty("cairo.sql.window.tree.max.pages", "1_000");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(1_000L * 512 * 1024, cairo.getSqlWindowTreeKeyMaxBytes());
+    }
+
+    @Test
+    public void testDeprecatedMaxPagesNegativeValueDerivesNegativeBytes() throws Exception {
+        // A legacy *.max.pages=-1 (historically a pathological "fail fast" probe) parses to -1 and
+        // derives a negative byte cap. The config layer accepts it; downstream consumers floor the
+        // negative cap to one page (or throw a clean LimitOverflowException), never crashing. Pins
+        // that contract, which lost its only coverage when the SampleByFillTest probe was rewritten.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.sort.key.page.size", "128k");
+        properties.setProperty("cairo.sql.sort.key.max.pages", "-1");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(128L * 1024 * -1, cairo.getSqlSortKeyMaxBytes());
+    }
+
+    @Test
+    public void testDeprecatedParquetFrameCacheCapacityAcceptedButIgnored() throws Exception {
+        // cairo.sql.parquet.frame.cache.capacity is deprecated in favour of the byte budget
+        // cairo.sql.parquet.cache.memory.size. Supplying the old key alone must parse without a
+        // ServerConfigurationException, even under strict validation, yet no longer affect
+        // behaviour: the byte budget stays at its 256 MB default.
+        Properties properties = new Properties();
+        properties.setProperty("config.validation.strict", "true");
+        properties.setProperty("http.min.bind.to", "0.0.0.0:0");
+        properties.setProperty("cairo.sql.parquet.frame.cache.capacity", "8");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+        Assert.assertEquals(256L * Numbers.SIZE_1MB, cairo.getSqlParquetCacheMemorySize());
+    }
+
+    @Test
+    public void testDeprecatedParquetFrameCacheCapacityYieldsToByteBudget() throws Exception {
+        // The deprecated count key and the new byte-budget key may both be present; the new key
+        // controls behaviour and the old one is silently ignored.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parquet.frame.cache.capacity", "8");
+        properties.setProperty("cairo.sql.parquet.cache.memory.size", "64m");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+        Assert.assertEquals(64L * Numbers.SIZE_1MB, cairo.getSqlParquetCacheMemorySize());
+    }
+
+    @Test
+    public void testMaxBytesBelowPageSizeAccepted() throws Exception {
+        // The implementation floors each operator's effective cap at one *.page.size, so a
+        // *.max.bytes below the page size is silently raised at runtime. The config layer
+        // accepts the value (the floor produces a valid cap), and stores it verbatim in the
+        // field; an advisory log entry is emitted at init so the operator knows.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.sort.key.page.size", "128k");
+        properties.setProperty("cairo.sql.sort.key.max.bytes", "1024");
+        properties.setProperty("cairo.sql.window.store.page.size", "1m");
+        properties.setProperty("cairo.sql.window.cache.max.bytes", "100");
+        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
+        properties.setProperty("cairo.sql.window.tree.max.bytes", "4096");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(1024L, cairo.getSqlSortKeyMaxBytes());
+        Assert.assertEquals(100L, cairo.getSqlWindowCacheMaxBytes());
+        Assert.assertEquals(4096L, cairo.getSqlWindowTreeKeyMaxBytes());
+        // CachedWindow resolved cap goes through Math.max(1L, bytes/pageSize), so it floors at
+        // 1 page even with the sub-page bytes value above.
+        Assert.assertEquals(1, cairo.getSqlWindowCacheMaxPagesResolved());
+    }
+
+    @Test
+    public void testPageSizeAtMinimumAccepted() throws Exception {
+        // Exactly at each minimum must build (off-by-one guard). window.rowid (>=12, ceilPow2 -> 16)
+        // and window.tree (>=24, ceilPow2 -> 32) are rounded up by the config's ceilPow2.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.sort.key.page.size", "64");
+        properties.setProperty("cairo.sql.sort.light.value.page.size", "12");
+        properties.setProperty("cairo.sql.window.store.page.size", "64");
+        properties.setProperty("cairo.sql.window.rowid.page.size", "16");
+        properties.setProperty("cairo.sql.window.tree.page.size", "32");
+
+        newPropServerConfiguration(properties); // must not throw
+    }
+
+    @Test
+    public void testPageSizeBelowBlockSizeRejected() throws Exception {
+        // Heap operators need a page holding one fixed-size block: sort.key -> RecordTreeChain
+        // MemoryPages (41B node, ceilPow2 -> 64), window.tree -> 24B node, value chains -> 12B entry,
+        // window.store -> 64 (store/RECORD_SIZE widest 40, and store >> 4). A sub-block page.size is
+        // rejected at startup rather than corrupting the heap at query time. The window keys ceilPow2,
+        // so e.g. 16 stays 16 and 32 stays 32.
+        assertPageSizeRejected("cairo.sql.sort.key.page.size", "0");
+        assertPageSizeRejected("cairo.sql.sort.key.page.size", "32");
+        assertPageSizeRejected("cairo.sql.window.tree.page.size", "0");
+        assertPageSizeRejected("cairo.sql.window.tree.page.size", "16");
+        assertPageSizeRejected("cairo.sql.sort.light.value.page.size", "0");
+        assertPageSizeRejected("cairo.sql.sort.light.value.page.size", "8");
+        assertPageSizeRejected("cairo.sql.window.rowid.page.size", "0");
+        assertPageSizeRejected("cairo.sql.window.rowid.page.size", "8");
+        assertPageSizeRejected("cairo.sql.window.store.page.size", "0");
+        assertPageSizeRejected("cairo.sql.window.store.page.size", "32");
+    }
+
+    @Test
+    public void testParquetExportTablePrefixNonBlankLoads() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX.getPropertyPath(), "qdb.export.");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        TestUtils.assertEquals("qdb.export.", configuration.getCairoConfiguration().getParquetExportTableNamePrefix());
+    }
+
+    @Test
+    public void testSortValuePageSizeClampedToOne() throws Exception {
+        // sort.value.page.size is a divisor-only RecordChain page (no fixed block), so 0 clamps to 1
+        // rather than being rejected - see testPageSizeBelowBlockSizeRejected for the heap-backed keys.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.sort.value.page.size", "0");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(1, cairo.getSqlSortValuePageSize());
+    }
+
+    @Test
+    public void testWindowCacheResolvedDefault() throws Exception {
+        Properties properties = new Properties();
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // No explicit keys: uncapped, saturating to Integer.MAX_VALUE pages; the error message
+        // names the new bytes key.
+        Assert.assertEquals(Integer.MAX_VALUE, cairo.getSqlWindowCacheMaxPagesResolved());
+        Assert.assertEquals("cairo.sql.window.cache.max.bytes", cairo.getSqlWindowCacheMaxPagesConfigKey());
+    }
+
+    @Test
+    public void testWindowCacheResolvedExplicitBytesWinsOverExplicitStorePages() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.store.page.size", "1m");
+        properties.setProperty("cairo.sql.window.store.max.pages", "64");
+        properties.setProperty("cairo.sql.window.cache.max.bytes", "8m");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // Both explicit: the new bytes key wins, error names it.
+        Assert.assertEquals(8, cairo.getSqlWindowCacheMaxPagesResolved());
+        Assert.assertEquals("cairo.sql.window.cache.max.bytes", cairo.getSqlWindowCacheMaxPagesConfigKey());
+    }
+
+    @Test
+    public void testWindowCacheResolvedLegacyAnalyticStorePagesWins() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.store.page.size", "1m");
+        // Legacy analytic.* alias is the only explicit cap.
+        properties.setProperty("cairo.sql.analytic.store.max.pages", "32");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // Bytes unset: the legacy alias drives the cap and the error names the legacy pages key.
+        Assert.assertEquals(32, cairo.getSqlWindowCacheMaxPagesResolved());
+        Assert.assertEquals("cairo.sql.window.store.max.pages", cairo.getSqlWindowCacheMaxPagesConfigKey());
+    }
+
+    @Test
+    public void testWindowCacheResolvedLegacyStorePagesWinsWhenBytesUnset() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.store.page.size", "1m");
+        properties.setProperty("cairo.sql.window.store.max.pages", "64");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // Bytes unset: the legacy pages key drives the cap and the error message names it,
+        // matching what the user would actually need to raise.
+        Assert.assertEquals(64, cairo.getSqlWindowCacheMaxPagesResolved());
+        Assert.assertEquals("cairo.sql.window.store.max.pages", cairo.getSqlWindowCacheMaxPagesConfigKey());
     }
 
     @Test
@@ -1087,6 +1361,42 @@ public class PropServerConfigurationTest {
         newPropServerConfiguration(properties);
     }
 
+    @Test
+    public void testInvalidGroupByBatchSizeNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.groupby.batch.size", "-1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.parallel.groupby.batch.size must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testInvalidGroupByBatchSizeTooLarge() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.groupby.batch.size", String.valueOf(io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 2));
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.parallel.groupby.batch.size must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testInvalidGroupByBatchSizeZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.groupby.batch.size", "0");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.parallel.groupby.batch.size must be between 1 and");
+        }
+    }
+
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidIPv4Address() throws Exception {
         Properties properties = new Properties();
@@ -1124,6 +1434,32 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testInvalidParquetExportTablePrefixBlank() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX.getPropertyPath(), "");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.parquet.export.table.prefix");
+            TestUtils.assertContains(e.getMessage(), "prefix must not be blank");
+        }
+    }
+
+    @Test
+    public void testInvalidParquetExportTablePrefixWhitespace() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX.getPropertyPath(), "   ");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.parquet.export.table.prefix");
+            TestUtils.assertContains(e.getMessage(), "prefix must not be blank");
+        }
+    }
+
+    @Test
     public void testInvalidTimestampLocale() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("log.timestamp.locale", "jp");
@@ -1145,6 +1481,23 @@ public class PropServerConfigurationTest {
         } catch (ServerConfigurationException e) {
             TestUtils.assertEquals("Invalid log timezone: 'HKK'", e.getMessage());
         }
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidWalMaxLagSizeNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.max.lag.size", "-1");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testWalMaxLagSizeZeroAccepted() throws Exception {
+        // 0 is the minimum accepted value (the guard rejects only negatives), so it must pass and
+        // round-trip unchanged. Guards against a > vs >= regression in getLongSize(..., minValue).
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.max.lag.size", "0");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getWalMaxLagSize());
     }
 
     @Test
@@ -1233,6 +1586,19 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testNewMaxBytesWinsOverDeprecatedMaxPages() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
+        properties.setProperty("cairo.sql.window.tree.max.pages", "200");
+        properties.setProperty("cairo.sql.window.tree.max.bytes", "1g");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // The new key takes precedence over the deprecated alias.
+        Assert.assertEquals(Numbers.SIZE_1GB, cairo.getSqlWindowTreeKeyMaxBytes());
+    }
+
+    @Test
     public void testNotValidAllowedVolumePaths0() throws Exception {
         File volumeA = temp.newFolder("volumeA");
         try {
@@ -1306,6 +1672,58 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testPageFrameMaxRowsAcceptsBatchedProbeUpperBound() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getPropertyPath(), Integer.toString(1 << 24));
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(1 << 24, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
+    }
+
+    @Test
+    public void testPageFrameMaxRowsRejectsOversize() throws Exception {
+        Properties properties = new Properties();
+        // One more than the 24-bit rowIndex field can represent; the batched GROUP BY
+        // probe would silently truncate, so we reject at config time.
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getPropertyPath(), Integer.toString((1 << 24) + 1));
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS);
+    }
+
+    @Test
+    public void testPageFrameMaxRowsRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS);
+    }
+
+    @Test
+    public void testPageFrameMinRowsRejectsOversize() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getPropertyPath(), Integer.toString((1 << 24) + 1));
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS);
+    }
+
+    @Test
+    public void testPageFrameMinRowsRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS);
+    }
+
+    @Test
+    public void testPageFrameSmallMaxRowsRejectsOversize() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS.getPropertyPath(), Integer.toString((1 << 24) + 1));
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS);
+    }
+
+    @Test
+    public void testPageFrameSmallMinRowsRejectsOversize() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS.getPropertyPath(), Integer.toString((1 << 24) + 1));
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS);
+    }
+
+    @Test
     public void testPartitionBy() throws Exception {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
@@ -1337,6 +1755,184 @@ public class PropServerConfigurationTest {
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
+    }
+
+    @Test
+    public void testQwpMaxRowsPerTable() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE, configuration.getQwpUdpReceiverConfiguration().getMaxRowsPerTable());
+        Assert.assertEquals(
+                QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE,
+                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxRowsPerTable()
+        );
+
+        properties.setProperty(PropertyKey.QWP_MAX_ROWS_PER_TABLE.getPropertyPath(), "512");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(512, configuration.getQwpUdpReceiverConfiguration().getMaxRowsPerTable());
+        Assert.assertEquals(512, configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxRowsPerTable());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testQwpMaxRowsPerTableRejectsValuesAboveProtocolDefault() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(
+                PropertyKey.QWP_MAX_ROWS_PER_TABLE.getPropertyPath(),
+                Integer.toString(QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE + 1)
+        );
+        newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testQwpMaxTablesPerConnection() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION, configuration.getQwpUdpReceiverConfiguration().getMaxTablesPerConnection());
+        Assert.assertEquals(
+                QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION,
+                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxTablesPerConnection()
+        );
+
+        properties.setProperty(PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath(), "500");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(500, configuration.getQwpUdpReceiverConfiguration().getMaxTablesPerConnection());
+        Assert.assertEquals(500, configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxTablesPerConnection());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testQwpMaxTablesPerConnectionRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath(), "0");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testMemoryUsageLogConfiguration() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "5s");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
+        Assert.assertEquals(5_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
+    }
+
+    @Test
+    public void testMemoryUsageLogIntervalAcceptsMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "86_400_000");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(86_400_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
+    }
+
+    @Test
+    public void testMemoryUsageLogIntervalRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
+    }
+
+    @Test
+    public void testMemoryUsageLogIntervalRejectsAboveMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "86_400_001");
+        assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
+    }
+
+    @Test
+    public void testMemoryUsageLogIntervalRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "-1");
+        assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
+    }
+
+    @Test
+    public void testQwpUdpCommitIntervalRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_COMMIT_INTERVAL.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_COMMIT_INTERVAL);
+    }
+
+    @Test
+    public void testQwpUdpCommitIntervalUsesOwnProperties() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.LINE_TCP_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.LINE_HTTP_ENABLED.getPropertyPath(), "false");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(PropServerConfiguration.COMMIT_INTERVAL_DEFAULT, configuration.getQwpUdpReceiverConfiguration().getCommitInterval());
+
+        properties.setProperty(PropertyKey.QWP_UDP_COMMIT_INTERVAL.getPropertyPath(), "2500");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(2500, configuration.getQwpUdpReceiverConfiguration().getCommitInterval());
+    }
+
+    @Test
+    public void testQwpUdpMaxUncommittedDatagramsRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS);
+    }
+
+    @Test
+    public void testQwpUdpMaxUncommittedDatagramsUsesOwnProperty() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(1_048_576, configuration.getQwpUdpReceiverConfiguration().getMaxUncommittedDatagrams());
+
+        properties.setProperty(PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS.getPropertyPath(), "123");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(123, configuration.getQwpUdpReceiverConfiguration().getMaxUncommittedDatagrams());
+    }
+
+    @Test
+    public void testQwpUdpMsgBufferSizeRejectsValuesBelowHeaderSize() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_MSG_BUFFER_SIZE.getPropertyPath(), Integer.toString(QwpConstants.HEADER_SIZE - 1));
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_MSG_BUFFER_SIZE);
+    }
+
+    @Test
+    public void testQwpUdpMsgCountRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_MSG_COUNT.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_MSG_COUNT);
+    }
+
+    @Test
+    public void testQwpUdpOwnThreadAffinityRejectsValuesBelowMinusOne() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY.getPropertyPath(), "-2");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY);
+    }
+
+    @Test
+    public void testQwpUdpReceiveBufferSizeRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE);
+    }
+
+    @Test
+    public void testQwpUdpReceiveBufferSizeUsesSentinelMinusOne() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE.getPropertyPath(), "-1");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(-1, configuration.getQwpUdpReceiverConfiguration().getReceiveBufferSize());
+    }
+
+    @Test
+    public void testRepeatMigrationFromVersionDefault() throws Exception {
+        // The default must never equal ColumnType.VERSION. When it does, EngineMigration
+        // resets currentMigrationVersion to the table version (EngineMigration.java:110) and
+        // never short-circuits, so every forward-compatible migration registered above VERSION
+        // re-runs on every startup instead of once. -1 disables forced repeats by default.
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(-1, configuration.getCairoConfiguration().getRepeatMigrationsFromVersion());
+        Assert.assertNotEquals(ColumnType.VERSION, configuration.getCairoConfiguration().getRepeatMigrationsFromVersion());
     }
 
     @Test
@@ -1389,7 +1985,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(90002, configuration.getHttpMinServerConfiguration().getNapThreshold());
             Assert.assertEquals(100002, configuration.getHttpMinServerConfiguration().getSleepThreshold());
             Assert.assertEquals(1002, configuration.getHttpMinServerConfiguration().getSleepTimeout());
-            Assert.assertEquals(16, configuration.getHttpMinServerConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(4, configuration.getHttpMinServerConfiguration().getWorkerCount());
             Assert.assertEquals(750, configuration.getHttpMinServerConfiguration().getAcceptLoopTimeout());
 
@@ -1413,7 +2008,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(4194304, configuration.getHttpServerConfiguration().getNetSendBufferSize());
             Assert.assertEquals(8192, configuration.getHttpServerConfiguration().getRecvBufferSize());
             Assert.assertEquals(8388608, configuration.getHttpServerConfiguration().getNetRecvBufferSize());
-            Assert.assertEquals(16, configuration.getHttpServerConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(168101918, configuration.getHttpServerConfiguration().getBindIPv4Address());
             Assert.assertEquals(9900, configuration.getHttpServerConfiguration().getBindPort());
             Assert.assertEquals(2_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
@@ -1445,7 +2039,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1_002, configuration.getLineTcpReceiverConfiguration().getQueueTimeout());
             Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getInterestQueueCapacity());
             Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getListenBacklog());
-            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(32, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
             Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_MICROS, configuration.getLineTcpReceiverConfiguration().getTimestampUnit());
             Assert.assertEquals(2049, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
@@ -1482,10 +2075,10 @@ public class PropServerConfigurationTest {
 
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
-            Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
             Assert.assertEquals(10000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
+            Assert.assertTrue(configuration.getCairoConfiguration().isMatViewCoveringIndexEnabled());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
             Assert.assertEquals(4200, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
             Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewMaxRefreshStepUs());
@@ -1498,16 +2091,12 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getPGWireConfiguration().isInsertCacheEnabled());
             Assert.assertEquals(128, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
             Assert.assertEquals(256, configuration.getPGWireConfiguration().getInsertCacheRowCount());
-            Assert.assertFalse(configuration.getPGWireConfiguration().isUpdateCacheEnabled());
-            Assert.assertEquals(128, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
-            Assert.assertEquals(256, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
             Assert.assertTrue(configuration.getPGWireConfiguration().readOnlySecurityContext());
             Assert.assertEquals("my_quest", configuration.getPGWireConfiguration().getDefaultPassword());
             Assert.assertEquals("my_admin", configuration.getPGWireConfiguration().getDefaultUsername());
             Assert.assertTrue(configuration.getPGWireConfiguration().isReadOnlyUserEnabled());
             Assert.assertEquals("my_quest_ro", configuration.getPGWireConfiguration().getReadOnlyPassword());
             Assert.assertEquals("my_user", configuration.getPGWireConfiguration().getReadOnlyUsername());
-            Assert.assertEquals(16, configuration.getPGWireConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(new DefaultPGConfiguration().getServerVersion(), configuration.getPGWireConfiguration().getServerVersion());
             Assert.assertEquals(10, configuration.getPGWireConfiguration().getNamedStatementLimit());
             Assert.assertEquals(250, configuration.getPGWireConfiguration().getAcceptLoopTimeout());
@@ -1591,7 +2180,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(33554432, configuration.getHttpMinServerConfiguration().getNetSendBufferSize());
             Assert.assertEquals(16384, configuration.getHttpMinServerConfiguration().getRecvBufferSize());
             Assert.assertEquals(16777216, configuration.getHttpMinServerConfiguration().getNetRecvBufferSize());
-            Assert.assertEquals(64, configuration.getHttpMinServerConfiguration().getTestConnectionBufferSize());
             Assert.assertTrue(configuration.getHttpMinServerConfiguration().getHint());
 
             // ILP/TCP
@@ -1622,6 +2210,61 @@ public class PropServerConfigurationTest {
 
             PropServerConfiguration configuration = newPropServerConfiguration(properties);
             Assert.assertNull(configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
+        }
+    }
+
+    @Test
+    public void testSampleByFillSortStrategy() throws Exception {
+        // Absent property falls back to the default (separate code path
+        // from the empty-string fallback below).
+        {
+            PropServerConfiguration cfg = newPropServerConfiguration(new Properties());
+            Assert.assertEquals(SampleBySortStrategy.LIGHT_ENCODED,
+                    cfg.getCairoConfiguration().getSampleByFillSortStrategy());
+        }
+
+        Properties properties = new Properties();
+
+        // Empty value falls back to the LIGHT_ENCODED default.
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.LIGHT_ENCODED, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "light_encoded");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.LIGHT_ENCODED, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "full_encoded");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.FULL_ENCODED, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "light_recordchain");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.LIGHT_RECORDCHAIN, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "full_recordchain");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.FULL_RECORDCHAIN, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        // Case-insensitivity: the parser lowercases both operands via
+        // Chars.equalsLowerCaseAscii, so user-facing config files can use
+        // mixed-case values.
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "FULL_ENCODED");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.FULL_ENCODED, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "Light_RecordChain");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.LIGHT_RECORDCHAIN, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        // Strict validation: any unknown value fails fast.
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "bogus");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("Expected ServerConfigurationException for invalid strategy");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.sampleby.fill.sort.strategy");
+            TestUtils.assertContains(e.getMessage(), "bogus");
         }
     }
 
@@ -1873,6 +2516,26 @@ public class PropServerConfigurationTest {
         }
     }
 
+    private void assertInvalidConfiguration(Properties properties, PropertyKey key) throws Exception {
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), key.getPropertyPath());
+        }
+    }
+
+    private void assertPageSizeRejected(String key, String value) throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(key, value);
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("expected ServerConfigurationException for " + key + '=' + value);
+        } catch (ServerConfigurationException expected) {
+            TestUtils.assertContains(expected.getMessage(), key);
+        }
+    }
+
     private void assertTimestampTimezone(
             String expected,
             String timezone,
@@ -1920,7 +2583,6 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.getCircuitBreakerConfiguration().isEnabled());
         Assert.assertEquals(500, configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
-        Assert.assertEquals(16, configuration.getCircuitBreakerConfiguration().getBufferSize());
 
         Assert.assertEquals(32, configuration.getTextConfiguration().getDateAdapterPoolCapacity());
         Assert.assertEquals(65536, configuration.getTextConfiguration().getJsonCacheLimit());
@@ -1972,11 +2634,15 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getSqlModelPoolCapacity());
         Assert.assertEquals(42, configuration.getSqlMaxNegativeLimit());
         Assert.assertEquals(10 * 1024 * 1024, configuration.getSqlSortKeyPageSize());
-        Assert.assertEquals(256, configuration.getSqlSortKeyMaxPages());
+        // New max.bytes key wins over the deprecated max.pages alias.
+        Assert.assertEquals(123L * 1024 * 1024, configuration.getSqlSortKeyMaxBytes());
         Assert.assertEquals(3 * 1024 * 1024, configuration.getSqlSortLightValuePageSize());
-        Assert.assertEquals(1027, configuration.getSqlSortLightValueMaxPages());
+        Assert.assertEquals(321L * 1024 * 1024, configuration.getSqlSortLightValueMaxBytes());
         Assert.assertEquals(8 * 1024 * 1024, configuration.getSqlHashJoinValuePageSize());
         Assert.assertEquals(1024, configuration.getSqlHashJoinValueMaxPages());
+        Assert.assertEquals(65_536, configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold());
+        Assert.assertEquals(512, configuration.getSqlHorizonJoinBwdScanMinGap());
+        Assert.assertEquals(4, configuration.getSqlHorizonJoinBwdScanSwitchFactor());
         Assert.assertEquals(5000, configuration.getSqlHorizonJoinMaxOffsets());
         Assert.assertEquals(10000, configuration.getSqlLatestByRowCount());
         Assert.assertEquals(2 * 1024 * 1024, configuration.getSqlHashJoinLightValuePageSize());
@@ -1985,7 +2651,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinMapEvacuationThreshold());
         Assert.assertEquals(4 * 1024 * 1024, configuration.getSqlSortValuePageSize());
-        Assert.assertEquals(1028, configuration.getSqlSortValueMaxPages());
+        Assert.assertEquals(678L * 1024 * 1024, configuration.getSqlSortValueMaxBytes());
         Assert.assertEquals(1000000, configuration.getWorkStealTimeoutNanos());
         Assert.assertFalse(configuration.isParallelIndexingEnabled());
         Assert.assertEquals(8 * 1024, configuration.getSqlJoinMetadataPageSize());
@@ -1998,11 +2664,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getWindowColumnPoolCapacity());
         Assert.assertEquals(256, configuration.getSqlWindowMaxRecursion());
         Assert.assertEquals(512 * 1024, configuration.getSqlWindowTreeKeyPageSize());
-        Assert.assertEquals(1031, configuration.getSqlWindowTreeKeyMaxPages());
+        Assert.assertEquals(456L * 1024 * 1024, configuration.getSqlWindowTreeKeyMaxBytes());
         Assert.assertEquals(1024 * 1024, configuration.getSqlWindowStorePageSize());
         Assert.assertEquals(1029, configuration.getSqlWindowStoreMaxPages());
+        Assert.assertEquals(234L * 1024 * 1024, configuration.getSqlWindowCacheMaxBytes());
         Assert.assertEquals(524288, configuration.getSqlWindowRowIdPageSize());
-        Assert.assertEquals(1030, configuration.getSqlWindowRowIdMaxPages());
+        Assert.assertEquals(345L * 1024 * 1024, configuration.getSqlWindowRowIdMaxBytes());
         Assert.assertEquals(1024, configuration.getWithClauseModelPoolCapacity());
         Assert.assertEquals(512, configuration.getRenameTableModelPoolCapacity());
         Assert.assertEquals(128, configuration.getInsertModelPoolCapacity());
@@ -2035,11 +2702,10 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelWindowJoinEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());
+        Assert.assertEquals(128L * Numbers.SIZE_1MB, configuration.getSqlParquetCacheMemorySize());
         Assert.assertFalse(configuration.isSqlOrderBySortEnabled());
-        Assert.assertEquals(100, configuration.getSqlOrderByRadixSortThreshold());
         Assert.assertEquals(32, configuration.getSqlParallelWorkStealingThreshold());
         Assert.assertEquals(100_000, configuration.getSqlParallelWorkStealingSpinTimeout());
-        Assert.assertEquals(42, configuration.getSqlParquetFrameCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlPageFrameMaxRows());
         Assert.assertEquals(100, configuration.getSqlPageFrameMinRows());
         Assert.assertEquals(128, configuration.getPageFrameReduceShardCount());
@@ -2048,6 +2714,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4096, configuration.getVectorAggregateQueueCapacity());
         Assert.assertEquals(8, configuration.getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(4, configuration.getPageFrameReduceColumnListCapacity());
+        Assert.assertEquals(512, configuration.getGroupByBatchSize());
         Assert.assertEquals(2048, configuration.getGroupByMergeShardQueueCapacity());
         Assert.assertEquals(100, configuration.getGroupByShardingThreshold());
         Assert.assertEquals(1000, configuration.getGroupByParallelTopKThreshold());

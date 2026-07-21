@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
 import io.questdb.std.QuietCloseable;
@@ -77,7 +77,7 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      * @return BitmapIndexReader for the specified column, or null if the column is not indexed
      * or if this cursor doesn't support indexed access
      */
-    default BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
+    default IndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
         throw new UnsupportedOperationException();
     }
 
@@ -177,6 +177,14 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      * @param timestamp the target timestamp to search for, in native timestamp space
      */
     void seekEstimate(long timestamp);
+
+    /**
+     * Declares the access pattern the enclosing factory will use when calling
+     * random-access on this cursor. Mirrors {@link RecordCursor#setParquetDecodeHint(ParquetDecodeHint)};
+     * default is no-op so non-pool-owning implementations can ignore it.
+     */
+    default void setParquetDecodeHint(ParquetDecodeHint hint) {
+    }
 
     /**
      * Return the cursor to the beginning of the page frame.

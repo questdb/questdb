@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,7 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -73,7 +73,7 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
     public boolean processNextBinaryPart(long addr) throws ParseException {
         switch (state) {
             case ELEMENT_TYPE:
-                elemType = Unsafe.getUnsafe().getByte(addr);
+                elemType = Unsafe.getByte(addr);
                 // TODO(puzpuzpuz): remove this check completely once we update all clients to skip fields
                 //  for null arrays instead of sending this code; this code is unreliable as it changes
                 //  each time we add a new column type
@@ -89,7 +89,7 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
                 nextBinaryPartExpectSize = 1;
                 return false;
             case N_DIMS:
-                nDims = Unsafe.getUnsafe().getByte(addr) & 0xFF; // treat as unsigned
+                nDims = Unsafe.getByte(addr) & 0xFF; // treat as unsigned
                 if (nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
                     throw ParseException.tooManyDims();
                 }
@@ -105,7 +105,7 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
                 shapeAddr = addr;
                 int n = nDims;
                 for (long i = 0; i < n; i++) {
-                    final int dimLength = Unsafe.getUnsafe().getInt(addr + i * Integer.BYTES);
+                    final int dimLength = Unsafe.getInt(addr + i * Integer.BYTES);
                     if (dimLength == 0) {
                         int type = ColumnType.encodeArrayType(elemType, nDims);
                         array.of(type, shapeAddr, 0L, 0);
@@ -115,7 +115,7 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
                 }
                 nextBinaryPartExpectSize = ColumnType.sizeOf(elemType);
                 for (long i = 0; i < n; i++) {
-                    final int dimLength = Unsafe.getUnsafe().getInt(addr + i * Integer.BYTES);
+                    final int dimLength = Unsafe.getInt(addr + i * Integer.BYTES);
                     try {
                         nextBinaryPartExpectSize = Math.multiplyExact(nextBinaryPartExpectSize, dimLength);
                     } catch (ArithmeticException e) {
@@ -157,7 +157,7 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
     }
 
     public static class ParseException extends Exception {
-        private static final io.questdb.std.ThreadLocal<ParseException> tlException = new ThreadLocal<>(ParseException::new);
+        private static final CarrierLocal<ParseException> tlException = new CarrierLocal<>(ParseException::new);
         private LineTcpParser.ErrorCode errorCode;
 
         public static @NotNull ParseException invalidType() {

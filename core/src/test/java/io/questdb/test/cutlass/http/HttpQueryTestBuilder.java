@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -127,7 +127,7 @@ public class HttpQueryTestBuilder {
         }
 
         if (securityContext != null) {
-            SecurityContextFactory securityContextFactory = (principalContext, interfaceId) -> securityContext;
+            SecurityContextFactory securityContextFactory = (_, _) -> securityContext;
 
             serverConfigBuilder.withFactoryProvider(new DefaultFactoryProvider() {
                 @Override
@@ -229,6 +229,7 @@ public class HttpQueryTestBuilder {
                 @Override
                 public ObjHashSet<String> getUrls() {
                     return new ObjHashSet<>() {{
+                        add("/imp");
                         add("/upload");
                     }};
                 }

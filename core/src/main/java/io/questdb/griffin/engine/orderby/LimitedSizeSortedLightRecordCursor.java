@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,13 +25,16 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 /**
  * SortedLightRecordCursor which implements LIMIT clause.
@@ -40,6 +43,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     private final LimitedSizeLongTreeChain chain;
     private final LimitedSizeLongTreeChain.TreeCursor chainCursor;
     private final RecordComparator comparator;
+    private final ObjList<DirectIntList> rankMaps;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -52,17 +56,23 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
 
     public LimitedSizeSortedLightRecordCursor(
             LimitedSizeLongTreeChain chain,
-            RecordComparator comparator
+            RecordComparator comparator,
+            ObjList<DirectIntList> rankMaps
     ) {
         this.chain = chain;
         this.comparator = comparator;
         this.chainCursor = chain.getCursor();
-        this.isOpen = true;
+        // Lazy variant: the chain skeleton is constructed but the key/value heaps
+        // are not allocated yet. The first of() call binds the MemoryTracker and
+        // calls chain.reopen() to allocate the initial backing under it.
+        this.isOpen = false;
+        this.rankMaps = rankMaps;
     }
 
     @Override
     public void close() {
         if (isOpen) {
+            Misc.freeObjListAndKeepObjects(rankMaps);
             baseCursor = Misc.free(baseCursor);
             Misc.free(chain);
             isOpen = false;
@@ -91,6 +101,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
             isChainBuilt = true;
         }
         if (rowsLeft-- > 0 && chainCursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             baseCursor.recordAt(baseRecord, chainCursor.next());
             return true;
         }
@@ -106,10 +117,13 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
         this.baseCursor = baseCursor;
         baseRecord = baseCursor.getRecord();
+        baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         if (!isOpen) {
             isOpen = true;
+            chain.setMemoryTracker(executionContext.getMemoryTracker());
             chain.reopen();
         }
+        SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
         circuitBreaker = executionContext.getCircuitBreaker();
         isChainBuilt = false;
         chain.clear();
@@ -123,6 +137,12 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(record, atRowId);
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        // We emit out of order, so of() pins the base to SCATTERED. An outer MONOTONIC push
+        // (e.g. an ASOF light join slave) must not downgrade it and force base re-decodes.
     }
 
     @Override
@@ -150,6 +170,8 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     }
 
     private void buildChain() {
+        // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         final Record placeHolderRecord = baseCursor.getRecordB();
         if (limit != 0) {
             while (baseCursor.hasNext()) {

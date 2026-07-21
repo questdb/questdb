@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.union;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -36,11 +37,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory {
-    protected final RecordCursorFactory factoryA;
-    protected final RecordCursorFactory factoryB;
-    private final ObjList<Function> castFunctionsA;
-    private final ObjList<Function> castFunctionsB;
     protected AbstractSetRecordCursor cursor;
+    protected RecordCursorFactory factoryA;
+    protected RecordCursorFactory factoryB;
+    private ObjList<Function> castFunctionsA;
+    private ObjList<Function> castFunctionsB;
 
     public AbstractSetRecordCursorFactory(
             RecordMetadata metadata,
@@ -74,11 +75,13 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
             cursorB = factoryB.getCursor(executionContext);
             Function.initNc(castFunctionsA, cursorA, executionContext, null);
             Function.initNc(castFunctionsB, cursorB, executionContext, null);
-            cursor.of(cursorA, cursorB, executionContext.getCircuitBreaker());
+            cursor.of(cursorA, cursorB, executionContext);
             return cursor;
         } catch (Throwable ex) {
             Misc.free(cursorA);
             Misc.free(cursorB);
+            // of() may breach after reopening tracker-charged maps; close() frees them and resets isOpen for reuse
+            Misc.free(cursor);
             throw ex;
         }
     }
@@ -101,10 +104,31 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     protected void _close() {
-        Misc.free(factoryA);
-        Misc.free(factoryB);
-        Misc.freeObjListAndClear(castFunctionsA);
-        Misc.freeObjListAndClear(castFunctionsB);
+        final AbstractSetRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        closeSetOwnersBestEffort(cursor);
+    }
+
+    protected final void closeSetOwnersBestEffort(AbstractSetRecordCursor cursor) {
+        final RecordCursorFactory factoryA = this.factoryA;
+        this.factoryA = null;
+        final RecordCursorFactory factoryB = this.factoryB;
+        this.factoryB = null;
+        final ObjList<Function> castFunctionsA = this.castFunctionsA;
+        this.castFunctionsA = null;
+        final ObjList<Function> castFunctionsB = this.castFunctionsB;
+        this.castFunctionsB = null;
+
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, factoryA);
+        if (factoryB != factoryA) {
+            failure = Misc.freeBestEffort(failure, factoryB);
+        }
+        failure = Misc.freeObjListBestEffort(failure, castFunctionsA);
+        if (castFunctionsB != castFunctionsA) {
+            failure = Misc.freeObjListBestEffort(failure, castFunctionsB);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     protected abstract CharSequence getOperation();

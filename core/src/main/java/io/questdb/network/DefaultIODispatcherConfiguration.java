@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -113,11 +113,6 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public int getSendBufferSize() {
         return 131072;
-    }
-
-    @Override
-    public int getTestConnectionBufferSize() {
-        return 64;
     }
 
     @Override

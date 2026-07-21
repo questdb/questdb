@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,6 +34,7 @@ import io.questdb.cairo.O3CopyJob;
 import io.questdb.cairo.O3OpenColumnJob;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.griffin.SqlException;
@@ -67,7 +68,6 @@ public class WorkerPoolUtils {
     ) {
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
         final MessageBus messageBus = cairoEngine.getMessageBus();
-        final int workerCount = sharedPoolQuery.getWorkerCount();
 
         sharedPoolQuery.assign(new LatestByAllIndexedJob(messageBus));
 
@@ -80,37 +80,34 @@ public class WorkerPoolUtils {
         if (configuration.isSqlParallelFilterEnabled() || configuration.isSqlParallelGroupByEnabled()) {
             final io.questdb.std.datetime.Clock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
             final Clock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
-            for (int i = 0; i < workerCount; i++) {
-                // create job per worker to allow each worker to have own shard walk sequence
-                final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
-                        cairoEngine,
-                        messageBus,
-                        new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks())
-                );
-                sharedPoolQuery.assign(i, pageFrameReduceJob);
-                sharedPoolQuery.freeOnExit(pageFrameReduceJob);
-
-                final UnorderedPageFrameReduceJob unorderedJob = new UnorderedPageFrameReduceJob(cairoEngine, messageBus);
-                sharedPoolQuery.assign(i, unorderedJob);
-                sharedPoolQuery.freeOnExit(unorderedJob);
-            }
+            // assign(Job) calls cloneInstance() once per worker; each clone is
+            // a fresh PageFrameReduceJob with its own shuffled shard order.
+            // The blueprint passed here is consumed only as a cloneInstance()
+            // target. WorkerPool.halt() frees Closeable clones from workerJobs.
+            sharedPoolQuery.assign(new PageFrameReduceJob(
+                    cairoEngine,
+                    messageBus,
+                    new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks())
+            ));
+            sharedPoolQuery.assign(new UnorderedPageFrameReduceJob(cairoEngine, messageBus));
         }
     }
 
     public static void setupWriterJobs(WorkerPool sharedPoolWrite, CairoEngine cairoEngine) throws SqlException {
         final MessageBus messageBus = cairoEngine.getMessageBus();
-        final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(
-                cairoEngine,
-                sharedPoolWrite.getWorkerCount()
-        );
-        sharedPoolWrite.freeOnExit(purgeDiscoveryJob);
-        sharedPoolWrite.assign(purgeDiscoveryJob);
+        // assign(Job) clones once per worker via O3PartitionPurgeJob.cloneInstance();
+        // WorkerPool.halt() frees the Closeable clones from workerJobs.
+        sharedPoolWrite.assign(new O3PartitionPurgeJob(cairoEngine));
 
         // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
         if (!cairoEngine.getConfiguration().disableColumnPurgeJob()) {
             final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine);
             sharedPoolWrite.freeOnExit(columnPurgeJob);
             sharedPoolWrite.assign(columnPurgeJob);
+
+            final PostingSealPurgeJob postingSealPurgeJob = new PostingSealPurgeJob(cairoEngine);
+            sharedPoolWrite.freeOnExit(postingSealPurgeJob);
+            sharedPoolWrite.assign(postingSealPurgeJob);
         }
 
         sharedPoolWrite.assign(new ColumnIndexerJob(messageBus));

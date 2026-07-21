@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,6 +33,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -195,7 +196,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     final int order = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
                     state.descending = order == ORDER_DESC;
                     if (isParquet) {
-                        state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending);
+                        state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending, sqlExecutionContext);
                     }
                     for (int retries = 0; runQuery; retries++) {
                         try {
@@ -239,7 +240,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 state.recordCursorFactory = cc.getRecordCursorFactory();
                             }
                             if (isParquet) {
-                                state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending);
+                                state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending, sqlExecutionContext);
                             }
                         }
                     }
@@ -249,10 +250,15 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         // when unwrapped instanceof VirtualRecordCursorFactory.
                         RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
-                        state.pageFrameCursor.setStreamingMode(true);
+                        state.pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                         state.materializer.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);
                     } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
-                        state.materializer.setUp(state.recordCursorFactory.getMetadata());
+                        RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
+                        if (unwrapped instanceof VirtualRecordCursorFactory vf) {
+                            state.materializer.setUpCursorBacked(vf);
+                        } else {
+                            state.materializer.setUp(state.recordCursorFactory.getMetadata());
+                        }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);
@@ -485,13 +491,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             if (state.parquetExportMode == ParquetExportMode.TEMP_TABLE) {
                 String tableName = getTableName(state.copyID);
                 state.setParquetExportTableName(tableName);
+                var exportModel = state.getExportModel();
                 var createOp = copyExportContext.validateAndCreateParquetExportTableOp(
                         sqlExecutionContext,
                         state.sqlText,
-                        state.getExportModel().getPartitionBy(),
+                        exportModel.getPartitionBy(),
                         tableName,
                         "",
-                        0
+                        0,
+                        exportModel.getBloomFilterColumns(),
+                        exportModel.getBloomFilterColumnsPosition()
                 );
                 state.setParquetTempTableCreate(createOp);
             }
@@ -629,6 +638,30 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             exportModel.setRawArrayEncoding(enabled);
         }
 
+        DirectUtf8Sequence bloomFilterColumns = request.getUrlParam(EXPORT_PARQUET_OPTION_BLOOM_FILTER_COLUMNS);
+        if (bloomFilterColumns != null && bloomFilterColumns.size() > 0) {
+            exportModel.setBloomFilterColumns(bloomFilterColumns.toString(), 0);
+        }
+
+        DirectUtf8Sequence bloomFilterFpp = request.getUrlParam(EXPORT_PARQUET_OPTION_BLOOM_FILTER_FPP);
+        if (bloomFilterFpp != null && bloomFilterFpp.size() > 0) {
+            try {
+                double fpp = Numbers.parseDouble(bloomFilterFpp.ptr(), bloomFilterFpp.size());
+                if (!Double.isFinite(fpp) || fpp <= 0 || fpp >= 1) {
+                    errSink.clear();
+                    errSink.put("bloom_filter_fpp must be between 0 and 1 (exclusive): ").put(bloomFilterFpp);
+                    sendException(response, 0, errSink, state);
+                    return false;
+                }
+                exportModel.setBloomFilterFpp(fpp);
+            } catch (NumericException e) {
+                errSink.clear();
+                errSink.put("invalid bloom_filter_fpp value: ").put(bloomFilterFpp);
+                sendException(response, 0, errSink, state);
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -670,7 +703,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.metadata,
                         state.getWriteCallback(),
                         exportMode,
-                        null
+                        null,
+                        state.getExportModel().getBloomFilterColumns(),
+                        0,
+                        state.getExportModel().getBloomFilterFpp(),
+                        sqlExecutionContext.getBindVariableService()
                 );
                 exporter.of(state.task);
                 exporter.setExportMode(exportMode);
@@ -1145,7 +1182,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             state.columnValueFullySent = true;
         } catch (Throwable e) {
             // we have to disambiguate here if this is the first attempt to send the value, which failed,
-            // and we have any partial value we can send to the clint, or our state did not bookmark anything?
+            // and we have any partial value we can send to the client, or our state did not bookmark anything?
             state.columnValueFullySent = state.arrayState.isNothingWritten();
             state.arrayState.reset(arrayView);
             throw e;
