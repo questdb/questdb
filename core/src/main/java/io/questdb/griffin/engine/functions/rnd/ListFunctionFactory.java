@@ -97,6 +97,15 @@ public class ListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean shouldMemoize() {
+            // Every accessor advances the cycle, so getInt() and getSymbol() on one row are two
+            // separate draws. Any consumer that reads both - an all-symbol UNION re-symbolises the
+            // column and then resolves a key against the row's own text - would otherwise see the
+            // key and the text describe different values. Memoizing pins one draw per row.
+            return true;
+        }
+
+        @Override
         public boolean supportsKeyValueAccess() {
             // The dictionary is a fixed list built once per cursor, so getInt() returns an index
             // and valueOf() resolves it without touching text. A key consumer (QWP egress) should

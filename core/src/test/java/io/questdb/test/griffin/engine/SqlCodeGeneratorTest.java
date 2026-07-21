@@ -8954,6 +8954,40 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsStatefulSourceResolvesKeyAndTextAlike() throws Exception {
+        // list() and the rnd_symbol_* generators draw a fresh value on EVERY accessor call, so
+        // getInt() and getSymbol() on one row are two independent draws. The projection reads the
+        // key off the leg record and the text through the union, so without memoization a row's
+        // key resolves to a different value than the row's own text - silently, and differently
+        // over QWP (key path) than over HTTP (text path). Memoizing pins one draw per row.
+        // The union column was STRING before it was re-symbolised, so there was only ever one
+        // read path and nothing to disagree.
+        allowFunctionMemoization();
+        assertMemoryLeak(() -> {
+            assertUnionKeyResolvesToRowText(
+                    "SELECT list('a','b','c') s FROM long_sequence(6)" +
+                            " UNION ALL SELECT list('x','y','z') s FROM long_sequence(6)"
+            );
+            assertUnionKeyResolvesToRowText(
+                    "SELECT rnd_symbol('a','b','c') s FROM long_sequence(16)" +
+                            " UNION ALL SELECT rnd_symbol('x','y','z') s FROM long_sequence(16)"
+            );
+            assertUnionKeyResolvesToRowText(
+                    "SELECT rnd_symbol_weighted('a', 2.5, 'b', 1.0) s FROM long_sequence(16)" +
+                            " UNION ALL SELECT rnd_symbol_weighted('x', 2.5, 'y', 1.0) s FROM long_sequence(16)"
+            );
+            assertUnionKeyResolvesToRowText(
+                    "SELECT rnd_symbol_zipf('a','b','c', 2.0) s FROM long_sequence(16)" +
+                            " UNION ALL SELECT rnd_symbol_zipf('x','y','z', 2.0) s FROM long_sequence(16)"
+            );
+            assertUnionKeyResolvesToRowText(
+                    "SELECT rnd_symbol_zipf(5, 1.5) s FROM long_sequence(16)" +
+                            " UNION ALL SELECT rnd_symbol_zipf(5, 1.5) s FROM long_sequence(16)"
+            );
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsTranslatesNativeKeysAcrossThreeSources() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL)");
@@ -10017,6 +10051,22 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             Assert.assertFalse(sql + " base claims page frames", base.supportsPageFrameCursor());
             Assert.assertFalse(sql + " base claims filter stealing", base.supportsFilterStealing());
             Assert.assertFalse(sql + " base claims time frames", base.supportsTimeFrameCursor());
+        }
+    }
+
+    private static void assertUnionKeyResolvesToRowText(String sql) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertEquals(sql + " must return SYMBOL", ColumnType.SYMBOL, factory.getMetadata().getColumnType(0));
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                final Record record = cursor.getRecord();
+                for (int row = 0; cursor.hasNext(); row++) {
+                    // Read the key first: it is the accessor a key consumer would use, and reading
+                    // the text first would hide a divergence behind the memoizer's own cache.
+                    final int key = record.getInt(0);
+                    TestUtils.assertEquals(sql + " row " + row + " key " + key, symbolTable.valueOf(key), record.getSymA(0));
+                }
+            }
         }
     }
 
