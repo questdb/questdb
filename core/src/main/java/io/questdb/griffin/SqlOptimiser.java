@@ -9406,6 +9406,9 @@ public class SqlOptimiser implements Mutable {
         final CharSequence keepAlias = createColumnAlias("__keep_subsample", model);
         final WindowExpression keepCol = windowExpressionPool.next();
         keepCol.of(keepAlias, uni);
+        // The keep flag is an internal helper consumed by the WHERE filter only. Exclude it from
+        // wildcard expansion so it cannot leak into the output of SELECT * FROM t SUBSAMPLE uniform(N).
+        keepCol.setIncludeIntoWildcard(false);
         uni.windowExpression = keepCol;
         // OVER (ORDER BY ts): the designated timestamp gives deterministic input order.
         final ExpressionNode orderByTs = expressionNodePool.next().of(LITERAL, timestamp.token, 0, timestamp.position);
@@ -9435,6 +9438,13 @@ public class SqlOptimiser implements Mutable {
                 outerModel.addBottomUpColumn(nextColumn(qc.getAlias()));
             }
         }
+
+        // Re-lift LIMIT above the keep-flag filter. The parser attaches LIMIT to the projection model
+        // (parseDml0), which is now the inner model of the rewrite. Left in place it would clip the scan
+        // BEFORE __keep_subsample filtering, i.e. LIMIT would apply before subsampling. Move it to the
+        // outer model so LIMIT k returns the first k of the uniformly-selected rows, matching the cursor.
+        outerModel.setLimitPosition(model.getLimitPosition());
+        outerModel.moveLimitFrom(model);
 
         // Bubble up the union model so set operations apply to the rewritten (outer) model.
         final IQueryModel unionModel = model.getUnionModel();

@@ -3116,6 +3116,69 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUniformSelectStarDoesNotLeakKeepColumn() throws Exception {
+        // Regression: SELECT * must project only the table's columns. The internal __keep_subsample
+        // window flag used by the rewrite must never surface in wildcard output.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, 1, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, 2, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, 3, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, 4, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, 5, '2024-01-01T04:00:00.000000Z'),
+                    (60.0, 6, '2024-01-01T05:00:00.000000Z'),
+                    (70.0, 7, '2024-01-01T06:00:00.000000Z'),
+                    (80.0, 8, '2024-01-01T07:00:00.000000Z'),
+                    (90.0, 9, '2024-01-01T08:00:00.000000Z'),
+                    (100.0, 10, '2024-01-01T09:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // 10 rows, target 4: positions 0, 3, 6, 9. Header must be exactly price, qty, ts.
+            assertSql(
+                    "price\tqty\tts\n" +
+                            "10.0\t1\t2024-01-01T00:00:00.000000Z\n" +
+                            "40.0\t4\t2024-01-01T03:00:00.000000Z\n" +
+                            "70.0\t7\t2024-01-01T06:00:00.000000Z\n" +
+                            "100.0\t10\t2024-01-01T09:00:00.000000Z\n",
+                    "SELECT * FROM t SUBSAMPLE uniform(4)"
+            );
+        });
+    }
+
+    @Test
+    public void testUniformLimitAppliesAfterSubsample() throws Exception {
+        // Regression: LIMIT must apply AFTER the uniform subsample, not before it. The rewrite re-lifts
+        // LIMIT above the __keep_subsample filter so LIMIT k returns the first k of the selected rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z'),
+                    (60.0, '2024-01-01T05:00:00.000000Z'),
+                    (70.0, '2024-01-01T06:00:00.000000Z'),
+                    (80.0, '2024-01-01T07:00:00.000000Z'),
+                    (90.0, '2024-01-01T08:00:00.000000Z'),
+                    (100.0, '2024-01-01T09:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // uniform(4) on 10 rows -> positions 0, 3, 6, 9 (prices 10, 40, 70, 100).
+            // LIMIT 2 must keep the FIRST 2 of those selected rows: 10, 40 (not the first 2 raw rows).
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "40.0\t2024-01-01T03:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE uniform(4) LIMIT 2"
+            );
+        });
+    }
+
+    @Test
     public void testCadenceStrideNegative() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
