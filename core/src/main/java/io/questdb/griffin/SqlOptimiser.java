@@ -9438,6 +9438,40 @@ public class SqlOptimiser implements Mutable {
                             || isConstantLttbGap(subsample.args.getQuick(2), sqlExecutionContext))) {
                         model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, subsample.token);
                     }
+                } else if (Chars.equalsIgnoreCase(subsample.token, "sdt")) {
+                    // TOTAL GATE for sdt. Unlike the other methods, sdt has NO custom SUBSAMPLE cursor,
+                    // so a non-migrable sdt node must NOT fall through to codegen (which would only emit
+                    // the misleading "unknown subsample method: sdt"). Every sdt shape therefore either
+                    // MIGRATES to the sdt(ts, value, compdev) keep-flag window function, or throws a
+                    // specific SqlException at the subsample position here.
+                    //
+                    // Migrate when: not in a join context; a designated timestamp is present; exactly 2
+                    // arguments (value, compdev); not an aggregation context; the value arg (arg 0) is a
+                    // bare column literal (same by-name reasoning as m4/minmax/lttb); and compdev (arg 1)
+                    // is a compile-time, non-negative, finite double constant (isConstantSdtCompdev).
+                    // A value literal naming a non-numeric (SYMBOL/VARCHAR) column still migrates - its
+                    // existence/type is unknown at rewrite time - and the sdt window factory rejects it at
+                    // runtime with its own numeric-type overload message.
+                    if (subsampleInJoinContext) {
+                        throw SqlException.$(subsample.position, "SUBSAMPLE sdt is not supported inside a join");
+                    }
+                    if (timestamp == null) {
+                        throw SqlException.$(subsample.position, "SUBSAMPLE requires a designated timestamp column");
+                    }
+                    if (subsample.paramCount != 2) {
+                        throw SqlException.$(subsample.position, "sdt() requires exactly 2 arguments: column and compdev");
+                    }
+                    if (isAggregationContext(model, nested)) {
+                        throw SqlException.$(subsample.position, "SUBSAMPLE sdt is not supported in an aggregation context");
+                    }
+                    final ExpressionNode valueNode = subsample.args.getQuick(0);
+                    if (valueNode == null || valueNode.type != ExpressionNode.LITERAL) {
+                        throw SqlException.$(subsample.position, "SUBSAMPLE sdt requires a plain column as its first argument");
+                    }
+                    if (!isConstantSdtCompdev(subsample.args.getQuick(1), sqlExecutionContext)) {
+                        throw SqlException.$(subsample.position, "SUBSAMPLE sdt requires a constant, non-negative compdev");
+                    }
+                    model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, subsample.token);
                 }
             }
         }
@@ -9544,6 +9578,39 @@ public class SqlOptimiser implements Mutable {
             };
             // unsupported unit (unitMicros == 0) or n * unitMicros overflow -> fall through.
             return unitMicros != 0 && n <= Long.MAX_VALUE / unitMicros;
+        } catch (Throwable th) {
+            return false;
+        } finally {
+            Misc.free(func);
+        }
+    }
+
+    /**
+     * True only when {@code compdevNode} is a compile-time numeric constant whose double value is
+     * non-negative and finite - the sole sdt compdev shape the {@code sdt(NDd)} keep-flag window
+     * function accepts (it re-validates the same way at runtime). Mirrors {@link #isConstantCadenceSeed}.
+     * A non-constant (bind-variable / runtime), non-numeric, negative, NaN, or infinite compdev returns
+     * false, so the total sdt gate throws a specific "constant, non-negative compdev" error instead of
+     * migrating (sdt has no cursor fallback).
+     */
+    private boolean isConstantSdtCompdev(ExpressionNode compdevNode, SqlExecutionContext sqlExecutionContext) {
+        if (compdevNode == null) {
+            return false;
+        }
+        Function func = null;
+        try {
+            func = functionParser.parseFunction(compdevNode, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!func.isConstant()) {
+                return false;
+            }
+            final int tag = ColumnType.tagOf(func.getType());
+            if (tag != ColumnType.DOUBLE && tag != ColumnType.FLOAT
+                    && tag != ColumnType.INT && tag != ColumnType.LONG
+                    && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
+                return false;
+            }
+            final double compdev = func.getDouble(null);
+            return compdev >= 0 && Numbers.isFinite(compdev);
         } catch (Throwable th) {
             return false;
         } finally {

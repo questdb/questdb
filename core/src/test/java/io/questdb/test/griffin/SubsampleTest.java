@@ -3591,6 +3591,145 @@ public class SubsampleTest extends AbstractCairoTest {
         });
     }
 
+    // ---- sdt (Swinging Door Trending) desugaring: SUBSAMPLE sdt(value, compdev) ----
+    // sdt has NO custom SUBSAMPLE cursor, so the rewrite gate is TOTAL: a valid shape migrates to the
+    // sdt(ts, value, compdev) keep-flag window function; every other sdt shape throws a specific
+    // SqlException here (never the generic codegen "unknown subsample method").
+
+    @Test
+    public void testSdtDesugarsToWindowFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    Filter filter: __keep_subsample\n" +
+                            "        CachedWindowLight\n" +
+                            "          unorderedFunctions: [sdt(ts, price, 0.5) over (order by [ts])]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n",
+                    "EXPLAIN SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)"
+            );
+        });
+    }
+
+    @Test
+    public void testSdtMatchesWindowFunction() throws Exception {
+        // The sdt window function IS the oracle (sdt has no byte-identity cursor). The desugared
+        // SUBSAMPLE must be byte-identical to the explicit window+keep-filter it lowers to.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO x SELECT rnd_double() * 100, timestamp_sequence('2024-01-01', 60000000) FROM long_sequence(500)");
+            printSql("SELECT ts, price FROM (SELECT *, sdt(ts, price, 0.5) OVER (ORDER BY ts) k FROM x) WHERE k");
+            final String expected = sink.toString();
+            assertSql(expected, "SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)");
+        });
+    }
+
+    @Test
+    public void testSdtNullFlush() throws Exception {
+        // A null value mid-series: default RESPECT NULLS. The desugared SUBSAMPLE must match the
+        // window function's null handling byte-for-byte.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO x VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (10.0, '2024-01-01T01:00:00.000000Z'),
+                    (10.0, '2024-01-01T02:00:00.000000Z'),
+                    (NULL, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z'),
+                    (50.0, '2024-01-01T05:00:00.000000Z'),
+                    (90.0, '2024-01-01T06:00:00.000000Z')
+                    """);
+            printSql("SELECT ts, price FROM (SELECT *, sdt(ts, price, 0.5) OVER (ORDER BY ts) k FROM x) WHERE k");
+            final String expected = sink.toString();
+            assertSql(expected, "SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)");
+        });
+    }
+
+    @Test
+    public void testSdtNonConstantCompdev() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT ts, price FROM x SUBSAMPLE sdt(price, $1)",
+                    34,
+                    "SUBSAMPLE sdt requires a constant, non-negative compdev"
+            );
+        });
+    }
+
+    @Test
+    public void testSdtNegativeCompdev() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT ts, price FROM x SUBSAMPLE sdt(price, -1.0)",
+                    34,
+                    "SUBSAMPLE sdt requires a constant, non-negative compdev"
+            );
+        });
+    }
+
+    @Test
+    public void testSdtNonNumericValue() throws Exception {
+        // A literal naming a SYMBOL column legitimately MIGRATES (existence/type unknown at rewrite
+        // time); the sdt window factory rejects it at runtime with its own numeric-type overload
+        // message, mirroring how lttb handles testErrorNonNumericColumn.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT ts, sym FROM x SUBSAMPLE sdt(sym, 0.5)",
+                    36,
+                    "argument type mismatch for function `sdt` at #2 expected: DOUBLE, actual: SYMBOL"
+            );
+        });
+    }
+
+    @Test
+    public void testSdtWrongArity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT ts, price FROM x SUBSAMPLE sdt(price)",
+                    34,
+                    "sdt() requires exactly 2 arguments: column and compdev"
+            );
+            assertException(
+                    "SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5, 1)",
+                    34,
+                    "sdt() requires exactly 2 arguments: column and compdev"
+            );
+        });
+    }
+
+    @Test
+    public void testSdtInJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prices (price DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE volumes (volume DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertException(
+                    "SELECT p.price, p.ts, v.volume FROM prices p ASOF JOIN volumes v ON (symbol) SUBSAMPLE sdt(price, 0.5)",
+                    87,
+                    "SUBSAMPLE sdt is not supported inside a join"
+            );
+        });
+    }
+
+    @Test
+    public void testSdtNoDesignatedTs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP)");
+            assertException(
+                    "SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)",
+                    34,
+                    "SUBSAMPLE requires a designated timestamp column"
+            );
+        });
+    }
+
     private static int deterministicCadenceOffset(long seed, int stride) {
         long h = seed;
         h = (h ^ (h >>> 30)) * 0xbf58476d1ce4e5b9L;
