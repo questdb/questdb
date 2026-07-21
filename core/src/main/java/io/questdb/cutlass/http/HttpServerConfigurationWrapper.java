@@ -286,11 +286,6 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
-    public int getTestConnectionBufferSize() {
-        return getDelegate().getTestConnectionBufferSize();
-    }
-
-    @Override
     public long getTimeout() {
         return getDelegate().getTimeout();
     }
