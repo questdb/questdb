@@ -54,6 +54,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
+    private PageFrameRecordCursor bwdRecordCursor;
     private PageFrameRecordCursor cursor;
     private Function filter;
     private RowCursorFactory rowCursorFactory;
@@ -149,6 +150,66 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         final PageFrameCursor frameCursor = initFwdPageFrameCursor(partitionFrameCursor, executionContext);
         try {
             return initRecordCursor(frameCursor, executionContext);
+        } catch (Throwable th) {
+            frameCursor.close();
+            throw th;
+        }
+    }
+
+    /**
+     * Opens this full scan over the timestamp range {@code [timestampLo, timestampHi]},
+     * <b>inclusive of both edges</b>, yielding rows in descending designated-timestamp
+     * order - the exact reverse of
+     * {@link #getCursorInTimestampRange(SqlExecutionContext, long, long)} over the same
+     * bounds, ties included.
+     * <p>
+     * A localized live-view repair reads through this while discovering how far back its
+     * dependency floor {@code L} sits: it counts qualifying predecessors per partition
+     * key and stops on the row that satisfies the last key still short. Descending order
+     * is what makes that stop meaningful - the row it stops on <i>is</i> {@code L}, and
+     * the partitions below it were never opened.
+     * <p>
+     * The descending scan substitutes an entity row cursor of its own, so the factory
+     * must be a plain full scan. An index-backed row cursor yields rows in index order
+     * rather than in timestamp order, which the caller would read as a predecessor count
+     * over the wrong rows. That requirement also keeps the two directions free of shared
+     * mutable state - every construction carrying a factory-level filter builds an
+     * index-backed row cursor - which is what lets a repair hold an ascending and a
+     * descending cursor open at the same time.
+     */
+    public RecordCursor getCursorInTimestampRangeBackward(
+            SqlExecutionContext executionContext,
+            long timestampLo,
+            long timestampHi
+    ) throws SqlException {
+        if (!(partitionFrameCursorFactory instanceof FullPartitionFrameCursorFactory fullFrameFactory)) {
+            throw CairoException.nonCritical().put("timestamp range cursor requires a full partition scan");
+        }
+        if (!rowCursorFactory.isEntity() || rowCursorFactory.isUsingIndex()) {
+            throw CairoException.nonCritical().put("backward timestamp range cursor requires an entity row cursor");
+        }
+        if (bwdRecordCursor == null) {
+            bwdRecordCursor = new PageFrameRecordCursorImpl(
+                    configuration,
+                    getMetadata(),
+                    new PageFrameRowCursorFactory(ORDER_DESC),
+                    true,
+                    filter
+            );
+        }
+        final PartitionFrameCursor partitionFrameCursor = fullFrameFactory.getCursorBackward(
+                executionContext,
+                columnIndexes,
+                timestampLo,
+                timestampHi
+        );
+        final PageFrameCursor frameCursor = initBwdPageFrameCursor(partitionFrameCursor, executionContext);
+        try {
+            bwdRecordCursor.of(frameCursor, executionContext);
+            if (filter != null) {
+                filter.init(bwdRecordCursor, executionContext);
+            }
+            return bwdRecordCursor;
         } catch (Throwable th) {
             frameCursor.close();
             throw th;
@@ -255,6 +316,8 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     protected void _close() {
         final TablePageFrameCursor bwdPageFrameCursor = this.bwdPageFrameCursor;
         this.bwdPageFrameCursor = null;
+        final PageFrameRecordCursor bwdRecordCursor = this.bwdRecordCursor;
+        this.bwdRecordCursor = null;
         final PageFrameRecordCursor cursor = this.cursor;
         this.cursor = null;
         final Function filter = this.filter;
@@ -272,6 +335,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         } catch (Throwable th) {
             failure = th;
         }
+        failure = Misc.freeBestEffort(failure, bwdRecordCursor);
         failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, fwdPageFrameCursor);

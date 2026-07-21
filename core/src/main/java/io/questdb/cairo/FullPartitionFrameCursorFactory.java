@@ -38,10 +38,13 @@ import org.jetbrains.annotations.NotNull;
 public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
     private final int baseOrder;
     private FullBwdPartitionFrameCursor bwdCursor;
+    private IntervalBwdPartitionFrameCursor bwdRangeCursor;
+    private RuntimeIntervalModel bwdRangeIntervalModel;
+    private LongList bwdRangeIntervals;
     private FullFwdPartitionFrameCursor fwdCursor;
-    private IntervalFwdPartitionFrameCursor rangeCursor;
-    private RuntimeIntervalModel rangeIntervalModel;
-    private LongList rangeIntervals;
+    private IntervalFwdPartitionFrameCursor fwdRangeCursor;
+    private RuntimeIntervalModel fwdRangeIntervalModel;
+    private LongList fwdRangeIntervals;
 
     public FullPartitionFrameCursorFactory(
             TableToken tableToken,
@@ -61,8 +64,10 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
         super.close();
         fwdCursor = Misc.free(fwdCursor);
         bwdCursor = Misc.free(bwdCursor);
-        rangeCursor = Misc.free(rangeCursor);
-        rangeIntervalModel = Misc.free(rangeIntervalModel);
+        fwdRangeCursor = Misc.free(fwdRangeCursor);
+        fwdRangeIntervalModel = Misc.free(fwdRangeIntervalModel);
+        bwdRangeCursor = Misc.free(bwdRangeCursor);
+        bwdRangeIntervalModel = Misc.free(bwdRangeIntervalModel);
     }
 
     @Override
@@ -129,27 +134,70 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
         final TableReader reader = getReader(executionContext);
         try {
             reader.setActiveColumns(columnIndexes);
-            if (rangeCursor == null) {
-                rangeIntervals = new LongList(2);
-                rangeIntervalModel = new RuntimeIntervalModel(
+            if (fwdRangeCursor == null) {
+                fwdRangeIntervals = new LongList(2);
+                fwdRangeIntervalModel = new RuntimeIntervalModel(
                         ColumnType.getTimestampDriver(getMetadata().getTimestampType()),
                         PartitionBy.NONE,
-                        rangeIntervals
+                        fwdRangeIntervals
                 );
-                rangeCursor = new IntervalFwdPartitionFrameCursor(
-                        rangeIntervalModel,
+                fwdRangeCursor = new IntervalFwdPartitionFrameCursor(
+                        fwdRangeIntervalModel,
                         getMetadata().getTimestampIndex()
                 );
             }
-            // An empty interval list is how the interval cursor spells "matches
-            // nothing"; an inverted pair would instead drive its binary searches
-            // off a range that cannot exist.
-            rangeIntervals.clear();
-            if (timestampLo <= timestampHi) {
-                rangeIntervals.add(timestampLo);
-                rangeIntervals.add(timestampHi);
+            stampRange(fwdRangeIntervals, timestampLo, timestampHi);
+            return fwdRangeCursor.of(reader, executionContext);
+        } catch (Throwable th) {
+            Misc.free(reader);
+            throw th;
+        }
+    }
+
+    /**
+     * Returns a cursor over the timestamp range {@code [timestampLo, timestampHi]},
+     * <b>inclusive of both edges</b>, walking partitions from the top of the range
+     * down. It is the descending mirror of
+     * {@link #getCursor(SqlExecutionContext, IntList, long, long)} and obeys the same
+     * inclusive-edge and empty-on-inverted-bounds rules.
+     * <p>
+     * Descent is what makes predecessor discovery bounded. A caller looking for the
+     * {@code N} qualifying rows that precede a repair floor does not know how far back
+     * they sit, so it walks down and stops on the row that satisfies the last key it is
+     * still waiting for. Closing the cursor there leaves every partition below that row
+     * unopened - the cost the discovery bound exists to avoid, and one an ascending scan
+     * cannot avoid at all, because it would have to start from the bottom of the range
+     * to arrive in that order.
+     * <p>
+     * The backward cursor keeps its own interval list rather than sharing the forward
+     * one: both directions are open at once while a repair collects its output keys
+     * above the floor and its dependency floor below it, and a shared list would let the
+     * second call silently re-point the first cursor's range.
+     */
+    public PartitionFrameCursor getCursorBackward(
+            SqlExecutionContext executionContext,
+            @NotNull IntList columnIndexes,
+            long timestampLo,
+            long timestampHi
+    ) throws SqlException {
+        authorizeSelect(executionContext, columnIndexes);
+        final TableReader reader = getReader(executionContext);
+        try {
+            reader.setActiveColumns(columnIndexes);
+            if (bwdRangeCursor == null) {
+                bwdRangeIntervals = new LongList(2);
+                bwdRangeIntervalModel = new RuntimeIntervalModel(
+                        ColumnType.getTimestampDriver(getMetadata().getTimestampType()),
+                        PartitionBy.NONE,
+                        bwdRangeIntervals
+                );
+                bwdRangeCursor = new IntervalBwdPartitionFrameCursor(
+                        bwdRangeIntervalModel,
+                        getMetadata().getTimestampIndex()
+                );
             }
-            return rangeCursor.of(reader, executionContext);
+            stampRange(bwdRangeIntervals, timestampLo, timestampHi);
+            return bwdRangeCursor.of(reader, executionContext);
         } catch (Throwable th) {
             Misc.free(reader);
             throw th;
@@ -173,5 +221,19 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
             sink.type("Frame forward scan");
         }
         super.toPlan(sink);
+    }
+
+    /**
+     * Re-stamps <b>both</b> bounds of a cached interval list, so a later call cannot
+     * inherit an earlier one's edge. An empty list is how the interval cursor spells
+     * "matches nothing"; an inverted pair would instead drive its binary searches off a
+     * range that cannot exist.
+     */
+    private static void stampRange(LongList intervals, long timestampLo, long timestampHi) {
+        intervals.clear();
+        if (timestampLo <= timestampHi) {
+            intervals.add(timestampLo);
+            intervals.add(timestampHi);
+        }
     }
 }
