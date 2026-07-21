@@ -266,54 +266,75 @@ public class QwpMessageCursor implements Mutable {
         }
         // With the gap rejected, deltaStartId <= size(), so every slot this
         // pre-sizing appends falls inside [deltaStartId, requiredSize) and the
-        // loop below overwrites it. No null can survive this method.
-        while (connectionSymbolDict.size() < requiredSize) {
-            connectionSymbolDict.add(null);
-        }
-
-        // Read and accumulate symbols
-        for (int i = 0; i < deltaCount; i++) {
-            if (address >= payloadEnd) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                        "truncated delta symbol entry"
-                );
+        // loop below overwrites it -- ON A COMPLETE FRAME. But the per-entry loop
+        // can still throw partway (a truncated entry, a symbol length past the
+        // payload), and reject() does NOT close the connection nor clear the
+        // dictionary -- state.clear() preserves connectionSymbolDict for the next
+        // message. So a null pre-filled here but never overwritten would SURVIVE
+        // onto the connection, inflate size(), and defeat QwpSymbolColumnCursor's
+        // idx >= dictLimit guard on a LATER frame exactly as a gap would. Make the
+        // mutation atomic: restore the size on any throw, so a rejected frame leaves
+        // the connection dictionary exactly as it was. Only then does the invariant
+        // "no null can survive this method" actually hold on every path.
+        int sizeBefore = connectionSymbolDict.size();
+        boolean committed = false;
+        try {
+            while (connectionSymbolDict.size() < requiredSize) {
+                connectionSymbolDict.add(null);
             }
 
-            // Read symbol length
-            QwpVarint.decode(address, payloadEnd, varintResult);
-            if (varintResult.value < 0 || varintResult.value > Integer.MAX_VALUE) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                        "delta symbol length out of int range: " + varintResult.value
-                );
-            }
-            int symbolLen = (int) varintResult.value;
-            address += varintResult.bytesRead;
+            // Read and accumulate symbols
+            for (int i = 0; i < deltaCount; i++) {
+                if (address >= payloadEnd) {
+                    throw QwpParseException.create(
+                            QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                            "truncated delta symbol entry"
+                    );
+                }
 
-            if (address + symbolLen > payloadEnd) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                        "truncated delta symbol value"
-                );
-            }
+                // Read symbol length
+                QwpVarint.decode(address, payloadEnd, varintResult);
+                if (varintResult.value < 0 || varintResult.value > Integer.MAX_VALUE) {
+                    throw QwpParseException.create(
+                            QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                            "delta symbol length out of int range: " + varintResult.value
+                    );
+                }
+                int symbolLen = (int) varintResult.value;
+                address += varintResult.bytesRead;
 
-            // Read symbol value as UTF-8 directly from memory
-            String symbol = Utf8s.stringFromUtf8Bytes(address, address + symbolLen);
-            address += symbolLen;
+                if (address + symbolLen > payloadEnd) {
+                    throw QwpParseException.create(
+                            QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                            "truncated delta symbol value"
+                    );
+                }
 
-            // Store in dictionary. Flag a redefinition when an existing client
-            // symbol ID is remapped to a different string: orphan-adoption
-            // replays a prior sender's dict-from-0 ahead of this sender's own,
-            // so the same client symbol IDs are reused with different strings.
-            // Re-sending an identical dict (the common dict-from-0 case within
-            // one sender) overwrites with equal values and is not a redefinition.
-            int dictIndex = deltaStartId + i;
-            String previous = connectionSymbolDict.getQuick(dictIndex);
-            if (previous != null && !previous.equals(symbol)) {
-                symbolDictRedefined = true;
+                // Read symbol value as UTF-8 directly from memory
+                String symbol = Utf8s.stringFromUtf8Bytes(address, address + symbolLen);
+                address += symbolLen;
+
+                // Store in dictionary. Flag a redefinition when an existing client
+                // symbol ID is remapped to a different string: orphan-adoption
+                // replays a prior sender's dict-from-0 ahead of this sender's own,
+                // so the same client symbol IDs are reused with different strings.
+                // Re-sending an identical dict (the common dict-from-0 case within
+                // one sender) overwrites with equal values and is not a redefinition.
+                int dictIndex = deltaStartId + i;
+                String previous = connectionSymbolDict.getQuick(dictIndex);
+                if (previous != null && !previous.equals(symbol)) {
+                    symbolDictRedefined = true;
+                }
+                connectionSymbolDict.setQuick(dictIndex, symbol);
             }
-            connectionSymbolDict.setQuick(dictIndex, symbol);
+            committed = true;
+        } finally {
+            if (!committed) {
+                // Roll the pre-sizing back to what it was. A later add() overwrites any
+                // stale slots beyond this position before getQuick can expose them, so no
+                // null is ever reachable through size().
+                connectionSymbolDict.setPos(sizeBefore);
+            }
         }
 
         return address;

@@ -220,6 +220,49 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
+    public void testTruncatedDeltaLeavesNoNullResidueOnTheConnection() throws Exception {
+        // The invariant the method claims -- "no null can survive" -- is only true if a
+        // frame that fails PARTWAY leaves nothing behind. The pre-sizing runs before the
+        // entry loop, and reject() does NOT close the connection or clear the dictionary
+        // (state.clear() preserves connectionSymbolDict for the next message), so a null
+        // pre-filled for an entry the loop never reached would persist onto the connection,
+        // inflate size(), and slip a later row past QwpSymbolColumnCursor's idx >= dictLimit
+        // guard to read back as a silent NULL symbol. A frame declaring more entries than it
+        // carries is the reachable trigger (a torn store-and-forward dictionary, a buggy or
+        // third-party client). The rejected frame must leave the dictionary exactly as it
+        // was: same size, no nulls.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b");
+
+            // deltaStartId == size() (a legal contiguous append), but declares 5 entries
+            // while carrying only 1 -- the entry loop throws on the second, after the
+            // pre-sizing has already grown the dictionary with nulls.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 2, 5, "sym_c");
+                Assert.fail("Expected a truncated-entry parse error");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+            }
+
+            // The rejected frame must have left the connection dictionary untouched.
+            Assert.assertEquals("a rejected frame must not grow the connection dictionary",
+                    2, dict.size());
+            for (int i = 0; i < dict.size(); i++) {
+                Assert.assertNotNull("dictionary slot " + i + " must be defined", dict.getQuick(i));
+            }
+
+            // And the connection must still accept the correct frame afterwards, landing
+            // the ids where they belong (no null residue shifted the dense map).
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 2, "sym_c", "sym_d"));
+            Assert.assertEquals(4, dict.size());
+            Assert.assertEquals("sym_c", dict.getQuick(2));
+            Assert.assertEquals("sym_d", dict.getQuick(3));
+        });
+    }
+
+    @Test
     public void testSymbolDictRedefinitionDetected() throws Exception {
         // Guards the orphan-adoption symbol-corruption fix: when a connection's
         // delta symbol dictionary remaps an already-defined client symbol ID to
@@ -261,10 +304,29 @@ public class QwpSymbolDecoderTest {
             int deltaStartId,
             String... symbols
     ) throws Exception {
-        int deltaCount = symbols.length;
-        byte[][] symbolBytes = new byte[deltaCount][];
-        int payloadSize = QwpVarint.encodedLength(deltaStartId) + QwpVarint.encodedLength(deltaCount);
-        for (int i = 0; i < deltaCount; i++) {
+        return decodeDeltaDictDeclaring(cursor, connectionDict, deltaStartId, symbols.length, symbols);
+    }
+
+    /**
+     * As {@link #decodeDeltaDict}, but stamps {@code declaredCount} into the frame's
+     * deltaCount header field independently of how many {@code symbols} are actually
+     * written. With {@code declaredCount > symbols.length} the decoder's entry loop runs
+     * off the end of the payload and throws -- the reachable trigger for a torn or
+     * mismatched delta frame.
+     */
+    private static boolean decodeDeltaDictDeclaring(
+            QwpMessageCursor cursor,
+            ObjList<String> connectionDict,
+            int deltaStartId,
+            int declaredCount,
+            String... symbols
+    ) throws Exception {
+        // The header advertises declaredCount; the payload carries only the symbols
+        // actually supplied. When declaredCount > symbols.length the frame is genuinely
+        // short and the decoder's entry loop runs off the end.
+        byte[][] symbolBytes = new byte[symbols.length][];
+        int payloadSize = QwpVarint.encodedLength(deltaStartId) + QwpVarint.encodedLength(declaredCount);
+        for (int i = 0; i < symbols.length; i++) {
             symbolBytes[i] = symbols[i].getBytes(StandardCharsets.UTF_8);
             payloadSize += QwpVarint.encodedLength(symbolBytes[i].length) + symbolBytes[i].length;
         }
@@ -279,8 +341,8 @@ public class QwpSymbolDecoderTest {
 
             long pos = address + HEADER_SIZE;
             pos = QwpVarint.encode(pos, deltaStartId);
-            pos = QwpVarint.encode(pos, deltaCount);
-            for (int i = 0; i < deltaCount; i++) {
+            pos = QwpVarint.encode(pos, declaredCount);
+            for (int i = 0; i < symbols.length; i++) {
                 pos = QwpVarint.encode(pos, symbolBytes[i].length);
                 for (byte b : symbolBytes[i]) {
                     Unsafe.putByte(pos++, b);
