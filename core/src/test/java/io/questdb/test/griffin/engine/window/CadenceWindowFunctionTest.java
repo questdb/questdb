@@ -104,6 +104,25 @@ public class CadenceWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRandomSeedOffsetKeepsFirstAndLastOrdinal() throws Exception {
+        // SEED_MODE_RANDOM (literal NULL seed) draws a fresh random offset per execution, so the
+        // full kept-row set varies run to run and can't be asserted exactly. Two invariants always
+        // hold regardless of the random offset though: ordinal 0 (the first row) is always kept,
+        // and the last row is always pinned (see CadenceFunctionFactory.CadenceFunction#preparePass2).
+        // Assert those two deterministic invariants rather than the varying row set.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v double) timestamp(ts)");
+            execute("insert into t select x::timestamp, x from long_sequence(10)");
+            assertQuery("select count() from (select ts, cadence(3, null) over (order by ts) keep from t) " +
+                    "where keep and (ts = '1970-01-01T00:00:00.000001Z' or ts = '1970-01-01T00:00:00.000010Z')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
+        });
+    }
+
+    @Test
     public void testRejectsNonConstantStride() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");

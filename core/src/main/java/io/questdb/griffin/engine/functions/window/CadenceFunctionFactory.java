@@ -90,7 +90,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return newInstance0(position, args, argPositions, sqlExecutionContext, false);
+        return newInstance0(position, args, argPositions, sqlExecutionContext, false, supportNullsDesc());
     }
 
     // Shared by CadenceFunctionFactory (cadence(L)) and CadenceSeedFunctionFactory (cadence(LL)).
@@ -99,10 +99,11 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             ObjList<Function> args,
             IntList argPositions,
             SqlExecutionContext sqlExecutionContext,
-            boolean hasSeed
+            boolean hasSeed,
+            boolean supportNullsDesc
     ) throws SqlException {
         final WindowContext windowContext = sqlExecutionContext.getWindowContext();
-        windowContext.validate(position, false);
+        windowContext.validate(position, supportNullsDesc);
 
         if (!windowContext.isOrdered()) {
             throw SqlException.$(position, "cadence() requires ORDER BY");
