@@ -5164,23 +5164,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                             }
 
-                            // We're falling back to the default Fast scan. We can still optimize one thing:
-                            // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
-                            // For that to work, we need code that maps master symbol key to slave symbol key.
-                            writeSymbolAsString.unset(slaveSymbolColumnIndex);
-                            return new AsOfJoinFastRecordCursorFactory(
+                            if (hasFastHint) {
+                                // Fast only on explicit request: its per-master symbol back-scan is
+                                // O(symbol-cardinality / symbol-distance) and cliffs on high-cardinality
+                                // symbols. We still optimize the key equality check: compare symbol keys
+                                // (ints) instead of strings, via a master->slave symbol-key mapping.
+                                writeSymbolAsString.unset(slaveSymbolColumnIndex);
+                                return new AsOfJoinFastRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit),
+                                        slave,
+                                        createRecordCopierSlave(slaveMetadata),
+                                        joinColumnSplit,
+                                        symbolShortCircuit,
+                                        slaveContext,
+                                        toleranceInterval,
+                                        null,
+                                        null
+                                );
+                            }
+                            // Default single-symbol ASOF: forward-scan DenseSingleSymbol. Resilient to
+                            // symbol cardinality and timestamp density (O(n), no per-master back-scan cliff).
+                            return new AsOfJoinDenseSingleSymbolRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
                                     master,
-                                    new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit),
                                     slave,
-                                    createRecordCopierSlave(slaveMetadata),
                                     joinColumnSplit,
-                                    symbolShortCircuit,
+                                    slaveSymbolColumnIndex,
+                                    (SymbolJoinKeyMapping) symbolShortCircuit,
                                     slaveContext,
-                                    toleranceInterval,
-                                    null,
-                                    null
+                                    toleranceInterval
                             );
                         } else if (hasFastHint) {
                             // Multi-column / non-single-symbol key: Fast only on explicit request. Its

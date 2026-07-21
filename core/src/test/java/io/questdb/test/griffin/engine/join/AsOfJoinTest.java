@@ -600,7 +600,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense Single Symbol", expected);
@@ -643,7 +643,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -685,7 +685,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -727,7 +727,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -776,7 +776,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -831,7 +831,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -875,7 +875,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -925,7 +925,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "ASOF JOIN quotes q ON t.symbol = q.symbol " +
                     "TOLERANCE 1m";
 
-            assertAlgoAndResult(queryBody1, "", "Fast", expected1);
+            assertAlgoAndResult(queryBody1, "", "Dense", expected1);
             assertAlgoAndResult(queryBody1, "asof_index(t q)", "Indexed", expected1);
             assertAlgoAndResult(queryBody1, "asof_memoized(t q)", "Memoized", expected1);
             assertAlgoAndResult(queryBody1, "asof_dense(t q)", "Dense", expected1);
@@ -940,7 +940,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String queryBody2 = "t.symbol, t.price, q.bid, q.ask FROM trades t " +
                     "ASOF JOIN quotes q ON t.symbol = q.symbol " +
                     "TOLERANCE 15m";
-            assertAlgoAndResult(queryBody2, "", "Fast", expected2);
+            assertAlgoAndResult(queryBody2, "", "Dense", expected2);
             assertAlgoAndResult(queryBody2, "asof_index(t q)", "Indexed", expected2);
             assertAlgoAndResult(queryBody2, "asof_memoized(t q)", "Memoized", expected2);
             assertAlgoAndResult(queryBody2, "asof_dense(t q)", "Dense", expected2);
@@ -992,7 +992,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "ON t.symbol = q.symbol " +
                     "WHERE t.ts BETWEEN '2024-01-02T00:00:00.000000Z' AND '2024-01-02T23:59:59.999999Z'";
 
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -6070,7 +6070,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2022-10-06T00:01:01.000000%1$s	6	c	2022-10-06T00:01:00.000000%1$s	6	c
                     2022-10-06T00:02:01.000000%1$s	7	a	2022-10-06T00:02:00.000000%1$s	7	a
                     """, tsSuffix);
-            assertAlgoAndResult(queryBody2, "", "Fast", expected2);
+            assertAlgoAndResult(queryBody2, "", "Dense", expected2);
             assertAlgoAndResult(queryBody2, "asof_index(t1 t2)", "Index", expected2);
             assertAlgoAndResult(queryBody2, "asof_memoized(t1 t2)", "Memoized", expected2);
         });
