@@ -973,6 +973,16 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the monotonic deque
+            // holds their decreasing suffix, so both follow from the frame's contents alone. A
+            // replay from the frame's lower edge rebuilds them, and the value read off the
+            // deque's front is one of the frame's rows rather than an accumulator, so it
+            // converges exactly.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -1453,6 +1463,16 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     : (frameLoBounded
                        ? MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
                        : MAX_OVER_PARTITION_ROWS_COLUMN_TYPES).getColumnCount();
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the monotonic deque holds their
+            // decreasing suffix, so a warm-up of N predecessors rebuilds both. The deque's
+            // indexes count every row the partition saw and a warm-up restarts them at zero,
+            // which the contract allows: they are read modulo the deque capacity, and the value
+            // they frame - the max/min at the front - is one of the frame's own rows.
+            return true;
         }
 
         @Override

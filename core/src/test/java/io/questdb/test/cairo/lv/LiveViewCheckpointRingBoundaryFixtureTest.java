@@ -164,6 +164,27 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     }
 
     @Test
+    public void testRangeDependencyBoundsAMaxRebuild() throws Exception {
+        // The max/min family on the RANGE arm. Its state is a ring of the frame's own rows
+        // plus a monotonic deque over exactly those, so the frame bounds it as it bounds the
+        // sum - and the bounds are the sum's to the row, because they are read off the frame
+        // and not off the function. What the deque adds is a state the replay cannot
+        // reproduce byte for byte: its capacity and rotation follow the number of rows the
+        // partition ever saw, and a warm-up starts from an empty one. Only the values it
+        // frames have to converge, which is what the recompute oracle checks here - and the
+        // out-of-order row carries the largest value in the fixture, so every frame it
+        // enters changes its answer.
+        final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
+                "max(x)",
+                "PARTITION BY sym ORDER BY ts RANGE BETWEEN '" + LOCALIZATION_RANGE_WIDTH_SECONDS
+                        + "' SECOND PRECEDING AND CURRENT ROW",
+                false
+        );
+        Assert.assertEquals("the rebuild must read exactly [R - W, changeMaxTs + W]", 14, cost.scannedRows);
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
+    }
+
+    @Test
     public void testRangeDependencyBoundsTheOldO3BoundaryRebuild() throws Exception {
         // The two-sided RANGE bound, on the fixture the pathology was built
         // for. The change is older than every surviving anchor, so the repair
@@ -192,6 +213,20 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         assertRingCollapsesThenOldO3ForcesBoundaryReplay(
                 "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW"
         );
+    }
+
+    @Test
+    public void testRowsDependencyBoundsAMinRebuild() throws Exception {
+        // The same family on the ROWS arm, and through min() rather than max(), which is the
+        // same implementation under a reversed comparator. Nmax bounds the ring and the
+        // deque alike, so the discovery and the rebuild cost what the sum's do.
+        final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
+                "min(x)",
+                "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
+                false
+        );
+        Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
     }
 
     @Test

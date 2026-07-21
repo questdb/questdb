@@ -212,11 +212,11 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertFalse(range.dependency.hasFrameLocalState());
             Assert.assertNull(range.rangePlan);
 
-            // max() holds the frame and nothing else, so it is a candidate - but its state
-            // is not proven to converge yet, and the default fails closed until it is.
+            // first_value() holds the frame and nothing else, so it is a candidate - but its
+            // state is not proven to converge yet, and the default fails closed until it is.
             final Metadata notEnabledYet = compileMetadata(
-                    "select ts, sym, max(x) over (partition by sym order by ts "
-                            + "rows between 3 preceding and current row) m from base",
+                    "select ts, sym, first_value(x) over (partition by sym order by ts "
+                            + "rows between 3 preceding and current row) f from base",
                     0
             );
             Assert.assertTrue(notEnabledYet.dependency.isFiniteRows());
@@ -241,6 +241,33 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                 Assert.fail("expected incompatible RANGE domain rejection");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "must use the same PARTITION BY and ORDER BY domain");
+            }
+        });
+    }
+
+    /**
+     * The max/min family, admitted one type at a time. Its state is a ring of the frame's
+     * own rows plus a monotonic deque over exactly those rows, so the frame's extent
+     * determines every value it emits - the same claim the count and sum/avg families
+     * carry, over a different buffer. The value it emits is one of the frame's rows rather
+     * than an accumulator, so it converges exactly even over DOUBLE, where the sum carries
+     * the documented floating tolerance instead.
+     * <p>
+     * Every value type that reaches a partitioned bounded frame is covered here, because
+     * they are separate implementations rather than one parameterized class: the
+     * long-valued family (LONG directly, DATE and TIMESTAMP through the shared helper),
+     * DOUBLE, and each of the six DECIMAL widths.
+     */
+    @Test
+    public void testMaxAndMinDeclareFrameLocalStateForEveryTypeAndFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table typed (ts timestamp, sym symbol, l long, d double, other timestamp, dt date, "
+                    + "d8 decimal(2, 0), d16 decimal(4, 1), d32 decimal(9, 2), d64 decimal(18, 3), "
+                    + "d128 decimal(38, 6), d256 decimal(76, 10)) timestamp(ts) partition by day wal");
+            final String[] columns = {"l", "d", "other", "dt", "d8", "d16", "d32", "d64", "d128", "d256"};
+            for (int i = 0; i < columns.length; i++) {
+                assertFrameLocalOverBothFrames("max(" + columns[i] + ")");
+                assertFrameLocalOverBothFrames("min(" + columns[i] + ")");
             }
         });
     }
@@ -418,6 +445,33 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                 Assert.assertEquals(DependencyKind.FIXED_ANCHOR_SEGMENT, ranking.dependency.getKind());
             }
         });
+    }
+
+    /**
+     * Asserts that {@code projection} carries frame-local state, and therefore a repair
+     * plan, over both bounded frame shapes on the {@code typed} fixture. The two shapes
+     * are separate implementations of the same buffer, so neither implies the other.
+     */
+    private static void assertFrameLocalOverBothFrames(String projection) throws Exception {
+        final Metadata rows = compileMetadata(
+                "select ts, sym, " + projection + " over (partition by sym order by ts "
+                        + "rows between 3 preceding and current row) v from typed",
+                0
+        );
+        Assert.assertTrue(projection, rows.dependency.isFiniteRows());
+        Assert.assertTrue(projection, rows.dependency.hasFrameLocalState());
+        Assert.assertEquals(projection, NumericConvergence.EXACT, rows.dependency.getNumericConvergence());
+        Assert.assertNotNull(projection, rows.rowsPlan);
+
+        final Metadata range = compileMetadata(
+                "select ts, sym, " + projection + " over (partition by sym order by ts "
+                        + "range between 2 seconds preceding and current row) v from typed",
+                0
+        );
+        Assert.assertTrue(projection, range.dependency.isFiniteRange());
+        Assert.assertTrue(projection, range.dependency.hasFrameLocalState());
+        Assert.assertEquals(projection, NumericConvergence.EXACT, range.dependency.getNumericConvergence());
+        Assert.assertNotNull(projection, range.rangePlan);
     }
 
     private static void assertNoRowsPlan(String sql) throws Exception {

@@ -951,6 +951,16 @@ public class MaxMinWindowFunctionFactoryHelper {
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the (timestamp, value) pairs inside [t - W, t] and the monotonic
+            // deque holds that ring's own decreasing suffix, so both are a function of the
+            // frame's contents alone. Replaying from the frame's lower edge rebuilds them, and
+            // the value read off the deque's front is a member of the frame rather than an
+            // accumulator, so it converges exactly.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -1374,6 +1384,17 @@ public class MaxMinWindowFunctionFactoryHelper {
                     : (frameLoBounded
                        ? MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
                        : MAX_OVER_PARTITION_ROWS_COLUMN_TYPES).getColumnCount();
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the monotonic deque holds their
+            // decreasing suffix, so a warm-up of N predecessors reconstructs both. The deque's
+            // absolute indexes count every row the partition ever saw and a warm-up starts them
+            // at zero, which the contract allows: they are only ever read modulo the deque's
+            // capacity, and the values they frame - hence the max/min emitted from the front -
+            // are the frame's own.
+            return true;
         }
 
         @Override
