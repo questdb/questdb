@@ -94,6 +94,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final boolean deferred;
     private final int periodDelay;
     private final char periodDelayUnit;
+    private final ObjList<String> referencedTableNames = new ObjList<>();
     private final int refreshType;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final String sqlText;
@@ -240,6 +241,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public ObjList<String> getReferencedTableNames() {
+        return referencedTableNames;
+    }
+
+    @Override
     public int getRefreshType() {
         return refreshType;
     }
@@ -367,6 +373,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @NotNull FunctionFactoryCache functionFactoryCache,
             @NotNull IQueryModel queryModel
     ) throws SqlException {
+        // Every table the defining query reads, so executeCreateMatView can reject a policied
+        // reference anywhere in the query (not only the base) before the view is created.
+        referencedTableNames.clear();
+        collectReferencedTableNames(queryModel, referencedTableNames);
+
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         assert columns.size() > 0;
@@ -573,6 +584,35 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType(), baseTableMetadata.getPartitionBy());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
+    }
+
+    /**
+     * Collects the distinct names of every plain table the model tree reads (nested models, join
+     * models, unions). Sub-queries and CTE references carry no table name of their own and recurse;
+     * table functions are skipped.
+     */
+    private static void collectReferencedTableNames(@Nullable IQueryModel model, ObjList<String> namesOut) {
+        if (model == null) {
+            return;
+        }
+        final CharSequence tableName = model.getTableName();
+        if (tableName != null && model.getTableNameFunction() == null) {
+            boolean isPresent = false;
+            for (int i = 0, n = namesOut.size(); i < n; i++) {
+                if (Chars.equals(namesOut.getQuick(i), tableName)) {
+                    isPresent = true;
+                    break;
+                }
+            }
+            if (!isPresent) {
+                namesOut.add(Chars.toString(tableName));
+            }
+        }
+        collectReferencedTableNames(model.getNestedModel(), namesOut);
+        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+            collectReferencedTableNames(model.getJoinModels().getQuick(i), namesOut);
+        }
+        collectReferencedTableNames(model.getUnionModel(), namesOut);
     }
 
     private static void copyBaseTableSymbolColumnCapacity(

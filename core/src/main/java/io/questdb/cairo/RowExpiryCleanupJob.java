@@ -111,6 +111,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private static final int ACTION_REPLACE = 2;
     private static final int ACTION_SKIP = 0;
     private static final int ACTION_UNKNOWN = -1; // bounds were not decisive; fall back to the survivor scan
+    // Ceiling for the per-table failure backoff (10 minutes): a persistently failing sweep keeps
+    // retrying, but never more often than this once the exponential backoff has grown to the cap.
+    private static final long FAILURE_BACKOFF_CAP_MICROS = 600_000_000L;
     private static final long GLOBAL_CHECK_INTERVAL_MICROS = 1_000_000L;
     private static final Log LOG = LogFactory.getLog(RowExpiryCleanupJob.class);
     private static final long NO_LAST_RUN = Long.MIN_VALUE;
@@ -123,6 +126,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private final ObjList<String> discoveredPredicates = new ObjList<>();
     private final ObjList<TableToken> discoveredTokens = new ObjList<>();
     private final CairoEngine engine;
+    // Current failure backoff per table: a failing cleanup doubles it (from one global tick up to
+    // FAILURE_BACKOFF_CAP_MICROS) so a persistently failing sweep cannot re-run its full heavy work
+    // on every global tick. A successful or deferred sweep removes the entry.
+    private final CharSequenceLongHashMap failureBackoffMicros = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
     private final CharSequenceLongHashMap lastRunByTable = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
     // Per-cleanup snapshot of one object's non-active LOGICAL partitions.
     private final LongList partitionContentGenerations = new LongList();
@@ -602,6 +609,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         if (!engine.getMetadataCache().mayHaveExpiryPolicy()) {
             if (lastRunByTable.size() > 0) {
                 lastRunByTable.clear();
+                failureBackoffMicros.clear();
             }
             nextDiscoveryDeadlineMicros = nowMicros + GLOBAL_CHECK_INTERVAL_MICROS;
             return false;
@@ -634,6 +642,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         if (discoveredTokens.size() == 0) {
             if (lastRunByTable.size() > 0) {
                 lastRunByTable.clear();
+                failureBackoffMicros.clear();
             }
             nextDiscoveryDeadlineMicros = nowMicros + GLOBAL_CHECK_INTERVAL_MICROS;
             return false;
@@ -645,6 +654,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // extra sweep per live view this round before each CLEANUP EVERY cadence re-applies.
         if (lastRunByTable.size() > 4 * discoveredTokens.size()) {
             lastRunByTable.clear();
+            failureBackoffMicros.clear();
         }
 
         boolean isWorkDone = false;
@@ -660,9 +670,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             }
             final CharSequence tableKey = tableToken.getTableName();
 
+            // A table in a failure streak is throttled by its current backoff instead of the
+            // CLEANUP EVERY cadence, so retries neither hammer every global tick nor wait a
+            // full (possibly hours-long) cadence for a transient failure to clear.
             final long lastRun = lastRunByTable.get(tableKey);
-            if (lastRun != NO_LAST_RUN && nowMicros - lastRun < cleanupIntervalMicros) {
-                nextDeadlineMicros = Math.min(nextDeadlineMicros, lastRun + cleanupIntervalMicros);
+            final long backoffMicros = failureBackoffMicros.get(tableKey);
+            final long requiredGapMicros = backoffMicros != NO_LAST_RUN ? backoffMicros : cleanupIntervalMicros;
+            if (lastRun != NO_LAST_RUN && nowMicros - lastRun < requiredGapMicros) {
+                nextDeadlineMicros = Math.min(nextDeadlineMicros, lastRun + requiredGapMicros);
                 continue;
             }
 
@@ -691,8 +706,18 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                         .I$();
             }
             if (isLastCleanupFailed) {
-                nextDeadlineMicros = Math.min(nextDeadlineMicros, nowMicros + GLOBAL_CHECK_INTERVAL_MICROS);
+                // Exponential backoff: the first failure retries after one global tick, each further
+                // failure doubles the wait up to FAILURE_BACKOFF_CAP_MICROS.
+                final long prevBackoffMicros = failureBackoffMicros.get(tableKey);
+                final long nextBackoffMicros = prevBackoffMicros == NO_LAST_RUN
+                        ? GLOBAL_CHECK_INTERVAL_MICROS
+                        : Math.min(prevBackoffMicros * 2, FAILURE_BACKOFF_CAP_MICROS);
+                final String key = Chars.toString(tableKey);
+                failureBackoffMicros.put(key, nextBackoffMicros);
+                lastRunByTable.put(key, nowMicros);
+                nextDeadlineMicros = Math.min(nextDeadlineMicros, nowMicros + nextBackoffMicros);
             } else {
+                failureBackoffMicros.remove(tableKey);
                 lastRunByTable.put(Chars.toString(tableKey), nowMicros);
                 nextDeadlineMicros = Math.min(nextDeadlineMicros, nowMicros + cleanupIntervalMicros);
             }

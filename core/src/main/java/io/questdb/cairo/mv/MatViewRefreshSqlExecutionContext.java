@@ -82,7 +82,18 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         // a view cannot be created over a base that carries an EXPIRE ROWS policy (rejected at CREATE, and
         // ALTER ... SET EXPIRE is rejected on a view that already has dependents), so the base reachable here
         // never has a policy. The view's OWN policy (if any) is applied when the VIEW is read, not on refresh.
+        // The per-table refinement below limits this disable to the base.
         return false;
+    }
+
+    @Override
+    public boolean isExpiryReadFilterEnabled(TableToken tableToken) {
+        // Only the base is read raw (at a fixed txn; it can never carry a policy — policied chains are
+        // rejected at CREATE and at ALTER ... SET EXPIRE). Every OTHER referenced table keeps the read
+        // filter, so a view that gained a policy AFTER a referencing view was created is read here
+        // exactly as any query reads it: a deterministic policy filters consistently, and a now()-based
+        // one fails the refresh visibly instead of silently materializing expired rows.
+        return baseTableReader == null || !tableToken.equals(baseTableReader.getTableToken());
     }
 
     public void clearReader() {

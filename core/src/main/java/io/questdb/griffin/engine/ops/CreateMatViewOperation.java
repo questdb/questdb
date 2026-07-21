@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IQueryModel;
+import io.questdb.std.ObjList;
 
 public interface CreateMatViewOperation extends TableStructure, Operation {
 
@@ -67,6 +68,13 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
     CharSequence getBaseTableName();
 
     CreateTableOperation getCreateTableOperation();
+
+    /**
+     * Distinct names of every plain table the defining query reads (collected by
+     * {@link #validateAndUpdateMetadataFromModel}), so the executor can reject a policied
+     * reference anywhere in the query, not only the base.
+     */
+    ObjList<String> getReferencedTableNames();
 
     int getRefreshType();
 

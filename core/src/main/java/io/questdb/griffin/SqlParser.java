@@ -168,6 +168,10 @@ public class SqlParser {
     // Case-sensitive: QuestDB table names are case-sensitive, so case-distinct sibling tables/views
     // must each be guarded independently (a LowerCase set would wrongly conflate "T" and "t").
     private final CharSequenceHashSet expiringTablesBeingExpanded = new CharSequenceHashSet();
+    // The execution context of the current parse, consulted for the PER-TABLE read-filter decision
+    // (the mat-view refresh context keeps the filter on every table except the base). Null when parse()
+    // was invoked without a context; rowExpiryReadFilterEnabled is the decision then.
+    private SqlExecutionContext expiryFilterExecutionContext;
     // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
@@ -5190,8 +5194,7 @@ public class SqlParser {
         // nested model above (tableNameExpr stays null), so it is naturally skipped.
         final ExpressionNode resolvedTableNameExpr = model.getTableNameExpr();
         if (
-                rowExpiryReadFilterEnabled
-                        && resolvedTableNameExpr != null
+                resolvedTableNameExpr != null
                         && resolvedTableNameExpr.type == ExpressionNode.LITERAL
                         && cairoEngine.getMetadataCache().mayHaveExpiryPolicy()
         ) {
@@ -5202,7 +5205,9 @@ public class SqlParser {
             if (!expiringTablesBeingExpanded.contains(unquotedName)) {
                 final TableToken tt = cairoEngine.getTableTokenIfExists(unquotedName);
                 final String predicate;
-                if (tt != null && !tt.isView() && cairoEngine.getMetadataCache().mayTableHaveExpiryPolicy(tt)
+                if (tt != null && !tt.isView()
+                        && isExpiryReadFilterEnabledFor(tt)
+                        && cairoEngine.getMetadataCache().mayTableHaveExpiryPolicy(tt)
                         && (predicate = lookupExpiryPredicate(tt)) != null) {
                     final CharSequence designatedTimestampColumn = expiryTimestampColumnName;
                     final int position = resolvedTableNameExpr.position;
@@ -5220,6 +5225,15 @@ public class SqlParser {
                 }
             }
         }
+    }
+
+    // The read-filter decision for one resolved table: the context's per-table refinement when a
+    // context is present (the mat-view refresh context keeps the filter on every table except the
+    // base), the parse-global flag otherwise.
+    private boolean isExpiryReadFilterEnabledFor(TableToken tableToken) {
+        return expiryFilterExecutionContext == null
+                ? rowExpiryReadFilterEnabled
+                : expiryFilterExecutionContext.isExpiryReadFilterEnabled(tableToken);
     }
 
     private int parseSymbolCapacity(GenericLexer lexer) throws SqlException {
@@ -6340,6 +6354,7 @@ public class SqlParser {
         // Hygiene: parse() always re-derives these from the execution context, but reset them here too so a
         // reused parser never carries a stale row-expiry gate/timestamp between compilations.
         rowExpiryReadFilterEnabled = true;
+        expiryFilterExecutionContext = null;
         expiryTimestampColumnName = null;
     }
 
@@ -6378,7 +6393,10 @@ public class SqlParser {
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         // Capture the read-filter toggle for this whole parse (the row-expiry cleanup job disables it).
+        // The context is also kept for the per-table refinement: the mat-view refresh context keeps the
+        // filter on every table except the base.
         rowExpiryReadFilterEnabled = executionContext == null || executionContext.isExpiryReadFilterEnabled();
+        expiryFilterExecutionContext = executionContext;
         final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {

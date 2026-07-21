@@ -4367,6 +4367,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         .put("': the base carries an EXPIRE ROWS policy (a view over a policied view would copy expired rows on refresh)");
                             }
                         }
+                        // The same rule closes over every OTHER referenced table: a policied view joined
+                        // into the defining query would need the read filter during refresh, and a
+                        // now()-based policy cannot be evaluated there (non-deterministic functions are
+                        // rejected in mat view queries). Reject the chain up front, like the base case.
+                        final ObjList<String> referencedTableNames = createMatViewOp.getReferencedTableNames();
+                        for (int i = 0, n = referencedTableNames.size(); i < n; i++) {
+                            final String referencedName = referencedTableNames.getQuick(i);
+                            if (Chars.equals(referencedName, createMatViewOp.getBaseTableName())) {
+                                continue; // the base is checked above, with its own message
+                            }
+                            final TableToken referencedToken = engine.getTableTokenIfExists(referencedName);
+                            if (referencedToken == null || !referencedToken.isMatView()) {
+                                continue; // EXPIRE ROWS is materialized-view-only
+                            }
+                            try (TableMetadata referencedMetadata = engine.getTableMetadata(referencedToken)) {
+                                final CharSequence referencedPredicate = referencedMetadata.getExpiryPredicate();
+                                if (referencedPredicate != null && referencedPredicate.length() > 0) {
+                                    throw SqlException.$(createMatViewOp.getTableNamePosition(),
+                                                    "cannot create a materialized view referencing '")
+                                            .put(referencedName)
+                                            .put("': it carries an EXPIRE ROWS policy (refresh would copy its expired rows into this view)");
+                                }
+                            }
+                        }
                         // Reject a bad EXPIRE ROWS policy before the view exists.
                         validateCreateMatViewExpiryPolicy(executionContext, createMatViewOp, createTableOp, metadata);
 

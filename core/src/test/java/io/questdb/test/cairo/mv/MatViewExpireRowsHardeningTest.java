@@ -557,6 +557,63 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateViewJoiningPoliciedViewRejected() throws Exception {
+        // The no-policied-chains rule covers JOINED tables, not only the base: refresh cannot
+        // evaluate a now()-based policy at all, so the chain is rejected up front like a policied
+        // base.
+        assertMemoryLeak(() -> {
+            execute("create table b (sym symbol, bv double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table base2 (sym symbol, vv double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            execute("create materialized view v as (select * from base2) expire rows when vv < 2.0");
+            drainWalAndMatViewQueues();
+
+            assertExceptionNoLeakCheck(
+                    "create materialized view m2 with base b as (select b.ts, b.sym, first(v.vv) vv from b join v on (sym) sample by 1d)",
+                    25,
+                    "cannot create a materialized view referencing 'v': it carries an EXPIRE ROWS policy"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("m2"));
+        });
+    }
+
+    @Test
+    public void testRefreshFiltersPoliciedViewJoinedAfterCreation() throws Exception {
+        // A view can gain a policy AFTER another view was created referencing it as a JOIN table
+        // (the dependency graph tracks base edges only, so ALTER SET EXPIRE cannot see the join
+        // edge). The refresh then reads the policied view FILTERED - exactly as any query reads it -
+        // instead of silently materializing its expired rows.
+        assertMemoryLeak(() -> {
+            execute("create table b (sym symbol, bv double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table base2 (sym symbol, vv double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            execute("create materialized view v as (select * from base2)");
+            drainWalAndMatViewQueues();
+            execute("create materialized view m2 with base b as " +
+                    "(select b.ts, b.sym, first(v.vv) vv from b join v on (sym) sample by 1d)");
+            drainWalAndMatViewQueues();
+
+            execute("alter materialized view v set expire rows when vv < 2.0");
+            drainWalAndMatViewQueues();
+
+            execute("""
+                    insert into base2 values
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 5.0, '2024-01-01T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("""
+                    insert into b values
+                    ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 20.0, '2024-01-01T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+
+            // A's v-row (vv=1.0) is expired, so the refresh join drops A; only B materializes.
+            assertQuery("select sym, vv from m2 order by sym")
+                    .expectSize().noLeakCheck().returns("sym\tvv\nB\t5.0\n");
+        });
+    }
+
+    @Test
     public void testCreateViewOverPoliciedBaseRejected() throws Exception {
         // A materialized view must not derive from a base that carries an EXPIRE ROWS policy: refresh reads
         // the RAW base, so it would copy the base's expired-but-not-yet-reclaimed rows.
@@ -626,6 +683,55 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 setCurrentMicros(JAN_10 + 1_000_000L);
                 Assert.assertFalse(job.runNow());
                 Assert.assertEquals(2, attempts[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testRepeatedCleanupFailuresBackOffExponentially() throws Exception {
+        // A persistently failing cleanup must not re-run its full sweep on every 1-second global
+        // tick: each failure doubles the per-table retry gap (1s, 2s, 4s, ... capped at 10 minutes),
+        // and a successful or deferred sweep resets it.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(JAN_10);
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES (1.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
+                    "EXPIRE ROWS WHEN v < 0 CLEANUP EVERY 1h");
+            drainWalAndMatViewQueues();
+            engine.getMetadataCache().hydrateAllTables();
+
+            final int[] attempts = {0};
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine) {
+                @Override
+                public boolean cleanupTable(TableToken tableToken, String predicate) {
+                    attempts[0]++;
+                    throw new RuntimeException("injected cleanup failure");
+                }
+            }) {
+                job.runNow();                                // attempt 1 at T0 -> backoff 1s
+                Assert.assertEquals(1, attempts[0]);
+
+                setCurrentMicros(JAN_10 + 1_000_000L);       // T0+1s -> attempt 2 -> backoff 2s
+                job.runNow();
+                Assert.assertEquals(2, attempts[0]);
+
+                setCurrentMicros(JAN_10 + 2_000_000L);       // 1s into the 2s gap -> no attempt
+                job.runNow();
+                Assert.assertEquals(2, attempts[0]);
+
+                setCurrentMicros(JAN_10 + 3_000_000L);       // 2s gap elapsed -> attempt 3 -> backoff 4s
+                job.runNow();
+                Assert.assertEquals(3, attempts[0]);
+
+                setCurrentMicros(JAN_10 + 6_999_999L);       // inside the 4s gap -> no attempt
+                job.runNow();
+                Assert.assertEquals(3, attempts[0]);
+
+                setCurrentMicros(JAN_10 + 7_000_000L);       // 4s gap elapsed -> attempt 4
+                job.runNow();
+                Assert.assertEquals(4, attempts[0]);
             }
         });
     }

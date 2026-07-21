@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.CharSequenceObjSortedHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -1559,6 +1560,49 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     Assert.assertEquals(registeredTables, ro.getTableCount());
                 }
                 Assert.assertTrue(cache.isCacheComplete());
+            }
+        });
+    }
+
+    @Test
+    public void testGiveUpPublishesExpiryPolicySnapshot() throws Exception {
+        // After a reconcile give-up (an unhydratable table exhausts the budget), the policied views
+        // that DID hydrate must still reach the row-expiry cleanup job: its discovery reads only the
+        // published snapshot, and cacheComplete short-circuits every later hydrateAllTables() that
+        // could publish one. The give-up path publishes the snapshot itself; fullyHydrated stays
+        // false, so reads keep the conservative per-table policy gate.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            execute("CREATE TABLE stuck (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final File stuckMeta = metaFile("stuck");
+            final File stuckHidden = new File(stuckMeta.getParentFile(), "_meta.hidden");
+            java.nio.file.Files.move(stuckMeta.toPath(), stuckHidden.toPath());
+            try (MetadataCache cache = new MetadataCache(engine)) {
+                try {
+                    // Burn the give-up budget: every pass hydrates what it can, cannot confirm
+                    // completeness (stuck's _meta is unreadable), and spends one stuck round.
+                    for (int i = 0; i < 10 && !cache.isCacheComplete(); i++) {
+                        cache.hydrateAllTables();
+                    }
+                    Assert.assertTrue("give-up must have latched cacheComplete", cache.isCacheComplete());
+
+                    // The hydrated policied view is discoverable from the published snapshot.
+                    final ObjList<TableToken> tokens = new ObjList<>();
+                    final ObjList<String> predicates = new ObjList<>();
+                    final LongList intervals = new LongList();
+                    try (MetadataCacheReader ro = cache.readLock()) {
+                        ro.collectPoliciedTables(tokens, predicates, intervals);
+                    }
+                    Assert.assertEquals(1, tokens.size());
+                    Assert.assertEquals("mv", tokens.getQuick(0).getTableName());
+                    Assert.assertEquals("v < 0", predicates.getQuick(0));
+                } finally {
+                    java.nio.file.Files.move(stuckHidden.toPath(), stuckMeta.toPath());
+                }
             }
         });
     }

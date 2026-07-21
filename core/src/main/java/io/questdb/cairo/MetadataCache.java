@@ -403,6 +403,13 @@ public class MetadataCache implements QuietCloseable {
                 gaveUp = ++incompleteReconcilePasses >= MAX_INCOMPLETE_RECONCILE_PASSES;
                 if (gaveUp) {
                     publishCacheComplete();
+                    // Policied views that DID hydrate must still reach the cleanup job: its discovery
+                    // reads only the published snapshot, and once cacheComplete short-circuits
+                    // hydrateAllTables() no later pass would ever publish one — physical cleanup
+                    // would silently stall until a restart or clearCache(). fullyHydrated stays
+                    // false (tables are genuinely missing), so reads keep the conservative
+                    // per-table policy gate.
+                    publishActiveExpiryPolicySnapshot();
                 }
             }
         }
