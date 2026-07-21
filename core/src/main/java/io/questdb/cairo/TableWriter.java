@@ -5419,6 +5419,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
                 mem.jumpTo(srcDataMax << ColumnType.pow2SizeOf(columnType)); // column top is 0 (gated)
             }
+        } catch (Throwable th) {
+            // Partial open: some column handles were opened + positioned at the committed size, but one
+            // failed (e.g. a mid-flight ff.mmap failure while positioning). A failed handle's append offset
+            // is 0 -- so a TRUNCATING close (the default, via closeCompositeFastAppendCell / doClose's
+            // freeObjList) would shrink that committed cell column file BELOW its committed size and corrupt
+            // already-committed rows. This open runs before the _txn size bump, so the cell's committed size
+            // is unchanged; close every handle WITHOUT truncation (fd -> -1, making the later truncating
+            // closes no-ops) so the bytes past the committed size are merely ignored on reopen and the WAL
+            // replays the un-acked txn == plain twin. openCellKey stays -1: this cell never became open.
+            // Guard each close so a throw from one handle's cleanup (e.g. a page msync under commitMode!=
+            // NOSYNC) cannot leave a LATER handle un-neutralized for doClose's truncating close to shrink.
+            for (int i = 0, n = compositeFastAppendCellColumns.size(); i < n; i++) {
+                final MemoryMA mem = compositeFastAppendCellColumns.getQuick(i);
+                if (mem != null) {
+                    try {
+                        mem.close(false);
+                    } catch (Throwable closeErr) {
+                        th.addSuppressed(closeErr);
+                    }
+                }
+            }
+            throw th;
         } finally {
             path.trimTo(pathSize);
         }
