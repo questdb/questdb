@@ -25,12 +25,15 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts.RepairPublicationStage;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaSegmentWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairState;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
@@ -118,6 +121,45 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             Assert.assertFalse(segmentExists(true, 21, false));
             Assert.assertTrue("fallback-protected data survives", segmentExists(false, 19, false));
             Assert.assertTrue("fallback-protected metadata survives", segmentExists(true, 19, false));
+        });
+    }
+
+    @Test
+    public void testPendingRepairCandidateIsDiscardedAndReplanned() throws Exception {
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 10);
+            // A repair that crashed with its candidate staged: the descriptor is the
+            // only record naming the segment it wrote, because no metadata references
+            // one until the splice commits the superblock.
+            try (
+                    LiveViewCheckpointRepairState state = new LiveViewCheckpointRepairState(configuration);
+                    Path dir = checkpointsDir()
+            ) {
+                state.begin(dir, 31, 7, 0, 2, 31, 30, 1_000, 500, 800, 2_000, HighBoundTag.FINITE);
+                state.addOwnedSegmentId(11);
+                state.recordStage(RepairPublicationStage.CANDIDATE_ROOTS_AND_RUNTIME_READY);
+                state.recordProgress(1_500, 4);
+            }
+            touchTemp(false, 11);
+
+            final LiveViewCheckpointLifecycle.ReconcileResult reconciliation;
+            try (Path dir = checkpointsDir()) {
+                reconciliation = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+            }
+            // The pinned snapshot the candidate was built against cannot be reopened,
+            // so it is discarded and replanned rather than resumed.
+            Assert.assertEquals(1, reconciliation.getDiscardedRepairCount());
+            Assert.assertEquals(0, reconciliation.getFailedRepairCount());
+            Assert.assertFalse(repairDescriptorExists(31));
+            Assert.assertFalse(segmentExists(false, 11, true));
+            // The generation the candidate would have spliced into is untouched: a
+            // discarded repair costs the timeline nothing.
+            Assert.assertTrue(timelineExists());
+            try (LiveViewCheckpointMetaStore store = openStore()) {
+                Assert.assertTrue(store.isValid());
+                Assert.assertEquals(1, store.getSuperblock().generation);
+            }
         });
     }
 
@@ -271,6 +313,13 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
                     directoryRoot.getLength()
             );
             store.publish();
+        }
+    }
+
+    private boolean repairDescriptorExists(long repairId) {
+        try (Path dir = checkpointsDir(); Path path = new Path()) {
+            LiveViewCheckpointLayout.repairDescriptorPath(path, dir, repairId);
+            return configuration.getFilesFacade().exists(path.$());
         }
     }
 

@@ -121,7 +121,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         );
                 orphanUpperBound = reconciliation.getFinalOrphanUpperBound();
                 if (reconciliation.getFailedOrphanCount() == 0
-                        && reconciliation.getFailedPurgeCount() == 0) {
+                        && reconciliation.getFailedPurgeCount() == 0
+                        && reconciliation.getFailedRepairCount() == 0) {
                     lifecycleReconciledDirs.add(lifecycleKey);
                 }
             }
@@ -1147,6 +1148,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         entry -> out.add(new LiveViewCheckpointTimelineEntry().copyFrom(entry))
                 );
             }
+        }
+
+        /**
+         * @return the temporary data segment this capture freezes every boundary
+         * into. It reaches its final name only at {@link #publishRepair}, so until
+         * then the repair's own descriptor is the sole record that it exists.
+         */
+        public long getDataSegmentId() {
+            return dataSegmentId;
         }
 
         /**

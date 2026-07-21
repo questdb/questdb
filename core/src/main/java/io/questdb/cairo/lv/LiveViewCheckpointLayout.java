@@ -72,6 +72,11 @@ public final class LiveViewCheckpointLayout {
      */
     public static final String DATA_SEGMENT_PREFIX = "d.";
     /**
+     * Zero-pad width for a segment or repair id in a filename, matching the
+     * {@code .cp} convention so lexical enumeration equals numeric ordering.
+     */
+    public static final int ID_PAD_LEN = 16;
+    /**
      * Subdirectory holding immutable, per-page-checksummed metadata segments.
      */
     public static final String META_DIR_NAME = "meta";
@@ -98,6 +103,10 @@ public final class LiveViewCheckpointLayout {
      * {@code payloadLength} INT, {@code pageKind} INT.
      */
     public static final int PAGE_HEADER_SIZE = PAGE_KIND_OFFSET + Integer.BYTES; // 12
+    /**
+     * Filename prefix for a repair descriptor: {@code r.<repairId>}.
+     */
+    public static final String REPAIR_DESCRIPTOR_PREFIX = "r.";
     /**
      * Subdirectory holding checksummed resumable-repair descriptors.
      */
@@ -144,11 +153,6 @@ public final class LiveViewCheckpointLayout {
      */
     public static final int SEG_PAGE_COUNT_OFFSET = 16;
     /**
-     * Zero-pad width for a segment id in a filename, matching the {@code .cp}
-     * convention so lexical enumeration equals numeric ordering.
-     */
-    public static final int SEGMENT_ID_PAD_LEN = 16;
-    /**
      * The fixed A/B superblock filename under {@code _checkpoints}.
      */
     public static final String TIMELINE_FILE_NAME = "_timeline";
@@ -181,7 +185,7 @@ public final class LiveViewCheckpointLayout {
     public static Path dataSegmentPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir, long segmentId) {
         dataDirPath(dst, checkpointsDir).slash();
         dst.put(DATA_SEGMENT_PREFIX);
-        appendPaddedSegmentId(dst, segmentId);
+        appendPaddedId(dst, segmentId, "segment");
         return dst;
     }
 
@@ -207,7 +211,7 @@ public final class LiveViewCheckpointLayout {
     public static Path metaSegmentPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir, long segmentId) {
         metaDirPath(dst, checkpointsDir).slash();
         dst.put(META_SEGMENT_PREFIX);
-        appendPaddedSegmentId(dst, segmentId);
+        appendPaddedId(dst, segmentId, "segment");
         return dst;
     }
 
@@ -221,23 +225,50 @@ public final class LiveViewCheckpointLayout {
     }
 
     /**
+     * Points {@code dst} at {@code <checkpointsDir>/repair/r.<repairId>}.
+     */
+    public static Path repairDescriptorPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir, long repairId) {
+        repairDirPath(dst, checkpointsDir).slash();
+        dst.put(REPAIR_DESCRIPTOR_PREFIX);
+        appendPaddedId(dst, repairId, "repair");
+        return dst;
+    }
+
+    /**
+     * Points {@code dst} at {@code <checkpointsDir>/repair/r.<repairId>.tmp}.
+     */
+    public static Path repairDescriptorTmpPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir, long repairId) {
+        repairDescriptorPath(dst, checkpointsDir, repairId);
+        dst.put(TMP_SUFFIX);
+        return dst;
+    }
+
+    /**
+     * Points {@code dst} at {@code <checkpointsDir>/repair}.
+     */
+    public static Path repairDirPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
+        return dst.of(checkpointsDir).concat(REPAIR_DIR_NAME);
+    }
+
+    /**
      * Points {@code dst} at {@code <checkpointsDir>/_timeline}.
      */
     public static Path timelinePath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
         return dst.of(checkpointsDir).concat(TIMELINE_FILE_NAME);
     }
 
-    static void appendPaddedSegmentId(@NotNull Path path, long segmentId) {
-        if (segmentId < 0) {
+    static void appendPaddedId(@NotNull Path path, long id, @NotNull CharSequence what) {
+        if (id < 0) {
             throw CairoException.critical(0)
-                    .put("live view checkpoint segment id must be non-negative, was ")
-                    .put(segmentId);
+                    .put("live view checkpoint ").put(what)
+                    .put(" id must be non-negative, was ")
+                    .put(id);
         }
         // Manual zero-pad, avoiding a String.format allocation on the write path.
-        final int digits = segmentId == 0 ? 1 : (int) Math.floor(Math.log10(segmentId)) + 1;
-        for (int i = digits; i < SEGMENT_ID_PAD_LEN; i++) {
+        final int digits = id == 0 ? 1 : (int) Math.floor(Math.log10(id)) + 1;
+        for (int i = digits; i < ID_PAD_LEN; i++) {
             path.put('0');
         }
-        path.put(segmentId);
+        path.put(id);
     }
 }

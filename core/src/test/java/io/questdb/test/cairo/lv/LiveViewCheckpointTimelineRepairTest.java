@@ -26,9 +26,11 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairState;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
@@ -46,11 +48,17 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -129,6 +137,55 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     public void testCrashBeforeSuperblockPublishKeepsThePriorGeneration() throws Exception {
         assertCrashBeforeSuperblockPublish(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_DATA_PUBLISH);
         assertCrashBeforeSuperblockPublish(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+    }
+
+    @Test
+    public void testCrashedRepairCandidateIsDiscardedOnRestart() throws Exception {
+        // A repair that died with its candidate staged leaves a descriptor and the
+        // temporary segment it names. Nothing in the timeline references either, and
+        // the snapshot the candidate was planned against cannot be reopened, so
+        // startup discards both and the next out-of-order row is repaired from a
+        // fresh plan against the untouched generation.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                plantCrashedRepair(buildHistory(job), 99, 500);
+            }
+            Assert.assertTrue(repairDescriptorExists(99));
+            Assert.assertTrue(tmpDataSegmentExists(500));
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertFalse(repairDescriptorExists(99));
+            Assert.assertFalse(tmpDataSegmentExists(500));
+
+            final long generationBefore = generation(reloaded);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 25, 100);
+            }
+            Assert.assertEquals(
+                    "the discarded candidate must cost the timeline nothing",
+                    HISTORY_COMMITS,
+                    entryCount(reloaded)
+            );
+            Assert.assertEquals(generationBefore + 1, generation(reloaded));
+            Assert.assertEquals("a published repair owes no descriptor", 0, repairDescriptorCount());
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+        });
     }
 
     @Test
@@ -258,6 +315,57 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
                             "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
                             "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+        });
+    }
+
+    @Test
+    public void testLocalizedRepairOwnsItsCandidateThroughADescriptor() throws Exception {
+        // The same localized repair as above, watched through the filesystem. The
+        // temporary data segment the capture writes is named by no metadata until the
+        // splice commits the superblock, so the descriptor the repair publishes into
+        // repair/ is the only thing that could tell a later startup the segment exists
+        // and whose it is. Once the splice publishes, the segment is reachable from a
+        // generation and the descriptor retires with the ownership it recorded.
+        final ObjList<String> descriptorWrites = new ObjList<>();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (Utf8s.containsAscii(to, LiveViewCheckpointLayout.REPAIR_DIR_NAME)) {
+                    descriptorWrites.add(Utf8s.stringFromUtf8Bytes(to));
+                }
+                return super.rename(from, to);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        assertMemoryLeak(ff, () -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                Assert.assertEquals("a cadence seal stages no repair candidate", 0, descriptorWrites.size());
+
+                appendAndRefresh(job, 25, 100);
+
+                // One write opens the descriptor, and the replay and the publication
+                // stamp their progress into the same record.
+                Assert.assertTrue(
+                        "the repair must record its ownership before it stages anything",
+                        descriptorWrites.size() > 1
+                );
+                final String descriptor = descriptorWrites.getQuick(0);
+                for (int i = 1, n = descriptorWrites.size(); i < n; i++) {
+                    Assert.assertEquals(
+                            "every stamp belongs to the one repair in flight",
+                            descriptor,
+                            descriptorWrites.getQuick(i)
+                    );
+                }
+                Assert.assertEquals(
+                        "the descriptor is named after the snapshot the repair pinned",
+                        descriptorPath(instance.getAppliedWatermark()),
+                        descriptor
+                );
+                Assert.assertEquals("a published repair owes no descriptor", 0, repairDescriptorCount());
+            }
         });
     }
 
@@ -719,6 +827,93 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+    }
+
+    private static Path checkpointsDir(Path dst) {
+        return dst.of(configuration.getDbRoot())
+                .concat(engine.verifyTableName("lv"))
+                .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+    }
+
+    private static String descriptorPath(long repairId) {
+        try (Path dir = new Path(); Path path = new Path()) {
+            LiveViewCheckpointLayout.repairDescriptorPath(path, checkpointsDir(dir), repairId);
+            return path.toString();
+        }
+    }
+
+    /**
+     * Plants the leftovers of a repair that died with its candidate staged: the
+     * descriptor plus the temporary data segment it claims ownership of.
+     */
+    private static void plantCrashedRepair(LiveViewInstance instance, long repairId, long segmentId) {
+        try (
+                LiveViewCheckpointRepairState state = new LiveViewCheckpointRepairState(configuration);
+                Path checkpointsDir = checkpointsDir(instance);
+                Path path = new Path()
+        ) {
+            state.begin(
+                    checkpointsDir,
+                    repairId,
+                    instance.getLiveViewToken().getTableId(),
+                    0,
+                    1,
+                    repairId,
+                    repairId - 1,
+                    ts(timestamp(30)),
+                    ts(timestamp(10)),
+                    ts(timestamp(25)),
+                    ts(timestamp(60)),
+                    LiveViewCheckpointContracts.HighBoundTag.FINITE
+            );
+            state.addOwnedSegmentId(segmentId);
+            LiveViewCheckpointLayout.dataSegmentTmpPath(path, checkpointsDir, segmentId);
+            Assert.assertTrue(configuration.getFilesFacade().touch(path.$()));
+        }
+    }
+
+    private static int repairDescriptorCount() {
+        int count = 0;
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path dir = new Path(); Path repairDir = new Path()) {
+            LiveViewCheckpointLayout.repairDirPath(repairDir, checkpointsDir(dir));
+            if (!ff.exists(repairDir.$())) {
+                return 0;
+            }
+            final long findPtr = ff.findFirst(repairDir.$());
+            if (findPtr == 0) {
+                return 0;
+            }
+            final StringSink name = new StringSink();
+            try {
+                do {
+                    final long namePtr = ff.findName(findPtr);
+                    name.clear();
+                    if (namePtr != 0
+                            && Utf8s.utf8ToUtf16Z(namePtr, name)
+                            && Chars.startsWith(name, LiveViewCheckpointLayout.REPAIR_DESCRIPTOR_PREFIX)) {
+                        count++;
+                    }
+                } while (ff.findNext(findPtr) > 0);
+            } finally {
+                ff.findClose(findPtr);
+            }
+        }
+        return count;
+    }
+
+    private static boolean repairDescriptorExists(long repairId) {
+        try (Path dir = new Path(); Path path = new Path()) {
+            LiveViewCheckpointLayout.repairDescriptorPath(path, checkpointsDir(dir), repairId);
+            return configuration.getFilesFacade().exists(path.$());
+        }
+    }
+
+    private static boolean tmpDataSegmentExists(long segmentId) {
+        try (Path dir = new Path(); Path path = new Path()) {
+            LiveViewCheckpointLayout.dataSegmentTmpPath(path, checkpointsDir(dir), segmentId);
+            return configuration.getFilesFacade().exists(path.$());
+        }
     }
 
     private static byte[] copyBytes(MemoryCARW memory) {

@@ -249,6 +249,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // at the start of each repair; repairs never nest, so it cannot be observed
     // mid-walk.
     private final LiveViewCheckpointRepairPublication repairPublication = new LiveViewCheckpointRepairPublication();
+    // Durable descriptor of the out-of-order repair currently executing: its pinned
+    // snapshot, bounds, replay cursor, publication stage, and the temporary segments
+    // it owns. Open only between a repair's capture and its publication or discard;
+    // what it leaves behind after a crash is what startup reconciliation discards.
+    // One instance per worker, and repairs never nest.
+    private final LiveViewCheckpointRepairState repairState;
     // Positional cursor into windowFactory.getWindowFunctions() while a single
     // restoreFromHead walks the checkpoint's FUNCTION_SNAPSHOT blocks. The writer
     // emits one block per snapshot-capable function in window-function order, so
@@ -369,6 +375,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         this.walFrameCursor = new WalSegmentPageFrameCursor(engine.getConfiguration());
         this.walRecordCursor = new WalSegmentRecordCursor(addressCache, memoryPool);
         this.rowsBounds = new LiveViewCheckpointRowsBounds(engine.getConfiguration());
+        this.repairState = new LiveViewCheckpointRepairState(engine.getConfiguration());
     }
 
     @Override
@@ -390,6 +397,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         ringManifestWriter = Misc.free(ringManifestWriter);
         stagingBuffer = Misc.free(stagingBuffer);
         Misc.free(repairOverlay);
+        Misc.free(repairState);
         Misc.free(rowsBounds);
     }
 
@@ -746,6 +754,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * before anything else touches the timeline and held until publication. Nothing
      * it writes is reachable until {@link #publishCheckpointTimelineRepair} commits
      * the superblock, so abandoning it costs one temporary data segment.
+     * <p>
+     * That temporary segment is also the reason the repair opens a durable
+     * {@link LiveViewCheckpointRepairState} descriptor here: no metadata names the
+     * segment until the splice publishes, so the descriptor is the only record that
+     * this repair owns it. The descriptor carries the plan's bounds and pinned
+     * snapshot alongside, and the replay and the publication stamp their progress
+     * into it, which is what lets startup discard a crashed candidate and replan
+     * instead of guessing at the files it left behind.
      *
      * @return the open capture, or null when this repair cannot splice - which is
      * not a failure of the repair, only of its ability to keep the timeline. The
@@ -773,6 +789,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // changed - and its output is re-emitted identically, so the splice
             // reuses it. Only [C, H) receives new payload versions.
             capture.collectBoundaries(plan.getRetireLowTs(), plan.getHighTsExclusive(), repairBoundaries);
+            // The repair is named after the snapshot it pinned, so a repair that is
+            // repeated against the same E - a deferred replacement the next turn
+            // re-materialises - rewrites its own descriptor rather than leaving a
+            // second one behind.
+            repairState.begin(
+                    checkpointsDir,
+                    plan.getPinnedSeqTxn(),
+                    instance.getLiveViewToken().getTableId(),
+                    0,
+                    capture.getGeneration(),
+                    plan.getPinnedSeqTxn(),
+                    plan.getTriggerSeqTxn(),
+                    plan.getRetireLowTs(),
+                    plan.getReplayLowTs(),
+                    plan.getOutputLowTs(),
+                    plan.getHighTsExclusive(),
+                    plan.getHighBoundTag()
+            );
+            repairState.addOwnedSegmentId(capture.getDataSegmentId());
+            repairState.recordProgress(
+                    Numbers.LONG_NULL,
+                    repairBoundaries.size() > 0 ? repairBoundaries.getQuick(0).checkpointId : Numbers.LONG_NULL
+            );
+            // Armed: the publication mirrors every stage it records from here on.
+            repairPublication.of(repairState);
             return capture;
         } catch (Throwable t) {
             // Most often "no valid generation": a view whose timeline was retired by
@@ -782,10 +823,40 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", correctionTs=").$(plan.getRetireLowTs())
                     .$(", highTsExclusive=").$(plan.getHighTsExclusive())
                     .$(", error=").$(t).I$();
+            discardRepairState();
             Misc.free(capture);
             repairBoundaries.clear();
             return null;
         }
+    }
+
+    /**
+     * Retires the executing repair's durable descriptor. Called from every path
+     * that ends its candidate - published, abandoned, or unwinding - because the
+     * descriptor exists only to describe files a crash would otherwise leave with
+     * no owner, and by then there are none. A no-op when no descriptor is open.
+     */
+    private void discardRepairState() {
+        // A failed unlink logs its own path and leaves the descriptor to the next
+        // reconciliation, which discards it as a crashed candidate - correct, since
+        // by then it describes nothing this process still owns.
+        repairState.discard();
+    }
+
+    /**
+     * Persists how far the replay got: the boundary it has just finished
+     * reproducing, and the {@code checkpointId} of the next one it owes a root
+     * version. One small descriptor write per boundary, against a
+     * {@link LiveViewCheckpointTimelineStoreWriter.RepairCapture#capture} that has
+     * just frozen the whole runtime state into the data segment.
+     */
+    private void recordRepairProgress(int capturedBoundaries) {
+        repairState.recordProgress(
+                repairBoundaries.getQuick(capturedBoundaries - 1).maxTimestamp,
+                capturedBoundaries < repairBoundaries.size()
+                        ? repairBoundaries.getQuick(capturedBoundaries).checkpointId
+                        : Numbers.LONG_NULL
+        );
     }
 
     /**
@@ -3973,6 +4044,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 LOG.error().$("could not measure live view durable prefix for a checkpoint timeline repair [view=")
                         .$(viewName).$(", error=").$(t).I$();
                 timelineCapture = Misc.free(timelineCapture);
+                discardRepairState();
                 repairBoundaries.clear();
             }
         }
@@ -4125,6 +4197,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                             durableRowsBelowFloor + appendedRows
                                     );
                                     capturedBoundaries++;
+                                    recordRepairProgress(capturedBoundaries);
                                 }
                                 if (ts < emitLowTs) {
                                     // Warm-up row: the window functions have advanced over it,
@@ -4163,6 +4236,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         durableRowsBelowFloor + appendedRows
                                 );
                                 capturedBoundaries++;
+                                recordRepairProgress(capturedBoundaries);
                             }
                             // Capture base rows scanned before the cursor chain closes
                             // (FilteringRecordCursor.close() resets its counter). No
@@ -4276,6 +4350,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // committed, and a timeline nothing corrects must not outlive the
                 // output it describes.
                 timelineCapture = Misc.free(timelineCapture);
+                discardRepairState();
                 repairBoundaries.clear();
                 retireCheckpointTimelineOnO3(instance);
             }
@@ -4439,6 +4514,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 retireCheckpointTimelineOnO3(instance);
             }
             Misc.free(timelineCapture);
+            // The candidate is either published - its segments reachable from the new
+            // generation - or gone. Either way nothing is left for a startup sweep to
+            // discard, so the descriptor's ownership claim retires with it.
+            discardRepairState();
             repairBoundaries.clear();
         }
         // The boundary rebuild is the residual O(view age) fallback (late row below

@@ -56,6 +56,12 @@ import org.jetbrains.annotations.Nullable;
  * </ul>
  * One instance per refresh worker, reused across repairs. Repairs never nest, so
  * the single instance cannot be observed mid-walk.
+ * <p>
+ * A repair that owns unpublished files also owns a durable
+ * {@link LiveViewCheckpointRepairState} descriptor, and {@link #of} attaches it
+ * so every stage this machine records reaches disk as well. Nothing here depends
+ * on the descriptor: a repair with no candidate to describe attaches none, and
+ * once the descriptor is discarded its own writes turn into no-ops.
  */
 public final class LiveViewCheckpointRepairPublication implements Mutable {
     // LV-WRITER space, not base space: the live-view writer's own seqTxn minted by
@@ -63,6 +69,9 @@ public final class LiveViewCheckpointRepairPublication implements Mutable {
     // live view's applied writer txn. LONG_NULL when the repair committed no
     // replacement.
     private long committedLvSeqTxn = Numbers.LONG_NULL;
+    // Durable mirror of the walk below, or null when this repair staged nothing a
+    // crash would have to clean up.
+    private LiveViewCheckpointRepairState durableState;
     private RuntimeDisposition runtimeDisposition;
     private boolean runtimeSettled;
     // The last completed stage; null before plan().
@@ -82,6 +91,7 @@ public final class LiveViewCheckpointRepairPublication implements Mutable {
     @Override
     public void clear() {
         committedLvSeqTxn = Numbers.LONG_NULL;
+        durableState = null;
         runtimeDisposition = null;
         runtimeSettled = false;
         stage = null;
@@ -129,6 +139,17 @@ public final class LiveViewCheckpointRepairPublication implements Mutable {
 
     public boolean isRuntimeSettled() {
         return runtimeSettled;
+    }
+
+    /**
+     * Attaches the durable descriptor of the repair in progress, so every stage
+     * this machine records from here on reaches disk too. Called once the repair
+     * has staged something a crash would have to clean up, which is after
+     * {@link #plan()}: the descriptor is created at {@link RepairPublicationStage#PLAN}
+     * by its owner.
+     */
+    public void of(@NotNull LiveViewCheckpointRepairState durableState) {
+        this.durableState = durableState;
     }
 
     /** Opens a repair: the pinned snapshot is classified and the bounds derived. */
@@ -202,6 +223,9 @@ public final class LiveViewCheckpointRepairPublication implements Mutable {
                     .put(']');
         }
         stage = next;
+        if (durableState != null) {
+            durableState.recordStage(next);
+        }
     }
 
     private void require(@NotNull RepairPublicationStage expected, @NotNull CharSequence why) {

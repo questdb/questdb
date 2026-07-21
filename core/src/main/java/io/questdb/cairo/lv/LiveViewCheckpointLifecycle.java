@@ -41,19 +41,21 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Primary-owned lifecycle operations for the versioned checkpoint timeline.
  *
- * <p>Startup reconciliation is bounded by physical segment count. It removes
- * recognized temporary files and records final-name files above both valid A/B
- * slot id ceilings. Final names are removed only after a new slot advances past
- * them, preserving monotonic allocation. Reconciliation never walks logical
- * checkpoint leaves. Zero-reference deletion delegates to
- * {@link LiveViewCheckpointDataStore}, retaining its old-slot, reader-pin,
- * candidate-ownership, and retry guards.</p>
+ * <p>Startup reconciliation is bounded by physical segment count. It discards
+ * the candidate of every crashed repair through
+ * {@link LiveViewCheckpointRepairState#sweep}, removes recognized temporary
+ * files, and records final-name files above both valid A/B slot id ceilings.
+ * Final names are removed only after a new slot advances past them, preserving
+ * monotonic allocation. Reconciliation never walks logical checkpoint leaves.
+ * Zero-reference deletion delegates to {@link LiveViewCheckpointDataStore},
+ * retaining its old-slot, reader-pin, candidate-ownership, and retry guards.</p>
  *
  * <p>Callers serialize reconciliation, epoch replacement, and retirement with
- * timeline publication and pin acquisition. The live-view integration does so
- * with the refresh latch (and fences DROP before retirement). Tests may pass an
- * open metadata store to {@link #retireTimeline} to assert that a live pin
- * defers deletion.</p>
+ * timeline publication, repair descriptor writes, and pin acquisition. The
+ * live-view integration does so with the refresh latch (and fences DROP before
+ * retirement), so the repair sweep only ever meets descriptors of repairs that
+ * are not running. Tests may pass an open metadata store to
+ * {@link #retireTimeline} to assert that a live pin defers deletion.</p>
  */
 public final class LiveViewCheckpointLifecycle {
 
@@ -84,12 +86,19 @@ public final class LiveViewCheckpointLifecycle {
                     .put(", historyEpoch=").put(expectedHistoryEpoch).put(']');
         }
 
+        // A descriptor left behind is a repair that crashed mid-candidate. Its
+        // pinned snapshot cannot be reopened, so the candidate is discarded and
+        // replanned rather than resumed; sweeping first also releases the
+        // temporary segments it owned before the orphan pass counts them.
+        final LiveViewCheckpointRepairState.SweepResult repairSweep =
+                LiveViewCheckpointRepairState.sweep(configuration, checkpointsDir, primaryOwner);
+
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path timelinePath = new Path()) {
             LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
             if (!ff.exists(timelinePath.$())) {
                 final CleanupResult cleanup = cleanupOrphans(configuration, checkpointsDir, 0);
-                return result(false, -1, Numbers.LONG_NULL, cleanup, 0, 0);
+                return result(false, -1, Numbers.LONG_NULL, cleanup, 0, 0, repairSweep);
             }
         }
 
@@ -130,11 +139,22 @@ public final class LiveViewCheckpointLifecycle {
                         .put("could not retire live view checkpoint history epoch [path=")
                         .put(checkpointsDir).put(']');
             }
-            return new ReconcileResult(true, -1, Numbers.LONG_NULL, 0, 0, 0, 0, 0);
+            return new ReconcileResult(
+                    true,
+                    -1,
+                    Numbers.LONG_NULL,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    repairSweep.getDiscardedRepairCount(),
+                    repairSweep.getFailedCount()
+            );
         }
 
         final CleanupResult cleanup = cleanupOrphans(configuration, checkpointsDir, nextSegmentIdCeiling);
-        return result(false, walPurgeFloor, normalizedBaseSeqTxn, cleanup, purgedSegments, failedPurges);
+        return result(false, walPurgeFloor, normalizedBaseSeqTxn, cleanup, purgedSegments, failedPurges, repairSweep);
     }
 
     /** Removes final-name orphans after a new slot durably advances past them. */
@@ -369,7 +389,8 @@ public final class LiveViewCheckpointLifecycle {
             long normalizedBaseSeqTxn,
             CleanupResult cleanup,
             int purgedSegments,
-            int failedPurges
+            int failedPurges,
+            LiveViewCheckpointRepairState.SweepResult repairSweep
     ) {
         return new ReconcileResult(
                 epochReplaced,
@@ -379,7 +400,9 @@ public final class LiveViewCheckpointLifecycle {
                 cleanup.failed,
                 cleanup.finalOrphanUpperBound,
                 purgedSegments,
-                failedPurges
+                failedPurges,
+                repairSweep.getDiscardedRepairCount(),
+                repairSweep.getFailedCount()
         );
     }
 
@@ -395,10 +418,12 @@ public final class LiveViewCheckpointLifecycle {
 
     public static final class ReconcileResult {
         private static final ReconcileResult NOT_OWNER =
-                new ReconcileResult(false, -1, Numbers.LONG_NULL, 0, 0, 0, 0, 0);
+                new ReconcileResult(false, -1, Numbers.LONG_NULL, 0, 0, 0, 0, 0, 0, 0);
+        private final int discardedRepairCount;
         private final boolean epochReplaced;
         private final int failedOrphanCount;
         private final int failedPurgeCount;
+        private final int failedRepairCount;
         private final long finalOrphanUpperBound;
         private final long normalizedBaseSeqTxn;
         private final int purgedSegmentCount;
@@ -413,7 +438,9 @@ public final class LiveViewCheckpointLifecycle {
                 int failedOrphanCount,
                 long finalOrphanUpperBound,
                 int purgedSegmentCount,
-                int failedPurgeCount
+                int failedPurgeCount,
+                int discardedRepairCount,
+                int failedRepairCount
         ) {
             this.epochReplaced = epochReplaced;
             this.walPurgeFloor = walPurgeFloor;
@@ -423,6 +450,15 @@ public final class LiveViewCheckpointLifecycle {
             this.finalOrphanUpperBound = finalOrphanUpperBound;
             this.purgedSegmentCount = purgedSegmentCount;
             this.failedPurgeCount = failedPurgeCount;
+            this.discardedRepairCount = discardedRepairCount;
+            this.failedRepairCount = failedRepairCount;
+        }
+
+        /**
+         * @return crashed repair candidates this reconciliation discarded
+         */
+        public int getDiscardedRepairCount() {
+            return discardedRepairCount;
         }
 
         public int getFailedOrphanCount() {
@@ -431,6 +467,14 @@ public final class LiveViewCheckpointLifecycle {
 
         public int getFailedPurgeCount() {
             return failedPurgeCount;
+        }
+
+        /**
+         * @return repair descriptors this reconciliation could not unlink; the
+         * next reconciliation retries them
+         */
+        public int getFailedRepairCount() {
+            return failedRepairCount;
         }
 
         public long getFinalOrphanUpperBound() {
