@@ -112,6 +112,7 @@ import io.questdb.std.FindVisitor;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.IntLongHashMap;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.LongIntHashMap;
@@ -356,6 +357,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int columnCount;
     private long commitRowCount;
     private long committedMasterRef;
+    // Composite single-cell fast-append (spec 1, Task 1 -- detection only): a writer-instance-scoped
+    // cache of the real max timestamp this writer has itself observed committed for a given cellKey,
+    // consulted by isCompositeSingleCellFastAppendPossible(...) to decide "append-only into that
+    // cell" for a cell that already has committed rows (there is no cheap persisted per-cell
+    // max-timestamp today -- see that method's own docs). Keyed by cellKey alone (not by day): safe
+    // because the method only ever consults/updates it for a commit landing in the table's CURRENT
+    // last day partition, and a cell's (day, cellKey) existence is independently verified via the
+    // _txn attached-partition record first, so a stale cross-day value can never cause a false
+    // "empty cell" or false "append-only" read. Cleared (not merely stale) on any multi-cell commit,
+    // since this method cannot cheaply attribute per-cell max timestamps for that shape and a stale
+    // entry could otherwise cause a false-positive read later. Null until the first composite commit
+    // this method observes (never allocated for a plain table, or while the flag is off).
+    private IntLongHashMap compositeCellMaxTimestamp;
     // Non-owning holder for a composite table's write-side interners (dedicated dicts + _cell
     // registry). Null for plain/cluster-only tables. The interner SymbolMapWriters themselves live
     // in denseSymbolMapWriters and are freed there (freeSymbolMapWriters); this reference is merely
@@ -389,6 +403,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // compile and reused thereafter -- it carries no per-table-schema state of its own, only a
     // reference to engine, so a metadata-version-triggered recompile never needs a fresh one.
     private CompositeExpressionSqlExecutionContext compositeExpressionSqlExecutionContext;
+    // Composite single-cell fast-append (spec 1, Task 1 -- detection only): counts commits
+    // isCompositeSingleCellFastAppendPossible(...) found eligible while the flag is on. Static
+    // (JVM-wide, not per-table/per-writer) because the writer that actually processes a WAL commit
+    // is internal to drainWalQueue()/the WAL-apply job and is released back to the pool immediately
+    // after -- a per-instance field would not reliably be observable by a caller that re-acquires
+    // the writer afterwards. Detection only: incrementing this never changes which code path a
+    // commit takes (see the processWalCommit hook). Test-visible via getCompositeFastAppendEligibleCount().
+    private static final AtomicLong compositeFastAppendEligibleCount = new AtomicLong();
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
@@ -5058,6 +5080,115 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 && committedMaxTimestamp <= lagMinTimestamp
                 && txWriter.getPartitionTimestampByTimestamp(lagMinTimestamp) == lastPartitionTimestamp
                 && lagMaxTimestamp <= Math.min(commitToTimestamp, partitionTimestampHi);
+    }
+
+    /**
+     * Composite single-cell fast-append eligibility (composite-partitioning fast-append spec 1,
+     * Task 1 -- detection only; see {@code docs/superpowers/specs/2026-07-21-composite-single-cell-
+     * fast-append-design.md} and {@code .superpowers/sdd/task-1-brief.md}). The per-cell analog of
+     * {@link #applyFromWalLagToLastPartitionPossible} -- that method is hard-gated {@code false} for
+     * every composite table ({@code dimCount > 0}, see its own docs); this is what a later task will
+     * substitute for it in the eligible case, once a real composite fast-append exists. TODAY this
+     * method's result is only counted ({@link #compositeFastAppendEligibleCount}), never acted on --
+     * every caller still always falls through to the existing, unchanged {@code
+     * processO3BlockComposite} path regardless of what this method returns.
+     * <p>
+     * Returns the single {@code cellKey} every row {@code [rowLo, rowHi)} resolves to (using the
+     * SAME absolute row numbering {@link #resolveRowCellKey}/{@link #processO3BlockComposite} use --
+     * true whenever {@code ordered}, the only case this method returns non-negative for, since a
+     * composite table never has WAL lag to rebase row numbering against) if ALL of the following
+     * hold, else -1:
+     * <ul>
+     *     <li><b>Ordered:</b> {@code ordered} (the WAL sequencer's own flag for this txn).</li>
+     *     <li><b>Not dedup:</b> {@link #isCommitDedupMode()} is false.</li>
+     *     <li><b>Last partition:</b> {@code [o3TimestampMin, o3TimestampMax]} falls entirely within
+     *     the table's current (last) day partition -- mirrors {@code
+     *     applyFromWalLagToLastPartitionPossible}'s own {@code lastPartitionTimestamp}/{@code
+     *     partitionTimestampHi} bounds.</li>
+     *     <li><b>Single-cell:</b> every row resolves to the same {@code cellKey} ({@link
+     *     #resolveRowCellKey}). This is the ~2.5us/commit irreducible cost the feasibility spike
+     *     measured.</li>
+     *     <li><b>Append-only into that cell:</b> {@code o3TimestampMin} is strictly greater than the
+     *     cell's real committed max timestamp. There is no persisted per-cell max-timestamp yet: the
+     *     {@code _txn} composite attached-partition {@code (ts, cellKey)} record (Plan 3) gives only
+     *     the partition-floor {@code ts} and the cell's row count ({@link
+     *     TxReader#findAttachedPartitionRawIndexBy}/{@link TxReader#getPartitionSizeByRawIndex}) --
+     *     slots 5-7 are reserved, unused today. A row count of 0 (no {@code (lastPartitionTimestamp,
+     *     cellKey)} entry yet, or an entry with size 0) means the cell is genuinely empty, so this is
+     *     trivially satisfied; otherwise this method consults {@link #compositeCellMaxTimestamp}, a
+     *     writer-instance-scoped cache of the real max timestamp it has itself observed committed
+     *     for that cellKey from a PRIOR single-cell commit. A cell with committed rows this writer
+     *     instance has not itself observed a single-cell commit for (a freshly (re)opened writer, or
+     *     a cell whose only commits so far were multi-cell) is conservatively treated as NOT
+     *     append-only -- a missed detection, never a false positive. See the Task 1 report for why a
+     *     real persisted per-cell max-timestamp (e.g. those reserved {@code _txn} slots) is the
+     *     natural next step before any later task lets this predicate's result skip real work.</li>
+     * </ul>
+     * Never called for a plain table -- every caller gates on {@code dimCount > 0} (and {@link
+     * #isRoutedComposite()}) first.
+     *
+     * @return the single cellKey every row in {@code [rowLo, rowHi)} resolves to, if this commit is
+     *         fast-append-eligible; -1 otherwise
+     */
+    int isCompositeSingleCellFastAppendPossible(long rowLo, long rowHi, boolean ordered, long o3TimestampMin, long o3TimestampMax) {
+        if (!ordered || isCommitDedupMode()) {
+            return -1;
+        }
+        if (txWriter.getPartitionTimestampByTimestamp(o3TimestampMin) != lastPartitionTimestamp
+                || o3TimestampMax > partitionTimestampHi) {
+            return -1;
+        }
+
+        final int dimCount = metadata.getPartitionSpec().getDimensionCount();
+        final int[] dimScratch = new int[dimCount];
+        final int cellKey = resolveRowCellKey(rowLo, dimScratch);
+        for (long row = rowLo + 1; row < rowHi; row++) {
+            if (resolveRowCellKey(row, dimScratch) != cellKey) {
+                // Multi-cell: out of spec 1 scope. This commit may have advanced any number of
+                // OTHER cells' real max timestamps in ways this method does not attribute per-cell;
+                // invalidate the whole cache rather than risk a stale, too-low entry causing a
+                // false-positive "append-only" read on a later single-cell commit into one of them.
+                if (compositeCellMaxTimestamp != null) {
+                    compositeCellMaxTimestamp.clear();
+                }
+                return -1;
+            }
+        }
+
+        final boolean appendOnly;
+        final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(lastPartitionTimestamp, cellKey);
+        if (partitionIndexRaw < 0 || txWriter.getPartitionSizeByRawIndex(partitionIndexRaw) == 0L) {
+            // Cell genuinely has no committed rows yet (today, in this day partition) -- trivially
+            // append-only.
+            appendOnly = true;
+        } else {
+            long cachedMax = compositeCellMaxTimestamp != null ? compositeCellMaxTimestamp.get(cellKey) : -1;
+            // -1 is IntLongHashMap's own "no entry" sentinel here, not a real cached value: this
+            // writer instance has not itself observed this cell's real max timestamp yet.
+            appendOnly = cachedMax != -1 && o3TimestampMin > cachedMax;
+        }
+
+        // Confirmed single-cell above regardless of the append-only outcome, so this commit's own
+        // o3TimestampMax is a real, trustworthy observation of this cell's new true max once it
+        // completes -- fold it in (keeping the larger of the two, in case of a rare non-append
+        // commit) for future eligibility checks within this writer's lifetime.
+        if (compositeCellMaxTimestamp == null) {
+            compositeCellMaxTimestamp = new IntLongHashMap();
+        }
+        long priorCached = compositeCellMaxTimestamp.get(cellKey);
+        if (priorCached == -1 || o3TimestampMax > priorCached) {
+            compositeCellMaxTimestamp.put(cellKey, o3TimestampMax);
+        }
+
+        return appendOnly ? cellKey : -1;
+    }
+
+    /**
+     * Test-visible read of {@link #compositeFastAppendEligibleCount} (composite-partitioning
+     * fast-append spec 1, Task 1 -- detection only). Static -- see that field's own docs for why.
+     */
+    public static long getCompositeFastAppendEligibleCount() {
+        return compositeFastAppendEligibleCount.get();
     }
 
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
@@ -12488,6 +12619,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long timestampAddr = 0;
                 MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
                 o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+
+                // Composite single-cell fast-append (spec 1, Task 1 -- detection only). Counts an
+                // eligible commit; NEVER takes an early return here -- always falls through to the
+                // existing full O3 composite path below, unchanged (no behavior change yet). A
+                // later task makes an eligible commit actually fast-append.
+                if (configuration.isWalCompositeFastAppendEnabled()
+                        && metadata.getPartitionSpec().getDimensionCount() > 0
+                        && isRoutedComposite()
+                        && isCompositeSingleCellFastAppendPossible(rowLo, rowHi, ordered, o3TimestampMin, o3TimestampMax) >= 0) {
+                    compositeFastAppendEligibleCount.incrementAndGet();
+                }
 
                 if (needsOrdering || needsDedup) {
                     if (needsOrdering) {

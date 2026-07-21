@@ -1768,6 +1768,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
         return getDelegate().isWalApplyParallelSqlEnabled();
     }
 
+    @Override
+    public boolean isWalCompositeFastAppendEnabled() {
+        return getDelegate().isWalCompositeFastAppendEnabled();
+    }
+
     public boolean isWalSupported() {
         return getDelegate().isWalSupported();
     }

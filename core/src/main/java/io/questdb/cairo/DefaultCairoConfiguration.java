@@ -1738,6 +1738,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isWalCompositeFastAppendEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isWalSupported() {
         return true;
     }

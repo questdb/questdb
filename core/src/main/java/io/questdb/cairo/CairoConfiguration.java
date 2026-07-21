@@ -1161,6 +1161,8 @@ public interface CairoConfiguration {
 
     boolean isWalApplyParallelSqlEnabled();
 
+    boolean isWalCompositeFastAppendEnabled();
+
     boolean isWalSupported();
 
     boolean isWriterMixedIOEnabled();

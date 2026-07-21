@@ -620,6 +620,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walApplyWorkerNapThreshold;
     private final long walApplyWorkerSleepThreshold;
     private final long walApplyWorkerYieldThreshold;
+    private final boolean walCompositeFastAppendEnabled;
     private final boolean walEnabledDefault;
     private final long walMaxLagSize;
     private final int walMaxLagTxnCount;
@@ -921,6 +922,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
         walApplyEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_ENABLED, true);
+        this.walCompositeFastAppendEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_COMPOSITE_FASTAPPEND_ENABLED, false);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
         this.walSegmentRolloverSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, 50 * Numbers.SIZE_1MB);
         if ((this.walSegmentRolloverSize != 0) && (this.walSegmentRolloverSize < 1024)) {  // 1KiB segments minimum
@@ -5415,6 +5417,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isWalApplyParallelSqlEnabled() {
             return walParallelExecutionEnabled;
+        }
+
+        @Override
+        public boolean isWalCompositeFastAppendEnabled() {
+            return walCompositeFastAppendEnabled;
         }
 
         @Override
