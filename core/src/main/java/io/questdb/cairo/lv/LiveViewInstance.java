@@ -485,6 +485,17 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     // is active, and the agent's startCheckpoint cannot complete its latch
     // handshake while the worker holds the refresh latch.
     private String pendingInvalidationReason;
+    // LV-WRITER space, not base space: the live-view writer's own seqTxn of an
+    // out-of-order repair's REPLACE_RANGE block that committed but whose inline
+    // apply did not land. LONG_NULL when nothing is outstanding. Refresh is blocked
+    // behind reconciliation until such a replacement is known applied or not
+    // applied: the repair's own bookkeeping (lvRowsTotal, every repaired root's
+    // lvRowPosition, the suffix range-add) reads the materialised table, so a turn
+    // that runs over an unapplied replacement derives its coordinates from a table
+    // that does not hold the output. In-RAM only - a restart reconciles the same
+    // window through LiveViewRefreshJob.reconcileAppliedFloorAfterRestart. Mutated
+    // and read under the refresh latch.
+    private long pendingReplacementLvSeqTxn = Numbers.LONG_NULL;
     // Cached RecordToRowCopier (compiled bytecode bridging the SELECT cursor's record
     // shape to the LV's WalWriter row). Invalidated when the WalWriter's metadata version
     // moves past recordRowCopierMetadataVersion. Accessed only while the refresh latch is held.
@@ -1256,6 +1267,15 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
 
     public long getO3ResumeReplayRows() {
         return o3ResumeReplayRows;
+    }
+
+    /**
+     * @return the live-view-writer seqTxn of an out-of-order repair's replacement
+     * that committed but did not apply, or {@link Numbers#LONG_NULL} when nothing
+     * is outstanding. See {@link #pendingReplacementLvSeqTxn}.
+     */
+    public long getPendingReplacementLvSeqTxn() {
+        return pendingReplacementLvSeqTxn;
     }
 
     public long getRecordRowCopierMetadataVersion() {
@@ -2099,6 +2119,15 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
      */
     public void setPendingInvalidationReason(String reason) {
         this.pendingInvalidationReason = reason;
+    }
+
+    /**
+     * Arms (or, with {@link Numbers#LONG_NULL}, clears) the reconciliation block a
+     * repair leaves behind when its replacement committed without applying. See
+     * {@link #pendingReplacementLvSeqTxn}.
+     */
+    public void setPendingReplacementLvSeqTxn(long lvSeqTxn) {
+        this.pendingReplacementLvSeqTxn = lvSeqTxn;
     }
 
     public void setRecordToRowCopier(RecordToRowCopier copier, long metadataVersion) {

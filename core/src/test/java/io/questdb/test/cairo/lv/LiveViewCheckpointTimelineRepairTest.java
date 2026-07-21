@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
@@ -47,6 +48,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -533,6 +535,134 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testStalledApplyDefersTheRepairAndRepeatsItOnceReconciled() throws Exception {
+        // The reconciliation between the replacement's commit and everything that
+        // describes it. With the live view's inline apply stalled, the block sits in
+        // the view's own WAL but not in its table, so the repair may not publish a
+        // generation whose root positions it would read off that table, may not seal a
+        // head, and may not consume the base range. It defers instead, and the deferred
+        // repair simply runs again once the block lands.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                final long rowsBefore = instance.getLvRowsTotal();
+                Assert.assertEquals(HISTORY_COMMITS, rowsBefore);
+
+                job.setSimulateRepairApplyFailureForTest(true);
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 'a', 100)");
+                drainWalQueue();
+                // Exactly one pass: it drains the notification and runs the repair, so
+                // the fallback scan - which re-drives a view's outstanding apply - does
+                // not get to run and the stalled state is observable.
+                Assert.assertTrue(job.run());
+                drainWalQueue();
+
+                Assert.assertTrue(
+                        "an unapplied replacement must be left for reconciliation",
+                        instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL
+                );
+                Assert.assertEquals(
+                        "no watermark may walk past output the live view table does not hold",
+                        processedBefore,
+                        instance.getLastProcessedSeqTxn()
+                );
+                Assert.assertEquals(
+                        "the lifetime row count tracks the table, which has not moved",
+                        rowsBefore,
+                        instance.getLvRowsTotal()
+                );
+                Assert.assertFalse(
+                        "the replacement supersedes what every root describes, so the"
+                                + " timeline must not outlive it",
+                        hasTimeline(instance)
+                );
+
+                // The deferred repair is repeated, not resumed. The base range was never
+                // consumed, so the next tick re-detects the same out-of-order row and
+                // rebuilds it - this time against a table that holds the replacement the
+                // fallback scan's apply retry landed.
+                job.setSimulateRepairApplyFailureForTest(false);
+                driveRefreshToQuiescence(job);
+
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getPendingReplacementLvSeqTxn());
+                Assert.assertTrue(instance.getLastProcessedSeqTxn() > processedBefore);
+                Assert.assertEquals(
+                        "the repeated replacement must replace, not duplicate",
+                        HISTORY_COMMITS + 1,
+                        instance.getLvRowsTotal()
+                );
+                Assert.assertEquals(
+                        "a retired timeline starts over from the post-replay seal",
+                        1,
+                        entryCount(instance)
+                );
+                Assert.assertEquals(1, generation(instance));
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+        });
+    }
+
+    @Test
+    public void testStalledApplyKeepsThePrimaryRuntimeUsable() throws Exception {
+        // The runtime half of the same ordering. A repair that converges below the
+        // frontier replays through the compiled factory's own window functions, so a
+        // turn that stops short of publishing still owes the runtime its state back -
+        // the alternative is a factory holding the replay's state for [L, H) and
+        // nothing for the frontier above it, which the following in-order rows would
+        // then accumulate onto. Here the view keeps ingesting in order after the
+        // stalled repair, which is what reads that state rather than the output.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                buildHistory(job);
+
+                job.setSimulateRepairApplyFailureForTest(true);
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 'a', 100)");
+                drainWalQueue();
+                Assert.assertTrue(job.run());
+                drainWalQueue();
+
+                job.setSimulateRepairApplyFailureForTest(false);
+                driveRefreshToQuiescence(job);
+                // 70s is 10 seconds past the 60s frontier, so the RANGE 30 SECOND frame
+                // holds 50s, 60s and itself: 114 - 103 + 18 - 3 ... in the view's own
+                // arithmetic, 50s(4) + 60s(6) + 70s(7) = 17.
+                appendAndRefresh(job, 70, 7);
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n");
+        });
+    }
+
+    @Test
     public void testSuffixDeltaAccumulatesAcrossRepairs() throws Exception {
         assertMemoryLeak(() -> {
             createView();
@@ -789,6 +919,17 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 LiveViewCheckpointTimelineReader reader = openTimelineReader(instance)
         ) {
             return reader.size(pin.getTimelineRootRef());
+        }
+    }
+
+    /** True while the view still has a published checkpoint timeline superblock. */
+    private boolean hasTimeline(LiveViewInstance instance) {
+        try (
+                Path checkpointsDir = checkpointsDir(instance);
+                Path timelinePath = new Path()
+        ) {
+            LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+            return configuration.getFilesFacade().exists(timelinePath.$());
         }
     }
 

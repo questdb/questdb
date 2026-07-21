@@ -42,6 +42,7 @@ import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts.RepairPublicationStage;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -234,6 +235,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // repair; the two executors only read it. Repairs never nest, so the single
     // instance cannot be observed mid-refill.
     private final LiveViewCheckpointRepairPlan repairPlan = new LiveViewCheckpointRepairPlan();
+    // Publication ordering of the out-of-order repair currently executing: which
+    // stage it has reached, the live-view seqTxn its replacement minted, and what
+    // it does with the runtime once it publishes. One instance per worker, cleared
+    // at the start of each repair; repairs never nest, so it cannot be observed
+    // mid-walk.
+    private final LiveViewCheckpointRepairPublication repairPublication = new LiveViewCheckpointRepairPublication();
     // Positional cursor into windowFactory.getWindowFunctions() while a single
     // restoreFromHead walks the checkpoint's FUNCTION_SNAPSHOT blocks. The writer
     // emits one block per snapshot-capable function in window-function order, so
@@ -257,6 +264,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final LongList ringSnapshot = new LongList();
     // Reusable counter for the seed sweep's skipRows() resume positioning.
     private final RecordCursor.Counter seedSkipCounter = new RecordCursor.Counter();
+    // Test-only: when armed, an out-of-order repair skips the inline apply of its
+    // own REPLACE_RANGE block, modelling the apply silently no-opping (the LV writer
+    // was busy, or its memory-pressure control backed off). Lets a test drive the
+    // committed-but-unapplied branch of the post-commit reconciliation. Sticky until
+    // cleared; always false in production.
+    @TestOnly
+    private boolean simulateRepairApplyFailureForTest;
     // Test-only: when armed, the refresh finally throws right where a real
     // LiveViewInMemoryBuffer.close() would (a native-memory / tracker-balance assert
     // under -ea), so a test can prove the refresh latch is still released on that path.
@@ -432,6 +446,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setCheckpointTrailingFunctionSnapshotBlocksToOmit(int count) {
         this.checkpointTrailingFunctionSnapshotBlocksToOmit = count;
+    }
+
+    /**
+     * Test-only: makes every out-of-order repair skip the inline apply of its own
+     * REPLACE_RANGE block, so the block stays committed-but-unapplied and the repair
+     * takes its unreconciled branch. Production never calls this.
+     */
+    @TestOnly
+    public void setSimulateRepairApplyFailureForTest(boolean simulate) {
+        this.simulateRepairApplyFailureForTest = simulate;
     }
 
     /**
@@ -3750,6 +3774,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // fullRebuild veto as the floors: a rebuild that must recompute the whole view
         // may not stop early, whatever the plan derived.
         final boolean finiteHighBound = localized && plan.isRuntimeStatePreserved();
+        // The publication ordering this rebuild walks. It owns the two decisions the
+        // rest of the method used to spread across local flags: what happens to the
+        // runtime once the repair publishes, and whether the replacement is
+        // materialised enough for a generation, a watermark or a head seal to
+        // describe it.
+        repairPublication.clear();
+        repairPublication.plan();
         boolean overlayCaptured = false;
         boolean readerAttached = false;
         long appendedRows = 0;
@@ -3758,10 +3789,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // unless a warm-up ran; the scan-cost counter is sourced from it when no
         // filter is present to count base rows itself.
         long scannedRows = 0;
-        // True when the zero-surviving-row path issued a pure-delete
-        // REPLACE_RANGE to clear ghost rows (appendedRows stays 0 there, but the
-        // apply + on-disk row-count re-read below still have to run).
-        boolean deletedGhostRange = false;
         long replayMaxTs = Numbers.LONG_NULL;
         // Minimum output ts the replay actually produced (rows arrive
         // ts-ascending, so the first appended row is the minimum). Base of the
@@ -3996,6 +4023,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             o3ScanRows = filter != null ? filteringCursor.getBaseRowsConsumed() : scannedRows;
                         }
 
+                        // Every candidate root the repair owed is frozen and the runtime
+                        // disposition is fixed. The replacement commits only from here,
+                        // never before: a commit the roots do not describe leaves durable
+                        // output with no state version to recover it from.
+                        repairPublication.candidateReady(runtimeDisposition(overlayCaptured));
                         if (appendedRows > 0 || localized) {
                             // REPLACE_RANGE low boundary. replayMinTs alone freezes the
                             // prefix when the base lost rows below it (DROP PARTITION /
@@ -4037,12 +4069,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     replaceLowTs,
                                     replaceHighTs
                             ));
-                            if (appendedRows == 0) {
-                                // The apply + on-disk row-count re-read below is gated on
-                                // rows having moved; a zero-row truncating replacement moved
-                                // them by deletion.
-                                deletedGhostRange = true;
-                            }
+                            repairPublication.replacementCommitted(walWriter.getLastSeqTxn());
                         }
                     }
                 }
@@ -4066,18 +4093,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // and the pre-O3 accumulator state must survive.
                 final long deleteLowTs = fullRebuild ? viewLowerBoundTimestamp : triggerLowTs;
                 clearWindowState(windowFactory, anchorWindow);
+                repairPublication.candidateReady(runtimeDisposition(overlayCaptured));
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
                     fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(
                             effectiveSeqTxn,
                             deleteLowTs,
                             Long.MAX_VALUE
                     ));
+                    repairPublication.replacementCommitted(walWriter.getLastSeqTxn());
                 }
-                deletedGhostRange = true;
                 LOG.info().$("live view O3 head-miss replay cleared emptied range [view=")
                         .$(viewName)
                         .$(", deleteLowTs=").$(deleteLowTs)
                         .$(", effectiveSeqTxn=").$(effectiveSeqTxn).I$();
+            }
+            if (!repairPublication.isAtOrAfter(RepairPublicationStage.CANDIDATE_ROOTS_AND_RUNTIME_READY)) {
+                // A rebuild that replaced nothing: the probe found no surviving row and
+                // the trigger authorised no deletion, so the empty candidate set is
+                // still this repair's candidate set and the runtime still has to be
+                // settled below.
+                repairPublication.candidateReady(runtimeDisposition(overlayCaptured));
             }
             replayCompleted = true;
         } finally {
@@ -4099,17 +4134,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
 
         try {
-            // Hand the runtime back its own state. Deliberately on the success path only:
-            // a replay that threw left the window state partially advanced with no
-            // durable change behind it, and the retry that follows starts by wiping and
-            // rebuilding it anyway, so restoring here would only mask the failure. The
-            // overlay is dropped either way - capture() discards whatever it held.
-            if (overlayCaptured) {
-                repairOverlay.restore(windowFactory.getWindowFunctions());
-            }
-
-            if (appendedRows > 0 || deletedGhostRange) {
-                applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+            if (repairPublication.hasCommittedReplacement()) {
+                // Post-commit reconciliation. The replacement is durable in the live
+                // view's own WAL, but every coordinate the rest of this method derives -
+                // the repaired roots' positions, the suffix range-add, the head seal's
+                // lvRowPosition - is read off the materialised table, and the consumed
+                // watermark declares base transactions the table is meant to hold. So
+                // the repair finds out whether the block landed before it commits to any
+                // of them, rather than reading a table that does not have the output yet.
+                if (reconcileLiveViewReplacement(instance, repairPublication.getCommittedLvSeqTxn())) {
+                    repairPublication.replacementApplied();
+                }
                 // Re-read the on-disk row count: the REPLACE_RANGE only rewrites the
                 // band at or above its low boundary and may have preserved a frozen
                 // prefix below it (or, on the pure-delete path, cleared the band
@@ -4121,10 +4156,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     instance.setLvRowsTotal(lvReader.size());
                 }
             }
-            if (timelineCapture != null) {
-                // The replacement is durable, so the repaired roots now describe real
-                // output and the splice can commit (design section 12.6's
-                // LV_REPLACEMENT_APPLIED -> TIMELINE_GENERATION_PUBLISHED).
+            final boolean replacementReconciled = repairPublication.isReplacementReconciled();
+            if (timelineCapture != null && replacementReconciled) {
+                // The replacement is applied, so the repaired roots now describe real
+                // output and the splice can commit.
                 //
                 // Every row that moved moved inside [R, H), so the table's total change
                 // IS the shift every suffix root's cumulative position owes. Proving
@@ -4150,71 +4185,111 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             plan.getHighTsExclusive(),
                             suffixRowDelta
                     );
-                }
-                if (!timelineSpliced) {
-                    // The output has already moved under every root the timeline holds,
-                    // so a timeline that cannot be corrected must not survive.
-                    retireCheckpointTimelineOnO3(instance);
+                    if (timelineSpliced) {
+                        repairPublication.timelinePublished();
+                    }
                 }
             }
-            instance.setLastProcessedSeqTxn(effectiveSeqTxn);
-            instance.setAppliedWatermark(effectiveSeqTxn);
-            boolean lvConsumedPersisted = false;
-            try {
-                engine.advanceLiveViewConsumedSeqTxn(
-                        instance.getLiveViewToken(),
-                        effectiveSeqTxn,
-                        blockFileWriter,
-                        path
-                );
-                lvConsumedPersisted = true;
-            } catch (CairoException e) {
-                LOG.critical().$("could not advance live view consumed seqTxn after O3 replay [view=")
+            // The one runtime exchange, and the first point at which it is safe: the
+            // generation that describes the state the primary is about to hold is
+            // already published, so a crash from here on restores that generation
+            // rather than a runtime nothing recorded.
+            settleRepairRuntime(windowFactory);
+            if (!replacementReconciled) {
+                // The replacement is in the live view's WAL but not in its table. No
+                // watermark may walk past output the table does not hold, so this turn
+                // stops short and leaves the repair to be repeated: the base range stays
+                // unconsumed, the retire below leaves nothing describing superseded
+                // output, and the next turn blocks on this same seqTxn until the block
+                // lands.
+                instance.setPendingReplacementLvSeqTxn(repairPublication.getCommittedLvSeqTxn());
+                LOG.critical().$("live view O3 replacement committed but did not apply, deferring repair [view=")
                         .$(viewName)
-                        .$(", advanceTo=").$(effectiveSeqTxn)
-                        .$(", error=").$safe(e.getFlyweightMessage()).I$();
-                persistState(instance);
-            }
-            if (lvConsumedPersisted && (appendedRows > 0 || overlayCaptured)) {
-                // Post-replay head: invalidateRetainedCheckpointsOnO3 cleared the head
-                // metadata and dropped the unsealed ring entries above, so force
-                // writes a fresh head reflecting the post-replay state (firstCp is
-                // already true here; force keeps the intent explicit and robust).
-                // Restart can then short-circuit to head-hit for a subsequent O3 in
-                // the head's hit zone instead of paying for another full head-miss
-                // replay.
-                //
-                // The head's maxTs has to describe the state the checkpoint is about to
-                // serialise. That is replayMaxTs for a rebuild that ran to the end of the
-                // base table, but the runtime frontier for one that stopped at a finite H
-                // and put its own state back - the restore just rewound the functions past
-                // replayMaxTs, so sealing them under it would claim a boundary the state
-                // does not sit at, and the next O3 would resume from it and re-read rows
-                // the state already holds. The frontier is a real timestamp whenever the
-                // plan tagged a finite H (it had to be at or above H to do so), so this
-                // seals even when the replacement emitted nothing at all - the retire above
-                // dropped every anchor, and a view left with none rebuilds from scratch on
-                // the next restart.
-                //
-                // Pass 0 appendedRows: lvRowsTotal already includes them (sourced
-                // from the on-disk size above), so adding them again would
-                // double-count lvRowPosition. Mirrors the seed-completion path.
-                //
-                // A published splice already IS this repair's timeline publication, and
-                // it created no new boundary - the runtime stands exactly where the
-                // repair found it - so the seal writes the legacy .cp alone.
-                final long headMaxTs = overlayCaptured ? instance.getLatestSeenTs() : replayMaxTs;
-                maybeWriteHeadCheckpoint(
-                        instance,
-                        windowFactory,
-                        effectiveSeqTxn,
-                        headMaxTs,
-                        0L,
-                        true,
-                        !timelineSpliced
-                );
+                        .$(", lvSeqTxn=").$(repairPublication.getCommittedLvSeqTxn())
+                        .$(", advanceTo=").$(effectiveSeqTxn).I$();
+            } else {
+                instance.setLastProcessedSeqTxn(effectiveSeqTxn);
+                instance.setAppliedWatermark(effectiveSeqTxn);
+                boolean lvConsumedPersisted = false;
+                try {
+                    engine.advanceLiveViewConsumedSeqTxn(
+                            instance.getLiveViewToken(),
+                            effectiveSeqTxn,
+                            blockFileWriter,
+                            path
+                    );
+                    lvConsumedPersisted = true;
+                } catch (CairoException e) {
+                    LOG.critical().$("could not advance live view consumed seqTxn after O3 replay [view=")
+                            .$(viewName)
+                            .$(", advanceTo=").$(effectiveSeqTxn)
+                            .$(", error=").$safe(e.getFlyweightMessage()).I$();
+                    persistState(instance);
+                }
+                repairPublication.watermarkAdvanced();
+                if (lvConsumedPersisted && (appendedRows > 0 || repairPublication.isKeepPrimaryRuntime())) {
+                    // Post-replay head: invalidateRetainedCheckpointsOnO3 cleared the head
+                    // metadata and dropped the unsealed ring entries above, so force
+                    // writes a fresh head reflecting the post-replay state (firstCp is
+                    // already true here; force keeps the intent explicit and robust).
+                    // Restart can then short-circuit to head-hit for a subsequent O3 in
+                    // the head's hit zone instead of paying for another full head-miss
+                    // replay.
+                    //
+                    // The head's maxTs has to describe the state the checkpoint is about to
+                    // serialise. That is replayMaxTs for a rebuild that ran to the end of the
+                    // base table, but the runtime frontier for one that stopped at a finite H
+                    // and put its own state back - the restore just rewound the functions past
+                    // replayMaxTs, so sealing them under it would claim a boundary the state
+                    // does not sit at, and the next O3 would resume from it and re-read rows
+                    // the state already holds. The frontier is a real timestamp whenever the
+                    // plan tagged a finite H (it had to be at or above H to do so), so this
+                    // seals even when the replacement emitted nothing at all - the retire above
+                    // dropped every anchor, and a view left with none rebuilds from scratch on
+                    // the next restart.
+                    //
+                    // Pass 0 appendedRows: lvRowsTotal already includes them (sourced
+                    // from the on-disk size above), so adding them again would
+                    // double-count lvRowPosition. Mirrors the seed-completion path.
+                    //
+                    // A published splice already IS this repair's timeline publication, and
+                    // it created no new boundary - the runtime stands exactly where the
+                    // repair found it - so the seal writes the legacy .cp alone.
+                    final long headMaxTs = repairPublication.isKeepPrimaryRuntime()
+                            ? instance.getLatestSeenTs()
+                            : replayMaxTs;
+                    maybeWriteHeadCheckpoint(
+                            instance,
+                            windowFactory,
+                            effectiveSeqTxn,
+                            headMaxTs,
+                            0L,
+                            true,
+                            !timelineSpliced
+                    );
+                }
             }
         } finally {
+            if (!repairPublication.isRuntimeSettled()) {
+                // The block above unwound before the exchange. Settle anyway: the
+                // disposition was fixed before the replacement committed, and a runtime
+                // left half in the replay's state and half in the pre-repair state is
+                // worse than either. A settle that fails here has already marked the
+                // window state for rebuild, so let the original failure propagate.
+                try {
+                    settleRepairRuntime(windowFactory);
+                } catch (Throwable t) {
+                    LOG.critical().$("could not settle live view repair runtime [view=")
+                            .$(viewName)
+                            .$(", error=").$(t).I$();
+                }
+            }
+            if (timelineCapture != null && !timelineSpliced) {
+                // Either the splice could not publish, or it was never allowed to try
+                // because the replacement has not applied. The output the timeline's
+                // roots describe has moved either way, so it must not survive them.
+                retireCheckpointTimelineOnO3(instance);
+            }
             Misc.free(timelineCapture);
             repairBoundaries.clear();
         }
@@ -4243,7 +4318,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", scanLowTs=").$(scanLowTs)
                 .$(", emitLowTs=").$(emitLowTs)
                 .$(", highTsExclusive=").$(finiteHighBound ? plan.getHighTsExclusive() : Numbers.LONG_NULL)
-                .$(", runtimeStatePreserved=").$(overlayCaptured)
+                .$(", runtimeStatePreserved=").$(repairPublication.isKeepPrimaryRuntime())
+                .$(", replacementApplied=").$(repairPublication.isReplacementReconciled())
                 .$(", rowsScanned=").$(o3ScanRows)
                 .$(", rowsEmitted=").$(appendedRows).I$();
     }
@@ -4271,6 +4347,109 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         if (anchorWindow != null) {
             anchorWindow.toTop();
+        }
+    }
+
+    /**
+     * Which state the compiled factory ends the repair holding. A repair that
+     * captured the scratch overlay proved its convergence boundary lands at or
+     * below the runtime frontier, so the state it took aside is still correct and
+     * goes back; one that did not replaced through the frontier, so the state its
+     * replay produced <i>is</i> the runtime.
+     */
+    private static LiveViewCheckpointRepairPublication.RuntimeDisposition runtimeDisposition(boolean overlayCaptured) {
+        return overlayCaptured
+                ? LiveViewCheckpointRepairPublication.RuntimeDisposition.KEEP_PRIMARY
+                : LiveViewCheckpointRepairPublication.RuntimeDisposition.PROMOTE_REPLAY;
+    }
+
+    /**
+     * Drives the live view's own WAL apply for the replacement a repair just
+     * committed and reports whether the live-view table now holds it. The refresh
+     * worker owns the live view's {@code TableWriter} on a primary, so this inline
+     * apply is the view's only applier - but it can silently no-op (the writer is
+     * busy, or the table backed off under memory pressure) or suspend the table,
+     * and neither raises. Comparing the applied writer txn against the seqTxn the
+     * commit minted is what turns "the apply ran" into "the replacement landed".
+     * <p>
+     * Idempotent: a block that is already applied short-circuits without reopening
+     * the writer, which is what lets the next refresh turn re-drive the same
+     * committed replacement.
+     */
+    private boolean reconcileLiveViewReplacement(LiveViewInstance instance, long committedLvSeqTxn) {
+        final TableToken token = instance.getLiveViewToken();
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+        if (tracker.getWriterTxn() >= committedLvSeqTxn) {
+            return true;
+        }
+        if (!simulateRepairApplyFailureForTest) {
+            try {
+                applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
+            } catch (Throwable t) {
+                // applyWal2Table suspends the table and returns rather than throwing, so
+                // this is defence against a future path that does raise: the check below
+                // decides either way and the caller handles an unapplied replacement.
+                LOG.critical().$("live view replacement apply failed [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", lvSeqTxn=").$(committedLvSeqTxn)
+                        .$(", error=").$(t).I$();
+            }
+        }
+        return tracker.getWriterTxn() >= committedLvSeqTxn;
+    }
+
+    /**
+     * Re-drives an out-of-order repair's replacement that committed without
+     * applying, and reports whether refresh may proceed. A turn that ran over an
+     * unapplied replacement would read its own coordinates - the lifetime row
+     * count, a head checkpoint's {@code lvRowPosition}, a repaired root's position
+     * - off a table that does not hold the output, and would consume base
+     * transactions nothing materialised. So the view stays blocked here until the
+     * block lands, at which point the deferred repair simply runs again from the
+     * base range it never consumed.
+     * <p>
+     * Called under the refresh latch, before any other work in the turn.
+     */
+    private boolean reconcilePendingReplacement(LiveViewInstance instance) {
+        final long pendingLvSeqTxn = instance.getPendingReplacementLvSeqTxn();
+        if (pendingLvSeqTxn == Numbers.LONG_NULL) {
+            return true;
+        }
+        if (!reconcileLiveViewReplacement(instance, pendingLvSeqTxn)) {
+            return false;
+        }
+        instance.setPendingReplacementLvSeqTxn(Numbers.LONG_NULL);
+        LOG.info().$("live view deferred O3 replacement applied, resuming refresh [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", lvSeqTxn=").$(pendingLvSeqTxn).I$();
+        return true;
+    }
+
+    /**
+     * Performs the repair's single runtime exchange. A {@code KEEP_PRIMARY}
+     * disposition hands the scratch overlay back to the compiled factory; a
+     * {@code PROMOTE_REPLAY} one leaves the state the replay produced standing,
+     * which is already the runtime. Either way it runs at most once per repair:
+     * the publication records the exchange before it happens, so an unwinding
+     * caller cannot restore twice or restore into a half-rebuilt runtime.
+     * <p>
+     * A failed exchange leaves the factory holding neither state consistently, so
+     * it marks the window state dirty on the way out and the refresh failure
+     * handler recomputes it from the applied base rather than continuing over it.
+     */
+    private void settleRepairRuntime(WindowRecordCursorFactory windowFactory) {
+        if (repairPublication.isRuntimeSettled()) {
+            return;
+        }
+        final boolean keepPrimary = repairPublication.isKeepPrimaryRuntime();
+        repairPublication.runtimePromoted();
+        if (keepPrimary) {
+            try {
+                repairOverlay.restore(windowFactory.getWindowFunctions());
+            } catch (Throwable t) {
+                windowStateDirty = true;
+                throw t;
+            }
         }
     }
 
@@ -7960,6 +8139,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // this latch too (the LiveViewApplyLagException catch below), so checking and clearing here
             // is atomic against it.
             if (isApplyLagDeferred(instance, true)) {
+                return false;
+            }
+            // Reconciliation gate. A prior turn's out-of-order repair committed a
+            // REPLACE_RANGE whose inline apply never landed, so the live view's table
+            // does not yet hold the output its WAL carries. Every coordinate this turn
+            // would derive - the lifetime row count, a head checkpoint's lvRowPosition,
+            // a repaired root's position, the consumed watermark - reads that table, so
+            // refresh stays blocked until the block is known applied. Reporting no work
+            // idles the worker instead of spinning a repair that would derive its
+            // numbers from a table missing the rows; scanForLaggingViews re-drives the
+            // apply on each sweep, and a suspended live view waits for an operator
+            // RESUME WAL, serving disk-only behind the seqTxn fence meanwhile.
+            if (!reconcilePendingReplacement(instance)) {
                 return false;
             }
             // Labels the refresh body so a compromised timeline recovery
