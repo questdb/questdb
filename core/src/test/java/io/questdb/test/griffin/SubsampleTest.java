@@ -3196,6 +3196,39 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testM4SelectStarDoesNotLeakKeepColumn() throws Exception {
+        // Regression: same as testUniformSelectStarDoesNotLeakKeepColumn, but for the
+        // value-inspecting (m4) desugar path. SELECT * must project only the table's columns -
+        // the internal __keep_subsample window flag must never surface in wildcard output.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, 1, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, 2, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, 3, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, 4, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, 5, '2024-01-01T04:00:00.000000Z'),
+                    (60.0, 6, '2024-01-01T05:00:00.000000Z'),
+                    (70.0, 7, '2024-01-01T06:00:00.000000Z'),
+                    (80.0, 8, '2024-01-01T07:00:00.000000Z'),
+                    (90.0, 9, '2024-01-01T08:00:00.000000Z'),
+                    (100.0, 10, '2024-01-01T09:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // m4 keeps first/last/min/max per bucket. With monotonically increasing values, min
+            // and max coincide with first/last, so only the global first and last row survive.
+            // Header must be exactly price, qty, ts - no __keep_subsample leak.
+            assertSql(
+                    "price\tqty\tts\n" +
+                            "10.0\t1\t2024-01-01T00:00:00.000000Z\n" +
+                            "100.0\t10\t2024-01-01T09:00:00.000000Z\n",
+                    "SELECT * FROM t SUBSAMPLE m4(price, 4)"
+            );
+        });
+    }
+
+    @Test
     public void testUniformLimitAppliesAfterSubsample() throws Exception {
         // Regression: LIMIT must apply AFTER the uniform subsample, not before it. The rewrite re-lifts
         // LIMIT above the __keep_subsample filter so LIMIT k returns the first k of the selected rows.
@@ -3443,6 +3476,29 @@ public class SubsampleTest extends AbstractCairoTest {
                     "SELECT price, ts FROM t SUBSAMPLE lttb(price, 5) UNION SELECT price, ts FROM t",
                     24,
                     "unexpected token 'subsample'"
+            );
+        });
+    }
+
+    @Test
+    public void testM4ExpressionValueArgFallsThroughToCursorError() throws Exception {
+        // Regression: the value-inspecting gate must migrate m4/minmax to the window path ONLY
+        // when the value arg (arg 0) is a bare column literal. The old cursor resolves the value
+        // arg BY NAME ONLY (columnNode.token), so an expression like v*2 makes it look up a column
+        // literally named "*" and fail. If the gate ignored this and migrated anyway, the window
+        // function would happily evaluate v*2 as a DOUBLE expression and return a result instead
+        // of reproducing that error - a byte-identity divergence. Assert the cursor's exact error.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT ts, v FROM t SUBSAMPLE m4(v * 2, 4)",
+                    35,
+                    "column not found: *"
+            );
+            assertException(
+                    "SELECT ts, v FROM t SUBSAMPLE m4(abs(v), 4)",
+                    33,
+                    "column not found: abs"
             );
         });
     }

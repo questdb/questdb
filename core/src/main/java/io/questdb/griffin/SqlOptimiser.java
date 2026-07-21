@@ -9359,12 +9359,19 @@ public class SqlOptimiser implements Mutable {
                     //    custom cursor, which re-reports the identical error.
                     //  - a designated timestamp is present and we are not in an aggregation context
                     //    (a keep-flag window cannot be injected into an aggregating model).
-                    // The value column (arg 0) is passed AS-IS: the window function validates its type
-                    // (reproducing the cursor's "numeric column expected" message) and normal SQL
-                    // resolution handles existence, so nothing is resolved at optimiser time here.
+                    //  - the value (arg 0) is a bare column literal (ExpressionNode.LITERAL). The old
+                    //    cursor resolves the value arg BY NAME ONLY (columnNode.token), so it only ever
+                    //    supports a plain column reference; an expression like v*2 or abs(v) makes the
+                    //    cursor look up a column named "*" / "abs" and fail with "column not found". The
+                    //    window path, by contrast, deep-clones the value arg and evaluates it as a full
+                    //    DOUBLE expression, which would silently return a result instead of reproducing
+                    //    that error. So non-literal value args fall through to the untouched cursor.
+                    final ExpressionNode valueNode = subsample.args.getQuick(0);
                     final ExpressionNode targetNode = subsample.args.getQuick(1);
                     if (timestamp != null
                             && !isAggregationContext(model, nested)
+                            && valueNode != null
+                            && valueNode.type == ExpressionNode.LITERAL
                             && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
                         model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, subsample.token);
                     }
