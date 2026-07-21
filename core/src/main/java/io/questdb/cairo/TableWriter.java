@@ -411,6 +411,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // the writer afterwards. Detection only: incrementing this never changes which code path a
     // commit takes (see the processWalCommit hook). Test-visible via getCompositeFastAppendEligibleCount().
     private static final AtomicLong compositeFastAppendEligibleCount = new AtomicLong();
+    // Composite single-cell fast-append (spec 1, Task 2): counts commits that ACTUALLY fast-appended
+    // (took the cheap early return), a strict subset of ...EligibleCount -- an eligible commit whose
+    // cell this task does not yet fast-append (a brand-new/empty cell, a var-size-column table, or a
+    // cell carrying a non-zero column top) still increments ...EligibleCount but falls through to the
+    // full path and does NOT increment this. Static for the same reason as ...EligibleCount above.
+    // Test-visible via getCompositeFastAppendCommittedCount().
+    private static final AtomicLong compositeFastAppendCommittedCount = new AtomicLong();
+    // Composite single-cell fast-append (spec 1, Task 2): the ACTIVE cell's kept-open last-partition
+    // column-file handles -- one primary MemoryMA per column (the fast-append path is fixed-size only,
+    // so no aux handles are needed; var-size-column tables fall back to the full path). Reused across
+    // consecutive single-cell commits into the SAME (cellKey, day) to avoid the async dispatch's
+    // re-open-every-commit; repositioned (via MemoryMA.of) when the target cell changes; closed on any
+    // full-path commit, rollback(), and doClose(). null until the first fast-append actually runs.
+    private ObjList<MemoryMA> compositeFastAppendCellColumns;
+    private int compositeFastAppendOpenCellKey = -1;                  // cellKey the handles point at; -1 = none open
+    private long compositeFastAppendOpenPartitionTs = Long.MIN_VALUE; // the day the handles point at
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
@@ -3988,6 +4004,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
                 partitionRemoveCandidates.clear();
+                // Composite single-cell fast-append (spec 1, Task 2): drop the kept-open cell handle.
+                // Any bytes it appended for the rolled-back txn are past the cell's still-committed
+                // _txn size (ignored on reopen); the next commit reopens at the committed size.
+                closeCompositeFastAppendCell();
                 rollbackDeferredPostingSealPurges();
                 o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
@@ -5189,6 +5209,253 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     public static long getCompositeFastAppendEligibleCount() {
         return compositeFastAppendEligibleCount.get();
+    }
+
+    /**
+     * Test-visible read of {@link #compositeFastAppendCommittedCount} (composite-partitioning
+     * fast-append spec 1, Task 2 -- commits that ACTUALLY took the fast-append early return, a strict
+     * subset of {@link #getCompositeFastAppendEligibleCount()}). Static -- see that field's own docs.
+     */
+    public static long getCompositeFastAppendCommittedCount() {
+        return compositeFastAppendCommittedCount.get();
+    }
+
+    /**
+     * Composite single-cell fast-append (spec 1, Task 2 -- the crux): synchronously append the commit's
+     * rows {@code o3Columns[rowLo, rowHi)} onto the target cell's kept-open {@code <day>/<cell>} segment,
+     * bump THAT cell's {@code (ts, cellKey)} {@code _txn} size, advance the writer-global max timestamp,
+     * and return so the caller commits the cheap way ({@link #commit00()} durably persists the size bump
+     * + seqTxn together -- the crash-safety invariant). The composite analog of plain's
+     * {@link #applyFromWalLagToLastPartition}, cell-keyed; plain's path is untouched.
+     * <p>
+     * Preconditions (guaranteed by the caller: {@link #isCompositeSingleCellFastAppendPossible} returned
+     * this {@code cellKey} AND {@link #canCompositeFastAppendCell} passed): a single, ordered,
+     * append-only-into-that-cell, last-partition, non-dedup commit; an existing non-empty cell; all
+     * fixed-size columns; every column top 0. This is the routine Task 3 fault-injects to PROVE the
+     * crash-safety invariant.
+     */
+    private void applyCompositeSingleCellFastAppend(int cellKey, long rowLo, long rowHi, long o3TimestampMax) {
+        final long partitionTs = lastPartitionTimestamp;
+        final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTs, cellKey);
+        final long srcDataMax = txWriter.getPartitionSizeByRawIndex(partitionIndexRaw);
+        final long copyRowCount = rowHi - rowLo;
+        final long newSize = srcDataMax + copyRowCount;
+
+        try {
+            ensureCompositeFastAppendCellOpen(cellKey, partitionTs, partitionIndexRaw, srcDataMax);
+            final int timestampIndex = metadata.getTimestampIndex();
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType <= 0) {
+                    continue; // deleted column
+                }
+                // Column top is 0 for every column here (canCompositeFastAppendCell gated on it), so the
+                // destination physical row index is the cell's committed size directly.
+                appendCompositeFastAppendColumn(i, columnType, i == timestampIndex, rowLo, copyRowCount, compositeFastAppendCellColumns.getQuick(i), srcDataMax);
+            }
+            // Durability: flush the cell's column files (respecting commitMode, exactly like
+            // syncColumns0) BEFORE the _txn size bump lands durably in commit00 -- so a crash can never
+            // leave _txn recording rows whose bytes were not flushed. Under NOSYNC this is a no-op, at
+            // parity with the full composite path and plain's fast-append.
+            syncCompositeFastAppendCell();
+        } catch (Throwable th) {
+            // A half-written cell leaves in-memory state untrustworthy. The appended bytes are past the
+            // cell's still-committed size (ignored on reopen -> the WAL replays this un-acked txn), so
+            // on-disk recovery stays sound; discard the writer so the pool rebuilds from that state.
+            distressed = true;
+            throw th;
+        }
+
+        // Cell-keyed (ts, cellKey) size bump -- the IDENTICAL call the async path uses for an in-place
+        // cell extend (o3ConsumePartitionUpdateSink); for an existing cell (rawIndex >= 0) it writes only
+        // the masked size slot (preserving nameTxn). NEVER a cell-blind day-granularity transientRowCount
+        // bump (the exact bug the composite off-switches forbid).
+        txWriter.updateAttachedPartitionSizeByRawIndex(partitionIndexRaw, partitionTs, newSize, txWriter.getTxn() - 1, cellKey);
+        // Maintain fixed/transient (transientRowCount == the array's LAST (ts ASC, cellKey ASC) entry's
+        // size; fixedRowCount == the sum of the rest; getRowCount == their sum). Add copyRowCount to
+        // transient if this cell IS that last entry, else to fixed -- exactly the single-(ts,cellKey)-block
+        // arithmetic o3ConsumePartitionUpdateSink performs, never the cell-blind `transientRowCount += n`.
+        final int lastIndex = txWriter.getPartitionCount() - 1;
+        if (txWriter.getPartitionTimestampByIndex(lastIndex) == partitionTs && txWriter.getPartitionCellKey(lastIndex) == cellKey) {
+            txWriter.transientRowCount = newSize;
+        } else {
+            txWriter.fixedRowCount += copyRowCount;
+        }
+        // Advance the writer-global max timestamp + last-partition ceiling, matching the full composite
+        // path (processO3BlockComposite). Min timestamp is unchanged (a pure append after the cell's max).
+        txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
+        partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
+        addPhysicallyWrittenRows(copyRowCount);
+        // Keep the per-cell max cache consistent. The eligibility predicate already folded o3TimestampMax
+        // in when it ran for this commit; fold defensively (idempotent Math.max) so the routine is correct
+        // even if ever invoked without that preceding predicate call.
+        if (compositeCellMaxTimestamp == null) {
+            compositeCellMaxTimestamp = new IntLongHashMap();
+        }
+        final long cached = compositeCellMaxTimestamp.get(cellKey);
+        if (cached == -1 || o3TimestampMax > cached) {
+            compositeCellMaxTimestamp.put(cellKey, o3TimestampMax);
+        }
+    }
+
+    /**
+     * Copies {@code [srcRowLo, srcRowLo + copyRowCount)} rows of one FIXED-size column from the
+     * (already symbol-remapped) {@code o3Columns} WAL buffer onto {@code dstDataMem} at physical row
+     * {@code dstRowCount}, for {@link #applyCompositeSingleCellFastAppend}. Reuses the same low-level
+     * primitives as plain's {@link #cthAppendWalColumnToLastPartition} -- {@link Vect#copyFromTimestampIndex}
+     * for the designated timestamp (WAL stores it as a 2-long {@code (ts, rowid)} index; the partition
+     * column is 1 long/row) and {@link Vect#memcpy} via {@link #mapAppendColumnBuffer} otherwise. Var-size
+     * columns never reach here (the whole table falls back to the full path -- see
+     * {@link #canCompositeFastAppendCell}).
+     */
+    private void appendCompositeFastAppendColumn(int columnIndex, int columnType, boolean designatedTimestamp, long srcRowLo, long copyRowCount, MemoryMA dstDataMem, long dstRowCount) {
+        final MemoryCR o3SrcDataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+        if (designatedTimestamp) {
+            final long copyBytes = copyRowCount << 3;
+            final long destOffset = dstRowCount << 3;
+            final long srcAddr = o3SrcDataMem.addressOf(srcRowLo << 4);
+            dstDataMem.jumpTo(destOffset + copyBytes);
+            final long destAddr = mapAppendColumnBuffer(dstDataMem, destOffset, copyBytes, true);
+            try {
+                Vect.copyFromTimestampIndex(srcAddr, 0, copyRowCount - 1, Math.abs(destAddr));
+            } finally {
+                mapAppendColumnBufferRelease(destAddr, destOffset, copyBytes);
+            }
+        } else {
+            final int shl = ColumnType.pow2SizeOf(columnType);
+            final long copyBytes = copyRowCount << shl;
+            final long destOffset = dstRowCount << shl;
+            dstDataMem.jumpTo(destOffset + copyBytes);
+            if (copyBytes > 0) {
+                final long destAddr = mapAppendColumnBuffer(dstDataMem, destOffset, copyBytes, true);
+                try {
+                    Vect.memcpy(Math.abs(destAddr), o3SrcDataMem.addressOf(srcRowLo << shl), copyBytes);
+                } finally {
+                    mapAppendColumnBufferRelease(destAddr, destOffset, copyBytes);
+                }
+            }
+        }
+    }
+
+    /**
+     * True iff {@link #applyCompositeSingleCellFastAppend} can handle this eligible (per
+     * {@link #isCompositeSingleCellFastAppendPossible}) cell; otherwise the commit falls back to the
+     * proven full O3 composite path (never wrong, just not accelerated). Spec-1 scope: fixed-size
+     * columns only, an existing non-empty cell (a brand-new cell's first commit takes the full path,
+     * which creates its directory / files / {@code _txn} record; later commits fast-append), and every
+     * column top 0 (an ADD-COLUMN top is spec-2 work).
+     */
+    private boolean canCompositeFastAppendCell(int cellKey) {
+        // Indexed columns: plain's fast-append (applyLagToLastPartition) re-indexes the appended rows
+        // (updateIndexesParallel / publishPostingIndexes); this synchronous cell append does not touch
+        // any index, so an indexed (bitmap or posting) table falls back to the full path, which keeps
+        // its indexes correct.
+        if (indexCount > 0) {
+            return false;
+        }
+        final int timestampIndex = metadata.getTimestampIndex();
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = metadata.getColumnType(i);
+            // Dimension source columns are always SYMBOL (fixed), so this only ever excludes a var-size
+            // (STRING/VARCHAR/BINARY/ARRAY) VALUE column, whose aux vector this path does not carry.
+            if (columnType > 0 && i != timestampIndex && ColumnType.isVarSize(columnType)) {
+                return false;
+            }
+        }
+        final long partitionTs = lastPartitionTimestamp;
+        final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTs, cellKey);
+        if (partitionIndexRaw < 0 || txWriter.getPartitionSizeByRawIndex(partitionIndexRaw) <= 0) {
+            return false; // brand-new / empty cell: first commit takes the full path
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0 && getColumnTop(partitionTs, cellKey, i, 0L) != 0L) {
+                return false; // non-zero column top (ADD COLUMN after this cell had rows)
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Opens (or repositions to) the target cell's {@code <day>/<cell>} column files into
+     * {@link #compositeFastAppendCellColumns}, positioned at the cell's committed size, and remembers
+     * the open (cellKey, day). A no-op when already open for that exact cell (the kept-open reuse across
+     * consecutive same-cell commits). Mirrors {@link #openColumnFiles}'s own {@code MemoryMA.of} call.
+     */
+    private void ensureCompositeFastAppendCellOpen(int cellKey, long partitionTs, int partitionIndexRaw, long srcDataMax) {
+        if (compositeFastAppendCellColumns != null
+                && compositeFastAppendOpenCellKey == cellKey
+                && compositeFastAppendOpenPartitionTs == partitionTs) {
+            return;
+        }
+        closeCompositeFastAppendCell();
+        if (compositeFastAppendCellColumns == null) {
+            compositeFastAppendCellColumns = new ObjList<>(columnCount);
+        }
+        while (compositeFastAppendCellColumns.size() < columnCount) {
+            compositeFastAppendCellColumns.add(Vm.getPMARInstance(configuration));
+        }
+        final long cellNameTxn = txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw);
+        final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+        cellSegmentSink.clear();
+        renderCellSegment(cellSegmentSink, cellKey);
+        try {
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTs, cellNameTxn, cellSegmentSink);
+            final int cellDirLen = path.size();
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType <= 0) {
+                    continue; // deleted column: leave its handle closed
+                }
+                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTs, cellKey, i);
+                final MemoryMA mem = compositeFastAppendCellColumns.getQuick(i);
+                mem.of(
+                        ff,
+                        dFile(path.trimTo(cellDirLen), metadata.getColumnName(i), columnNameTxn),
+                        dataAppendPageSize,
+                        -1,
+                        MemoryTag.MMAP_TABLE_WRITER,
+                        configuration.getWriterFileOpenOpts(),
+                        Files.POSIX_MADV_RANDOM
+                );
+                mem.jumpTo(srcDataMax << ColumnType.pow2SizeOf(columnType)); // column top is 0 (gated)
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+        compositeFastAppendOpenCellKey = cellKey;
+        compositeFastAppendOpenPartitionTs = partitionTs;
+    }
+
+    /**
+     * Releases the kept-open cell handle (truncating each column file to its committed size), leaving the
+     * MemoryMA objects allocated for reuse. Called when the fast-append target changes, before any
+     * full-path commit, on rollback(), and (via doClose) on writer close.
+     */
+    private void closeCompositeFastAppendCell() {
+        if (compositeFastAppendCellColumns == null || compositeFastAppendOpenCellKey == -1) {
+            return;
+        }
+        for (int i = 0, n = compositeFastAppendCellColumns.size(); i < n; i++) {
+            final MemoryMA mem = compositeFastAppendCellColumns.getQuick(i);
+            if (mem != null) {
+                mem.close(true);
+            }
+        }
+        compositeFastAppendOpenCellKey = -1;
+        compositeFastAppendOpenPartitionTs = Long.MIN_VALUE;
+    }
+
+    private void syncCompositeFastAppendCell() {
+        final int commitMode = configuration.getCommitMode();
+        if (commitMode == CommitMode.NOSYNC) {
+            return;
+        }
+        final boolean async = commitMode == CommitMode.ASYNC;
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0) {
+                compositeFastAppendCellColumns.getQuick(i).sync(async);
+            }
+        }
     }
 
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
@@ -7454,6 +7721,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         freeSymbolMapWriters();
         Misc.freeObjList(indexers);
         denseIndexers.clear();
+        // Composite single-cell fast-append (spec 1, Task 2): free the kept-open cell segment handles.
+        Misc.freeObjList(compositeFastAppendCellColumns);
         Misc.free(txWriter);
         Misc.free(ddlMem);
         Misc.free(other);
@@ -12620,15 +12889,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
                 o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
 
-                // Composite single-cell fast-append (spec 1, Task 1 -- detection only). Counts an
-                // eligible commit; NEVER takes an early return here -- always falls through to the
-                // existing full O3 composite path below, unchanged (no behavior change yet). A
-                // later task makes an eligible commit actually fast-append.
+                // Composite single-cell fast-append (spec 1, Task 2 -- the crux). An eligible commit
+                // whose cell this path supports appends its rows to that cell's kept-open segment, bumps
+                // that cell's (ts, cellKey) _txn size, and takes the cheap early return (mirroring plain's
+                // canFastCommitNew branch: the caller then commits via commit00, which durably persists
+                // the size bump + seqTxn together). Anything ineligible -- or eligible but not yet
+                // fast-append-supported (a brand-new/empty cell, a var-size-column table, a non-zero
+                // column top) -- releases the kept-open handle and falls through to the unchanged full O3
+                // composite path below.
                 if (configuration.isWalCompositeFastAppendEnabled()
                         && metadata.getPartitionSpec().getDimensionCount() > 0
-                        && isRoutedComposite()
-                        && isCompositeSingleCellFastAppendPossible(rowLo, rowHi, ordered, o3TimestampMin, o3TimestampMax) >= 0) {
-                    compositeFastAppendEligibleCount.incrementAndGet();
+                        && isRoutedComposite()) {
+                    final int fastAppendCellKey = isCompositeSingleCellFastAppendPossible(rowLo, rowHi, ordered, o3TimestampMin, o3TimestampMax);
+                    if (fastAppendCellKey >= 0) {
+                        compositeFastAppendEligibleCount.incrementAndGet();
+                        if (canCompositeFastAppendCell(fastAppendCellKey)) {
+                            applyCompositeSingleCellFastAppend(fastAppendCellKey, rowLo, rowHi, o3TimestampMax);
+                            compositeFastAppendCommittedCount.incrementAndGet();
+                            return true;
+                        }
+                    }
+                    closeCompositeFastAppendCell();
                 }
 
                 if (needsOrdering || needsDedup) {
