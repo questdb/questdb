@@ -71,6 +71,13 @@ public final class ScalarSubQueryBoundRefFunction extends TimestampFunction {
         return true;
     }
 
+    // Stateless reader of a volatile value: safe to share across worker threads. Also spares
+    // per-worker filter re-compiles when this is the only non-thread-safe filter component.
+    @Override
+    public boolean isThreadSafe() {
+        return true;
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("scalar_subquery_bound");

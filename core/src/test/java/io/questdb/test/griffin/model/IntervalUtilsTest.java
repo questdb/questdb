@@ -33,6 +33,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Comparator;
 
@@ -379,6 +380,37 @@ public class IntervalUtilsTest {
     }
 
     @Test
+    public void testSortAndUnionInPlaceLargeAscendingBatch() {
+        // complexity canary for the ascending IN-list / OR-ed disjunct shape: before
+        // LongGroupSort switched to introsort with a sorted-input fast-path, this
+        // already-sorted batch cost O(D^2) comparisons - minutes of CPU at this size.
+        // No wall-clock assertion: a regression shows up as a hung test.
+        final int count = 200_000;
+
+        // disjoint ascending intervals stay untouched
+        LongList intervals = new LongList(2 * count);
+        for (int i = 0; i < count; i++) {
+            intervals.add(10L * i, 10L * i + 5);
+        }
+        IntervalUtils.sortAndUnionInPlace(intervals, 0);
+        Assert.assertEquals(2 * count, intervals.size());
+        for (int i = 0; i < count; i++) {
+            Assert.assertEquals(10L * i, intervals.getQuick(2 * i));
+            Assert.assertEquals(10L * i + 5, intervals.getQuick(2 * i + 1));
+        }
+
+        // overlapping ascending intervals collapse into a single one
+        intervals.clear();
+        for (int i = 0; i < count; i++) {
+            intervals.add(2L * i, 2L * i + 3);
+        }
+        IntervalUtils.sortAndUnionInPlace(intervals, 0);
+        Assert.assertEquals(2, intervals.size());
+        Assert.assertEquals(0, intervals.getQuick(0));
+        Assert.assertEquals(2L * (count - 1) + 3, intervals.getQuick(1));
+    }
+
+    @Test
     public void testSortAndUnionInPlaceMatchesIncrementalUnionRandomized() {
         Random rnd = new Random(42);
         for (int iter = 0; iter < 500; iter++) {
@@ -446,6 +478,66 @@ public class IntervalUtilsTest {
         add(intervals, 6, 7);
 
         runTestUnionInPlace(intervals, 6, "[1,2], [3,4], [6,7], [100,101], [200,201], [205,206]");
+    }
+
+    @Test
+    public void testUnionBracketExpandedIntervalsAdjacentPairCoalesces() {
+        // lo == prevHi + 1 at a normal boundary - the second disjunct of the guard merges it
+        LongList intervals = new LongList();
+        add(intervals, 10, 20);
+        add(intervals, 21, 30);
+        unionBracketExpandedIntervals(intervals, 0);
+        TestUtils.assertEquals("[10,30]", toIntervalString(intervals, 0));
+
+        // adjacency into an interval whose hi is Long.MAX_VALUE (prevHi here is finite)
+        intervals.clear();
+        add(intervals, 10, 20);
+        add(intervals, 21, Long.MAX_VALUE);
+        unionBracketExpandedIntervals(intervals, 0);
+        TestUtils.assertEquals("[10," + Long.MAX_VALUE + "]", toIntervalString(intervals, 0));
+    }
+
+    @Test
+    public void testUnionBracketExpandedIntervalsGapOfTwoStaysSeparate() {
+        // lo == prevHi + 2 - not adjacent, must not coalesce
+        LongList intervals = new LongList();
+        add(intervals, 10, 20);
+        add(intervals, 22, 30);
+        unionBracketExpandedIntervals(intervals, 0);
+        TestUtils.assertEquals("[10,20], [22,30]", toIntervalString(intervals, 0));
+    }
+
+    @Test
+    public void testUnionBracketExpandedIntervalsMaxValueContainmentShapes() {
+        // both intervals reach Long.MAX_VALUE - the earlier one contains the later one
+        LongList intervals = new LongList();
+        add(intervals, 0, Long.MAX_VALUE);
+        add(intervals, 5, Long.MAX_VALUE);
+        unionBracketExpandedIntervals(intervals, 0);
+        TestUtils.assertEquals("[0," + Long.MAX_VALUE + "]", toIntervalString(intervals, 0));
+
+        // the middle interval opens the union up to Long.MAX_VALUE; the later finite
+        // interval overlaps (lo <= prevHi) and must fold in without prevHi + 1 wrapping
+        intervals.clear();
+        add(intervals, 5, 10);
+        add(intervals, 8, Long.MAX_VALUE);
+        add(intervals, 20, 25);
+        unionBracketExpandedIntervals(intervals, 0);
+        TestUtils.assertEquals("[5," + Long.MAX_VALUE + "]", toIntervalString(intervals, 0));
+    }
+
+    @Test
+    public void testUnionBracketExpandedIntervalsMaxValueOverlapCoalesces() {
+        // The overflow boundary: after sorting, the merge pass sees prevHi == Long.MAX_VALUE.
+        // The old guard (lo <= prevHi + 1) wrapped prevHi + 1 to Long.MIN_VALUE and failed to
+        // coalesce; the current guard checks lo <= prevHi first and merges. The prefix below
+        // the batch must stay untouched, and the batch arrives unordered to exercise the sort.
+        LongList intervals = new LongList();
+        add(intervals, 0, 1);
+        add(intervals, 200, 300);
+        add(intervals, 100, Long.MAX_VALUE);
+        unionBracketExpandedIntervals(intervals, 2);
+        TestUtils.assertEquals("[0,1], [100," + Long.MAX_VALUE + "]", toIntervalString(intervals, 0));
     }
 
     @Test
@@ -700,6 +792,18 @@ public class IntervalUtilsTest {
             sink.put('[').put(intervals.get(i++)).put(',').put(intervals.get(i++)).put(']');
         }
         return sink.toString();
+    }
+
+    private static void unionBracketExpandedIntervals(LongList out, int startIndex) {
+        // IntervalUtils.unionBracketExpandedIntervals is package-private in
+        // io.questdb.griffin.model; both modules are open, so reflection reaches it
+        try {
+            Method method = IntervalUtils.class.getDeclaredMethod("unionBracketExpandedIntervals", LongList.class, int.class);
+            method.setAccessible(true);
+            method.invoke(null, out, startIndex);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
     }
 
     static void append(LongList list, long lo, long hi) {

@@ -203,6 +203,9 @@ public class ExpressionNode implements Mutable, Sinkable {
         copy.type = node.type;
         copy.paramCount = node.paramCount;
         copy.intrinsicValue = node.intrinsicValue;
+        // shared by reference on purpose: every re-compile of this sub-query node - including ones
+        // fed a cloned filter expression - must read the same frozen pruning-bound value
+        copy.scalarBoundHolder = node.scalarBoundHolder;
         copy.isConstantExpression = node.isConstantExpression;
         copy.innerPredicate = node.innerPredicate;
         copy.implemented = node.implemented;
@@ -310,6 +313,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.type = other.type;
         this.paramCount = other.paramCount;
         this.intrinsicValue = other.intrinsicValue;
+        this.scalarBoundHolder = other.scalarBoundHolder;
         this.isConstantExpression = other.isConstantExpression;
         this.innerPredicate = other.innerPredicate;
         this.windowExpression = other.windowExpression;

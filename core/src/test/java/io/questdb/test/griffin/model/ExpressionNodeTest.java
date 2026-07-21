@@ -24,13 +24,35 @@
 
 package io.questdb.test.griffin.model;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.ScalarTimestampBoundHolder;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.str.AsciiCharSequence;
 import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ExpressionNodeTest {
+
+    @Test
+    public void testDeepCloneAndCopyFromCarryScalarBoundHolder() {
+        // The holder is a compile-time link shared by reference (like queryModel): the pruning
+        // bound publishes a single frozen value into it and every residual re-compile - including
+        // ones fed a cloned filter expression on the filter-stealing path - must read that same
+        // holder. Dropping it on clone makes FunctionParser re-open the sub-query per worker.
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
+        final ScalarTimestampBoundHolder holder = new ScalarTimestampBoundHolder(ColumnType.TIMESTAMP, false);
+
+        final ExpressionNode node = pool.next().of(ExpressionNode.QUERY, "query", 0, 0);
+        node.scalarBoundHolder = holder;
+
+        final ExpressionNode clone = ExpressionNode.deepClone(pool, node);
+        Assert.assertSame(holder, clone.scalarBoundHolder);
+
+        final ExpressionNode copy = pool.next().copyFrom(node);
+        Assert.assertSame(holder, copy.scalarBoundHolder);
+    }
 
     @Test
     public void testDeepHashCodeConsistentWithCompareNodesExact() {

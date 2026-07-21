@@ -73,10 +73,17 @@ import org.jetbrains.annotations.Nullable;
  * consumer's setup - acquiring the base reader but lifting no column data. Only the rare false
  * page-frame path pays that reader acquisition; the common false record-cursor path stays fully
  * zero-I/O.
+ * <p>
+ * The false wrapper claims only the capability the base actually provides: a table base gets a
+ * {@link TablePageFrameCursor} wrapper (parents such as a projection downcast to that surface),
+ * while a non-table base such as {@code read_parquet()} - whose page-frame cursor is a plain
+ * {@link PageFrameCursor} - gets a plain wrapper, so the gate never advertises a table contract
+ * it cannot honor.
  */
 public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFactory {
     private RecordCursorFactory base;
     private EmptyPageFrameCursor emptyPageFrameCursor;
+    private EmptyTablePageFrameCursor emptyTablePageFrameCursor;
     private Function filter;
 
     public RuntimeConstGateRecordCursorFactory(RecordCursorFactory base, Function filter) {
@@ -129,6 +136,16 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         // fully zero-I/O.
         final PageFrameCursor baseCursor = base.getPageFrameCursor(executionContext, order);
         try {
+            // Claim only what the base provides: a table base keeps the TablePageFrameCursor
+            // surface (parents such as a projection downcast to it), while a non-table base
+            // (e.g. read_parquet) gets a plain PageFrameCursor wrapper instead of a
+            // getTableReader()/hasIntervalFilter()/toPartition() contract it cannot honor.
+            if (baseCursor instanceof TablePageFrameCursor tableBaseCursor) {
+                if (emptyTablePageFrameCursor == null) {
+                    emptyTablePageFrameCursor = new EmptyTablePageFrameCursor();
+                }
+                return emptyTablePageFrameCursor.of(tableBaseCursor);
+            }
             if (emptyPageFrameCursor == null) {
                 emptyPageFrameCursor = new EmptyPageFrameCursor();
             }
@@ -205,12 +222,15 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
     protected void _close() {
         final EmptyPageFrameCursor emptyPageFrameCursor = this.emptyPageFrameCursor;
         this.emptyPageFrameCursor = null;
+        final EmptyTablePageFrameCursor emptyTablePageFrameCursor = this.emptyTablePageFrameCursor;
+        this.emptyTablePageFrameCursor = null;
         final RecordCursorFactory base = this.base;
         this.base = null;
         final Function filter = this.filter;
         this.filter = null;
 
         Throwable failure = Misc.freeBestEffort(null, emptyPageFrameCursor);
+        failure = Misc.freeBestEffort(failure, emptyTablePageFrameCursor);
         failure = Misc.freeBestEffort(failure, base);
         failure = Misc.freeBestEffort(failure, filter);
         CairoException.rethrowCleanupFailure(failure);
@@ -221,8 +241,13 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
      * Every frame-producing method reports empty so no column data is ever lifted, while the
      * metadata accessors delegate to the base cursor so a parallel consumer's setup contract is
      * honored. Opening the base cursor acquires its reader; the wrapper releases it on close.
+     * <p>
+     * This wrapper claims only the plain {@link PageFrameCursor} surface, so it can sit over any
+     * base (e.g. read_parquet()). When the base cursor is a {@link TablePageFrameCursor}, the
+     * gate hands out {@link EmptyTablePageFrameCursor} instead so parents that downcast to the
+     * table surface keep working.
      */
-    private static final class EmptyPageFrameCursor implements TablePageFrameCursor {
+    private static class EmptyPageFrameCursor implements PageFrameCursor {
         private PageFrameCursor baseCursor;
 
         @Override
@@ -250,18 +275,6 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
             return baseCursor.getSymbolTable(columnIndex);
         }
 
-        // For a table base the held base cursor is a real TablePageFrameCursor, so this cast is
-        // safe and hands consumers the base reader - the same one the TRUE path would expose.
-        @Override
-        public TableReader getTableReader() {
-            return ((TablePageFrameCursor) baseCursor).getTableReader();
-        }
-
-        @Override
-        public boolean hasIntervalFilter() {
-            return ((TablePageFrameCursor) baseCursor).hasIntervalFilter();
-        }
-
         @Override
         public boolean isExternal() {
             return baseCursor.isExternal();
@@ -275,14 +288,6 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         @Override
         public @Nullable PageFrame next(long skipTarget) {
             return null;
-        }
-
-        // This wrapper is initialized via of(PageFrameCursor), not via
-        // of(SqlExecutionContext, PartitionFrameCursor). The base factory's getPageFrameCursor()
-        // already handles partition-level initialization; we only wrap its result.
-        @Override
-        public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
-            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -306,17 +311,57 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         @Override
-        public void toPartition(int partitionIndex) {
-            ((TablePageFrameCursor) baseCursor).toPartition(partitionIndex);
-        }
-
-        @Override
         public void toTop() {
             // Empty scan: nothing to rewind.
         }
 
         private EmptyPageFrameCursor of(PageFrameCursor baseCursor) {
             this.baseCursor = baseCursor;
+            return this;
+        }
+    }
+
+    /**
+     * The gate's false-path wrapper over a table base: extends the empty scan with the
+     * {@link TablePageFrameCursor} surface, delegating the table-specific methods to the typed
+     * base cursor - the same reader the TRUE path would expose. The gate hands this wrapper out
+     * only when the base cursor is a {@link TablePageFrameCursor}, so no cast can fail.
+     */
+    private static final class EmptyTablePageFrameCursor extends EmptyPageFrameCursor implements TablePageFrameCursor {
+        private TablePageFrameCursor tableBaseCursor;
+
+        @Override
+        public void close() {
+            tableBaseCursor = null;
+            super.close();
+        }
+
+        @Override
+        public TableReader getTableReader() {
+            return tableBaseCursor.getTableReader();
+        }
+
+        @Override
+        public boolean hasIntervalFilter() {
+            return tableBaseCursor.hasIntervalFilter();
+        }
+
+        // This wrapper is initialized via of(TablePageFrameCursor), not via
+        // of(SqlExecutionContext, PartitionFrameCursor). The base factory's getPageFrameCursor()
+        // already handles partition-level initialization; we only wrap its result.
+        @Override
+        public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void toPartition(int partitionIndex) {
+            tableBaseCursor.toPartition(partitionIndex);
+        }
+
+        private EmptyTablePageFrameCursor of(TablePageFrameCursor baseCursor) {
+            this.tableBaseCursor = baseCursor;
+            super.of(baseCursor);
             return this;
         }
     }

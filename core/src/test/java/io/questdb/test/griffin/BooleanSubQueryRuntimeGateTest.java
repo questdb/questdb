@@ -25,21 +25,22 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
-import io.questdb.std.IntList;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.std.Files;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -122,41 +123,78 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFalseGatePageFrameSurvivesTablePageFrameCursorCast() throws Exception {
-        // A parent that unconditionally casts the base page-frame cursor to TablePageFrameCursor
-        // (here a SelectedRecordCursorFactory with a crossed projection, which casts at
-        // SelectedRecordCursorFactory.getPageFrameCursor) must not hit a ClassCastException over the
-        // FALSE gate. Before the getTableReader() delegation the empty wrapper implemented only
-        // PageFrameCursor, so this cast threw; now the wrapper IS a TablePageFrameCursor, so the
-        // projected scan simply yields zero frames. assertMemoryLeak guards the acquired reader.
+    public void testFalseGateOverParquetClaimsOnlyPageFrameCursor() throws Exception {
+        // read_parquet()'s page-frame cursor is a plain PageFrameCursor, not a TablePageFrameCursor.
+        // The FALSE gate's empty wrapper must claim only what the base provides: over a parquet base
+        // it must NOT advertise TablePageFrameCursor (its getTableReader()/hasIntervalFilter()/
+        // toPartition() could only throw ClassCastException on the inner cast), while the plain
+        // PageFrameCursor surface stays fully usable and empty.
         assertMemoryLeak(() -> {
-            createBigTable();
-            RecordCursorFactory base = select("select * from big");
-            RuntimeConstGateRecordCursorFactory gate =
-                    new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false));
-            // Crossed projection [v, ts] flips the column order so needsProjection is true and the
-            // projection factory casts the gate's page-frame cursor to TablePageFrameCursor.
-            IntList columnCrossIndex = new IntList();
-            columnCrossIndex.add(1);
-            columnCrossIndex.add(0);
-            RecordMetadata baseMeta = base.getMetadata();
-            GenericRecordMetadata projectedMeta = new GenericRecordMetadata();
-            projectedMeta.add(new TableColumnMetadata(baseMeta.getColumnName(1), baseMeta.getColumnType(1)));
-            projectedMeta.add(new TableColumnMetadata(baseMeta.getColumnName(0), baseMeta.getColumnType(0)));
-            // The projection factory owns the gate and frees it on close.
-            try (RecordCursorFactory projection =
-                         new SelectedRecordCursorFactory(projectedMeta, columnCrossIndex, gate)) {
-                Assert.assertTrue("projection must keep the base page-frame capability", projection.supportsPageFrameCursor());
-                try (PageFrameCursor cursor = projection.getPageFrameCursor(sqlExecutionContext, ORDER_ANY)) {
-                    Assert.assertTrue(
-                            "the projected wrapper must be a TablePageFrameCursor (no CCE at the cast seam)",
+            createTables();
+            createParquetFile();
+            try (RecordCursorFactory factory =
+                         select("select * from read_parquet('p.parquet') where (select b from x_false limit 1)")) {
+                RecordCursorFactory gate = findFactory(factory, RuntimeConstGateRecordCursorFactory.class);
+                Assert.assertNotNull("runtime-const WHERE over read_parquet must gate", gate);
+                Assert.assertTrue("gate must keep the parquet base page-frame capability", gate.supportsPageFrameCursor());
+                try (PageFrameCursor cursor = gate.getPageFrameCursor(sqlExecutionContext, ORDER_ANY)) {
+                    Assert.assertFalse(
+                            "the empty wrapper must not claim TablePageFrameCursor over a non-table base",
                             cursor instanceof TablePageFrameCursor
                     );
+                    Assert.assertTrue("the parquet base is external", cursor.isExternal());
+                    Assert.assertNotNull("column mapping must delegate to the parquet cursor", cursor.getColumnMapping());
+                    Assert.assertNull("false gate must yield no page frames", cursor.next());
+                    Assert.assertEquals("false gate size must be zero", 0, cursor.size());
+                    cursor.toTop();
+                    Assert.assertNull("still empty after toTop", cursor.next());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFalseGatePageFrameSurvivesTablePageFrameCursorCast() throws Exception {
+        // A parent that unconditionally casts the base page-frame cursor to TablePageFrameCursor
+        // (a SelectedRecordCursorFactory with a genuinely crossed projection casts at
+        // SelectedRecordCursorFactory.getPageFrameCursor) must not hit a ClassCastException over
+        // the FALSE gate. The duplicated column defeats projection pushdown, so the compiled
+        // chain is Selected -> gate -> table scan - the production composition of this seam. The
+        // wrapper over a TABLE base IS a TablePageFrameCursor (a non-table base gets a plain
+        // wrapper instead), so the projected scan simply yields zero frames; the TRUE path
+        // delegates the real table cursor through the same cast. assertMemoryLeak guards the
+        // acquired reader.
+        assertMemoryLeak(() -> {
+            createBigTable();
+            createTables();
+            try (RecordCursorFactory factory =
+                         select("select v, ts, v as v2 from big where (select b from x_false limit 1)")) {
+                Assert.assertNotNull(
+                        "the crossed projection must compile above the gate",
+                        findFactory(factory, SelectedRecordCursorFactory.class));
+                Assert.assertNotNull(
+                        "the runtime-const WHERE must gate under the projection",
+                        findFactory(factory, RuntimeConstGateRecordCursorFactory.class));
+                Assert.assertTrue("projection must keep the base page-frame capability", factory.supportsPageFrameCursor());
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ANY)) {
                     Assert.assertNull("false gate must yield no page frames through the projection", cursor.next());
                     Assert.assertEquals("false gate size must be zero through the projection", 0, cursor.size());
                     cursor.toTop();
                     Assert.assertNull("still empty after toTop", cursor.next());
                 }
+            }
+            // TRUE path: the same cast seam passes the real table cursor through and every row flows.
+            try (
+                    RecordCursorFactory factory =
+                            select("select v, ts, v as v2 from big where (select b from x_true limit 1)");
+                    PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ANY)
+            ) {
+                long rows = 0;
+                PageFrame frame;
+                while ((frame = cursor.next()) != null) {
+                    rows += frame.getPartitionHi() - frame.getPartitionLo();
+                }
+                Assert.assertEquals("true gate must expose every base row through the projection", 1_000, rows);
             }
         });
     }
@@ -210,6 +248,23 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
             } finally {
                 gate.close();
             }
+        });
+    }
+
+    @Test
+    public void testGateOverParquetEndToEnd() throws Exception {
+        // End-to-end both gate paths over a parquet base: FALSE yields no rows / a null aggregate
+        // (driving the empty page-frame wrapper through the parallel group-by consumer), TRUE
+        // delegates straight to the parquet scan.
+        assertMemoryLeak(() -> {
+            createTables();
+            createParquetFile();
+            assertRowCountSql(0, "select * from read_parquet('p.parquet') where (select b from x_false limit 1)");
+            assertRowCountSql(10, "select * from read_parquet('p.parquet') where (select b from x_true limit 1)");
+            printSql("select sum(v) from read_parquet('p.parquet') where (select b from x_false limit 1)");
+            TestUtils.assertContains(sink, "null");
+            printSql("select sum(v) from read_parquet('p.parquet') where (select b from x_true limit 1)");
+            TestUtils.assertContains(sink, "55");
         });
     }
 
@@ -392,14 +447,15 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         });
     }
 
-    private static boolean hasFactory(RecordCursorFactory f, Class<?> target) {
-        while (f != null) {
-            if (target.isInstance(f)) {
-                return true;
-            }
+    private static RecordCursorFactory findFactory(RecordCursorFactory f, Class<?> target) {
+        while (f != null && !target.isInstance(f)) {
             f = f.getBaseFactory();
         }
-        return false;
+        return f;
+    }
+
+    private static boolean hasFactory(RecordCursorFactory f, Class<?> target) {
+        return findFactory(f, target) != null;
     }
 
     private static boolean hasPostJoinFilter(RecordCursorFactory f) {
@@ -571,6 +627,21 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         execute("insert into a1 values ('2020-01-01T00:00:00.000000Z', 1), ('2020-01-01T00:00:01.000000Z', 2)");
         execute("create table a2 (ts timestamp, v int) timestamp(ts) partition by day");
         execute("insert into a2 values ('2020-01-01T00:00:00.000000Z', 100)");
+    }
+
+    private void createParquetFile() throws Exception {
+        execute("create table p as (select x::int v, (x * 1_000_000)::timestamp ts from long_sequence(10))");
+        try (
+                Path path = new Path();
+                PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                TableReader reader = engine.getReader("p")
+        ) {
+            path.of(root).concat("p.parquet");
+            PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+            PartitionEncoder.encode(partitionDescriptor, path);
+            Assert.assertTrue(Files.exists(path.$()));
+        }
+        inputRoot = root;
     }
 
     private void createJoinTables() throws Exception {
