@@ -4300,6 +4300,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ExpressionNode filterExpr = model.getWhereClause();
 
+        // An and_offset wrapper that never reached interval extraction would otherwise be handed
+        // to the function compiler, which fails with "unknown function name: and_offset". Rebuild
+        // it into its dateadd residual here, before the backups are taken, so every copy of the
+        // filter carries the compilable form.
+        WhereClauseParser.rebuildStrandedAndOffsets(expressionNodePool, filterExpr);
+
         // back up in case if the above factory steals the filter
         model.setBackupWhereClause(deepClone(expressionNodePool, filterExpr));
         // back up in case filters need to be compiled again

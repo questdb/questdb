@@ -265,7 +265,10 @@ public class InLongFunctionFactory implements FunctionFactory {
         // A numeric string has no declared integer width, so compare it at the width
         // its value would carry as a literal: an INT-range value wraps (matching
         // IN (intLiteral) and '='), a wider value or NULL widens (matching IN (longLiteral)).
-        return isNumericStringLike(tag) && isIntRangeValue(parsedVal);
+        // A string that does not parse carries LONG_NULL, i.e. it IS null - so it has to compare
+        // at the same width an untyped null does (INT), not at long width. Numbers.LONG_NULL is
+        // Long.MIN_VALUE, which isIntRangeValue rejects, so it needs its own arm.
+        return isNumericStringLike(tag) && (parsedVal == Numbers.LONG_NULL || isIntRangeValue(parsedVal));
     }
 
     /**
@@ -799,11 +802,13 @@ public class InLongFunctionFactory implements FunctionFactory {
                     case KIND_VARCHAR:
                         Utf8Sequence seq = func.getVarcharA(rec);
                         inVal = Numbers.parseLongQuiet(seq == null ? null : seq.asAsciiCharSequence());
-                        isIntWidth = isIntRangeValue(inVal);
+                        // A non-parsing or null string IS null, so it takes INT width like an
+                        // untyped null (the KIND_NONE arm below) - see isIntWidthElement.
+                        isIntWidth = inVal == Numbers.LONG_NULL || isIntRangeValue(inVal);
                         break;
                     case KIND_STR:
                         inVal = Numbers.parseLongQuiet(func.getStrA(rec));
-                        isIntWidth = isIntRangeValue(inVal);
+                        isIntWidth = inVal == Numbers.LONG_NULL || isIntRangeValue(inVal);
                         break;
                     default:
                         inVal = Numbers.LONG_NULL;

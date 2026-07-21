@@ -598,8 +598,20 @@ public final class WhereClauseParser implements Mutable {
             // filter so a source it cannot push down (e.g. multiple disjoint intervals that must union,
             // or a dynamic bound) still filters correctly.
             if (model.mergeIntervalModelWithAddMethod(tempModel, addMethod, offsetValue)) {
-                node.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
+                if (extracted) {
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
+                }
+                // removeAndIntrinsics declined the predicate but still left intervals behind: an
+                // analysis such as analyzeMonotonicTimestamp deliberately applies a WIDENED
+                // (superset) interval and returns false so the predicate survives as a residual
+                // filter. A lossy cast bound is the reachable case - ts::timestamp truncates a
+                // TIMESTAMP_NS column, so the preimage of the bound is wider than the bound
+                // itself. Consuming it here returned rows that fail the predicate. Keep the
+                // interval for pruning, but rebuild the predicate so it still re-checks each row.
+                // The merge consumed tempModel, so do not clear it again here.
+                rebuildAndOffsetResidual(node, predicate, unitToken, -offsetValue);
+                return false;
             }
         }
 
@@ -3087,8 +3099,59 @@ public final class WhereClauseParser implements Mutable {
         resetIntrinsicMarks(predicate);
         // The stride is invariant across the subtree, so format it once here rather than once
         // per wrapped literal down in the recursion.
-        wrapTimestampLiterals(predicate, unitToken, Integer.toString(stride));
+        wrapTimestampLiterals(expressionNodePool, predicate, unitToken, Integer.toString(stride));
         node.copyFrom(predicate);
+    }
+
+    /**
+     * Rewrites every {@code and_offset} pseudo-function node still present in {@code node} into an
+     * equivalent, compilable {@code dateadd(unit, stride, source_ts) <op> bound} residual.
+     * <p>
+     * {@link #analyzeAndOffset} already does this for the wrappers it sees, but it only runs when a
+     * model goes through interval extraction. {@code SqlOptimiser#moveWhereInsideSubQueries} pushes a
+     * wrapper onto whatever nested model it finds, and a model that never reaches interval extraction
+     * (for instance a sub-query carrying a LIMIT) hands the wrapper straight to the function compiler,
+     * which fails with "unknown function name: and_offset" and leaks an internal name to the user.
+     * Calling this immediately before a filter is compiled makes the un-wrapping happen at a layer
+     * every filter passes through, rather than only on the interval-extraction path.
+     * <p>
+     * Rewriting is idempotent: {@code copyFrom} replaces the wrapper with the rebuilt predicate, so a
+     * second pass finds no {@code and_offset} node.
+     */
+    public static void rebuildStrandedAndOffsets(ObjectPool<ExpressionNode> pool, ExpressionNode node) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.FUNCTION
+                && Chars.equalsIgnoreCase(node.token, "and_offset")
+                && node.args.size() == 3) {
+            // and_offset args are stored in reverse order: [offset, unit, predicate]
+            final ExpressionNode predicate = node.args.getQuick(2);
+            final ExpressionNode unitNode = node.args.getQuick(1);
+            final ExpressionNode offsetNode = node.args.getQuick(0);
+            if (unitNode.type == ExpressionNode.CONSTANT
+                    && unitNode.token != null
+                    && !unitNode.token.isEmpty()
+                    && offsetNode.type == ExpressionNode.CONSTANT) {
+                try {
+                    // The stored offset is the inverse of the original dateadd stride, so negate it
+                    // to restore the virtual-column semantics - see analyzeAndOffset.
+                    final int stride = -Numbers.parseInt(offsetNode.token);
+                    rebuildStrandedAndOffsets(pool, predicate);
+                    resetIntrinsicMarks(predicate);
+                    wrapTimestampLiterals(pool, predicate, unitNode.token, Integer.toString(stride));
+                    node.copyFrom(predicate);
+                    return;
+                } catch (NumericException ignore) {
+                    // Not a well-formed wrapper; leave it for the function compiler to reject.
+                }
+            }
+        }
+        rebuildStrandedAndOffsets(pool, node.lhs);
+        rebuildStrandedAndOffsets(pool, node.rhs);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            rebuildStrandedAndOffsets(pool, node.args.getQuick(i));
+        }
     }
 
     private boolean referencesTimestamp(ExpressionNode node) {
@@ -3249,7 +3312,7 @@ public final class WhereClauseParser implements Mutable {
         revertNodes(keyExclNodes);
     }
 
-    private void resetIntrinsicMarks(ExpressionNode node) {
+    private static void resetIntrinsicMarks(ExpressionNode node) {
         if (node == null) {
             return;
         }
@@ -3479,16 +3542,21 @@ public final class WhereClauseParser implements Mutable {
      * {@code dateadd(unit, stride, child)}; otherwise descends to wrap nested literals. Returns the
      * (possibly replaced) child to store back into the parent slot.
      */
-    private ExpressionNode wrapTimestampLiteral(ExpressionNode child, CharSequence unitToken, CharSequence strideToken) {
+    private static ExpressionNode wrapTimestampLiteral(
+            ObjectPool<ExpressionNode> pool,
+            ExpressionNode child,
+            CharSequence unitToken,
+            CharSequence strideToken
+    ) {
         if (child == null) {
             return null;
         }
         if (child.type == ExpressionNode.LITERAL) {
-            final ExpressionNode strideNode = expressionNodePool.next().of(
+            final ExpressionNode strideNode = pool.next().of(
                     ExpressionNode.CONSTANT, strideToken, 0, child.position);
-            final ExpressionNode unitNode = expressionNodePool.next().of(
+            final ExpressionNode unitNode = pool.next().of(
                     ExpressionNode.CONSTANT, unitToken, 0, child.position);
-            final ExpressionNode dateadd = expressionNodePool.next().of(
+            final ExpressionNode dateadd = pool.next().of(
                     ExpressionNode.FUNCTION, "dateadd", 0, child.position);
             dateadd.paramCount = 3;
             // dateadd args are stored in reverse order: [timestamp, stride, unit]
@@ -3497,7 +3565,7 @@ public final class WhereClauseParser implements Mutable {
             dateadd.args.add(unitNode);
             return dateadd;
         }
-        wrapTimestampLiterals(child, unitToken, strideToken);
+        wrapTimestampLiterals(pool, child, unitToken, strideToken);
         return child;
     }
 
@@ -3507,15 +3575,20 @@ public final class WhereClauseParser implements Mutable {
      * only literals present reference the offset source timestamp column, so wrapping each occurrence
      * faithfully restores the virtual expression {@code tt = dateadd(unit, stride, source_ts)}.
      */
-    private void wrapTimestampLiterals(ExpressionNode node, CharSequence unitToken, CharSequence strideToken) {
+    private static void wrapTimestampLiterals(
+            ObjectPool<ExpressionNode> pool,
+            ExpressionNode node,
+            CharSequence unitToken,
+            CharSequence strideToken
+    ) {
         if (node == null) {
             return;
         }
-        node.lhs = wrapTimestampLiteral(node.lhs, unitToken, strideToken);
-        node.rhs = wrapTimestampLiteral(node.rhs, unitToken, strideToken);
+        node.lhs = wrapTimestampLiteral(pool, node.lhs, unitToken, strideToken);
+        node.rhs = wrapTimestampLiteral(pool, node.rhs, unitToken, strideToken);
         final ObjList<ExpressionNode> args = node.args;
         for (int i = 0, n = args.size(); i < n; i++) {
-            args.setQuick(i, wrapTimestampLiteral(args.getQuick(i), unitToken, strideToken));
+            args.setQuick(i, wrapTimestampLiteral(pool, args.getQuick(i), unitToken, strideToken));
         }
     }
 

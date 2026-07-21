@@ -2428,6 +2428,91 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWideLaneInElementNarrowColumnUnderLongKey() throws Exception {
+        // A bare narrow-int column used as an IN ELEMENT under a LONG key was never
+        // sign-extended: isWidthSensitiveInKey covers a narrow KEY only, and the IN branch of
+        // markWidthSemantics returned before the narrow-leaf widening rule (which is gated on a
+        // comparison token, false for "in"). A widening sibling conjunct flips the filter to
+        // four-lane AVX2, where the element loads as four packed i32 in the low XMM half while
+        // the key spans four 64-bit lanes, so each lane compares the key against a pair of
+        // ADJACENT rows' elements.
+        assertMemoryLeak(() -> {
+            // i32 alternates 0, 1 so lanes 0 and 1 pack to (1 << 32) | 0 = 4_294_967_296, which
+            // equals the key. No row satisfies the predicate at 64-bit width, but the pre-fix
+            // four-lane path returned half the SIMD-body rows.
+            execute("create table in_elem as (select timestamp_sequence(0, 1_000_000) k," +
+                    " ((x + 1) % 2)::int i32, 4_294_967_296L i64, 7::int g32, 7L g64" +
+                    " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)");
+            assertJitMatchesJava("select count() from in_elem where i64 in (i32) and g32 = g64",
+                    true, "count\n0\n");
+            assertJitMatchesJava("in_elem where i64 in (i32) and g32 = g64", true, "k\ti32\ti64\tg32\tg64\n");
+            assertJitMatchesJava("select count() from in_elem where i64 in (i32, 5) and g32 = g64",
+                    true, "count\n0\n");
+
+            // Batch-length and operand-order parity across the sign-extension boundary.
+            for (int rowCount = 0; rowCount <= 9; rowCount++) {
+                execute("drop table if exists in_elem_b");
+                if (rowCount == 0) {
+                    execute("create table in_elem_b (i32 int, i64 long, f32 float)");
+                } else {
+                    execute("create table in_elem_b as (select "
+                            + "cast(case x when 1 then null when 2 then -1 else x - 3 end as int) i32, "
+                            + "cast(case x when 1 then null when 2 then 4_294_967_295 else 2 end as long) i64, "
+                            + "cast(case x when 1 then null else 2.5 end as float) f32 "
+                            + "from long_sequence(" + rowCount + "))");
+                }
+                assertJitMatchesJava("in_elem_b where i64 in (i32)", true);
+                assertJitMatchesJava("in_elem_b where i64 in (i32) and i32 < 5_000_000_000", true);
+                assertJitMatchesJava("in_elem_b where i32 in (i64)", true);
+                assertJitMatchesJava("in_elem_b where i32 in (i64) and i32 < 5_000_000_000", true);
+                assertJitMatchesJava("in_elem_b where i64 in (i32, 5_000_000_000)", true);
+                assertJitMatchesJava("select count() from in_elem_b where i64 in (i32) and f32 < 1.00000003", true);
+            }
+        });
+    }
+
+    @Test
+    public void testWideLaneInNullElementUnderWidenedKey() throws Exception {
+        // An untyped NULL IN element is wide-lane eligible, but its immediate took the local
+        // type observer's width. The observer sees columns only, so a predicate that
+        // sign-extends its narrow leaves to i64 still typed the NULL down to I4 and emitted
+        // INT_NULL; against the key's i64 lanes that broadcasts as 0x8000000080000000 per qword
+        // and no genuinely-NULL key ever matched. IN (null) and = null disagreed as a result.
+        assertMemoryLeak(() -> {
+            execute("create table in_null as (select timestamp_sequence(0, 1_000_000) k," +
+                    " null::int i32" +
+                    " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)");
+            // The key is INT + an out-of-INT-range constant, so it widens to i64; every row is
+            // NULL, so every row must match. Pre-fix the four-lane path returned none.
+            assertJitMatchesJava("select count() from in_null where (i32 + 5_000_000_000) in (null)",
+                    true, "count\n" + N_SIMD_WITH_SCALAR_TAIL + "\n");
+            // The = null control has always been correct; the two spellings must agree.
+            assertJitMatchesJava("select count() from in_null where (i32 + 5_000_000_000) = null",
+                    true, "count\n" + N_SIMD_WITH_SCALAR_TAIL + "\n");
+
+            for (int rowCount = 0; rowCount <= 9; rowCount++) {
+                execute("drop table if exists in_null_b");
+                if (rowCount == 0) {
+                    execute("create table in_null_b (i32 int, i64 long)");
+                } else {
+                    execute("create table in_null_b as (select "
+                            + "cast(case x when 1 then null when 2 then -7 else x end as int) i32, "
+                            + "cast(case x when 1 then null else 2 end as long) i64 "
+                            + "from long_sequence(" + rowCount + "))");
+                }
+                assertJitMatchesJava("in_null_b where (i32 + 5_000_000_000) in (null)", true);
+                assertJitMatchesJava("in_null_b where (i32 + 5_000_000_000) = null", true);
+                assertJitMatchesJava("in_null_b where (i32 * i64) in (null)", true);
+                // A narrow key with no LONG in the predicate must keep INT_NULL at I4.
+                assertJitMatchesJava("in_null_b where (i32 * 2) in (null)", true);
+                assertJitMatchesJava("in_null_b where i32 in (null)", true);
+                // A genuine LONG key already typed the NULL at I8; it must stay vectorized.
+                assertJitMatchesJava("in_null_b where i64 in (null)", true);
+            }
+        });
+    }
+
+    @Test
     public void testWideLaneIntColumnVsLongColumn() throws Exception {
         // A bare INT-column vs LONG-column comparison (no arithmetic, no out-of-range
         // constant) is wide-lane eligible, but nothing sign-extended its INT leaf. A
@@ -2484,6 +2569,108 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 assertJitMatchesJava("wide_cc where i16 < i64", true);
                 assertJitMatchesJava("wide_cc where i8 < i64 and i32 < 5_000_000_000", true);
                 assertJitMatchesJava("wide_cc where i16 = i64 and i32 < 5_000_000_000", true);
+            }
+        });
+    }
+
+    @Test
+    public void testWideLaneUnaryMinusNarrowLeaf() throws Exception {
+        // Unary minus over a narrow-int leaf compared at long width was never sign-extended:
+        // the widening rule fires only for a bare leaf (-i32 is an OPERATION), and the global
+        // fallback missed too because isArithmeticOperation() requires two operands, so
+        // NarrowI64WidenDetector.hasArithmetic stayed false. A widening sibling conjunct flips
+        // the filter to four-lane AVX2, where NEG then ran with 32-bit lane semantics over
+        // 64-bit lanes and corrupted the high half of each lane.
+        assertMemoryLeak(() -> {
+            // -i32 is -1, whose i32 pattern packs with its neighbour into 0xFFFFFFFFFFFFFFFF in
+            // some lanes and 0x00000000FFFFFFFF (= 4_294_967_295, the i64 value) in others. No
+            // row satisfies the predicate at 64-bit width; pre-fix the JIT returned half the
+            // SIMD-body rows.
+            execute("create table neg_leaf as (select timestamp_sequence(0, 1_000_000) k," +
+                    " 1::int i32, 4_294_967_295L i64, 7::int g32, 7L g64" +
+                    " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)");
+            assertJitMatchesJava("select count() from neg_leaf where -i32 = i64 and g32 = g64",
+                    true, "count\n0\n");
+            assertJitMatchesJava("neg_leaf where -i32 = i64 and g32 = g64", true,
+                    "k\ti32\ti64\tg32\tg64\n");
+            // Also route the shape through assertJitCountQuery: that helper compares the
+            // scalar-mode and vectorized-mode counts, and a lane scramble is exactly what it
+            // exists to catch, so it must observe the vectorized count rather than re-check
+            // the scalar one.
+            assertJitCountQuery("select count() from neg_leaf where -i32 = i64 and g32 = g64", 0);
+
+            // Batch lengths, NULL handling (INT_NULL is Integer.MIN_VALUE, so -i32 stays NULL)
+            // and every comparison operator, with both widening-sibling shapes.
+            for (int rowCount = 0; rowCount <= 9; rowCount++) {
+                execute("drop table if exists neg_b");
+                if (rowCount == 0) {
+                    execute("create table neg_b (i8 byte, i16 short, i32 int, i64 long, f32 float)");
+                } else {
+                    execute("create table neg_b as (select "
+                            + "cast(case x when 1 then null when 2 then 127 else x - 5 end as byte) i8, "
+                            + "cast(case x when 1 then null when 2 then 32767 else x - 5 end as short) i16, "
+                            + "cast(case x when 1 then null when 2 then 2147483647 when 3 then -2147483647 else x - 5 end as int) i32, "
+                            + "cast(case x when 1 then null when 2 then 4_294_967_295 else x - 5 end as long) i64, "
+                            + "cast(case x when 1 then null else 2.5 end as float) f32 "
+                            + "from long_sequence(" + rowCount + "))");
+                }
+                assertJitMatchesJava("neg_b where -i32 = i64", true);
+                assertJitMatchesJava("neg_b where -i32 <> i64", true);
+                assertJitMatchesJava("neg_b where -i32 < i64", true);
+                assertJitMatchesJava("neg_b where -i32 <= i64", true);
+                assertJitMatchesJava("neg_b where -i32 > i64", true);
+                assertJitMatchesJava("neg_b where -i32 >= i64", true);
+                assertJitMatchesJava("neg_b where i64 = -i32", true);
+                assertJitMatchesJava("neg_b where -i32 = i64 and i32 < 5_000_000_000", true);
+                assertJitMatchesJava("neg_b where -i32 = i64 or i32 < 5_000_000_000", true);
+                assertJitMatchesJava("select count() from neg_b where -i32 = i64 and f32 < 1.00000003", true);
+                assertJitMatchesJava("neg_b where i64 in (-i32)", true);
+                // BYTE / SHORT are never wide-lane eligible; the added widening must leave
+                // their correct scalar path alone.
+                assertJitMatchesJava("neg_b where -i8 = i64", true);
+                assertJitMatchesJava("neg_b where -i16 = i64", true);
+            }
+        });
+    }
+
+    @Test
+    public void testWideLaneUnaryMinusOperandWrapsUnderIntComparison() throws Exception {
+        // The mirror of testWideLaneUnaryMinusNarrowLeaf: under an INT-width comparison the
+        // unary-minus operand has to WRAP, not widen. markWidthSemantics recursed into the
+        // operand directly instead of going through markWidthSemanticsOperand, which is the
+        // only path that reaches i64WrapLeaves, so the predicate-global widening flag
+        // sign-extended it and the product then ran at 64 bits where the Java filter wraps
+        // mod 2^32 (NegInt/MulInt#getInt).
+        assertMemoryLeak(() -> {
+            // -(-65536) * 65536 = 4_294_967_296, which wraps to 0 in INT arithmetic, so the
+            // inner comparison is true for every row and the whole predicate is true = true.
+            // Pre-fix the JIT computed the product at 64 bits and returned no rows.
+            execute("create table neg_wrap as (select timestamp_sequence(0, 1_000_000) k," +
+                    " (-65536)::int a32, 65536::int b32, 1L i64" +
+                    " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)");
+            assertJitMatchesJava("select count() from neg_wrap where ((-a32 * b32) = 0) = (i64 > 0)",
+                    true, "count\n" + N_SIMD_WITH_SCALAR_TAIL + "\n");
+            // The binary-only spelling was always correct; both must agree.
+            assertJitMatchesJava("select count() from neg_wrap where ((a32 * b32) = 0) = (i64 > 0)",
+                    true, "count\n" + N_SIMD_WITH_SCALAR_TAIL + "\n");
+
+            for (int rowCount = 0; rowCount <= 9; rowCount++) {
+                execute("drop table if exists neg_wrap_b");
+                if (rowCount == 0) {
+                    execute("create table neg_wrap_b (a32 int, b32 int, i64 long)");
+                } else {
+                    execute("create table neg_wrap_b as (select "
+                            + "cast(case x when 1 then null when 2 then -65536 else x end as int) a32, "
+                            + "cast(case x when 1 then null when 2 then 65536 else x + 1 end as int) b32, "
+                            + "cast(case x when 1 then null else 1 end as long) i64 "
+                            + "from long_sequence(" + rowCount + "))");
+                }
+                assertJitMatchesJava("neg_wrap_b where ((-a32 * b32) = 0) = (i64 > 0)", true);
+                assertJitMatchesJava("neg_wrap_b where ((-a32 + b32) = 0) = (i64 > 0)", true);
+                assertJitMatchesJava("neg_wrap_b where ((-a32 * b32) > 0) = (i64 > 0)", true);
+                // A genuine long-width comparison over the same shape must still widen.
+                assertJitMatchesJava("neg_wrap_b where (-a32 * b32) = i64", true);
+                assertJitMatchesJava("neg_wrap_b where -a32 * b32 = 4_294_967_296", true);
             }
         });
     }
@@ -3278,8 +3465,8 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         Assert.assertEquals("[scalar mode] count mismatch for query: " + countQuery, expectedCount, actualCount);
 
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-        runJitQuery(countQuery);
-        Assert.assertEquals("[vectorized mode] count mismatch for query: " + countQuery, expectedCount, actualCount);
+        long vectorCount = runJitCountQuery(countQuery);
+        Assert.assertEquals("[vectorized mode] count mismatch for query: " + countQuery, expectedCount, vectorCount);
     }
 
     private void assertJitQuery(CharSequence query, boolean notNull) throws SqlException {

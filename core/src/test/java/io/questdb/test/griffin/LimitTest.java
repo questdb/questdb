@@ -1885,14 +1885,24 @@ public class LimitTest extends AbstractCairoTest {
                 Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
             }
 
-            // Long.MIN_VALUE is the pathological negative limit: negating it overflows back to
-            // Long.MIN_VALUE, which slips past the maxNegativeLimit bound and would otherwise yield an
-            // empty cursor. It must be rejected like any other over-limit value. A bind variable feeds
-            // the exact value without the parser rejecting the out-of-range literal first.
+            // Numbers.LONG_NULL IS Long.MIN_VALUE, so that bit pattern is not a negative limit of
+            // magnitude 2^63 - it is a NULL limit, which means "no limit". The unfiltered path has
+            // always read it that way, so the filtered path has to agree: an unset LIMIT :lim bind
+            // variable must not turn a working query into an error just because a WHERE was added.
+            // A bind variable feeds the exact value without the parser rejecting the out-of-range
+            // literal first.
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setLong("lim", Long.MIN_VALUE);
-            String minQuery = "select * from y where i > 0 limit :lim";
-            try (final RecordCursorFactory factory = select(minQuery)) {
+            assertRowCount("select * from y where i > 0 limit :lim", 100);
+            assertRowCount("select * from y limit :lim", 100);
+            // The same through the NULL spelling, and with the JIT filter in play.
+            sqlExecutionContext.getBindVariableService().clear();
+            assertRowCount("select * from y where i > 0 limit null::long", 100);
+            assertRowCount("select * from y limit null::long", 100);
+
+            // A genuinely over-large negative limit is still rejected.
+            String tooLarge = "select * from y where i > 0 limit -" + (maxLimit + 1);
+            try (final RecordCursorFactory factory = select(tooLarge)) {
                 try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
                     Assert.fail();
                 }
@@ -1900,6 +1910,18 @@ public class LimitTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
             }
         });
+    }
+
+    private void assertRowCount(String query, long expected) throws SqlException {
+        try (final RecordCursorFactory factory = select(query)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                long count = 0;
+                while (cursor.hasNext()) {
+                    count++;
+                }
+                Assert.assertEquals(query, expected, count);
+            }
+        }
     }
 
     private void testLimit(String expected1, String expected2, String query) throws Exception {

@@ -667,7 +667,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         putOperator(RET);
 
         ensureOnlyVarSizeHeaderChecks();
-        return getOptions(forceScalar, debug, nullChecks);
+        final int options = getOptions(forceScalar, debug, nullChecks);
+        assert areWideLaneWidthsHarmonised(options);
+        return options;
     }
 
     @Override
@@ -1054,6 +1056,92 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             default:
                 return UNDEFINED_CODE;
         }
+    }
+
+    /**
+     * Asserts that no binary operator in a finished wide-lane IR stream mixes a 4-byte and an
+     * 8-byte integer operand.
+     * <p>
+     * The four-lane backend loads a 4-byte column as four packed i32 in the low half of the
+     * register while an 8-byte column spans all four 64-bit lanes, and {@code avx2::convert()}
+     * has no i32-to-i64 case, so such a pairing silently compares against adjacent rows instead
+     * of declining. Correctness therefore rests entirely on {@link #markWidthSemantics} and the
+     * IN width rules harmonising every pairing up front; this is the backstop that turns a miss
+     * into a test failure instead of wrong rows. Integer-to-float pairings are excluded: those
+     * {@code convert()} does handle.
+     * <p>
+     * Runs under {@code -ea} only, so it costs nothing in production.
+     */
+    private boolean areWideLaneWidthsHarmonised(int options) {
+        if (((options >> 4) & 3) != EXEC_HINT_WIDE_LANE) {
+            return true;
+        }
+        // Operator instructions pad their options field with zero, and I1_TYPE is zero, so the
+        // stack has to carry widths derived from the opcode rather than the encoded field.
+        // UNDEFINED_CODE marks a value whose width is not a lane width (a comparison mask, or a
+        // type this check does not reason about); pairings involving one are skipped.
+        typeStack.clear();
+        for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
+            final int opCode = memory.getInt(offset);
+            switch (opCode) {
+                case RET:
+                    return true;
+                case VAR:
+                case MEM:
+                case IMM:
+                    typeStack.push(memory.getInt(offset + Integer.BYTES));
+                    break;
+                case SX_I64:
+                    typeStack.pop();
+                    typeStack.push(I8_TYPE);
+                    break;
+                case NEG:
+                    // Value-preserving: keeps its operand's width.
+                    break;
+                case NOT:
+                    typeStack.pop();
+                    typeStack.push(UNDEFINED_CODE);
+                    break;
+                case AND:
+                case OR:
+                case AND_SC:
+                case OR_SC:
+                    typeStack.pop();
+                    typeStack.pop();
+                    typeStack.push(UNDEFINED_CODE);
+                    break;
+                case BEGIN_SC:
+                case END_SC:
+                    break;
+                case EQ:
+                case NE:
+                case LT:
+                case LE:
+                case GT:
+                case GE:
+                case ADD:
+                case SUB:
+                case MUL:
+                case DIV: {
+                    final int lhsType = typeStack.pop();
+                    final int rhsType = typeStack.pop();
+                    if ((isNarrowIntTypeCode(lhsType) && rhsType == I8_TYPE)
+                            || (isNarrowIntTypeCode(rhsType) && lhsType == I8_TYPE)) {
+                        return false;
+                    }
+                    final boolean isComparison = opCode == EQ || opCode == NE || opCode == LT
+                            || opCode == LE || opCode == GT || opCode == GE;
+                    // A comparison yields a lane mask, not a value of either operand's width.
+                    typeStack.push(isComparison ? UNDEFINED_CODE : Math.max(lhsType, rhsType));
+                    break;
+                }
+                default:
+                    // An opcode this check does not model: drop the width information rather
+                    // than guess at its arity.
+                    typeStack.clear();
+            }
+        }
+        return true;
     }
 
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
@@ -1630,6 +1718,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return t == I1_TYPE || t == I2_TYPE || t == I4_TYPE;
     }
 
+    private static boolean isNarrowIntTypeCode(int typeCode) {
+        return typeCode == I1_TYPE || typeCode == I2_TYPE || typeCode == I4_TYPE;
+    }
+
     /**
      * Checks if the expression tree is a pure AND chain (no OR at top level).
      */
@@ -1817,7 +1909,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     isFloatLong
             );
             if (isUnaryMinus) {
-                markWidthSemantics(node.rhs != null ? node.rhs : node.lhs, childCtx);
+                // Route the operand through the same path as a binary operand: it is the
+                // only way a leaf reaches i64WrapLeaves. Recursing straight into
+                // markWidthSemantics skipped that, so under an INT-width comparison the
+                // global widening flag sign-extended the operand and the negation then ran
+                // at 64 bits, where the Java filter wraps mod 2^32 (NegInt#getInt).
+                markWidthSemanticsOperand(node.rhs != null ? node.rhs : node.lhs, exprType, childCtx);
             } else {
                 markWidthSemanticsOperand(node.lhs, exprType, childCtx);
                 markWidthSemanticsOperand(node.rhs, exprType, childCtx);
@@ -1831,6 +1928,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             for (int i = 0, n = node.args.size() - 1; i < n; i++) {
                 final ExpressionNode element = node.args.getQuick(i);
                 final boolean isPairLong = foldCmpType(keyType, element) == I8_TYPE;
+                // A narrow-int leaf element paired against a long-width key has to sign-extend
+                // for the same reason a narrow leaf under a long-width comparison does: the
+                // four-lane path loads it as four packed i32 in the low half of the register,
+                // so an un-widened element compares against the key's i64 lanes and mixes
+                // adjacent rows. isWidthSensitiveInKey covers only a narrow key, so a plain
+                // LONG key left this pairing unharmonised.
+                if (isPairLong && isNarrowIntLeaf(element)) {
+                    addI64WidenLeaf(element);
+                }
                 markWidthSemantics(
                         element,
                         new WidthCtx(isFoldActive, isPairLong, false, false, false, isFloatActive, isPairLong)
@@ -1846,7 +1952,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             cmpType = foldCmpType(cmpType, node.args.getQuick(i));
         }
         final boolean isCmpLong = cmpType == I8_TYPE;
-        if (isCmpLong && node.paramCount == 2 && isComparisonToken(node.token)) {
+        // The two-operand IN form (single element, key and element in lhs / rhs) reaches here
+        // instead of the args loop above and needs the same harmonisation.
+        if (isCmpLong && node.paramCount == 2 && (isComparisonToken(node.token) || isIn)) {
             // A bare narrow-int leaf (column / bind variable) compared at long width against
             // a LONG operand must sign-extend to i64, so the four-lane AVX2 path compares it
             // at 64-bit width: the LONG operand loads at full width and cmp_* dispatches on a
@@ -2244,7 +2352,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // SX_I64 no longer forces scalar (see maybeEmitI64Widening), so an I8 NULL immediate
             // would reach the four-lane backend and compare i32-vs-i64 (avx2.h#convert has no such
             // case), matching INT_NULL rows only in some lane positions.
-            serializeNull(offset, position, isNarrowKept ? I4_TYPE : typeCode, predicateContext.columnType);
+            // The immediate has to carry the width the key is actually serialized at. The local
+            // observer sees columns only, so a predicate that sign-extends its narrow leaves to
+            // i64 still types an untyped NULL down to I4 and emits INT_NULL; against the key's
+            // i64 lanes that broadcasts as 0x8000000080000000 per qword and no genuinely-NULL
+            // key matches (e.g. (i32 + 5000000000) IN (null)). isNarrowKept keeps priority - it
+            // is the narrow-key pairing, which wraps to INT_NULL at I4.
+            final int nullTypeCode;
+            if (isNarrowKept) {
+                nullTypeCode = I4_TYPE;
+            } else if (predicateContext.needsNarrowI64Widening
+                    && (typeCode == I1_TYPE || typeCode == I2_TYPE || typeCode == I4_TYPE)) {
+                nullTypeCode = I8_TYPE;
+            } else {
+                nullTypeCode = typeCode;
+            }
+            serializeNull(offset, position, nullTypeCode, predicateContext.columnType);
             return;
         }
 
@@ -3368,7 +3491,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     break;
                 }
                 case ExpressionNode.OPERATION:
-                    hasArithmetic |= isArithmeticOperation(node);
+                    // Unary minus counts as arithmetic even though isArithmeticOperation()
+                    // requires two operands. NegInt#getLong widens its subtree and negates at
+                    // long width, so a predicate mixing it with a LONG operand has to widen
+                    // the narrow leaf; otherwise the four-lane path negates a sign-extended
+                    // 64-bit lane with 32-bit lane semantics and corrupts the high half.
+                    hasArithmetic |= isArithmeticOperation(node)
+                            || (node.paramCount == 1 && Chars.equals(node.token, '-'));
                     // Overflowing pure-constant subtree folds to an IMM in
                     // descend(). Observe it as I4 (it keeps INT type), so
                     // shouldWiden() fires only on a real LONG operand - then

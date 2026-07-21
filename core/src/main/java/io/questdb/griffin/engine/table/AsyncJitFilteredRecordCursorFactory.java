@@ -56,6 +56,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -228,9 +229,17 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         if (limitLoFunction != null) {
             limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
             rowsRemaining = limitLoFunction.getLong(null);
-            // on negative limit we will be looking for positive number of rows
-            // while scanning table from the highest timestamp to the lowest
-            if (rowsRemaining > -1) {
+            // A NULL limit means "no limit", matching the unfiltered path (an unset LIMIT :lim
+            // bind variable reaches here as NULL). Numbers.LONG_NULL is Long.MIN_VALUE, so it has
+            // to be recognised before the sign flip below: negating it overflows back to a
+            // negative value that then trips the max-negative-limit guard, turning a working
+            // query into an error as soon as a WHERE clause is added.
+            if (rowsRemaining == Numbers.LONG_NULL) {
+                rowsRemaining = Long.MAX_VALUE;
+                order = baseOrder;
+            } else if (rowsRemaining > -1) {
+                // on negative limit we will be looking for positive number of rows
+                // while scanning table from the highest timestamp to the lowest
                 order = baseOrder;
             } else {
                 order = reverse(baseOrder);

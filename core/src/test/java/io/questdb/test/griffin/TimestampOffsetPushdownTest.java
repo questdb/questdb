@@ -70,6 +70,97 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLossyCastBoundKeepsResidualFilter() throws Exception {
+        // A cast that truncates - here TIMESTAMP_NS down to TIMESTAMP - makes the interval analysis a
+        // SUPERSET of the predicate, so removeAndIntrinsics applies the widened interval and returns
+        // false to keep the predicate as a residual filter. analyzeAndOffset used to consume the
+        // predicate anyway whenever intervals had been left behind, dropping the residual and
+        // returning rows that fail the predicate.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2022-01-01T10:00:00.000000500Z'),
+                        ('2022-01-01T11:00:00.000000000Z')
+                    """);
+            // Row 1 shifts to 09:00:00.000000500, whose cast to microseconds truncates to
+            // 09:00:00.000000 - NOT greater than the bound, so it must not be returned. It sits
+            // inside the widened scan interval, so only a surviving residual filter removes it.
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('h',-1,ts) tt FROM t)
+                    WHERE tt::timestamp > '2022-01-01T09:00:00.000000Z'
+                    """)
+                    .timestamp("tt")
+                    .withPlanContaining("filter: 2022-01-01T09:00:00.000000Z<dateadd('h',-1,ts)::timestamp")
+                    .returns("""
+                            tt
+                            2022-01-01T10:00:00.000000000Z
+                            """);
+            // The widened interval is still applied for pruning, so the scan is an interval scan
+            // rather than a full table scan.
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('h',-1,ts) tt FROM t)
+                    WHERE tt::timestamp > '2022-01-01T09:00:00.000000Z'
+                    """)
+                    .timestamp("tt")
+                    .withPlanContaining("Interval forward scan on: t")
+                    .returns("""
+                            tt
+                            2022-01-01T10:00:00.000000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testStrandedAndOffsetCompilesAsResidualFilter() throws Exception {
+        // moveWhereInsideSubQueries pushes an and_offset wrapper onto whatever nested model it
+        // finds. A model that never reaches interval extraction - here a sub-query carrying a
+        // LIMIT - handed the wrapper straight to the function compiler, which failed with
+        // "unknown function name: and_offset(BOOLEAN,CHAR,INT)", leaking an internal name to the
+        // user. generateFilter0 now rebuilds any stranded wrapper into its dateadd residual.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2020-01-01T10:00:00.000000Z', 1.5),
+                        ('2020-01-02T10:00:00.000000Z', 2.5)
+                    """);
+            // Both spellings of the bound reach the same stranded wrapper; the cast one is what
+            // isStaticTimestampPredicate()'s cast arm newly admits.
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('h',-1,ts) tt, price FROM (SELECT * FROM trades LIMIT 10))
+                    WHERE tt > '2020-01-02T08:00:00.000000Z'
+                    """)
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2020-01-02T09:00:00.000000Z\t2.5
+                            """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('h',-1,ts) tt, price FROM (SELECT * FROM trades LIMIT 10))
+                    WHERE tt > '2020-01-02T08:00:00.000000Z'::timestamp
+                    """)
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2020-01-02T09:00:00.000000Z\t2.5
+                            """);
+            // A bound that admits every row, to pin that the rebuilt residual is the original
+            // predicate rather than an always-false or always-true stand-in.
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('h',-1,ts) tt, price FROM (SELECT * FROM trades LIMIT 10))
+                    WHERE tt > '2020-01-01T00:00:00.000000Z'
+                    """)
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2020-01-01T09:00:00.000000Z\t1.5
+                            2020-01-02T09:00:00.000000Z\t2.5
+                            """);
+        });
+    }
+
+    @Test
     public void testCastWrappedDynamicBoundOffsetPredicateRemainsAsFilter() throws Exception {
         // isStaticTimestampPredicate() treats a cast as transparent so that a static bound like
         // null::timestamp still pushes down (see testNullBoundOffsetPushdownReturnsEmpty). That
