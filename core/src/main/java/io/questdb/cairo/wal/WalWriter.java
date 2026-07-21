@@ -1041,6 +1041,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
+    /**
+     * TEST-ONLY seam for the CRIT-2 mid-flight window (Task 1b). Invoked inside {@link #commit0} for an
+     * ADAPTIVE group-commit ({@code W>0}) deferral, AFTER the txn is sequenced (the shared tracker's seqTxn has
+     * advanced to it) and BEFORE the durable-ack contiguous-prefix pin is registered. A test may interpose a
+     * peer writer's flush here to deterministically reproduce the mid-flight over-claim; production leaves it
+     * {@code null} (a single volatile read, then a no-op). Never installed outside tests.
+     */
+    @TestOnly
+    public interface DeferredCommitInterceptor {
+        void onSequencedBeforePin(int walId, long seqTxn);
+    }
+
+    @TestOnly
+    public static volatile DeferredCommitInterceptor deferredCommitInterceptor;
+
     private void commit0(
             byte txnType,
             long lastRefreshBaseTxn,
@@ -1094,6 +1109,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 final long seqTxn = getSequencerTxn();
                 if (walCommitMode() == CommitMode.ADAPTIVE) {
                     if (deferDeviceFlush()) {
+                        // TEST-ONLY seam (Task 1b): the mid-flight window — the txn is now sequenced (the shared
+                        // tracker's seqTxn has advanced to it) but its durable-ack pin was registered ATOMICALLY
+                        // with that assignment in the sequencer, so a peer's markWriterDurable here can no longer
+                        // empty the pin map and over-claim this still-non-durable txn. Lets a test drive that race.
+                        final DeferredCommitInterceptor interceptor = deferredCommitInterceptor;
+                        if (interceptor != null) {
+                            interceptor.onSequencedBeforePin(walId, seqTxn);
+                        }
                         // Deferred 2 (group commit, W>0): the commit is SEQUENCED and msync'd to the page
                         // cache but NOT yet device-durable. Record it as the pending-durable frontier and
                         // DO NOT advance localDurableSeqTxn — the durable-ack must not fire until the batch
@@ -2289,14 +2312,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      */
     private synchronized void recordPendingDurable(long seqTxn) {
         if (pendingDurableSeqTxn < 0) {
-            // first commit of a new batch: stamp the batch's age clock (the OLDEST un-flushed commit) and
-            // register this writer's contiguous-prefix pin on the shared tracker at that oldest seqTxn, so a
-            // peer writer flushing a HIGHER seqTxn first cannot advance the durable-ack frontier past our
-            // still-unflushed batch (CRITICAL 2). putIfAbsent on the tracker: our later commits in this batch
-            // do NOT lower the pin.
+            // first commit of a new batch: stamp the batch's age clock (the OLDEST un-flushed commit). The
+            // shared contiguous-prefix pin is NOT registered here — it is registered ATOMICALLY with the seqTxn
+            // assignment inside the sequencer (TableSequencerImpl.nextTxn), so it is already in place before this
+            // runs and NO mid-flight window exists in which a peer flush could over-claim this txn (Task 1b).
+            // putIfAbsent there keeps the pin at this batch's OLDEST seqTxn until the writer's own flush drops it.
             pendingSinceMicros = configuration.getMicrosecondClock().getTicks();
             pendingLoSeqTxn = seqTxn;
-            seqTxnTracker.registerWriterPending(walId, seqTxn);
         }
         pendingDurableSeqTxn = seqTxn;
         // Register BEFORE the trigger: if the trigger flushes, flushPendingDurable() deregisters; if it does
