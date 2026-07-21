@@ -51,6 +51,39 @@ public class M4WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeepsAllRowsWhenCountAtTargetEvenIfBucketingWouldDrop() throws Exception {
+        // Distinguishing case for the count <= target keep-all short-circuit: 4 monotonically
+        // increasing rows with target=4 -> numBuckets=1 (single bucket over all rows). Bucketing
+        // would collapse first=min=row0 and last=max=row3 to just {0,3}, DROPPING the two interior
+        // rows (pre-fix window output: true,false,false,true). But bufferCount(4) <= target(4), so
+        // the old SUBSAMPLE cursor's selectAll() keeps every row - m4() must match, keeping all four.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v double) timestamp(ts)");
+            execute("insert into t values (1::timestamp,10.0),(2::timestamp,20.0),(3::timestamp,30.0),(4::timestamp,40.0)");
+            assertQuery("select ts, v, m4(ts, v, 4) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\t10.0\ttrue
+                            1970-01-01T00:00:00.000002Z\t20.0\ttrue
+                            1970-01-01T00:00:00.000003Z\t30.0\ttrue
+                            1970-01-01T00:00:00.000004Z\t40.0\ttrue
+                            """);
+            // Byte-identical to the old SUBSAMPLE cursor on the same data (its selectAll() path).
+            printSql("select ts, v from t SUBSAMPLE m4(v, 4)");
+            TestUtils.assertEquals("""
+                    ts\tv
+                    1970-01-01T00:00:00.000001Z\t10.0
+                    1970-01-01T00:00:00.000002Z\t20.0
+                    1970-01-01T00:00:00.000003Z\t30.0
+                    1970-01-01T00:00:00.000004Z\t40.0
+                    """, sink);
+        });
+    }
+
+    @Test
     public void testMatchesM4AlgorithmOnSpike() throws Exception {
         // Deterministic spike; keep first/min/max/last per time bucket. Expected output filled from
         // the FIRST (stable) run and cross-checked against the old-cursor

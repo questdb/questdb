@@ -293,7 +293,22 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         public void preparePass2() {
             selIdx = 0;
             pass2Ordinal = 0;
-            algorithm.select(buffer, (int) count, (int) target, selected, circuitBreaker);
+            if (count <= target) {
+                // Mirror SubsampleRecordCursorFactory.bufferAndSelect's
+                // `bufferSize <= targetPoints -> selectAll()` short-circuit: when the buffered
+                // (non-null) row count already fits the target, keep every buffered row rather than
+                // bucketing. Running algorithm.select here would dedup first/min/max/last and can drop
+                // rows (e.g. a monotonic run collapses to just {first,last}), diverging from the old
+                // SUBSAMPLE cursor which returns ALL rows in this case. Null rows stay dropped - they
+                // were never appended to the buffer, so keeping all buffered rows keeps only non-nulls,
+                // exactly as selectAll() over bufferInput()'s null-filtered buffer does.
+                selected.clear();
+                for (long i = 0; i < count; i++) {
+                    selected.add(i);
+                }
+            } else {
+                algorithm.select(buffer, (int) count, (int) target, selected, circuitBreaker);
+            }
         }
 
         @Override
