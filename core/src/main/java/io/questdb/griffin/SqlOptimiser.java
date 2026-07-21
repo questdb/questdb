@@ -9348,6 +9348,25 @@ public class SqlOptimiser implements Mutable {
                             || isConstantCadenceSeed(subsample.args.getQuick(1), sqlExecutionContext))) {
                         model = desugarCadenceSubsample(model, nested, subsample, timestamp);
                     }
+                } else if (subsample.paramCount == 2
+                        && Chars.equalsIgnoreCase(subsample.token, "m4")) {
+                    // Migrate m4(value, target) to the m4 keep-flag window function only when the
+                    // window path is byte-identical to the old cursor:
+                    //  - target (arg 1) is a compile-time constant in [2, MAX_INT]. A bind-variable /
+                    //    runtime-constant / out-of-range / non-integer target, and the 3-arg
+                    //    m4(value, target, extra) error shape (paramCount != 2), all fall through to the
+                    //    custom cursor, which re-reports the identical error.
+                    //  - a designated timestamp is present and we are not in an aggregation context
+                    //    (a keep-flag window cannot be injected into an aggregating model).
+                    // The value column (arg 0) is passed AS-IS: the window function validates its type
+                    // (reproducing the cursor's "numeric column expected" message) and normal SQL
+                    // resolution handles existence, so nothing is resolved at optimiser time here.
+                    final ExpressionNode targetNode = subsample.args.getQuick(1);
+                    if (timestamp != null
+                            && !isAggregationContext(model, nested)
+                            && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
+                        model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, "m4");
+                    }
                 }
             }
         }
@@ -9471,6 +9490,30 @@ public class SqlOptimiser implements Mutable {
             cadence.rhs = ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(1));
         }
         return desugarSubsample(model, nested, timestamp, cadence);
+    }
+
+    /**
+     * Builds a 3-arg value-inspecting keep-flag window call {@code fnName(ts, value, target)} and routes
+     * it through the shared {@link #desugarSubsample} tail. Shared by m4 (and, later, minmax): only the
+     * {@code fnName} differs, both read {@code subsample.args.get(0)} = value column, {@code get(1)} =
+     * target and produce the identical 3-arg {@code (ts, value, target)} window overload.
+     */
+    private IQueryModel desugarValueInspectingSubsample(
+            IQueryModel model,
+            IQueryModel nested,
+            ExpressionNode subsample,
+            ExpressionNode timestamp,
+            CharSequence fnName
+    ) throws SqlException {
+        // fnName(ts, value, target) window call. FunctionParser reverses argument order for
+        // paramCount > 2 (confirmed via rewriteSampleBy's tsFloorFunc), so the args list is built
+        // back-to-front: the window factory then reads args.getQuick(0)=ts, (1)=value, (2)=target.
+        final ExpressionNode call = expressionNodePool.next().of(FUNCTION, fnName, 0, subsample.position);
+        call.paramCount = 3;
+        call.args.add(ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(1))); // target
+        call.args.add(ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(0))); // value column
+        call.args.add(expressionNodePool.next().of(LITERAL, timestamp.token, 0, subsample.position)); // ts
+        return desugarSubsample(model, nested, timestamp, call);
     }
 
     /**
