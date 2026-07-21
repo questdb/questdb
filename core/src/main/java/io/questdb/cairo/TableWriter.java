@@ -1413,7 +1413,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, partitionNameTxn);
                         configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp);
-                        migrateLegacyCoveringHeadIfNeeded(indexer);
                     }
                 }
             } catch (Throwable th) {
@@ -3118,7 +3117,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         lastOpenPartitionTxnName
                                 );
                                 configureCoveringIfNeeded(indexer, index, lastOpenPartitionTs);
-                                migrateLegacyCoveringHeadIfNeeded(indexer);
                             }
                         } finally {
                             path.trimTo(pathSize);
@@ -4284,6 +4282,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * fast-committed (caller O3s the whole block); or the split row
      * {@code o3Lo < r < o3LoHi} (caller O3s {@code [r, o3LoHi)}).
      */
+    // True when any POSTING index on the (open) last partition has covering
+    // metadata AND a LEGACY (format-0, aliased-footer) head chain entry. The
+    // fast-lag block-apply must not extend a format-0 covering head in place
+    // (that re-exposes the concurrent covered-read OOB), so the gate falls back
+    // to O3 whose reseal writes a fresh format-1 entry — migrating the head so
+    // the NEXT block-apply fast-paths.
+    private boolean lastPartitionHasLegacyCoveringHead() {
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            if (metadata.getColumnType(colIdx) <= 0
+                    || !metadata.isColumnIndexed(colIdx)
+                    || colIdx >= indexers.size()
+                    || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
+                continue;
+            }
+            ColumnIndexer indexer = indexers.getQuick(colIdx);
+            if (indexer == null) {
+                continue;
+            }
+            IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
+            if (coveringCols == null || coveringCols.size() == 0) {
+                continue;
+            }
+            if (indexer.getWriter() instanceof PostingIndexWriter piw && piw.isHeadCoveringFormatLegacy()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private long tryFastAppendInOrderBlock(long o3Lo, long o3LoHi, int blockTransactionCount, long timestampAddr) {
         // @TestOnly override (default false, JIT-elided in production): force every
         // block through the unchanged O3 path so a differential test can prove the
@@ -4313,7 +4340,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 || isLastPartitionParquet()
                 || !isCommitPlainInsert()
                 || txWriter.getMaxTimestamp() > blockMin
-                || txWriter.getPartitionTimestampByTimestamp(blockMin) != lastPartitionTimestamp) {
+                || txWriter.getPartitionTimestampByTimestamp(blockMin) != lastPartitionTimestamp
+                || lastPartitionHasLegacyCoveringHead()) {
             return o3Lo;
         }
         // Rows whose timestamp is within the last partition (<= partitionTimestampHi).
@@ -5408,18 +5436,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // empty makes the asserts skip, which is correct for this path: the covered reads
         // are columnTop-relative over temp files sized to exactly (partitionSize - colTop)
         // rows, so an in-range rowId cannot address past the mapping by construction.
-    }
-
-    // Eager, one-time migration of a LEGACY (format-0, aliased-footer) covering
-    // POSTING head — as written by 9.4.x — to the de-aliased (format-1) layout on
-    // partition open, so no legacy covering head is ever extended in place (which
-    // would re-expose the concurrent covered-read OOB). Only fires on genuine
-    // partition open (NOT the fast-lag configure), and is a no-op once the head
-    // is format 1. Crash-safe via the reseal's atomic appendNewEntry publish.
-    private void migrateLegacyCoveringHeadIfNeeded(ColumnIndexer indexer) {
-        if (indexer.getWriter() instanceof PostingIndexWriter piw) {
-            piw.migrateLegacyCoveringHeadIfNeeded();
-        }
     }
 
     private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp) {

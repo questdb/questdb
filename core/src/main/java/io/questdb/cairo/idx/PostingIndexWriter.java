@@ -891,30 +891,6 @@ public class PostingIndexWriter implements IndexWriter {
                 : PostingIndexUtils.COVERING_FORMAT_LEGACY;
     }
 
-    /**
-     * Eager migration: if the current head is a LEGACY (format-0, aliased-footer)
-     * covering entry — as written by 9.4.x — re-seal it to a fresh de-aliased
-     * (format-1) entry so no format-0 covering head is ever extended in place
-     * (which would re-expose the concurrent covered-read OOB). Crash-safe: the
-     * reseal goes through appendNewEntry on a fresh sealTxn and only becomes live
-     * on the durable chain-head publish, so a crash mid-migrate leaves the old
-     * format-0 entry byte-intact and recoverable. One-time: after it runs the
-     * head is format 1 and this is a no-op. Returns true if it migrated.
-     */
-    public boolean migrateLegacyCoveringHeadIfNeeded() {
-        checkNotPoisoned();
-        if (coverCount <= 0 || !chain.hasHead()) {
-            return false;
-        }
-        if (headStoredCoveringFormat() != PostingIndexUtils.COVERING_FORMAT_LEGACY) {
-            return false; // already de-aliased
-        }
-        if (genCount == 0 || keyCount == 0) {
-            return false; // nothing covered to migrate
-        }
-        rebuildSidecars(); // reencodes the format-0 head into a fresh format-1 entry
-        return true;
-    }
 
     // The head entry's OWN stored covering format. The head may pre-date the
     // writer's current coverCount (e.g. a coverCount=0 seal that predates
@@ -923,6 +899,26 @@ public class PostingIndexWriter implements IndexWriter {
     // from the writer's live coverCount.
     private int headStoredCoveringFormat() {
         return PostingIndexChainEntry.unpackCoveringFormat(keyMem.getInt(chain.getHeadEntryOffset() + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT));
+    }
+
+    /**
+     * True when this covering index's HEAD chain entry is the LEGACY (format-0,
+     * aliased-footer) layout written by 9.4.x. The fast-lag block-apply gate uses
+     * this to fall back to O3 rather than extend a format-0 head in place (which
+     * would re-expose the concurrent covered-read OOB). The O3 reseal then writes
+     * a fresh format-1 entry, migrating the head; subsequent block-applies see a
+     * format-1 head and fast-path. Cheap: one mapped int read.
+     */
+    public boolean isHeadCoveringFormatLegacy() {
+        // Purely a property of the on-disk head entry (does not depend on the
+        // writer's live coverCount, which may not be configured at gate time).
+        // The caller only consults this for columns that carry covering metadata,
+        // so a format-0 head there is either legacy 9.4.x covering data or a
+        // not-yet-covering-sealed head; both must reseal (O3) to format 1 rather
+        // than be extended in place.
+        return keyMem != null && keyMem.isOpen()
+                && chain.hasHead()
+                && headStoredCoveringFormat() == PostingIndexUtils.COVERING_FORMAT_LEGACY;
     }
 
     // The head entry's OWN cover count, recovered from its total size

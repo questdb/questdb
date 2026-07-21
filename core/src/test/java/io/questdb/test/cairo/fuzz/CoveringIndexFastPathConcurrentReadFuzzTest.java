@@ -86,12 +86,27 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
 
     @Test
     public void testFastPathConcurrentReadFuzz() throws Exception {
-        runConcurrentReadFuzz(generateRandom(LOG));
+        runConcurrentReadFuzz(generateRandom(LOG), false);
     }
 
     @Test
     public void testFastPathConcurrentReadFuzzRegression() throws Exception {
-        runConcurrentReadFuzz(generateRandom(LOG, 0x4d9a2e7f1c063bL, 0x81b5c39e7a204fL));
+        runConcurrentReadFuzz(generateRandom(LOG, 0x4d9a2e7f1c063bL, 0x81b5c39e7a204fL), false);
+    }
+
+    // Legacy 9.4.x on-disk head: seed a format-0 (aliased-footer) covering head,
+    // then run the SAME concurrent covered-read + fast-lag block-apply load. The
+    // O3-fallback guard must (a) never trip the OOB (the format-0 head is sent to
+    // O3, not extended in place), (b) migrate the head to format 1 on the first
+    // block-apply (the O3 reseal), (c) then fast-path (fastLag>0) race-free.
+    @Test
+    public void testFastPathConcurrentReadFuzzLegacyFormat0Regression() throws Exception {
+        runConcurrentReadFuzz(generateRandom(LOG, 0x1f3c7a90e5d24bL, 0x77b1e6c0a4f293L), true);
+    }
+
+    @Test
+    public void testFastPathConcurrentReadFuzzLegacyFormat0() throws Exception {
+        runConcurrentReadFuzz(generateRandom(LOG), true);
     }
 
     private void resetCoveringCounters() {
@@ -102,7 +117,7 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
         PostingIndexWriter.COVERING_MAX_SEGCOUNT_OBSERVED.set(0);
     }
 
-    private void runConcurrentReadFuzz(Rnd rnd) throws Exception {
+    private void runConcurrentReadFuzz(Rnd rnd, boolean legacyInitial) throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 2000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 600_000);
@@ -114,11 +129,38 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
         final int rounds = 150 + rnd.nextInt(80);            // 150..229
         final int nullMod = 7 + rnd.nextInt(20);
         final long baseTs = 1_700_000_000_000_000L;
+        // A cursor shared between the (optional) legacy format-0 seed and the
+        // concurrent writer loop so ids/timestamps stay globally ascending.
+        final long[] writeCursor = {0L, baseTs}; // {id, ts}
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value), value DOUBLE)"
                     + " TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
+
+            if (legacyInitial) {
+                // Establish a LEGACY (format-0) covering head on disk BEFORE the
+                // concurrent load: several small ascending commits accumulate real
+                // covering gens under the aliased-footer layout.
+                PostingIndexWriter.FORCE_LEGACY_COVERING_FORMAT = true;
+                try {
+                    for (int b = 0; b < 6; b++) {
+                        final int rows = 30 + rnd.nextInt(60);
+                        final long step = 1 + rnd.nextInt(1000);
+                        final long v0 = writeCursor[0];
+                        final long startTs = writeCursor[1];
+                        execute("INSERT INTO t SELECT (" + startTs + " + x * " + step + ")::TIMESTAMP AS ts,"
+                                + " 'S' || ((" + v0 + " + x) % " + symbolCardinality + ") AS sym,"
+                                + " CASE WHEN ((" + v0 + " + x) % " + nullMod + ") = 0 THEN cast(NULL AS DOUBLE)"
+                                + " ELSE (" + v0 + " + x)::DOUBLE END AS value FROM long_sequence(" + rows + ")");
+                        drainWalQueue();
+                        writeCursor[0] = v0 + rows;
+                        writeCursor[1] = startTs + (long) rows * step;
+                    }
+                } finally {
+                    PostingIndexWriter.FORCE_LEGACY_COVERING_FORMAT = false;
+                }
+            }
             resetCoveringCounters();
 
             final AtomicReference<Throwable> bgError = new AtomicReference<>();
@@ -216,8 +258,8 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
                 readers[r].start();
             }
 
-            long id = 0;
-            long ts = baseTs;
+            long id = writeCursor[0];
+            long ts = writeCursor[1];
             try {
                 for (int round = 0; round < rounds && bgError.get() == null; round++) {
                     final int txns = 2 + rnd.nextInt(5); // 2..6 -> multi-txn backlog -> block apply
@@ -251,6 +293,14 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
             Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             Assert.assertTrue("fast path must fire (fastLag=" + PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.get() + ")",
                     PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.get() > 0);
+            if (legacyInitial) {
+                // The O3-fallback guard must have sent the format-0 head through
+                // O3 at least once (its reseal migrates the head to format 1),
+                // after which block-applies fast-path (asserted above).
+                Assert.assertTrue("legacy format-0 head must migrate via an O3 reseal (fullReseals="
+                                + PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get() + ")",
+                        PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get() > 0);
+            }
         });
     }
 
