@@ -140,6 +140,60 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testACaptureStepsOverAFinalNameSegmentLeftByACrash() throws Exception {
+        // A publication that died between renaming its data segment and committing
+        // the superblock leaves a final-name file the catalogue knows nothing
+        // about: nextSegmentId still points straight at it. Segment ids are never
+        // reused - not even for a file no generation references - so the next
+        // capture steps over it and leaves the orphan exactly as it found it, for
+        // reconciliation to dispose of. Writing through it instead would give one
+        // id two different published meanings, which is the assumption every
+        // reference count and every retired-generation check rests on.
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long orphanSegmentId = nextSegmentId(instance);
+                try (Path checkpointsDir = checkpointsDir(instance); Path path = new Path()) {
+                    LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, orphanSegmentId);
+                    Assert.assertTrue(configuration.getFilesFacade().touch(path.$()));
+                }
+
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer =
+                                new LiveViewCheckpointTimelineStoreWriter(configuration);
+                        Path checkpointsDir = checkpointsDir(instance)
+                ) {
+                    try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                                 writer.beginRepair(checkpointsDir)) {
+                        Assert.assertTrue(
+                                "the capture must allocate above the orphan, not onto it",
+                                capture.getDataSegmentId() > orphanSegmentId
+                        );
+                        captureRange(
+                                instance,
+                                capture,
+                                unwrapWindowFunctions(instance),
+                                ts(timestamp(30)),
+                                ts(timestamp(50)),
+                                new long[]{4, 6}
+                        );
+                        publish(writer, capture, instance, ts(timestamp(50)), 2);
+                    }
+                }
+
+                // Still the empty file it was: the splice wrote its own segment
+                // beside the orphan rather than through it.
+                try (Path checkpointsDir = checkpointsDir(instance); Path path = new Path()) {
+                    LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, orphanSegmentId);
+                    Assert.assertEquals(0, configuration.getFilesFacade().length(path.$()));
+                }
+                Assert.assertEquals(HISTORY_COMMITS, entryCount(instance));
+            }
+        });
+    }
+
+    @Test
     public void testCrashedRepairCandidateIsDiscardedOnRestart() throws Exception {
         // A repair that died with its candidate staged leaves a descriptor and the
         // temporary segment it names. Nothing in the timeline references either, and
@@ -904,6 +958,56 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRepairPublishesThePinnedSnapshotAsTheGenerationWatermark() throws Exception {
+        // The splice reuses the prefix and the converged suffix by page reference,
+        // so nothing those roots carry records that they are valid against the
+        // repair's pinned snapshot E. The generation watermark is the only place
+        // that fact lands, and the WAL floor is what reads it back: recovery
+        // replays every base transaction above the watermark, so a repair that
+        // left it behind would replay its own correction against roots that
+        // already incorporate it, and would pin the base WAL there for good.
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long baseBefore = normalizedBaseSeqTxn(instance);
+                final long lvBefore = coveredLvSeqTxn(instance);
+
+                final LiveViewCheckpointTimelineStoreWriter.RepairResult first = repair(
+                        instance,
+                        ts(timestamp(30)),
+                        ts(timestamp(50)),
+                        new long[]{4, 6},
+                        2,
+                        baseBefore + 5,
+                        lvBefore + 2
+                );
+                Assert.assertEquals(baseBefore + 5, normalizedBaseSeqTxn(instance));
+                Assert.assertEquals(lvBefore + 2, coveredLvSeqTxn(instance));
+                // Publication wrote the inactive slot, so the generation this
+                // repair superseded is still a recovery source and still holds the
+                // floor at the base it needed.
+                Assert.assertEquals(baseBefore, first.getWalPurgeFloor());
+
+                final LiveViewCheckpointTimelineStoreWriter.RepairResult second = repair(
+                        instance,
+                        ts(timestamp(30)),
+                        ts(timestamp(50)),
+                        new long[]{4, 6},
+                        0,
+                        baseBefore + 9,
+                        lvBefore + 3
+                );
+                Assert.assertEquals(baseBefore + 9, normalizedBaseSeqTxn(instance));
+                // The pre-repair generation has been overwritten, so the floor
+                // follows the first repair's snapshot rather than staying where
+                // the cadence left it.
+                Assert.assertEquals(baseBefore + 5, second.getWalPurgeFloor());
+            }
+        });
+    }
+
+    @Test
     public void testRepairRefusesABackwardWatermarkAndAnOutOfRangeBoundary() throws Exception {
         assertMemoryLeak(() -> {
             createView();
@@ -1660,6 +1764,12 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         }
     }
 
+    private long nextSegmentId(LiveViewInstance instance) {
+        try (LiveViewCheckpointMetaStore store = openStore(instance)) {
+            return store.getSuperblock().nextSegmentId;
+        }
+    }
+
     private long normalizedBaseSeqTxn(LiveViewInstance instance) {
         try (LiveViewCheckpointMetaStore store = openStore(instance)) {
             return store.getSuperblock().normalizedBaseSeqTxn;
@@ -1689,11 +1799,31 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
             long highTsExclusive,
             long suffixRowDelta
     ) {
+        return publish(
+                writer,
+                capture,
+                instance,
+                highTsExclusive,
+                suffixRowDelta,
+                normalizedBaseSeqTxn(instance),
+                coveredLvSeqTxn(instance)
+        );
+    }
+
+    private LiveViewCheckpointTimelineStoreWriter.RepairResult publish(
+            LiveViewCheckpointTimelineStoreWriter writer,
+            LiveViewCheckpointTimelineStoreWriter.RepairCapture capture,
+            LiveViewInstance instance,
+            long highTsExclusive,
+            long suffixRowDelta,
+            long normalizedBaseSeqTxn,
+            long coveredLvSeqTxn
+    ) {
         return writer.publishRepair(
                 capture,
                 instance.getLiveViewToken().getTableId(),
-                normalizedBaseSeqTxn(instance),
-                coveredLvSeqTxn(instance),
+                normalizedBaseSeqTxn,
+                coveredLvSeqTxn,
                 0,
                 true,
                 highTsExclusive,
@@ -1707,6 +1837,26 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
             long highTsExclusive,
             long[] effectivePositions,
             long suffixRowDelta
+    ) {
+        return repair(
+                instance,
+                lowTimestampInclusive,
+                highTsExclusive,
+                effectivePositions,
+                suffixRowDelta,
+                normalizedBaseSeqTxn(instance),
+                coveredLvSeqTxn(instance)
+        );
+    }
+
+    private LiveViewCheckpointTimelineStoreWriter.RepairResult repair(
+            LiveViewInstance instance,
+            long lowTimestampInclusive,
+            long highTsExclusive,
+            long[] effectivePositions,
+            long suffixRowDelta,
+            long normalizedBaseSeqTxn,
+            long coveredLvSeqTxn
     ) {
         try (
                 LiveViewCheckpointTimelineStoreWriter writer =
@@ -1722,7 +1872,15 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         highTsExclusive,
                         effectivePositions
                 );
-                return publish(writer, capture, instance, highTsExclusive, suffixRowDelta);
+                return publish(
+                        writer,
+                        capture,
+                        instance,
+                        highTsExclusive,
+                        suffixRowDelta,
+                        normalizedBaseSeqTxn,
+                        coveredLvSeqTxn
+                );
             }
         }
     }

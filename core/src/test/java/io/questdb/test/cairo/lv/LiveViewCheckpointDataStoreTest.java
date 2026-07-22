@@ -273,6 +273,39 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRetiredSegmentOutlivesItsOwnGenerationWithoutAnyReader() throws Exception {
+        assertMemoryLeak(() -> {
+            final DataSegment source = writeDataSegment(1, 88);
+            try (LiveViewCheckpointSegmentDirectory directory = new LiveViewCheckpointSegmentDirectory(configuration);
+                 LiveViewCheckpointMetaStore metaStore = openMetaStore();
+                 LiveViewCheckpointDataStore dataStore = openDataStore(metaStore)) {
+                directory.addSegment(1, source.fileLength, 1);
+                publish(metaStore, directory, 1, 101);
+                retire(directory, 1, 2);
+                publish(metaStore, directory, 2, 102);
+
+                // No reader holds a pin, yet the segment survives: generation 1
+                // still occupies the other A/B slot and still references it, and
+                // the purge's own pin still stands on the generation that retired
+                // it. Retirement alone is not a licence to unlink.
+                Assert.assertEquals(0, metaStore.getActivePinCount());
+                assertNoPurge(dataStore.purge());
+                Assert.assertTrue(dataFileExists(1));
+                Assert.assertEquals(88, readInt(1, source.fileLength, source.refs.getQuick(0)));
+
+                // Generation 3 overwrites the slot that held generation 1 and
+                // moves the purge's own pin above the retire generation, so both
+                // protections lapse together and the segment goes.
+                publish(metaStore, directory, 3, 103);
+                final LiveViewCheckpointDataStore.PurgeResult purged = dataStore.purge();
+                Assert.assertEquals(1, purged.getPurgedSegmentCount());
+                Assert.assertEquals(source.fileLength, purged.getPurgedBytes());
+                Assert.assertFalse(dataFileExists(1));
+            }
+        });
+    }
+
     private static void assertNoPurge(LiveViewCheckpointDataStore.PurgeResult result) {
         Assert.assertEquals(0, result.getPurgedSegmentCount());
         Assert.assertEquals(0, result.getFailedSegmentCount());

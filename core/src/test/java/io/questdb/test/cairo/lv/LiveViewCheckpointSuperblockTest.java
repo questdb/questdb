@@ -428,6 +428,56 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPublishRejectsBackwardWatermarksWithoutTouchingFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            publish(1);
+            publish(2);
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+
+                // The generation advances, so only the watermark guard stands
+                // between a slot and a base seqTxn below the one a durable slot
+                // already declared valid. Publishing it would release WAL the
+                // fallback still needs, and would let recovery replay a base
+                // transaction the roots have already incorporated.
+                setFields(sb, 3);
+                sb.normalizedBaseSeqTxn = 22;
+                try {
+                    sb.publish();
+                    Assert.fail("expected a backward base watermark to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "watermarks must not move backwards");
+                }
+                Assert.assertEquals(1, sb.getSelectedSlot());
+
+                setFields(sb, 3);
+                sb.coveredLvSeqTxn = 23;
+                try {
+                    sb.publish();
+                    Assert.fail("expected a backward live-view watermark to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "watermarks must not move backwards");
+                }
+                Assert.assertEquals(1, sb.getSelectedSlot());
+            }
+            // A rejected publication writes nothing, so the slot it would have
+            // targeted still holds generation 1 and can still be recovered from.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                corruptGenerationNoCrcFix(mem, 1);
+            }
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                assertFields(sb, 1);
+            }
+        });
+    }
+
+    @Test
     public void testPublishRejectsNonAdvancingGenerationWithoutTouchingFallback() throws Exception {
         assertMemoryLeak(() -> {
             publish(1);

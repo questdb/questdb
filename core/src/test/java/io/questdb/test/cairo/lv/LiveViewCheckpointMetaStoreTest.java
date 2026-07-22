@@ -275,6 +275,45 @@ public class LiveViewCheckpointMetaStoreTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectedPublicationLeavesThePinnableGenerationUntouched() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(); LiveViewCheckpointMetaStore store = openStore()) {
+                h.append(10, 1);
+                h.publish(store, 1);
+                final long walPurgeFloor = store.getWalPurgeFloor();
+
+                // A second boundary reaches its durable metadata page, and then
+                // the superblock refuses the publication: the generation does
+                // not advance.
+                h.append(20, 2);
+                try {
+                    h.publish(store, 1);
+                    Assert.fail("expected non-advancing generation rejection");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getFlyweightMessage().toString().contains("generation must advance"));
+                }
+
+                // The slot write is the commit point, so a publication that
+                // never reached it leaves every reader on the old generation.
+                // The candidate root is a durable metadata page either way; what
+                // must not happen is a pin naming it, because nothing has
+                // committed the timeline it belongs to.
+                try (LiveViewCheckpointGenerationPin pin = store.pin();
+                     LiveViewCheckpointTimelineReader timelineReader = new LiveViewCheckpointTimelineReader(configuration);
+                     Path dir = new Path()) {
+                    timelineReader.of(checkpointsDir(dir));
+                    Assert.assertEquals(1, pin.getGeneration());
+                    final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
+                    Assert.assertTrue(timelineReader.findExact(pin.getTimelineRootRef(), 10, 1, entry));
+                    Assert.assertFalse(timelineReader.findExact(pin.getTimelineRootRef(), 20, 2, entry));
+                }
+                Assert.assertEquals(walPurgeFloor, store.getWalPurgeFloor());
+            }
+            assertSelectedGeneration(1);
+        });
+    }
+
+    @Test
     public void testRestartValidationCostIsConstantAtOneAndOneHundredMillionLogicalEntries() throws Exception {
         final CountingMetaOpenFilesFacade ff = new CountingMetaOpenFilesFacade();
         assertMemoryLeak(ff, () -> {

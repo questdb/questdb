@@ -208,6 +208,69 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
     }
 
     @Test
+    public void testRangeDependencyAdmitsTheCompleteTieAtItsHighBound() throws Exception {
+        // H is exclusive one microsecond past changeMaxTs + W, not at it, so the
+        // complete timestamp tie the change still reaches sits inside the
+        // replacement. A RANGE W PRECEDING frame at changeMaxTs + W spans
+        // [changeMaxTs, changeMaxTs + W] and therefore holds the changed row;
+        // a bound that stopped one tie early would leave that row's durable
+        // output carrying the pre-change sum, with nothing above it to correct
+        // later.
+        //
+        // The fixture is what makes the tie observable: W is 30s over rows spaced
+        // 10s apart and the out-of-order row lands on 30s, so changeMaxTs + W is
+        // 60s - a timestamp the history already holds. Off that alignment the
+        // bound could be short by one tie and no row would sit there to notice.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final String viewSql = "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 1; commit <= HISTORY_COMMITS; commit++) {
+                    setCurrentMicros(commit * 200_000L);
+                    final String rowTs = secondsTs(commit * 10);
+                    execute("INSERT INTO base (ts, sym, x) VALUES " +
+                            "('" + rowTs + "', 'a', " + commit + "), " +
+                            "('" + rowTs + "', 'b', " + (commit + 100) + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                assertViewMatchesRecompute(viewSql);
+
+                // A second row on 30s, a timestamp the history already sealed a
+                // boundary at, so changeMaxTs is 30s and the tie lands on 60s.
+                setCurrentMicros((HISTORY_COMMITS + 1) * 200_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('" + secondsTs(30) + "', 'a', 7), " +
+                        "('" + secondsTs(30) + "', 'b', 107)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(
+                        "the replacement must re-emit [30s, 60s] - four rows on 30s and two on each of 40s, 50s, 60s",
+                        10,
+                        lv.getO3BoundaryReplayRows()
+                );
+                // The row on the tie is the one a short bound would strand, and
+                // the recompute is what says whether it was corrected: the sum
+                // there is 25 with the change and 18 without it.
+                assertViewMatchesRecompute(viewSql);
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRangeDependencyBoundsADecimalSumRebuild() throws Exception {
         // The sum/avg family's fixed-point arm. It buffers and accumulates what the DOUBLE arm
         // does, so the bounds are again the fixture's 14 and 8 - what changes is the claim the
