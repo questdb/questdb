@@ -6405,4 +6405,20 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertSqlCursors(dense, memo);
         });
     }
+
+    @Test
+    public void testAutoSelectMemoizedForSmallMasterNonIndexedSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            // NOT indexed slave symbol + small master -> auto-select memoized (index path unavailable).
+            execute("create table quotes (sym symbol, ts timestamp, bid double) timestamp(ts) partition by day bypass wal");
+            execute("insert into quotes select ('s'||(x%1000))::symbol, (x*1000)::timestamp, x::double from long_sequence(200000)");
+            execute("create table trades (sym symbol, ts timestamp, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into trades select ('s'||(x%1000))::symbol, (x*137)::timestamp, x::double from long_sequence(500)");
+            String auto = "SELECT t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym)";
+            String dense = "SELECT /*+ asof_dense(t q) */ t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym)";
+            printSql("EXPLAIN " + auto);
+            TestUtils.assertContains(sink, "AsOf Join Memoized Scan"); // auto path engaged (no index available)
+            assertSqlCursors(dense, auto); // identical results
+        });
+    }
 }

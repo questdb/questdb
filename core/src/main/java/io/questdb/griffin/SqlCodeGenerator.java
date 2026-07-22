@@ -5187,11 +5187,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         null
                                 );
                             }
-                            // Auto-select the index-accelerated scan when the slave symbol is indexed and the
-                            // master is confidently small relative to the slave (index is O(master lookups) vs
-                            // Dense O(slave scan); crossover ~2% master/slave ratio). Unknown estimate -> Dense.
-                            if (configuration.isSqlAsOfAutoAlgoEnabled()
-                                    && slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
+                            // Auto-select a faster single-symbol algo when the master is confidently small
+                            // relative to the slave (crossover ~2% master/slave ratio): the index-accelerated
+                            // scan if the slave symbol is indexed (O(master lookups) vs Dense O(slave scan)),
+                            // otherwise memoized (fast on sparse/illiquid symbols, dense-ts-cliff guarded).
+                            // Unknown estimate -> fall through to Dense (do no harm).
+                            if (configuration.isSqlAsOfAutoAlgoEnabled()) {
                                 long slaveN = estimateBaseRowCount(slave, executionContext);
                                 long masterN = estimateBaseRowCount(master, executionContext);
                                 long masterLimit = masterLimitOrMinus1(model.getJoinModels().getQuick(0));
@@ -5200,7 +5201,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         : masterN;
                                 int bp = configuration.getSqlAsOfIndexMaxMasterBp();
                                 if (slaveN > 0 && effMaster >= 0 && effMaster * 10000L <= slaveN * (long) bp) {
-                                    return new AsOfJoinIndexedRecordCursorFactory(
+                                    if (slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
+                                        return new AsOfJoinIndexedRecordCursorFactory(
+                                                configuration,
+                                                joinMetadata,
+                                                master,
+                                                slave,
+                                                joinColumnSplit,
+                                                slaveSymbolColumnIndex,
+                                                symbolJoinKeyMapping,
+                                                slaveContext,
+                                                toleranceInterval,
+                                                "auto:master~" + effMaster + " slave~" + slaveN + " bp<=" + bp
+                                        );
+                                    }
+                                    return new AsOfJoinMemoizedRecordCursorFactory(
                                             configuration,
                                             joinMetadata,
                                             master,
@@ -5210,7 +5225,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             symbolJoinKeyMapping,
                                             slaveContext,
                                             toleranceInterval,
-                                            "auto:master~" + effMaster + " slave~" + slaveN + " bp<=" + bp
+                                            false
                                     );
                                 }
                             }
