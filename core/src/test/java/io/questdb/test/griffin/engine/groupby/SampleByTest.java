@@ -117,6 +117,22 @@ public class SampleByTest extends AbstractCairoTest {
             "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;";
 
     @Test
+    public void testSampleByKeyOnQuoteProtectedAlias() throws Exception {
+        // A SAMPLE BY key that is a compiler-protected alias (dotted or operator token), referenced
+        // through the qualified subquery form, must resolve and surface a clean column name.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, g INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('2020-01-01T00:00:00', 1, 10.0), " +
+                    "('2020-01-01T00:30:00', 1, 20.0), " +
+                    "('2020-01-01T00:15:00', 2, 30.0)");
+            assertQuery("SELECT sub.\"a.b\", sum(v) FROM (SELECT ts, g AS \"a.b\", v FROM t) sub SAMPLE BY 1h ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("a.b\tsum\n1\t30.0\n2\t30.0\n");
+        });
+    }
+
+    @Test
     public void testBadFunction() throws Exception {
         assertQuery("select b, sum(a), sum(c), k from x sample by 3h fill(20.56)")
                 .ddl("create table x as " +
@@ -16900,6 +16916,37 @@ public class SampleByTest extends AbstractCairoTest {
                             2018-01-03T00:00:00.000000Z\t288.5
                             2018-01-17T00:00:00.000000Z\tnull
                             """);
+        });
+    }
+
+    @Test
+    public void testSampleFillWithWeekStrideNoDigit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(FROM_TO_DDL);
+
+            String expected = """
+                    ts\tavg
+                    2017-12-20T00:00:00.000000Z\tnull
+                    2017-12-27T00:00:00.000000Z\t48.5
+                    2018-01-03T00:00:00.000000Z\t264.5
+                    2018-01-10T00:00:00.000000Z\t456.5
+                    2018-01-17T00:00:00.000000Z\tnull
+                    2018-01-24T00:00:00.000000Z\tnull
+                    """;
+
+            String queryNoDigit = "select ts, avg(x) from fromto\n" +
+                    "sample by w from '2017-12-20' to '2018-01-31' fill(null) align to calendar";
+            assertQuery(queryNoDigit)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
+
+            assertQuery(queryNoDigit.replace("sample by w", "sample by 1w"))
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 

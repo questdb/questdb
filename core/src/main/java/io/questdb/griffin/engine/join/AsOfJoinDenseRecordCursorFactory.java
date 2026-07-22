@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
@@ -50,7 +51,7 @@ import org.jetbrains.annotations.Nullable;
 public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordCursorFactoryBase {
     private final RecordSink masterKeyCopier;
     private final RecordSink slaveKeyCopier;
-    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
+    private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public AsOfJoinDenseRecordCursorFactory(
             CairoConfiguration configuration,
@@ -101,8 +102,16 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(symbolTranslatingRecord);
+        final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
+        this.symbolTranslatingRecord = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

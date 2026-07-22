@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -103,9 +104,8 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
+        final Throwable failure = closeJoinOwnersBestEffort();
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class AsOfJoinFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {

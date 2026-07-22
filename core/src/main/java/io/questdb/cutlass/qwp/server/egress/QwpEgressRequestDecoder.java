@@ -80,6 +80,7 @@ public class QwpEgressRequestDecoder {
      */
     private final QwpVarint.DecodeResult varintScratch = new QwpVarint.DecodeResult();
     public long initialCredit;
+    public long queryFlags;
     public long requestId;
     /**
      * Reusable scratch for the parsed null flag that {@link #readNullFlag} writes
@@ -153,13 +154,14 @@ public class QwpEgressRequestDecoder {
      * Decodes a QUERY_REQUEST payload starting at {@code payload}, of length
      * {@code payloadLen}. The first byte (msg_kind) must already be QUERY_REQUEST.
      * <p>
-     * Populates {@link #requestId}, {@link #sql}, {@link #initialCredit}, and
-     * pushes bind parameters into {@code bindVars}.
+     * Populates {@link #requestId}, {@link #sql}, {@link #initialCredit},
+     * {@link #queryFlags}, and pushes bind parameters into {@code bindVars}.
      */
     public void decodeQueryRequest(long payload, int payloadLen, BindVariableService bindVars)
             throws QwpParseException, SqlException {
         long limit = payload + payloadLen;
         long p = payload + 1; // skip msg_kind
+        queryFlags = 0;
         if (p + 8 > limit) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("QUERY_REQUEST: header truncated");
         }
@@ -198,6 +200,13 @@ public class QwpEgressRequestDecoder {
         for (int i = 0; i < (int) bindCount; i++) {
             p = decodeBind(p, limit, i, bindVars);
         }
+
+        // Optional query_flags trailer; a baseline client leaves p == limit.
+        if (p < limit) {
+            QwpVarint.decode(p, limit, varintScratch);
+            queryFlags = varintScratch.value;
+            p += varintScratch.bytesRead;
+        }
     }
 
     /**
@@ -215,6 +224,7 @@ public class QwpEgressRequestDecoder {
         selectCacheKey.clear();
         requestId = 0;
         initialCredit = 0;
+        queryFlags = 0;
     }
 
     private long decodeBind(long start, long limit, int index, BindVariableService bindVars)
@@ -384,7 +394,12 @@ public class QwpEgressRequestDecoder {
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated VARCHAR bytes");
                     // Reuse varcharBindView -- StrBindVariable.setValue(Utf8Sequence) copies into
                     // its own utf8Sink, so the view can be re-pointed for the next bind.
-                    bindVars.setVarchar(index, varcharBindView.of(p, p + strLen));
+                    // Compute the ASCII flag (like PGWire does) instead of leaving it cleared:
+                    // the 2-arg of() hardcodes ascii=false, which would flag an empty bind value
+                    // as non-ASCII and break the empty => ASCII invariant relied on by the varchar
+                    // hash map (UnorderedVarcharMap) when the bind variable is used as a join key.
+                    final boolean ascii = Utf8s.isAscii(p, strLen);
+                    bindVars.setVarchar(index, varcharBindView.of(p, p + strLen, ascii));
                     p += strLen;
                 }
             }

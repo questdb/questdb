@@ -50,6 +50,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -58,7 +59,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
     private static final RecordMetadata METADATA;
     protected final TableToken tableToken;
     protected final int tokenPosition;
-    private final ShowCreateTableCursor cursor = new ShowCreateTableCursor();
+    private ShowCreateTableCursor cursor = new ShowCreateTableCursor();
 
     public ShowCreateTableRecordCursorFactory(TableToken tableToken, int tokenPosition) {
         super(METADATA);
@@ -86,6 +87,22 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 sink.put(alias);
             }
         }
+    }
+
+    // Emits a stored view/mat-view body with surrounding whitespace removed. The body is always a
+    // complete SELECT, where leading/trailing whitespace is never significant, so this only normalizes
+    // the dump's indentation; a trailing string or identifier literal ends in a quote (> ' '), so no
+    // character inside a literal is ever stripped.
+    public static void putTrimmed(Utf8Sink sink, CharSequence text) {
+        int lo = 0;
+        int hi = text.length();
+        while (lo < hi && text.charAt(lo) <= ' ') {
+            lo++;
+        }
+        while (hi > lo && text.charAt(hi - 1) <= ' ') {
+            hi--;
+        }
+        sink.put(text, lo, hi);
     }
 
     public static void tableFormatToSink(int format, CharSink<?> sink) {
@@ -142,8 +159,16 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final ShowCreateTableCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public static class ShowCreateTableCursor implements NoRandomAccessRecordCursor {

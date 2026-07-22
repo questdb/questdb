@@ -597,6 +597,32 @@ public class SqlOptimiser implements Mutable {
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
     }
 
+    private static boolean isStaticTimestampPredicate(ExpressionNode node) {
+        if (node == null) {
+            return true;
+        }
+        if (node.type == CONSTANT) {
+            return node.token == null || Chars.indexOf(node.token, '$') < 0;
+        }
+        if (node.type == LITERAL) {
+            return true;
+        }
+        if (node.type != OPERATION
+                && node.type != SET_OPERATION
+                && (node.type != FUNCTION
+                || !(isInKeyword(node.token)
+                || isBetweenKeyword(node.token)
+                || Chars.equalsIgnoreCase(node.token, "and_offset")))) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isStaticTimestampPredicate(node.args.getQuick(i))) {
+                return false;
+            }
+        }
+        return isStaticTimestampPredicate(node.lhs) && isStaticTimestampPredicate(node.rhs);
+    }
+
     private static boolean isSymbolColumn(ExpressionNode countDistinctExpr, IQueryModel nested) {
         return countDistinctExpr.rhs.type == LITERAL
                 && nested.getAliasToColumnMap().get(countDistinctExpr.rhs.token) != null
@@ -1314,6 +1340,29 @@ public class SqlOptimiser implements Mutable {
         ObjList<PivotForColumn> pivotForColumns = model.getPivotForColumns();
         ObjList<QueryColumn> pivotAggregates = model.getPivotGroupByColumns();
         int forColumnCount = pivotForColumns.size();
+        int aggregateCount = pivotAggregates.size();
+
+        // Precompute the clean (quote-stripped) display names once. toColumnName re-scans the alias
+        // and allocates a String on each call, and the combination loop below would otherwise repeat
+        // that per combination: an aggregate alias is invariant across combinations, and a value alias
+        // recurs across the combinations of a multi-FOR pivot. Cleaning them up front drops the
+        // toColumnName calls from O(totalCombinations * (forColumnCount + aggregateCount)) to
+        // O(sum(valueCounts) + aggregateCount). A quote-protected component ("in", "FNCL 2.5") cannot
+        // be stripped once embedded mid-composite, so each is cleaned before concatenation;
+        // protectColumnAlias below re-protects the assembled name as a whole when it still needs it.
+        ObjList<CharSequence> cleanAggAliases = new ObjList<>(aggregateCount);
+        for (int k = 0; k < aggregateCount; k++) {
+            cleanAggAliases.add(SqlUtil.toColumnName(pivotAggregates.getQuick(k).getAlias()));
+        }
+        ObjList<ObjList<CharSequence>> cleanValueAliases = new ObjList<>(forColumnCount);
+        for (int i = 0; i < forColumnCount; i++) {
+            ObjList<CharSequence> valueAliases = pivotForColumns.getQuick(i).getValueAliases();
+            ObjList<CharSequence> cleaned = new ObjList<>(valueAliases.size());
+            for (int v = 0, vn = valueAliases.size(); v < vn; v++) {
+                cleaned.add(SqlUtil.toColumnName(valueAliases.getQuick(v)));
+            }
+            cleanValueAliases.add(cleaned);
+        }
 
         IntList indices = tempCrosses;
         indices.clear();
@@ -1322,7 +1371,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         for (int combo = 0; combo < totalCombinations; combo++) {
-            for (int k = 0, p = pivotAggregates.size(); k < p; k++) {
+            for (int k = 0; k < aggregateCount; k++) {
                 QueryColumn aggColumn = pivotAggregates.getQuick(k);
                 CharSequence aggAlias = aggColumn.getAlias();
                 int position = aggColumn.getAst().position;
@@ -1338,7 +1387,6 @@ public class SqlOptimiser implements Mutable {
                     colCondition.paramCount = 2;
                     colCondition.lhs = expressionNodePool.next().of(LITERAL, pivotForColumn.getInExprAlias(), 0, position);
                     colCondition.rhs = valueExpr;
-                    CharSequence colAlias = pivotForColumn.getValueAliases().getQuick(valueIndex);
 
                     if (conditionNode == null) {
                         conditionNode = colCondition;
@@ -1353,11 +1401,11 @@ public class SqlOptimiser implements Mutable {
                     if (i > 0) {
                         cse.put('_');
                     }
-                    cse.put(colAlias);
+                    cse.put(cleanValueAliases.getQuick(i).getQuick(valueIndex));
                 }
 
                 if (!model.isPivotGroupByColumnHasNoAlias()) {
-                    cse.put('_').put(aggAlias);
+                    cse.put('_').put(cleanAggAliases.getQuick(k));
                 }
 
                 // Use switch when: single FOR column, single constant value (not ELSE mode)
@@ -1398,7 +1446,11 @@ public class SqlOptimiser implements Mutable {
                 aggNode.paramCount = 1;
                 aggNode.rhs = caseNode;
 
-                outerModel.addBottomUpColumn(queryColumnPool.next().of(cse.toImmutable(), aggNode));
+                // Re-protect the assembled composite as a whole: a dotted content (FNCL 2.5_s) would
+                // otherwise be mis-split by later table.column resolution, and an operator-token content
+                // (in) would collide - matching how a single-value pivot column is protected.
+                CharSequence colName = SqlUtil.protectColumnAlias(characterStore, cse.toImmutable());
+                outerModel.addBottomUpColumn(queryColumnPool.next().of(colName, aggNode));
             }
 
             for (int i = forColumnCount - 1; i >= 0; i--) {
@@ -5702,6 +5754,7 @@ public class SqlOptimiser implements Mutable {
                             if (parent.hasTimestampOffset()
                                     && isTimestampPredicate(node, parent)
                                     && referencesOnlyTimestampAlias(node, parent)
+                                    && isStaticTimestampPredicate(node)
                                     && !containsDisallowedFunction(node, timestampCol)) {
                                 // Rewrite column references from virtual timestamp to source column
                                 rewriteTimestampColumnForOffset(node, parent);
@@ -6290,6 +6343,9 @@ public class SqlOptimiser implements Mutable {
                     break;
                 case IQueryModel.SHOW_SERVER_VERSION_NUM:
                     tableFactory = new ShowServerVersionNumCursorFactory();
+                    break;
+                case IQueryModel.SHOW_CREATE_DATABASE:
+                    tableFactory = sqlParserCallback.generateShowCreateDatabaseFactory(model, executionContext, path);
                     break;
                 case IQueryModel.SHOW_CREATE_TABLE:
                     tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
