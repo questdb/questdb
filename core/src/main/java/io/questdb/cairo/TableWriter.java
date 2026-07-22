@@ -427,6 +427,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ObjList<MemoryMA> compositeFastAppendCellColumns;
     private int compositeFastAppendOpenCellKey = -1;                  // cellKey the handles point at; -1 = none open
     private long compositeFastAppendOpenPartitionTs = Long.MIN_VALUE; // the day the handles point at
+    // Composite MULTI-cell fast-append (spec 2, Task 1 -- detection only): counts commits
+    // isCompositeMultiCellFastAppendPossible(...) found eligible while the flag is on. Static for the
+    // same reason as compositeFastAppendEligibleCount (spec 1's own analog) above: the writer that
+    // processes a WAL commit is internal to drainWalQueue()/the WAL-apply job and released right
+    // after. Test-visible via getCompositeMultiCellFastAppendEligibleCount().
+    private static final AtomicLong compositeMultiCellFastAppendEligibleCount = new AtomicLong();
+    // Composite MULTI-cell fast-append (spec 2, Task 1 -- detection only): a writer-instance-scoped
+    // cache of the real max timestamp this writer has itself observed committed for a given cellKey,
+    // consulted by isCompositeMultiCellFastAppendPossible(...) -- the multi-cell analog of single-
+    // cell's own compositeCellMaxTimestamp above, populated/read the same way (folded in from every
+    // commit this method examines, keyed by cellKey alone, regardless of this method's own eligibility
+    // verdict for that commit -- including single-cell-shaped commits, which is how a cell seeded by
+    // ordinary single-cell traffic ever gets warm enough for a LATER multi-cell commit into it to
+    // pass the append-only check).
+    // <p>
+    // Deliberately a SEPARATE field from compositeCellMaxTimestamp, not a shared one, even though both
+    // exist to answer the identical question ("what is this cellKey's real committed max, per this
+    // writer's own observations?"): isCompositeSingleCellFastAppendPossible unconditionally CLEARS
+    // compositeCellMaxTimestamp the instant its own single-row-forward scan finds a second distinct
+    // cellKey -- i.e. on every genuinely multi-cell commit, before isCompositeMultiCellFastAppendPossible
+    // (called strictly after it -- see the processWalCommit hook) would ever get a chance to consult
+    // it. Reusing that field verbatim, as originally sketched, is a self-defeating design: the exact
+    // shape this method exists to detect always finds the shared cache freshly wiped by the sibling
+    // call that ran immediately before it on the SAME commit, making every multi-cell commit a
+    // guaranteed conservative miss forever (verified empirically while implementing this method). A
+    // dedicated field sidesteps that interaction entirely without touching spec 1's method or its
+    // behavior (single-cell stays byte-for-byte untouched, per this task's own scope).
+    // <p>
+    // Known residual gap (documented, not closed here -- see the Task 1 report): a cell most recently
+    // advanced by an ACTUAL single-cell fast-append action (spec 1, Task 2's real early-return path)
+    // never reaches this method at all (that path returns before this hook branch runs), so this
+    // cache can go stale (too low) for such a cell until a later commit into it that DOES reach this
+    // method refreshes it. Stale-too-low only ever risks a missed detection turning into this
+    // method's OWN false positive for a subsequent multi-cell commit that lands strictly between the
+    // stale value and the cell's true current max -- never a false negative. Task 1 never acts on
+    // this method's result (counter only), so this has no data-correctness consequence today; it must
+    // be resolved (most likely by unifying with a real persisted per-cell max-timestamp, the same
+    // follow-up spec 1's own docs already call for) before any future task lets this predicate's
+    // result skip real work.
+    private IntLongHashMap compositeMultiCellMaxTimestamp;
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
@@ -5209,6 +5249,171 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     public static long getCompositeFastAppendEligibleCount() {
         return compositeFastAppendEligibleCount.get();
+    }
+
+    /**
+     * Composite MULTI-cell fast-append eligibility (composite-partitioning fast-append spec 2, Task 1
+     * -- detection only; the multi-cell analog of {@link #isCompositeSingleCellFastAppendPossible},
+     * see that method's own docs for the single-cell case, {@code
+     * docs/superpowers/specs/2026-07-21-composite-multi-cell-fast-append-design.md} and {@code
+     * .superpowers/sdd/task-1-brief.md}). TODAY this method's result is only counted ({@link
+     * #compositeMultiCellFastAppendEligibleCount}), never acted on -- every caller still always falls
+     * through to the existing, unchanged {@code processO3BlockComposite} path regardless of what this
+     * method returns. Never called for a plain table, or for {@code rowHi - rowLo < 2} -- every caller
+     * gates on {@code dimCount > 0} and {@link #isRoutedComposite()} first.
+     * <p>
+     * Shares {@code isCompositeSingleCellFastAppendPossible}'s not-dedup and last-(day-)partition
+     * gates verbatim. Diverges from it in two ways, both required by the concrete eligibility
+     * scenarios this method exists to detect (composite-partitioning fast-append spec 2's whole
+     * premise: cells are independent, so a commit need not be single-cell OR globally ordered to be
+     * safely fast-appendable, as long as each cell it touches is):
+     * <ul>
+     *     <li><b>Not gated on the {@code ordered} parameter.</b> {@code ordered} is the WAL
+     *     sequencer's own GLOBAL flag -- true only when {@code [rowLo, rowHi)}'s timestamps are
+     *     non-decreasing across the WHOLE commit. A commit interleaving two (or more) independently
+     *     timestamp-sorted per-cell streams (e.g. concurrent per-symbol producers) is routinely
+     *     globally out-of-order ({@code ordered=false}) while every individual cell's own rows, taken
+     *     in the order they appear in {@code [rowLo, rowHi)}, are perfectly non-decreasing -- and
+     *     therefore just as safely append-only per cell as the single-cell case. This method
+     *     independently verifies PER-CELL ordering instead (in the same forward pass that resolves
+     *     each row's cellKey), never rejecting on the whole-commit {@code ordered} flag alone. (The
+     *     parameter is still accepted, for call-site symmetry with the single-cell predicate and
+     *     because Tasks 2-3 consume both with the same signature, but is not itself a hard gate here.)</li>
+     *     <li><b>Resolves the DISTINCT cellKey set</b> touched by {@code [rowLo, rowHi)} (via {@link
+     *     #resolveRowCellKey}, the same absolute row numbering {@link #processO3BlockComposite} uses)
+     *     instead of requiring all rows to share one cellKey.</li>
+     * </ul>
+     * Returns {@code true} only if ALL of the following hold (all-or-nothing: any cell failing any
+     * gate makes the WHOLE commit ineligible, mirroring this task's own "K_max cap exceeded" and
+     * "one OOO cell" acceptance scenarios):
+     * <ul>
+     *     <li><b>Not dedup:</b> {@link #isCommitDedupMode()} is false.</li>
+     *     <li><b>Last partition:</b> {@code [o3TimestampMin, o3TimestampMax]} falls entirely within
+     *     the table's current (last) day partition -- identical bounds check to the single-cell
+     *     method's own.</li>
+     *     <li><b>Every touched cell internally ordered:</b> that cell's own rows, in the order they
+     *     appear in {@code [rowLo, rowHi)}, are non-decreasing in timestamp (see above).</li>
+     *     <li><b>&ge; 2 distinct cells:</b> exactly one distinct cell is spec 1's own single-cell
+     *     branch's scope, not double-handled here.</li>
+     *     <li><b>&le; {@link CairoConfiguration#getWalCompositeFastAppendMaxOpenCells()} distinct
+     *     cells</b> (the configured {@code K_max} cap).</li>
+     *     <li><b>Every touched cell pre-existing and non-empty:</b> {@link
+     *     TxReader#findAttachedPartitionRawIndexBy}/{@link TxReader#getPartitionSizeByRawIndex} report
+     *     a real, non-zero-size {@code (lastPartitionTimestamp, cellKey)} entry. A brand-new/never-
+     *     committed cell (no entry at all) is conservatively NOT eligible here -- its own first commit
+     *     takes the full path regardless (mirrors {@code canCompositeFastAppendCell}'s identical gate
+     *     for the single-cell action, though Task 1 never calls that method: no action is taken yet).</li>
+     *     <li><b>Every touched cell append-only:</b> this commit's minimum timestamp INTO THAT CELL
+     *     (the timestamp of the first row in {@code [rowLo, rowHi)} resolving to it, which -- given
+     *     internal ordering just verified above -- is that cell's true minimum in this commit) is
+     *     strictly greater than the cell's real committed max, per {@link
+     *     #compositeMultiCellMaxTimestamp} (see that field's own docs for why this is a SEPARATE cache
+     *     from single-cell's {@link #compositeCellMaxTimestamp}, not the same one, and for its own
+     *     residual staleness caveat). A cell this writer has not itself observed a max timestamp for
+     *     is conservatively treated as NOT append-only -- a missed detection, never a false positive,
+     *     exactly mirroring the single-cell method's own cold-cache handling.</li>
+     * </ul>
+     * Every distinct cell touched by this commit has its observed max (this commit's own last-seen
+     * timestamp for that cell) folded into {@link #compositeMultiCellMaxTimestamp} before returning,
+     * REGARDLESS of the eligibility verdict above (including when {@code distinctCount < 2}, i.e. for
+     * an ordinary single-cell-shaped commit) -- the full O3 composite path this task never skips
+     * commits these rows regardless, so each touched cell's real max genuinely does advance to {@code
+     * max(old, new)} whether or not THIS commit counted as "eligible"; this is also the only way a
+     * cell ever becomes warm enough for a LATER multi-cell commit's append-only check to consult (see
+     * the field's own docs). The one exception: a per-cell ordering violation aborts the whole method
+     * immediately, folding in nothing from this scan -- the simplest safe choice when this scan's own
+     * picture of a cell's max is unreliable.
+     *
+     * @return true iff this commit is multi-cell fast-append-eligible (detection only -- no caller
+     *         acts on this result yet)
+     */
+    boolean isCompositeMultiCellFastAppendPossible(long rowLo, long rowHi, boolean ordered, long o3TimestampMin, long o3TimestampMax) {
+        if (isCommitDedupMode()) {
+            return false;
+        }
+        if (txWriter.getPartitionTimestampByTimestamp(o3TimestampMin) != lastPartitionTimestamp
+                || o3TimestampMax > partitionTimestampHi) {
+            return false;
+        }
+
+        final int dimCount = metadata.getPartitionSpec().getDimensionCount();
+        final int[] dimScratch = new int[dimCount];
+        final int timestampIndex = metadata.getTimestampIndex();
+        final MemoryCR o3TsColumn = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
+        final int maxOpenCells = configuration.getWalCompositeFastAppendMaxOpenCells();
+
+        // Single forward pass: resolve each row's cellKey, track the distinct cellKey set touched by
+        // this commit plus, per cell, its minimum ts (cellMinTs, set once on first sight) and its
+        // running last-seen ts (cellLastTs, updated every sight) -- verifying per-cell internal
+        // ordering as we go (a later row for an already-seen cell must never be < that cell's own
+        // last-seen ts). -1 is IntLongHashMap's own "no entry" sentinel, not a real timestamp value
+        // (same simplification as the single-cell method's own cache reads).
+        final IntList distinctCells = new IntList();
+        final IntLongHashMap cellMinTs = new IntLongHashMap();
+        final IntLongHashMap cellLastTs = new IntLongHashMap();
+        for (long row = rowLo; row < rowHi; row++) {
+            final int cellKey = resolveRowCellKey(row, dimScratch);
+            final long ts = o3TsColumn.getLong(row << 4);
+            final long last = cellLastTs.get(cellKey);
+            if (last == -1) {
+                distinctCells.add(cellKey);
+                cellMinTs.put(cellKey, ts);
+                cellLastTs.put(cellKey, ts);
+            } else if (ts < last) {
+                // Per-cell ordering violated within this commit: never fast-append-eligible, and this
+                // scan's own picture of per-cell maxes is unreliable -- bail without folding in
+                // anything (see this method's own docs).
+                return false;
+            } else {
+                cellLastTs.put(cellKey, ts);
+            }
+        }
+
+        final int distinctCount = distinctCells.size();
+
+        // Decide eligibility using the cache's state as it stood BEFORE this commit's own fold-in
+        // below mutates it (else this commit's own contribution could mask a real violation of its
+        // own -- mirrors isCompositeSingleCellFastAppendPossible's own read-then-fold-in order).
+        boolean eligible = distinctCount >= 2 && distinctCount <= maxOpenCells;
+        if (eligible) {
+            for (int i = 0; i < distinctCount; i++) {
+                final int cellKey = distinctCells.getQuick(i);
+                final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(lastPartitionTimestamp, cellKey);
+                if (partitionIndexRaw < 0 || txWriter.getPartitionSizeByRawIndex(partitionIndexRaw) == 0L) {
+                    eligible = false; // brand-new/empty cell -- not pre-existing
+                    continue;
+                }
+                final long cachedMax = compositeMultiCellMaxTimestamp != null ? compositeMultiCellMaxTimestamp.get(cellKey) : -1;
+                final long cellMin = cellMinTs.get(cellKey);
+                if (cachedMax == -1 || cellMin <= cachedMax) {
+                    eligible = false; // never observed by this writer, or not append-only
+                }
+            }
+        }
+
+        // Fold in every touched cell's observed max, regardless of the verdict above (see this
+        // method's own docs for why).
+        if (compositeMultiCellMaxTimestamp == null) {
+            compositeMultiCellMaxTimestamp = new IntLongHashMap();
+        }
+        for (int i = 0; i < distinctCount; i++) {
+            final int cellKey = distinctCells.getQuick(i);
+            final long observedMax = cellLastTs.get(cellKey);
+            final long priorCached = compositeMultiCellMaxTimestamp.get(cellKey);
+            if (priorCached == -1 || observedMax > priorCached) {
+                compositeMultiCellMaxTimestamp.put(cellKey, observedMax);
+            }
+        }
+
+        return eligible;
+    }
+
+    /**
+     * Test-visible read of {@link #compositeMultiCellFastAppendEligibleCount} (composite-partitioning
+     * fast-append spec 2, Task 1 -- detection only). Static -- see that field's own docs for why.
+     */
+    public static long getCompositeMultiCellFastAppendEligibleCount() {
+        return compositeMultiCellFastAppendEligibleCount.get();
     }
 
     /**
@@ -12932,6 +13137,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     }
                     closeCompositeFastAppendCell();
+                }
+
+                // Composite MULTI-cell fast-append (spec 2, Task 1 -- detection only). Placed AFTER
+                // the single-cell branch above so an eligible-and-supported single-cell commit's cheap
+                // early return (line ~13136) is never slowed down by this method's own full
+                // distinct-cellKey scan -- that early return already skips this branch entirely, which
+                // is fine: a single-cell commit can never itself be multi-cell-eligible (requires >= 2
+                // distinct cells) and this task takes no action either way, so nothing is lost by
+                // skipping it there. A commit that fell through (ineligible, or eligible-but-not-yet-
+                // fast-append-supported) always reaches this branch and is examined fresh: increments
+                // compositeMultiCellFastAppendEligibleCount when eligible, then -- always, regardless
+                // of the verdict -- falls through unchanged to the existing full O3 composite path
+                // below (no behavior change yet; a later task makes an eligible commit actually
+                // fast-append).
+                if (configuration.isWalCompositeFastAppendEnabled()
+                        && metadata.getPartitionSpec().getDimensionCount() > 0
+                        && isRoutedComposite()) {
+                    if (isCompositeMultiCellFastAppendPossible(rowLo, rowHi, ordered, o3TimestampMin, o3TimestampMax)) {
+                        compositeMultiCellFastAppendEligibleCount.incrementAndGet();
+                    }
                 }
 
                 if (needsOrdering || needsDedup) {

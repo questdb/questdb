@@ -1449,6 +1449,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalCompositeFastAppendMaxOpenCells() {
+        return getDelegate().getWalCompositeFastAppendMaxOpenCells();
+    }
+
+    @Override
     public long getWalDataAppendPageSize() {
         return getDelegate().getWalDataAppendPageSize();
     }
