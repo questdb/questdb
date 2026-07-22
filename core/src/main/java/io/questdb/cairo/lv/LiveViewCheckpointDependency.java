@@ -95,8 +95,9 @@ public final class LiveViewCheckpointDependency {
     /**
      * Returns the negated look-behind the frame starts at, in the units
      * {@link #getFrameHi()} describes. It says where the function's values come from; what a
-     * repair replays is {@link #getStateExtentLo() the state extent}, which the compiler
-     * populates from this bound and which the two magnitude readers answer.
+     * repair replays is {@link #getStateExtentLo() the state extent}, which the two magnitude
+     * readers answer and which is this bound for an accumulator and the high bound's lag for a
+     * function reading the single row that bound names.
      */
     public long getFrameLo() {
         return frameLo;
@@ -134,8 +135,8 @@ public final class LiveViewCheckpointDependency {
      * dependency floor is {@code L = R - W}.
      * <p>
      * The magnitude is the {@link #getStateExtentLo() state extent}'s, which is the frame's
-     * own look-behind for every shape admitted today and is not required to stay so - that
-     * method carries the distinction.
+     * own look-behind for every RANGE shape admitted today and is not required to stay so -
+     * that method carries the distinction, and the ROWS side already parts the two.
      * <p>
      * The width runs from the current row, not from where the frame ends, so a frame ending
      * {@code V} below its own row reports the same {@code W} as the one ending at it -
@@ -157,11 +158,12 @@ public final class LiveViewCheckpointDependency {
      * arithmetic and both have to be discovered by scanning.
      * <p>
      * The magnitude is the {@link #getStateExtentLo() state extent}'s, on the same terms the
-     * RANGE width answers it.
-     * <p>
-     * The count runs from the current row, not from where the frame ends, so a frame ending
-     * {@code M} rows below its own row reports the same {@code Nmax} as the one ending at it -
-     * {@link #isFiniteRows()} states why that stays a bound.
+     * RANGE width answers it, so this is not in general the frame's own look-behind. An
+     * accumulator's is: the count runs from the current row rather than from where the frame
+     * ends, so a frame ending {@code M} rows below its own row reports the same {@code Nmax}
+     * as the one ending at it. A function reading the single row its high bound names reports
+     * that lag instead, which is narrower than the frame and is the whole of what its state
+     * needs - {@link #isFiniteRows()} states why both stay bounds.
      */
     public long getRowsPrecedingCount() {
         if (!isFiniteRows()) {
@@ -178,19 +180,16 @@ public final class LiveViewCheckpointDependency {
      * are the readers a repair uses, and the dependency floor {@code L} follows from this
      * magnitude rather than from the frame's own low bound.
      * <p>
-     * The compiler populates it from {@link #getFrameLo()} today, so the two are equal for
-     * every shape a plan admits. They are nevertheless separate claims. The frame says which
-     * rows a function's <i>values</i> are computed over; the extent says how far back a
-     * replay has to start for its <i>state</i> to be the state a whole-history run would
-     * hold. The two coincide for an accumulator, whose state is the frame's own contents,
-     * and part company for a function reading a single row the frame's high bound names -
-     * its state extent is the lag, however far back the frame nominally starts.
+     * The frame says which rows a function's <i>values</i> are computed over; the extent says
+     * how far back a replay has to start for its <i>state</i> to be the state a whole-history
+     * run would hold. The two coincide for an accumulator, whose state is the frame's own
+     * contents, and part company for a function reading a single row the frame's high bound
+     * names - its state extent is the lag, however far back the frame nominally starts. The
+     * compiler decides which of the two a descriptor carries by the function, not by the
+     * frame: reading the lag for an accumulator sharing that frame would under-replay it.
      * <p>
-     * Deriving the floor from the frame's low bound would leave such a function no way to
-     * say so, which is why the field exists before anything populates it differently. The
-     * finite-frame predicates are what keep the negation above in range, so a caller that
-     * does populate it differently owes them the same {@code Long.MIN_VALUE} test they apply
-     * to the frame's own bounds.
+     * The finite-frame predicates are what keep the negation above in range, so they test this
+     * field rather than the frame's own low bound.
      */
     public long getStateExtentLo() {
         return stateExtentLo;
@@ -216,14 +215,14 @@ public final class LiveViewCheckpointDependency {
      * {@code lag()} counts rows by its own offset, not by the frame's - declines the repair
      * plan instead of being replayed against a warm-up that never fed the rows it needs.
      * <p>
-     * The extent is the frame's own look-behind for every function that answers true today,
-     * which is where the name comes from and why one reading has so far served both. They
-     * are separate claims: the frame is what the function's values are computed over, the
-     * extent is what its state needs replayed, and a function reading a single row the
-     * frame's high bound names has the second far narrower than the first. This answers for
-     * the extent, so a function narrowing it must carry the narrower extent in the
-     * descriptor rather than answer differently here - an extent wider than the state only
-     * over-replays, while an extent the state outruns emits wrong values.
+     * The extent is the frame's own look-behind for every accumulator, which is where the name
+     * comes from and why one reading served both at first. They are separate claims: the frame
+     * is what the function's values are computed over, the extent is what its state needs
+     * replayed, and {@code last_value} over a ROWS frame - which emits the single row its high
+     * bound names - has the second far narrower than the first. This answers for the extent,
+     * so a function narrowing it carries the narrower extent in the descriptor rather than
+     * answering differently here - an extent wider than the state only over-replays, while an
+     * extent the state outruns emits wrong values.
      *
      * @see io.questdb.griffin.engine.window.WindowFunction#hasFrameLocalCheckpointState()
      */
@@ -246,8 +245,10 @@ public final class LiveViewCheckpointDependency {
      * frame needs, which widens the repair interval and never narrows it.
      * <p>
      * Only the high bound's sign is read here. The magnitude the two bounds are functions
-     * of is the look-behind, which {@link #getRangeFrameWidth()} answers. The one high bound
-     * this rejects on its magnitude is {@code Long.MIN_VALUE}, the encoding an unbounded
+     * of is the {@link #getStateExtentLo() state extent}, which {@link #getRangeFrameWidth()}
+     * negates and which every RANGE descriptor takes from the frame's own low bound. Both are
+     * tested, so the negation stays in range whatever populates the extent later. The one high
+     * bound this rejects on its magnitude is {@code Long.MIN_VALUE}, the encoding an unbounded
      * look-behind uses - a bound that reaches it names no finite lag, and negating a literal
      * {@code Long.MAX_VALUE PRECEDING} is what gets there.
      */
@@ -255,6 +256,8 @@ public final class LiveViewCheckpointDependency {
         return kind == DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI
                 && frameLo != Long.MIN_VALUE
                 && frameLo <= 0
+                && stateExtentLo != Long.MIN_VALUE
+                && stateExtentLo <= 0
                 && frameHi != Long.MIN_VALUE
                 && frameHi <= 0
                 && ColumnType.isTimestamp(timestampType);
@@ -276,14 +279,23 @@ public final class LiveViewCheckpointDependency {
      * backward walk follows the same subset argument - computing a row needs its {@code N}-th
      * through {@code M}-th predecessors, which the {@code N} predecessors it counts contain.
      * <p>
-     * Only the high bound's sign is read here. The magnitude both scans count against is the
-     * look-behind, which {@link #getRowsPrecedingCount()} answers, and {@code Long.MIN_VALUE}
-     * is turned away for the reason {@link #isFiniteRange()} gives.
+     * The count both scans run against is the {@link #getStateExtentLo() state extent}'s, not
+     * the frame's, so an unbounded frame start is admitted whenever the extent is finite. That
+     * is the {@code last_value} shape: it emits the row {@code M} back rather than accumulating
+     * over the frame, so with {@code N = M} the same two scans bound it. Inserting {@code c}
+     * leaves the {@code M}-th predecessor of {@code f_i} at {@code f_{i-M}} for every
+     * {@code i > M} - the same row it was before the insert - so the output above the key's
+     * {@code M}-th row above the change has converged, which is where the forward scan already
+     * stops; and the backward walk's {@code M} predecessors are exactly the rows the emitted
+     * value comes from.
+     * <p>
+     * Only the high bound's sign is read here, and {@code Long.MIN_VALUE} is turned away on
+     * the extent for the reason {@link #isFiniteRange()} gives.
      */
     public boolean isFiniteRows() {
         return kind == DependencyKind.ROWS_N_PRECEDING_BOUNDED_HI
-                && frameLo != Long.MIN_VALUE
-                && frameLo <= 0
+                && stateExtentLo != Long.MIN_VALUE
+                && stateExtentLo <= 0
                 && frameHi != Long.MIN_VALUE
                 && frameHi <= 0
                 && ColumnType.isTimestamp(timestampType);

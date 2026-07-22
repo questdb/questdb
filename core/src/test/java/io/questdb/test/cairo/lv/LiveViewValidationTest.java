@@ -241,9 +241,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             assertUnboundedFrameStartRejected("SELECT ts, x, covar_pop(y, y) OVER () AS c FROM base", "covar_pop");
             // The value functions go the same way. They accumulate nothing, but a row
             // inserted below a partition's earliest row becomes the first_value of every
-            // frame above it, and shifts what nth_value counts to. last_value over an
-            // unbounded start would in fact converge at the next existing row - nothing
-            // proves that bound today, and an unproven bound is a full-history replay.
+            // frame above it, and shifts what nth_value counts to.
             assertUnboundedFrameStartRejected(
                     "SELECT ts, x, first_value(x) IGNORE NULLS OVER w AS f FROM base "
                             + "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '2' SECOND PRECEDING)",
@@ -254,7 +252,31 @@ public class LiveViewValidationTest extends AbstractCairoTest {
                             + "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)",
                     "nth_value"
             );
+            // last_value keeps the reject wherever its state is not the ring the lag names.
+            // The default frame ends at the current row, so this one reduces to a per-row
+            // projection with no checkpoint surface at all.
             assertUnboundedFrameStartRejected("SELECT ts, x, last_value(x) OVER () AS l FROM base", "last_value");
+            // IGNORE NULLS scans the whole frame for the last non-null, so an unbounded
+            // start leaves it as unbounded as an accumulator.
+            assertUnboundedFrameStartRejected(
+                    "SELECT ts, x, last_value(y) IGNORE NULLS OVER w AS l FROM base "
+                            + "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING)",
+                    "last_value"
+            );
+            // A RANGE frame ends at a timestamp offset rather than at a row, so the lag does
+            // not name the last row the change can reach.
+            assertUnboundedFrameStartRejected(
+                    "SELECT ts, x, last_value(y) OVER w AS l FROM base "
+                            + "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '2' SECOND PRECEDING)",
+                    "last_value"
+            );
+            // And the carve-out is the function's, not the frame's: an accumulator written
+            // over the very same frame absorbs the whole history.
+            assertUnboundedFrameStartRejected(
+                    "SELECT ts, x, sum(x) OVER w AS s FROM base "
+                            + "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING)",
+                    "sum"
+            );
 
             // Positive control: a bounded frame keeps the influence finite and
             // stays eligible, whether the bound is a row count or a time width.
@@ -284,6 +306,22 @@ public class LiveViewValidationTest extends AbstractCairoTest {
                     + "SELECT ts, sym, nth_value(x, 2) OVER w AS n FROM base "
                     + "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND 1 PRECEDING)");
             execute("DROP LIVE VIEW lv_nth");
+
+            // Positive control: the one shape the reject carves out. last_value over
+            // ROWS ... AND K PRECEDING emits the row K back and accumulates nothing, so its
+            // state is the K values behind the current row and a late row moves only the K
+            // outputs above it - a finite H over an unbounded frame start.
+            execute("CREATE LIVE VIEW lv_last FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, last_value(y) OVER w AS l FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING)");
+            execute("DROP LIVE VIEW lv_last");
+            // The same shape spelled as an exclusion, whose runtime frame ends one row below
+            // the current one.
+            execute("CREATE LIVE VIEW lv_last_excl FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, last_value(y) OVER w AS l FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts "
+                    + "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)");
+            execute("DROP LIVE VIEW lv_last_excl");
         });
     }
 

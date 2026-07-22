@@ -913,6 +913,170 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * {@code last_value} over a ROWS frame does not accumulate: it emits the single row its
+     * high bound names, and its ring holds exactly the {@code K} values that bound names.
+     * So its state extent is {@code -frameHi} rather than {@code -frameLo}, and the frame's
+     * own start - unbounded or not - says nothing about what a warm-up has to replay.
+     * <p>
+     * The extent is per function, not per frame. An accumulator sharing that same frame keeps
+     * reading {@code -frameLo}, because under-replaying an accumulator emits a wrong value
+     * rather than a slow one, and the plan takes the widest extent of the two so it satisfies
+     * both.
+     */
+    @Test
+    public void testLastValueTakesItsStateExtentFromTheFrameHighBound() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+
+            // A bounded frame start the extent ignores: the ring is three values deep however
+            // far back the frame reaches, so the plan replays three rows and not ten.
+            final Metadata bounded = compileMetadata(
+                    "select ts, sym, last_value(x) over (partition by sym order by ts "
+                            + "rows between 10 preceding and 3 preceding) l from base",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_BOUNDED_HI, bounded.dependency.getKind());
+            Assert.assertEquals(-10, bounded.dependency.getFrameLo());
+            Assert.assertEquals(-3, bounded.dependency.getFrameHi());
+            Assert.assertEquals(-3, bounded.dependency.getStateExtentLo());
+            Assert.assertEquals(3, bounded.dependency.getRowsPrecedingCount());
+            Assert.assertTrue(bounded.dependency.isFiniteRows());
+            Assert.assertTrue(bounded.dependency.hasFrameLocalState());
+            Assert.assertNotNull(bounded.rowsPlan);
+            Assert.assertEquals(3, bounded.rowsPlan.getMaxPrecedingRows());
+            Assert.assertTrue(bounded.isDependencyComplete);
+
+            // The same descriptor from an unbounded start. This is the shape the CREATE-time
+            // reject turned away, and the extent is what makes it bounded after all.
+            final Metadata unbounded = compileMetadata(
+                    "select ts, sym, last_value(x) over (partition by sym order by ts "
+                            + "rows between unbounded preceding and 3 preceding) l from base",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_BOUNDED_HI, unbounded.dependency.getKind());
+            Assert.assertEquals(Long.MIN_VALUE, unbounded.dependency.getFrameLo());
+            Assert.assertEquals(-3, unbounded.dependency.getFrameHi());
+            Assert.assertEquals(-3, unbounded.dependency.getStateExtentLo());
+            Assert.assertEquals(3, unbounded.dependency.getRowsPrecedingCount());
+            Assert.assertTrue(unbounded.dependency.isFiniteRows());
+            Assert.assertNotNull(unbounded.rowsPlan);
+            Assert.assertEquals(3, unbounded.rowsPlan.getMaxPrecedingRows());
+            Assert.assertTrue(unbounded.isDependencyComplete);
+
+            // EXCLUDE CURRENT ROW is the same shape with the smallest lag the runtime can
+            // evaluate, so the ring is one value deep and the extent follows it.
+            final Metadata excluded = compileMetadata(
+                    "select ts, sym, last_value(x) over (partition by sym order by ts "
+                            + "rows between unbounded preceding and current row exclude current row) l from base",
+                    0
+            );
+            Assert.assertEquals(-1, excluded.dependency.getFrameHi());
+            Assert.assertEquals(-1, excluded.dependency.getStateExtentLo());
+            Assert.assertEquals(1, excluded.dependency.getRowsPrecedingCount());
+            Assert.assertNotNull(excluded.rowsPlan);
+
+            // The step's main failure mode, asserted from both sides. An accumulator over the
+            // very same frame keeps the frame's own look-behind...
+            final Metadata accumulator = compileMetadata(
+                    "select ts, sym, sum(x) over (partition by sym order by ts "
+                            + "rows between 10 preceding and 3 preceding) s from base",
+                    0
+            );
+            Assert.assertEquals(-10, accumulator.dependency.getStateExtentLo());
+            Assert.assertEquals(10, accumulator.dependency.getRowsPrecedingCount());
+
+            // ...and one declared beside it takes the plan to the wider of the two, which is
+            // the only extent that satisfies both.
+            final Metadata mixed = compileMetadata(
+                    "select ts, sym, "
+                            + "last_value(x) over (partition by sym order by ts "
+                            + "rows between 10 preceding and 3 preceding) l, "
+                            + "sum(x) over (partition by sym order by ts "
+                            + "rows between 10 preceding and 3 preceding) s "
+                            + "from base",
+                    0
+            );
+            Assert.assertEquals(-3, mixed.dependency.getStateExtentLo());
+            Assert.assertNotNull(mixed.rowsPlan);
+            Assert.assertEquals(2, mixed.rowsPlan.getFunctionCount());
+            Assert.assertEquals(10, mixed.rowsPlan.getMaxPrecedingRows());
+            Assert.assertTrue(mixed.isDependencyComplete);
+
+            // IGNORE NULLS scans the frame for the last non-null rather than emitting the row
+            // the high bound names, so it is bounded by the frame's start like an accumulator.
+            final Metadata ignoreNulls = compileMetadata(
+                    "select ts, sym, last_value(x) ignore nulls over (partition by sym order by ts "
+                            + "rows between 10 preceding and 3 preceding) l from base",
+                    0
+            );
+            Assert.assertEquals(-10, ignoreNulls.dependency.getStateExtentLo());
+            Assert.assertEquals(10, ignoreNulls.dependency.getRowsPrecedingCount());
+
+            // A RANGE frame ends at a timestamp offset rather than at a row, so the last row
+            // the lag names does not bound the forward influence and this stays the frame's.
+            final Metadata range = compileMetadata(
+                    "select ts, sym, last_value(x) over (partition by sym order by ts "
+                            + "range between '3' hour preceding and '1' hour preceding) l from base",
+                    0
+            );
+            Assert.assertEquals(-10_800_000_000L, range.dependency.getFrameLo());
+            Assert.assertEquals(-10_800_000_000L, range.dependency.getStateExtentLo());
+            Assert.assertEquals(10_800_000_000L, range.dependency.getRangeFrameWidth());
+        });
+    }
+
+    /**
+     * The unbounded frame start is admitted for one function and one frame shape. Everything
+     * else that reads from one keeps the descriptor it had, which is the ineligible kind and
+     * no plan - and, at CREATE, the reject
+     * {@link LiveViewValidationTest#testRejectUnboundedFrameStart} owns.
+     */
+    @Test
+    public void testUnboundedFrameStartStaysIneligibleForEveryOtherShape() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+
+            // An accumulator absorbs the whole history whatever its frame ends at.
+            final Metadata accumulator = compileMetadata(
+                    "select ts, sym, sum(x) over (partition by sym order by ts "
+                            + "rows between unbounded preceding and 3 preceding) s from base",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.FOLLOWING_OR_DATA_DEPENDENT, accumulator.dependency.getKind());
+            Assert.assertFalse(accumulator.dependency.isFiniteRows());
+            Assert.assertNull(accumulator.rowsPlan);
+            Assert.assertFalse(accumulator.isDependencyComplete);
+
+            // The IGNORE NULLS spelling of the admitted function goes the same way: its state
+            // is the whole frame, so an unbounded start leaves it unbounded.
+            final Metadata ignoreNulls = compileMetadata(
+                    "select ts, sym, last_value(x) ignore nulls over (partition by sym order by ts "
+                            + "rows between unbounded preceding and 3 preceding) l from base",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.FOLLOWING_OR_DATA_DEPENDENT, ignoreNulls.dependency.getKind());
+            Assert.assertFalse(ignoreNulls.dependency.isFiniteRows());
+            Assert.assertNull(ignoreNulls.rowsPlan);
+
+            // And so does the RANGE spelling, whose forward influence the lag does not bound.
+            final Metadata range = compileMetadata(
+                    "select ts, sym, last_value(x) over (partition by sym order by ts "
+                            + "range between unbounded preceding and '1' hour preceding) l from base",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.FOLLOWING_OR_DATA_DEPENDENT, range.dependency.getKind());
+            Assert.assertFalse(range.dependency.isFiniteRange());
+            Assert.assertNull(range.rangePlan);
+
+            // A high bound at the current row is the stateless family rather than a ring of
+            // zero values: it carries no checkpoint surface at all, so no descriptor is built
+            // for it and the repair declines however many plans the factory holds.
+            assertNoCheckpointDependency("select ts, sym, last_value(x) over (partition by sym order by ts "
+                    + "rows between unbounded preceding and current row) l from base");
+        });
+    }
+
     private static void assertExclusionRejected(String sql) throws Exception {
         try {
             compileMetadata(sql, 0);

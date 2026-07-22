@@ -190,13 +190,13 @@ public final class LiveViewCheckpointFunctionCompiler {
         final long frameHi = isRange
                 ? rangeFrameHi(function.getName(), window, timestampType)
                 : effectiveRowsHi(window);
-        // Every function admitted today accumulates over the rows its frame holds, so the
-        // look-behind that feeds the frame is also the one a warm-up replays to rebuild the
-        // state, and the descriptor's state extent is the frame's low bound. The two are
-        // recorded apart because the coincidence is a property of the function rather than of
-        // the frame: a function reading one row the high bound names needs a narrower extent,
-        // and a floor derived from the frame would have no way to carry it.
-        final long stateExtentLo = frameLo;
+        // An accumulator's state is the frame's own contents, so the look-behind that feeds
+        // the frame is also the one a warm-up replays and the extent is the frame's low bound.
+        // last_value reads a single row instead, the one its high bound names, so its extent
+        // is that lag however far back the frame nominally starts.
+        final long stateExtentLo = hasHighBoundStateExtent(function.getName(), window, frameHi)
+                ? frameHi
+                : frameLo;
         final LiveViewCheckpointDependency dependency = new LiveViewCheckpointDependency(
                 kind,
                 partitionSignature,
@@ -529,6 +529,12 @@ public final class LiveViewCheckpointFunctionCompiler {
      * removes rows from the affected set. Both are looser than a lagging frame needs, which
      * widens the repair interval and never narrows it.
      * <p>
+     * The look-behind the eligible kinds require is the state extent's rather than the
+     * frame's, which is why {@link #hasFiniteStateLookBehind} rather than the frame's own low
+     * bound decides it: {@code last_value} over a ROWS frame reads the one row its high bound
+     * names, so an unbounded frame start still leaves a finite extent and both bounds follow
+     * from it.
+     * <p>
      * A {@code FOLLOWING} high bound is what must keep falling through to
      * {@code FOLLOWING_OR_DATA_DEPENDENT}: a base row at {@code m} then joins the frame of
      * output below {@code m}, and neither bound holds. That case stays a visible branch here
@@ -549,7 +555,7 @@ public final class LiveViewCheckpointFunctionCompiler {
         // Long.MAX_VALUE PRECEDING negates into it, leaving a frame that ends below its own
         // start. Such a bound names no finite lag, so it is turned away here alongside the
         // unbounded frame starts.
-        if (window.getRowsLo() != Long.MIN_VALUE && window.getRowsLo() <= 0
+        if (hasFiniteStateLookBehind(functionName, window, rowsHi)
                 && rowsHi != Long.MIN_VALUE && rowsHi <= 0
                 && hasSupportedExclusion(window)) {
             if (window.getFramingMode() == WindowExpression.FRAMING_ROWS) {
@@ -700,6 +706,54 @@ public final class LiveViewCheckpointFunctionCompiler {
         return identity.getCanonicalWindowName().isEmpty()
                 ? identity.getFactorySignature()
                 : identity.getFactorySignature() + " OVER " + identity.getCanonicalWindowName();
+    }
+
+    /**
+     * Whether the frame names a finite look-behind for the function's <i>state</i>, which is
+     * what the eligible kinds need and what a warm-up replays. For an accumulator that is the
+     * frame's own low bound; for a function whose state the high bound bounds it is the lag,
+     * and the frame's start does not participate.
+     * <p>
+     * Keeping the two arms apart is what confines the widening to the second: an unbounded
+     * frame start still leaves every accumulator with no floor to discover, and its own arm
+     * turns it away here exactly as before.
+     */
+    private static boolean hasFiniteStateLookBehind(CharSequence functionName, WindowExpression window, long rowsHi) {
+        return hasHighBoundStateExtent(functionName, window, rowsHi)
+                || (window.getRowsLo() != Long.MIN_VALUE && window.getRowsLo() <= 0);
+    }
+
+    /**
+     * Whether the function's state extent is the frame's high bound rather than its low one.
+     * <p>
+     * This reads the function and not just the frame, which inverts the rule the CREATE-time
+     * reject follows, and the inversion is the point. A frame bounds what an accumulator
+     * depends on, so reading the frame alone covers every accumulator written later without
+     * listing any of them. {@code last_value} does not accumulate: it emits the single row its
+     * high bound names, so the lag is the whole of what a warm-up has to replay and the
+     * frame's start says nothing about it. Reading {@code -frameHi} for an accumulator sharing
+     * that same frame would under-replay it and emit a wrong value, which is why the test
+     * names the function.
+     * <p>
+     * Three things narrow it to the shape whose state really is the ring of the last
+     * {@code K} values. {@code IGNORE NULLS} scans the whole frame for the last non-null and
+     * is bounded by the frame's start like any accumulator. A RANGE frame ends at a timestamp
+     * offset rather than at a row, so its forward influence reaches past the last row the lag
+     * names and is not this kind's to bound yet. And a high bound at the current row - as the
+     * runtime evaluates it, so an {@code EXCLUDE CURRENT ROW} frame is a lag of one rather
+     * than one of these - leaves no ring at all: that shape compiles to a stateless per-row
+     * projection, which carries no checkpoint surface and never reaches this compiler.
+     * <p>
+     * The function's own {@link WindowFunction#hasFrameLocalCheckpointState()} stands behind
+     * this: only the partitioned ROWS-frame {@code last_value} implementations declare it, so
+     * a shape this admits that compiles to some other class declines the plan rather than
+     * taking one against an extent it does not hold.
+     */
+    private static boolean hasHighBoundStateExtent(CharSequence functionName, WindowExpression window, long rowsHi) {
+        return rowsHi < 0
+                && window.getFramingMode() == WindowExpression.FRAMING_ROWS
+                && !window.isIgnoreNulls()
+                && Chars.equalsIgnoreCase(functionName, "last_value");
     }
 
     /**

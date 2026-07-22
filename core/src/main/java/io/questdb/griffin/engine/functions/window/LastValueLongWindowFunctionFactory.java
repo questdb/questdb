@@ -2802,6 +2802,17 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the bufferSize values behind the current row and computeNext
+            // emits the oldest of them, so the state is a function of that many rows and
+            // of nothing else. bufferSize is the frame's own high bound, which is where
+            // the descriptor takes this function's state extent from, and replaying that
+            // many rows overwrites every slot - so a warm-up from the extent's lower edge
+            // emits what a whole-history run would, however far back the frame starts.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();

@@ -1809,6 +1809,77 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testUnboundedStartLastValueSplicesOnTheHighBoundLag() throws Exception {
+        // The frame starts at UNBOUNDED PRECEDING, which is what the CREATE-time reject used
+        // to turn away and what a whole-history rebuild is the fallback for. last_value
+        // accumulates nothing: it emits the row 2 back, so its state is the 2 values behind
+        // the current row and the discovery runs on that count rather than on the frame's.
+        // Inserting at 25s leaves the 2nd predecessor of every row from 50s up where it was -
+        // 30s reads 20s and 40s reads 25s, but 50s reads 30s both before and after - so only
+        // the 2 rows above the change move and the repair re-emits [25s, 50s).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                            "SELECT ts, sym, last_value(x) OVER (" +
+                            "PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING" +
+                            ") l FROM base"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+
+                appendAndRefresh(job, 25, 100);
+
+                Assert.assertEquals(
+                        "only the rows in [R, H) are re-emitted: 25s, 30s, 40s",
+                        3,
+                        instance.getO3BoundaryReplayRows()
+                );
+                Assert.assertEquals(
+                        "a spliced timeline keeps every logical entry it had",
+                        HISTORY_COMMITS,
+                        entryCount(instance)
+                );
+                Assert.assertEquals(generationBefore + 1, generation(instance));
+
+                // The prefix and the converged suffix keep their payload roots by page
+                // identity, which is what separates a localized repair from the whole-history
+                // rebuild an unbounded frame start took before: that one versions every root.
+                final LongList after = snapshotTimeline(instance);
+                assertSameRoot(before, after, 0);
+                assertSameRoot(before, after, 1);
+                assertNewRoot(before, after, 2);
+                assertNewRoot(before, after, 3);
+                assertSameRoot(before, after, 4);
+                assertSameRoot(before, after, 5);
+            }
+            assertNoRefreshFaults("lv");
+
+            // The oracle: every row emits the value 2 rows behind it. The insert shifts what
+            // 30s and 40s read and leaves 50s onward reading the rows they already did.
+            assertQuery("select ts, sym, l from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\tl\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\tnull\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\tnull\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t1\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t2\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t100\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t3\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t4\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t5\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t6\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t7\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t8\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t9\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t10\n");
+        });
+    }
+
     private LiveViewInstance buildHistory(LiveViewRefreshJob job) throws Exception {
         return buildHistory(job, HISTORY_COMMITS);
     }

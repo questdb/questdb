@@ -207,6 +207,14 @@ public final class LiveViewCheckpointContracts {
          * which the lag does not move, and the lower end only removes rows from
          * the affected set. Both strategies below therefore stay valid, and both
          * are looser than a lagging frame needs.
+         * <p>
+         * {@code Nmax} is the
+         * {@link LiveViewCheckpointDependency#getStateExtentLo() state extent},
+         * which is the frame's look-behind for an accumulator and the high
+         * bound's lag for {@code last_value}. The frame start it names may
+         * therefore be {@code UNBOUNDED PRECEDING}: {@code last_value} emits the
+         * row {@code M} back rather than accumulating, so both strategies read
+         * {@code Nmax = M} and bound it on the same two scans.
          */
         ROWS_N_PRECEDING_BOUNDED_HI(
                 "at most Nmax qualifying predecessors for every key in Q",
@@ -248,8 +256,11 @@ public final class LiveViewCheckpointContracts {
          * influence boundary. {@code SqlParser.validateLiveViewFiniteInfluence}
          * rejects it at CREATE, naming the aggregate; it applies the same test
          * to every other window function over an unbounded frame start, since
-         * the frame - not the function - is what leaves the boundary open. The
-         * anchored form resets at every segment start and remains eligible via
+         * the frame - not the function - is what leaves an accumulator's
+         * boundary open. The one exception it carves out is {@code last_value}
+         * over {@code ROWS ... AND K PRECEDING}, which accumulates nothing and
+         * whose influence the lag bounds. The anchored form resets at every
+         * segment start and remains eligible via
          * {@link #FIXED_ANCHOR_SEGMENT}.
          */
         UNBOUNDED_CUMULATIVE_NO_RESET(

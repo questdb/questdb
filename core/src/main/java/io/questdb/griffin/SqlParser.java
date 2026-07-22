@@ -1901,12 +1901,14 @@ public class SqlParser {
      *     {@code nth_value} counts to.</li>
      * </ul>
      * The rule reads the frame rather than the function, so a window function
-     * added later is covered without being listed anywhere. It costs the shapes
-     * whose influence would in fact be finite - {@code last_value} over an
-     * unbounded start moves only until the next existing row supersedes it -
-     * but nothing proves that bound today, and an unproven bound means a late
-     * row replays the whole history rather than an interval. A frame the
-     * planner can bound is the price of admission.
+     * added later is covered without being listed anywhere. It still costs the
+     * shapes whose influence is in fact finite, and one of those is now proven
+     * and carved out by {@link #hasHighBoundStateExtent}: {@code last_value}
+     * over {@code ROWS ... AND K PRECEDING} accumulates nothing, so its state is
+     * the {@code K} values behind it and a late row moves only the {@code K}
+     * outputs above it. Every other unbounded start keeps the reject, because an
+     * unproven bound means a late row replays the whole history rather than an
+     * interval, and a frame the planner can bound is the price of admission.
      * <p>
      * The anchored, per-segment-reset forms have a finite {@code H} (the
      * segment end) and stay eligible; they route through the fixed-anchor
@@ -1986,7 +1988,9 @@ public class SqlParser {
             WindowExpression window,
             LowerCaseCharSequenceObjHashMap<WindowExpression> named
     ) throws SqlException {
-        if (isAnchoredWindow(window, named) || !hasUnboundedFrameStart(window, named)) {
+        if (isAnchoredWindow(window, named)
+                || !hasUnboundedFrameStart(window, named)
+                || hasHighBoundStateExtent(fn, window, named)) {
             return;
         }
         throw SqlException.$(fn.position, "live view select cannot use ")
@@ -2017,6 +2021,53 @@ public class SqlParser {
             return true;
         }
         return frame.getRowsLoKind() == WindowExpression.PRECEDING && frame.getRowsLoExpr() == null;
+    }
+
+    /**
+     * Reports whether {@code fn} is the one call whose state the frame's <b>end</b>
+     * bounds rather than its start, and which therefore keeps a finite forward
+     * influence over an unbounded frame start: {@code last_value} respecting
+     * nulls over {@code ROWS BETWEEN ... AND K PRECEDING}.
+     * <p>
+     * It emits the row {@code K} back and accumulates nothing, so its state is
+     * the {@code K} values behind the current row however far back the frame
+     * says it starts, and a late row shifts only the {@code K} outputs above it.
+     * That is what the repair planner reads as the descriptor's state extent,
+     * and the compiler applies the same three narrowings this does.
+     * {@code IGNORE NULLS} scans the whole frame for the last non-null, so it is
+     * bounded by the frame's start like an accumulator; a RANGE end is a
+     * timestamp offset rather than a row, so its influence reaches past the last
+     * row the lag names; and a frame end at the current row leaves no ring at
+     * all - it compiles to a stateless per-row projection, a family whose
+     * admission needs a stateless window function to be able to declare itself.
+     * <p>
+     * The shape is read syntactically, because the parser has neither folded
+     * frame bound expressions to numbers nor picked a factory yet. So a couple
+     * of spellings pass here and are turned away further on for carrying no
+     * checkpoint surface: {@code AND 0 PRECEDING}, which folds to the stateless
+     * family, and a window with no {@code PARTITION BY}, whose ROWS-frame
+     * implementation has no checkpoint state whatever its frame starts at. For
+     * those this decides which reject names them, not whether they are one.
+     */
+    private static boolean hasHighBoundStateExtent(
+            ExpressionNode fn,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) {
+        // IGNORE NULLS lives on the call rather than on the named definition, so
+        // the two halves are read from the windows that carry them.
+        if (window.isIgnoreNulls() || !Chars.equalsLowerCaseAscii(fn.token, "last_value")) {
+            return false;
+        }
+        final WindowExpression frame = resolveFrameWindow(window, named);
+        return frame != null
+                && frame.getFramingMode() == WindowExpression.FRAMING_ROWS
+                && ((frame.getRowsHiKind() == WindowExpression.PRECEDING && frame.getRowsHiExpr() != null)
+                // EXCLUDE CURRENT ROW is the same shape with the smallest lag: the runtime
+                // rewrites the frame end to one row below the current one before any factory
+                // sees it, so the ring holds a single value.
+                || (frame.getRowsHiKind() == WindowExpression.CURRENT
+                && frame.getExclusionKind() == WindowExpression.EXCLUDE_CURRENT_ROW));
     }
 
     /**
