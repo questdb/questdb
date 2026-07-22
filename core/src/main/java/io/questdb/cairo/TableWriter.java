@@ -4197,7 +4197,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 && txWriter.getLagRowCount() > 0
                 && txWriter.isLagOrdered()
                 && txWriter.getMaxTimestamp() <= lagMinTimestamp
-                && txWriter.getPartitionTimestampByTimestamp(lagMinTimestamp) == lastPartitionTimestamp) {
+                && txWriter.getPartitionTimestampByTimestamp(lagMinTimestamp) == lastPartitionTimestamp
+                // Guard the METHOD (not just its callers): the fast-lag apply
+                // reaches publishPostingIndexesForLastPartitionFastLag -> commit ->
+                // extendHead, which would extend a LEGACY (format-0) covering head
+                // in place (aliased footer) and re-expose the concurrent covered-read
+                // OOB. Bailing to Long.MIN_VALUE here forces EVERY caller down its
+                // non-fast-lag path, whose reseal migrates the head to format 1.
+                // This covers the direct :10232 pre-existing-lag-before-O3 call that
+                // bypasses applyFromWalLagToLastPartitionPossible. Callers that
+                // ignore the return are additionally kept off this method for a
+                // legacy head by the Possible-predicate guard; the block-apply gate
+                // bails earlier still. See lastPartitionHasLegacyCoveringHead().
+                && !lastPartitionHasLegacyCoveringHead()) {
             // There is some data in LAG, it's ordered, and it's already written to the last partition.
             // We can simply increase the last partition transient row count to make it committed.
 
@@ -4289,26 +4301,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // to O3 whose reseal writes a fresh format-1 entry — migrating the head so
     // the NEXT block-apply fast-paths.
     private boolean lastPartitionHasLegacyCoveringHead() {
-        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-            if (metadata.getColumnType(colIdx) <= 0
-                    || !metadata.isColumnIndexed(colIdx)
-                    || colIdx >= indexers.size()
-                    || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
-                continue;
-            }
-            ColumnIndexer indexer = indexers.getQuick(colIdx);
-            if (indexer == null) {
-                continue;
-            }
-            IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
-            if (coveringCols == null || coveringCols.size() == 0) {
-                continue;
-            }
-            if (indexer.getWriter() instanceof PostingIndexWriter piw && piw.isHeadCoveringFormatLegacy()) {
+        // Fast out for the common case (no POSTING indexers at all), then iterate
+        // only the dense indexer list rather than every column.
+        if (!hasPostingIndexers) {
+            return false;
+        }
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            ColumnIndexer indexer = denseIndexers.getQuick(i);
+            if (indexer != null
+                    && indexer.getWriter() instanceof PostingIndexWriter piw
+                    && piw.isHeadCoveringFormatLegacy()) {
                 return true;
             }
         }
         return false;
+    }
+
+    // -ea-only check that the fast-append prefix's WAL timestamp-index values are
+    // non-decreasing (the fast path has no O3 merge fallback, so this is the
+    // safety net that catches an allInOrder-flag regression before it corrupts
+    // the partition).
+    private static boolean isFastAppendPrefixOrdered(long timestampAddr, long o3Lo, long prefixRows) {
+        long prev = Long.MIN_VALUE;
+        for (long i = 0; i < prefixRows; i++) {
+            long ts = getTimestampIndexValue(timestampAddr, o3Lo + i);
+            if (ts < prev) {
+                return false;
+            }
+            prev = ts;
+        }
+        return true;
     }
 
     private long tryFastAppendInOrderBlock(long o3Lo, long o3LoHi, int blockTransactionCount, long timestampAddr) {
@@ -4326,7 +4348,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         //  - a native (non-parquet) last partition that can accept lag;
         //  - a PLAIN insert: exclude both UPSERT/DEFAULT dedup AND replace-range
         //    (isCommitPlainInsert() covers both; isCommitDedupMode() alone misses
-        //    replace-range) -- those need the merge/replace semantics of O3;
+        //    replace-range) -- those need the merge/replace semantics of O3.
+        //    NOTE (finding #8): the single-txn gate applyFromWalLagToLastPartitionPossible
+        //    uses the WEAKER !isCommitDedupMode() because that path re-arms the lag
+        //    range for replace via a separate mechanism; the two gates intentionally
+        //    diverge here but SHARE the legacy-covering disqualifier below;
         //  - the block's first row sits at/after the committed max (pure append,
         //    NOT late data / a merge) and inside the last partition.
         // FORCE_FULL_COMMIT (commit-to == Long.MAX_VALUE) needs no guard: the
@@ -4341,7 +4367,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 || !isCommitPlainInsert()
                 || txWriter.getMaxTimestamp() > blockMin
                 || txWriter.getPartitionTimestampByTimestamp(blockMin) != lastPartitionTimestamp
-                || lastPartitionHasLegacyCoveringHead()) {
+                || lastPartitionHasLegacyCoveringHead()
+                // A closed last partition is only opened by processWalCommitBlock
+                // when the table is empty; appending to an otherwise-closed
+                // partition would write to unopened columns. Let O3 handle it.
+                || (isLastPartitionClosed() && !isEmptyTable())) {
             return o3Lo;
         }
         // Rows whose timestamp is within the last partition (<= partitionTimestampHi).
@@ -4362,6 +4392,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             prefixRows = lastPrefixIdx - o3Lo + 1;
             prefixMax = getTimestampIndexValue(timestampAddr, lastPrefixIdx);
         }
+        // Defense-in-depth: the fast path trusts the allInOrder flag with no O3
+        // merge fallback, so verify (under -ea) the appended prefix is actually
+        // non-decreasing before we commit it as ordered lag. A regression that
+        // let out-of-order rows through here would silently corrupt the partition.
+        assert isFastAppendPrefixOrdered(timestampAddr, o3Lo, prefixRows)
+                : "fast-append prefix is not ascending [o3Lo=" + o3Lo + ", prefixRows=" + prefixRows + ']';
         // Append the prefix (or whole block) to the last partition as lag, exactly
         // like the single-txn "move to lag" path.
         dispatchColumnTasks(prefixRows, IGNORE, o3Lo, 0, 1, cthAppendWalColumnToLastPartition);
@@ -4417,7 +4453,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 && lagOrdered
                 && committedMaxTimestamp <= lagMinTimestamp
                 && txWriter.getPartitionTimestampByTimestamp(lagMinTimestamp) == lastPartitionTimestamp
-                && lagMaxTimestamp <= Math.min(commitToTimestamp, partitionTimestampHi);
+                && lagMaxTimestamp <= Math.min(commitToTimestamp, partitionTimestampHi)
+                // Never fast-lag-extend a LEGACY (format-0) covering head in place
+                // (that writes the aliased footer and re-exposes the concurrent
+                // covered-read OOB): fall back to the full commit, whose reseal
+                // migrates the head to format 1. Mirrors the block-apply gate;
+                // together they cover every fast-lag extend path.
+                && !lastPartitionHasLegacyCoveringHead();
     }
 
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {

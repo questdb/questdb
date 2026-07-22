@@ -275,6 +275,177 @@ public class PostingIndexChainWriterTest {
         }
     }
 
+    // The COW migrates a legacy format-0 (aliased trailing footer) covering head
+    // to the de-aliased format 1 (fixed footer at entry+56), copying ALL gens and
+    // the footer verbatim, keeping the same sealTxn, and REPLACING the head (prev
+    // = the old head's predecessor, entryCount unchanged). The superseded format-0
+    // entry stays byte-intact as an unreachable gap.
+    @Test
+    public void testMigrateHeadToFormat1CopiesAllGensAndFooter() {
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+
+        // A predecessor at a lower sealTxn so we can prove prevEntryOffset (and
+        // thus the seal-purge visibility-window predecessor) is preserved.
+        long predOffset = w.appendNewEntry(mem, /* sealTxn */ 3, /* txnAtSeal */ 30, 0, 0, 0, 1, 64, 0);
+
+        final int gens = 3;
+        final int coverCount = 2;
+        final long[] footerVals = {111_111L, 222_222L};
+        long off = buildLegacyCoveringHead(w, /* sealTxn */ 7, /* txnAtSeal */ 70, gens, coverCount, footerVals);
+        Assert.assertEquals(2, w.getEntryCount());
+        Assert.assertEquals(7, w.getGenCounter());
+        long preMigrateRegionLimit = w.getRegionLimit();
+
+        w.migrateHeadToFormat1(mem);
+
+        long newHead = w.getHeadEntryOffset();
+        Assert.assertEquals("COW writes into virgin space at regionLimit", preMigrateRegionLimit, newHead);
+        Assert.assertNotEquals(off, newHead);
+
+        // Format flipped to de-aliased with the entry's own coverCount packed in.
+        int raw = mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT);
+        Assert.assertEquals(PostingIndexUtils.COVERING_FORMAT_DEALIASED, PostingIndexChainEntry.unpackCoveringFormat(raw));
+        Assert.assertEquals(coverCount, PostingIndexChainEntry.unpackCoverCount(raw));
+
+        // Header fields copied verbatim; LEN is the (layout-independent) same size.
+        Assert.assertEquals(gens, mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+        Assert.assertEquals(PostingIndexChainEntry.entrySize(gens, coverCount), mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_LEN));
+        Assert.assertEquals(7L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN));
+        Assert.assertEquals(1500L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
+        Assert.assertEquals(902L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
+        Assert.assertEquals(5, mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT));
+        Assert.assertEquals(64, mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_BLOCK_CAPACITY));
+        // REPLACE semantics: the new head's predecessor is the OLD head's
+        // predecessor, NOT the old head (which becomes a gap).
+        Assert.assertEquals(predOffset, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET));
+
+        // Every gen-dir slot copied to the format-1 (shifted-past-footer) offset.
+        for (int g = 0; g < gens; g++) {
+            long slot = PostingIndexChainEntry.resolveGenDirOffset(newHead, g, PostingIndexUtils.COVERING_FORMAT_DEALIASED, coverCount);
+            Assert.assertEquals("gen " + g + " fileOffset", g * 1000L, mem.getLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
+            Assert.assertEquals("gen " + g + " size", 500L + g, mem.getLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_SIZE));
+            Assert.assertEquals("gen " + g + " keyCount", 3 + g, mem.getInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT));
+            Assert.assertEquals("gen " + g + " minKey", g, mem.getInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
+            Assert.assertEquals("gen " + g + " maxKey", 4 + g, mem.getInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
+            Assert.assertEquals("gen " + g + " txnAtSeal", 70L, mem.getLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL));
+            Assert.assertEquals("gen " + g + " maxValue", 900L + g, mem.getLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE));
+        }
+
+        // Footer relocated to the FIXED entry+56 offset, values byte-identical.
+        long newFooter = newHead + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+        Assert.assertEquals(footerVals[0], mem.getLong(newFooter));
+        Assert.assertEquals(footerVals[1], mem.getLong(newFooter + PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
+
+        // Chain mirrors: replace (not stack) -> entryCount + genCounter + sealTxn
+        // unchanged (same seal, only .pk layout changed).
+        Assert.assertEquals(2, w.getEntryCount());
+        Assert.assertEquals(7, w.getGenCounter());
+        Assert.assertEquals(7, w.getHeadSealTxn());
+        Assert.assertEquals(70, w.getCurrentTxnAtSeal());
+        Assert.assertEquals(newHead + PostingIndexChainEntry.entrySize(gens, coverCount), w.getRegionLimit());
+
+        // Old format-0 entry is untouched (an unreachable gap): still format 0.
+        Assert.assertEquals(0, PostingIndexChainEntry.unpackCoveringFormat(mem.getInt(off + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT)));
+        Assert.assertEquals(gens, mem.getInt(off + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+
+        // The picker reads the migrated head's covered footer correctly.
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot picked = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, Long.MAX_VALUE, coverCount, header, picked));
+        Assert.assertEquals(newHead, picked.offset);
+        Assert.assertEquals(gens, picked.genCount);
+        Assert.assertEquals(70, picked.txnAtSeal);
+        Assert.assertEquals(1500, picked.valueMemSize);
+        Assert.assertEquals(coverCount, picked.coverFileEndOffsets.size());
+        Assert.assertEquals(footerVals[0], picked.coverFileEndOffsets.getQuick(0));
+        Assert.assertEquals(footerVals[1], picked.coverFileEndOffsets.getQuick(1));
+    }
+
+    // Crash BEFORE the head-pointer flip: the entry bytes were written to virgin
+    // space at regionLimit, but the two-page header publish never reached disk.
+    // Simulated by restoring the durable header pages to their pre-COW state.
+    // A fresh writer must reopen with the UNTOUCHED format-0 head as the valid,
+    // readable head -- no REINDEX, no corruption. This is the atomicity guarantee
+    // of the two-page publish: nothing destructive happens before the flip.
+    @Test
+    public void testMigrateHeadToFormat1CrashBeforeFlipKeepsLegacyHead() {
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+        final int gens = 3;
+        final int coverCount = 2;
+        final long[] footerVals = {555_555L, 666_666L};
+        long off = buildLegacyCoveringHead(w, /* sealTxn */ 6, /* txnAtSeal */ 60, gens, coverCount, footerVals);
+        long headBefore = w.getHeadEntryOffset();
+        long regionLimitBefore = w.getRegionLimit();
+        long entryCountBefore = w.getEntryCount();
+
+        // Snapshot the durable header region (both pages A+B: [0, V2_ENTRY_REGION_BASE)).
+        final int headerLongs = (int) (PostingIndexUtils.V2_ENTRY_REGION_BASE / Long.BYTES);
+        long[] savedHeader = new long[headerLongs];
+        for (int i = 0; i < headerLongs; i++) {
+            savedHeader[i] = mem.getLong((long) i * Long.BYTES);
+        }
+
+        w.migrateHeadToFormat1(mem);
+
+        // Restore the header -> the flip is undone (crash before publish reached disk).
+        for (int i = 0; i < headerLongs; i++) {
+            mem.putLong((long) i * Long.BYTES, savedHeader[i]);
+        }
+
+        // A fresh writer reopens: the valid head is the ORIGINAL format-0 head.
+        PostingIndexChainWriter reopened = new PostingIndexChainWriter();
+        reopened.openExisting(mem);
+        Assert.assertEquals(off, reopened.getHeadEntryOffset());
+        Assert.assertEquals(headBefore, reopened.getHeadEntryOffset());
+        Assert.assertEquals(entryCountBefore, reopened.getEntryCount());
+        Assert.assertEquals(regionLimitBefore, reopened.getRegionLimit());
+
+        // And it reads back as the intact legacy format-0 covering head.
+        PostingIndexChainEntry.Snapshot snap = new PostingIndexChainEntry.Snapshot();
+        PostingIndexChainEntry.read(mem, off, coverCount, snap);
+        Assert.assertEquals(PostingIndexUtils.COVERING_FORMAT_LEGACY, snap.coveringFormat);
+        Assert.assertEquals(gens, snap.genCount);
+        Assert.assertEquals(60, snap.txnAtSeal);
+        Assert.assertEquals(coverCount, snap.coverFileEndOffsets.size());
+        Assert.assertEquals(footerVals[0], snap.coverFileEndOffsets.getQuick(0));
+        Assert.assertEquals(footerVals[1], snap.coverFileEndOffsets.getQuick(1));
+    }
+
+    // Crash AFTER the head-pointer flip: the header publish landed. A fresh
+    // writer reopening the same memory must read the fully-written format-1 head
+    // (no exception, no REINDEX), with covered reads intact.
+    @Test
+    public void testMigrateHeadToFormat1SurvivesReopenAfterFlip() {
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+        final int gens = 3;
+        final int coverCount = 2;
+        final long[] footerVals = {333_333L, 444_444L};
+        buildLegacyCoveringHead(w, /* sealTxn */ 4, /* txnAtSeal */ 40, gens, coverCount, footerVals);
+        w.migrateHeadToFormat1(mem);
+        long migratedHead = w.getHeadEntryOffset();
+
+        PostingIndexChainWriter reopened = new PostingIndexChainWriter();
+        reopened.openExisting(mem);
+        Assert.assertEquals(migratedHead, reopened.getHeadEntryOffset());
+        Assert.assertEquals(w.getEntryCount(), reopened.getEntryCount());
+        Assert.assertEquals(w.getGenCounter(), reopened.getGenCounter());
+        Assert.assertEquals(w.getRegionLimit(), reopened.getRegionLimit());
+        Assert.assertEquals(w.getCurrentTxnAtSeal(), reopened.getCurrentTxnAtSeal());
+
+        // Read via the reopened chain: format 1, covered footer intact.
+        PostingIndexChainEntry.Snapshot snap = new PostingIndexChainEntry.Snapshot();
+        PostingIndexChainEntry.read(mem, migratedHead, coverCount, snap);
+        Assert.assertEquals(PostingIndexUtils.COVERING_FORMAT_DEALIASED, snap.coveringFormat);
+        Assert.assertEquals(gens, snap.genCount);
+        Assert.assertEquals(coverCount, snap.coverFileEndOffsets.size());
+        Assert.assertEquals(footerVals[0], snap.coverFileEndOffsets.getQuick(0));
+        Assert.assertEquals(footerVals[1], snap.coverFileEndOffsets.getQuick(1));
+    }
+
     @Test
     public void testOpenExistingPopulatesStateFromHead() {
         PostingIndexChainWriter writer = new PostingIndexChainWriter();
@@ -962,5 +1133,35 @@ public class PostingIndexChainWriterTest {
         // Should not throw.
         w.updateHeadMaxValue(mem, 100L);
         Assert.assertFalse(w.hasHead());
+    }
+
+    // ---- Format-migration COW (migrateHeadToFormat1) ----
+
+    // Build a legacy format-0 covering head with {@code gens} gens and
+    // {@code coverCount} covers, stamping every gen-dir slot with deterministic
+    // values. Mirrors a real 9.4.x on-disk covering head (trailing footer).
+    private long buildLegacyCoveringHead(PostingIndexChainWriter w, long sealTxn, long txnAtSeal, int gens, int coverCount, long[] footerVals) {
+        LongList coverEnds = new LongList();
+        for (int c = 0; c < coverCount; c++) {
+            coverEnds.add(footerVals[c]);
+        }
+        long off = w.appendNewEntry(
+                mem, sealTxn, txnAtSeal,
+                /* valueMemSize */ 1500, /* maxValue */ 902,
+                /* keyCount */ 5, /* genCount */ gens,
+                /* blockCapacity */ 64, PostingIndexUtils.COVERING_FORMAT_LEGACY,
+                coverEnds
+        );
+        for (int g = 0; g < gens; g++) {
+            long slot = PostingIndexChainEntry.resolveGenDirOffset(off, g, PostingIndexUtils.COVERING_FORMAT_LEGACY, coverCount);
+            mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET, g * 1000L);
+            mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_SIZE, 500L + g);
+            mem.putInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, 3 + g);
+            mem.putInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, g);
+            mem.putInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, 4 + g);
+            mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, txnAtSeal);
+            mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE, 900L + g);
+        }
+        return off;
     }
 }

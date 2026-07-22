@@ -147,6 +147,13 @@ public class PostingIndexWriter implements IndexWriter {
     // COVERING_COUNTERS_ENABLED like the others.
     @TestOnly
     public static final java.util.concurrent.atomic.AtomicLong COVERING_MAX_SEGCOUNT_OBSERVED = new java.util.concurrent.atomic.AtomicLong();
+    // @TestOnly: number of times publishToChain COW-migrated a legacy format-0
+    // covering head to format 1 before an in-place extend (the universal
+    // aliased-footer fix). Lets a test PROVE the COW actually fires on the
+    // unguardable O3-merge / syncColumns extend paths. Gated by
+    // COVERING_COUNTERS_ENABLED like the others.
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_COW_MIGRATE_COUNT = new java.util.concurrent.atomic.AtomicLong();
     private static final int MAX_GEN_COUNT = PostingIndexUtils.MAX_GEN_COUNT;
     private static final int PENDING_SLOT_CAPACITY = 8;
     private final double alignedBitWidthThreshold;
@@ -910,25 +917,25 @@ public class PostingIndexWriter implements IndexWriter {
      * format-1 head and fast-path. Cheap: one mapped int read.
      */
     public boolean isHeadCoveringFormatLegacy() {
-        // Purely a property of the on-disk head entry (does not depend on the
-        // writer's live coverCount, which may not be configured at gate time).
-        // The caller only consults this for columns that carry covering metadata,
-        // so a format-0 head there is either legacy 9.4.x covering data or a
-        // not-yet-covering-sealed head; both must reseal (O3) to format 1 rather
-        // than be extended in place.
+        // Self-contained property of the on-disk head entry (independent of the
+        // writer's live coverCount, which may be unconfigured at gate time): a
+        // LEGACY (format-0) head that actually carries covering data (its own
+        // cover count > 0). A non-covering POSTING head is also format 0 but has
+        // cover count 0, so it is correctly NOT flagged. Such a head must reseal
+        // (O3) to format 1 rather than be extended in place.
         return keyMem != null && keyMem.isOpen()
                 && chain.hasHead()
-                && headStoredCoveringFormat() == PostingIndexUtils.COVERING_FORMAT_LEGACY;
+                && headStoredCoveringFormat() == PostingIndexUtils.COVERING_FORMAT_LEGACY
+                && headStoredCoverCount() > 0;
     }
 
     // The head entry's OWN cover count, recovered from its total size
     // (layout-order-independent; safe single-threaded on the writer's own head).
     private int headStoredCoverCount() {
         long head = chain.getHeadEntryOffset();
-        int gc = keyMem.getInt(head + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
-        long len = keyMem.getLong(head + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
-        long cover = len - PostingIndexUtils.V2_ENTRY_HEADER_SIZE - (long) gc * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
-        return cover > 0 ? (int) (cover / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE) : 0;
+        return PostingIndexChainEntry.coverCountFromLen(
+                keyMem.getInt(head + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT),
+                keyMem.getLong(head + PostingIndexUtils.V2_ENTRY_OFFSET_LEN));
     }
 
     private long resolveHeadGenDirOffset(int gen) {
@@ -4337,6 +4344,25 @@ public class PostingIndexWriter implements IndexWriter {
         // would force a newEntry append at this.sealTxn = head.sealTxn,
         // tripping the appendNewEntry monotonicity assertion.
         boolean newEntry = !chain.hasHead() || this.sealTxn != chain.getHeadSealTxn();
+        // Universal aliased-footer fix. Before ANY in-place gen-dir/footer
+        // mutation of a same-sealTxn head, migrate a legacy format-0 covering
+        // head to the de-aliased format 1 via a crash-safe copy-on-write. Because
+        // every publish funnels through here, this closes the concurrent
+        // covered-read OOB on EVERY extend path by construction -- including the
+        // ones no call-site guard can reach: the O3 partition-merge index commit
+        // (o3ConsumePartitionUpdates -> o3CopySafe -> commit) and syncColumns ->
+        // commit. After migration the footer lives at the fixed entry+56 offset,
+        // so appending gen (genCount-1)'s gen-dir slot never overwrites it. The
+        // COW reuses the SAME sealTxn / .pv / .pc (only the .pk entry layout
+        // changes -- the sidecar data is format-agnostic), so no file is
+        // superseded and nothing is purged; the superseded format-0 entry becomes
+        // an unreachable gap. No-op for format-1 or non-covering heads.
+        if (!newEntry && isHeadCoveringFormatLegacy()) {
+            chain.migrateHeadToFormat1(keyMem);
+            if (COVERING_COUNTERS_ENABLED) {
+                COVERING_COW_MIGRATE_COUNT.incrementAndGet();
+            }
+        }
         long entryBase = newEntry ? chain.getRegionLimit() : chain.getHeadEntryOffset();
 
         // For a same-sealTxn head extension the new gen-dir written below
@@ -4360,6 +4386,18 @@ public class PostingIndexWriter implements IndexWriter {
         // same-sealTxn extend must match the existing head's on-disk layout.
         int writeFormat = newEntry ? newEntryCoveringFormat() : headStoredCoveringFormat();
         int writeCoverCount = newEntry ? coverCount : headStoredCoverCount();
+        // A format-1 extend writes into the head's fixed cover reserve using the
+        // HEAD's own coverCount (writeCoverCount above), so the footer fits by
+        // construction. When covering is actively configured (coverCount>0), the
+        // writer's cover set must match the head's — a genuine cover-set change
+        // (ALTER add/drop covered column) must roll a NEW sealTxn (appendNewEntry),
+        // never extend in place. coverCount==0 (covering not configured this cycle,
+        // e.g. an O3 pool rebuild) is legitimate and skips the check.
+        assert newEntry
+                || writeFormat != PostingIndexUtils.COVERING_FORMAT_DEALIASED
+                || coverCount == 0
+                || coverCount == headStoredCoverCount()
+                : "format-1 extend cover-set mismatch [writer=" + coverCount + ", head=" + headStoredCoverCount() + ']';
         long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex, writeFormat, writeCoverCount);
         long slotTxnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);

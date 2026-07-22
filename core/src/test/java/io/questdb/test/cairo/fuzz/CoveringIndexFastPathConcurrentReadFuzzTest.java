@@ -109,18 +109,68 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
         runConcurrentReadFuzz(generateRandom(LOG), true);
     }
 
+    // The gap the block-apply guard alone missed: a LEGACY format-0 covering
+    // table driven PURELY by the SINGLE-TXN fast-lag path (one txn per drain, NOT
+    // block-apply) under concurrent covered reads. Without the single-txn gate
+    // guard this OOBs (the single-txn fast-lag extends the format-0 head in
+    // place); with it, the format-0 head is sent to the full commit, migrates to
+    // format 1 (fullReseals>0), and subsequent commits fast-path (fastLag>0)
+    // race-free.
+    @Test
+    public void testSingleTxnConcurrentReadFuzzLegacyFormat0Regression() throws Exception {
+        runConcurrentReadFuzz(generateRandom(LOG, 0x3ae7195c02f4d8L, 0x62c8b0e73915afL), true, true);
+    }
+
+    @Test
+    public void testSingleTxnConcurrentReadFuzzLegacyFormat0() throws Exception {
+        runConcurrentReadFuzz(generateRandom(LOG), true, true);
+    }
+
+    // The path the other tests miss: pre-existing WAL lag flushed BEFORE an O3
+    // commit — the DIRECT applyFromWalLagToLastPartition(:10232) call that bypasses
+    // the Possible-predicate gate. Interleaves out-of-order (O3) batches with a
+    // non-zero WAL lag on a LEGACY format-0 covering head under concurrent covered
+    // reads. Without the method-level guard the pre-existing-lag apply extends the
+    // format-0 head in place -> OOB; with it, that call bails to O3 which migrates
+    // the head to format 1.
+    @Test
+    public void testO3PreLagConcurrentReadFuzzLegacyFormat0Regression() throws Exception {
+        runConcurrentReadFuzz(generateRandom(LOG, 0x5c1e83b7096d2fL, 0x4a90e2f1b7c358L), true, false, true);
+    }
+
+    @Test
+    public void testO3PreLagConcurrentReadFuzzLegacyFormat0() throws Exception {
+        runConcurrentReadFuzz(generateRandom(LOG), true, false, true);
+    }
+
     private void resetCoveringCounters() {
         PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.set(0);
         PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
         PostingIndexWriter.COVERING_AUTOSEAL_COUNT.set(0);
         PostingIndexWriter.COVERING_MAX_GENCOUNT_OBSERVED.set(0);
         PostingIndexWriter.COVERING_MAX_SEGCOUNT_OBSERVED.set(0);
+        PostingIndexWriter.COVERING_COW_MIGRATE_COUNT.set(0);
     }
 
     private void runConcurrentReadFuzz(Rnd rnd, boolean legacyInitial) throws Exception {
+        runConcurrentReadFuzz(rnd, legacyInitial, false, false);
+    }
+
+    private void runConcurrentReadFuzz(Rnd rnd, boolean legacyInitial, boolean singleTxn) throws Exception {
+        runConcurrentReadFuzz(rnd, legacyInitial, singleTxn, false);
+    }
+
+    private void runConcurrentReadFuzz(Rnd rnd, boolean legacyInitial, boolean singleTxn, boolean o3Mode) throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 2000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 600_000);
+        if (o3Mode) {
+            // Keep rows in WAL lag (not fully committed) so an out-of-order batch
+            // hits the O3 commit path with PRE-EXISTING lag -> the direct
+            // applyFromWalLagToLastPartition(:10232) call.
+            setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 5 * 1024 * 1024);
+            setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 50);
+        }
 
         final int symbolCardinality = 3 + rnd.nextInt(6);   // 3..8
         final int readerCount = 3 + rnd.nextInt(3);          // 3..5
@@ -262,19 +312,29 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
             long ts = writeCursor[1];
             try {
                 for (int round = 0; round < rounds && bgError.get() == null; round++) {
-                    final int txns = 2 + rnd.nextInt(5); // 2..6 -> multi-txn backlog -> block apply
+                    // singleTxn: exactly one txn per drain -> the single-txn
+                    // fast-lag commit path (NOT block-apply).
+                    final int txns = singleTxn ? 1 : (2 + rnd.nextInt(5)); // 2..6 -> multi-txn backlog -> block apply
                     for (int t = 0; t < txns; t++) {
                         final int rows = 10 + rnd.nextInt(200);
                         final long step = 1 + rnd.nextInt(1000);
                         final long v0 = id;
-                        final long startTs = ts;
+                        // o3Mode: ~1 in 4 batches back-dates below the current max
+                        // (out-of-order), so the drain takes the O3 commit path with
+                        // the ascending rows still sitting in WAL lag -> the
+                        // pre-existing-lag-before-O3 apply (:10232). value stays == id
+                        // (ascending), so the reader's monotonic/ceiling checks hold.
+                        final boolean o3 = o3Mode && rnd.nextInt(4) == 0 && ts > baseTs + 5_000_000L;
+                        final long startTs = o3 ? (ts - (long) (1 + rnd.nextInt(4)) * 1_000_000L) : ts;
                         execute("INSERT INTO t SELECT (" + startTs + " + x * " + step + ")::TIMESTAMP AS ts,"
                                 + " 'S' || ((" + v0 + " + x) % " + symbolCardinality + ") AS sym,"
                                 + " CASE WHEN ((" + v0 + " + x) % " + nullMod + ") = 0 THEN cast(NULL AS DOUBLE)"
                                 + " ELSE (" + v0 + " + x)::DOUBLE END AS value"
                                 + " FROM long_sequence(" + rows + ")");
                         id += rows;
-                        ts = startTs + (long) rows * step;
+                        // Keep the ascending cursor monotonic even after an o3 dip,
+                        // so the bulk of the stream stays in-order (builds lag).
+                        ts = Math.max(ts, startTs + (long) rows * step);
                     }
                     // Publish the ceiling BEFORE draining (ids only grow), the floor AFTER.
                     idCeiling.set(id);
@@ -294,12 +354,25 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
             Assert.assertTrue("fast path must fire (fastLag=" + PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.get() + ")",
                     PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.get() > 0);
             if (legacyInitial) {
-                // The O3-fallback guard must have sent the format-0 head through
-                // O3 at least once (its reseal migrates the head to format 1),
-                // after which block-applies fast-path (asserted above).
-                Assert.assertTrue("legacy format-0 head must migrate via an O3 reseal (fullReseals="
-                                + PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get() + ")",
-                        PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get() > 0);
+                // The legacy format-0 head must migrate to format 1 -- via an O3
+                // reseal (the guard paths) and/or the publishToChain COW (the
+                // unguardable O3-merge / syncColumns extend paths). Either way no
+                // format-0 head is ever extended in place (asserted by the readers'
+                // clean covered scans above).
+                Assert.assertTrue("legacy format-0 head must migrate (fullReseals="
+                                + PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get()
+                                + ", cowMigrates=" + PostingIndexWriter.COVERING_COW_MIGRATE_COUNT.get() + ")",
+                        PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get() > 0
+                                || PostingIndexWriter.COVERING_COW_MIGRATE_COUNT.get() > 0);
+                if (o3Mode) {
+                    // The O3 partition-merge index commit (o3ConsumePartitionUpdates
+                    // -> o3CopySafe -> commit) extends the legacy head in place with
+                    // no call-site guard able to intercept it; the publishToChain COW
+                    // migrates it there. Prove the COW actually fires on that path.
+                    Assert.assertTrue("O3-merge path must COW-migrate the legacy head (cowMigrates="
+                                    + PostingIndexWriter.COVERING_COW_MIGRATE_COUNT.get() + ")",
+                            PostingIndexWriter.COVERING_COW_MIGRATE_COUNT.get() > 0);
+                }
             }
         });
     }

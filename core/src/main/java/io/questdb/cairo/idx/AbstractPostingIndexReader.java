@@ -1332,9 +1332,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // active snapshot. Slots are zero-padded to coverCount so
                 // callers can read them by includeIdx without bounds checks.
                 sidecarFileEndOffsets.clear();
-                sidecarFileEndOffsets.setPos(coverCount);
+                // Use the entry's OWN authoritative cover count where it exceeds
+                // the reader's live .pci coverCount (which can be transiently 0
+                // mid covering-config): a format-1 entry carries its footer for its
+                // packed coverCount, so covered reads stay robust instead of
+                // returning NULL. Equal in the steady state.
+                final int effCoverCount = Math.max(coverCount, entryScratch.coverCount);
+                sidecarFileEndOffsets.setPos(effCoverCount);
                 int picked = entryScratch.coverFileEndOffsets.size();
-                for (int c = 0; c < coverCount; c++) {
+                for (int c = 0; c < effCoverCount; c++) {
                     sidecarFileEndOffsets.setQuick(c, c < picked ? entryScratch.coverFileEndOffsets.getQuick(c) : 0L);
                 }
                 this.lastPickedPinnedTxn = this.pinnedTableTxn;

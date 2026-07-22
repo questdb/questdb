@@ -142,25 +142,32 @@ public final class PostingIndexChainEntry {
                 ? keyMem.getLong(into.genDirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL)
                 : 0L;
         into.coverFileEndOffsets.clear();
-        if (coverCount > 0) {
+        // Use the ENTRY's authoritative cover count (into.coverCount): for format 1
+        // that is the entry's own packed coverCount, so a format-1 entry's footer
+        // is read even when the reader's live .pci coverCount is transiently stale
+        // (== 0 mid covering-config) — covered reads stay robust rather than
+        // returning NULL. For format 0 it is the caller's coverCount, so legacy
+        // behaviour is unchanged.
+        final int effectiveCoverCount = into.coverCount;
+        if (effectiveCoverCount > 0) {
             long footerOffset = resolveCoverFooterOffset(entryOffset, into.genCount, into.coveringFormat, entryCoverCount);
             // How many footer slots the entry actually carries. Format 1: its own
             // packed coverCount. Format 0: derived from the trailing byte span
             // (self-bound against LEN — a legacy entry sealed with fewer covers
-            // than the reader expects reads only what is present). Bound the reader's
-            // expected coverCount by this so we never dereference past the entry.
+            // than expected reads only what is present). Bound by this so we never
+            // dereference past the entry.
             int entryFooterSlots = into.coveringFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED
                     ? entryCoverCount
                     : (int) Math.max(0L, (entryOffset + into.len - footerOffset) / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE);
-            int writtenCovers = Math.max(0, Math.min(coverCount, entryFooterSlots));
-            into.coverFileEndOffsets.setPos(coverCount);
+            int writtenCovers = Math.max(0, Math.min(effectiveCoverCount, entryFooterSlots));
+            into.coverFileEndOffsets.setPos(effectiveCoverCount);
             for (int c = 0; c < writtenCovers; c++) {
                 into.coverFileEndOffsets.setQuick(
                         c,
                         keyMem.getLong(footerOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE)
                 );
             }
-            for (int c = writtenCovers; c < coverCount; c++) {
+            for (int c = writtenCovers; c < effectiveCoverCount; c++) {
                 into.coverFileEndOffsets.setQuick(c, 0L);
             }
         }
@@ -184,6 +191,20 @@ public final class PostingIndexChainEntry {
 
     public static int unpackCoveringFormat(int rawStored) {
         return rawStored & 0xFF;
+    }
+
+    /**
+     * Recover an entry's own cover-column count from its total size. LEN =
+     * round8(56 + genCount*44 + coverCount*8); 56 and coverCount*8 are 8-aligned,
+     * so the alignment pad (0 or 4) is &lt; 8 and floor-division recovers
+     * coverCount exactly, independent of format (the total size is the same in
+     * both). Safe ONLY in single-threaded writer contexts (a concurrent
+     * extendHead races LEN vs GEN_COUNT); concurrent readers must use the entry's
+     * packed coverCount (format 1) or the .pci-published coverCount.
+     */
+    public static int coverCountFromLen(int genCount, long len) {
+        long cover = len - PostingIndexUtils.V2_ENTRY_HEADER_SIZE - (long) genCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        return cover > 0 ? (int) (cover / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE) : 0;
     }
 
     /**
