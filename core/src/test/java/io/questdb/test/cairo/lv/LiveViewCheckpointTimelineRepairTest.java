@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
@@ -366,6 +367,193 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 );
                 Assert.assertEquals("a published repair owes no descriptor", 0, repairDescriptorCount());
             }
+        });
+    }
+
+    @Test
+    public void testLocalizedRepairYieldsAndResumesAcrossRefreshTurns() throws Exception {
+        // The same localized repair as testLocalizedO3ReplaySplicesTheTimelineInPlace,
+        // driven one base row per turn. The replay stops on its per-turn row budget,
+        // parks the pinned snapshot, the uncommitted replacement and the roots it has
+        // staged, and continues on the next turn - and what it finally publishes is
+        // what the single-turn run publishes: the same rows read, the same rows
+        // emitted, the same splice and the same output.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 'a', 100)");
+                drainWalQueue();
+
+                int turns = 0;
+                int parkedTurns = 0;
+                while (turns < 64 && job.processNotificationsForTest()) {
+                    turns++;
+                    if (instance.getSuspendedRepair() == null) {
+                        continue;
+                    }
+                    parkedTurns++;
+                    // Nothing a reader or a restart can see moves while the repair is
+                    // parked: the replacement is uncommitted, so the durable output is
+                    // the pre-repair one; no generation names the staged roots; and the
+                    // base range stays unconsumed.
+                    Assert.assertEquals(HISTORY_COMMITS, durableRowCount(instance));
+                    Assert.assertEquals(generationBefore, generation(instance));
+                    Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+                    Assert.assertEquals(
+                            "a parked repair owns its staged files through its descriptor",
+                            1,
+                            repairDescriptorCount()
+                    );
+                }
+                drainWalQueue();
+
+                Assert.assertTrue("the replay must have yielded at least once", parkedTurns > 0);
+                Assert.assertNull("the repair must finish", instance.getSuspendedRepair());
+                Assert.assertEquals("a published repair owes no descriptor", 0, repairDescriptorCount());
+
+                // Identical to the single-turn run: the resume skips the rows its own
+                // turn already folded, so no row is read, folded or emitted twice.
+                Assert.assertEquals("the rebuild must stop at H", 6, instance.getO3ReplayScanRows());
+                Assert.assertEquals("the rebuild must re-emit [R, H) only", 4, instance.getO3BoundaryReplayRows());
+
+                final LongList after = snapshotTimeline(instance);
+                Assert.assertEquals(before.size(), after.size());
+                Assert.assertEquals(
+                        "however many turns it took, the splice is one publication",
+                        generationBefore + 1,
+                        generation(instance)
+                );
+                assertSameRoot(before, after, 0);
+                assertSameRoot(before, after, 1);
+                for (int i = 2; i <= 4; i++) {
+                    assertNewRoot(before, after, i);
+                    Assert.assertEquals(
+                            "repaired position at index " + i,
+                            i + 2,
+                            after.getQuick(i * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION)
+                    );
+                }
+                assertSameRoot(before, after, 5);
+                Assert.assertEquals(6 + 1, after.getQuick(5 * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+        });
+    }
+
+    @Test
+    public void testAForeignWorkerLeavesAParkedRepairAlone() throws Exception {
+        // A parked repair holds a pinned base snapshot, a live-view writer with
+        // uncommitted rows and a capture that freezes through its owner's timeline
+        // store writer - all of them taken out on the owning worker's thread. Another
+        // worker must therefore skip the view outright rather than plan a second
+        // repair over it, and the owner must not depend on the view coming back around
+        // to it: it drives its own parked repairs at the top of every run.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView();
+            try (
+                    LiveViewRefreshJob owner = new LiveViewRefreshJob(0, engine, 1);
+                    LiveViewRefreshJob foreign = new LiveViewRefreshJob(1, engine, 1)
+            ) {
+                final LiveViewInstance instance = buildHistory(owner);
+                final long generationParked = generation(instance);
+
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 'a', 100)");
+                drainWalQueue();
+                Assert.assertTrue(owner.processNotificationsForTest());
+                Assert.assertNotNull("the first turn must park the repair", instance.getSuspendedRepair());
+
+                Assert.assertFalse("a foreign worker reports no work on a parked view", drainJob(foreign));
+                Assert.assertNotNull(
+                        "a foreign worker must not continue - or replan - another worker's repair",
+                        instance.getSuspendedRepair()
+                );
+                Assert.assertEquals(generationParked, generation(instance));
+                Assert.assertEquals(HISTORY_COMMITS, durableRowCount(instance));
+
+                for (int turn = 0; turn < 64 && instance.getSuspendedRepair() != null; turn++) {
+                    owner.processNotificationsForTest();
+                }
+                Assert.assertNull("the owner must finish what it parked", instance.getSuspendedRepair());
+                drainWalQueue();
+                Assert.assertEquals(generationParked + 1, generation(instance));
+                Assert.assertEquals(HISTORY_COMMITS + 1, durableRowCount(instance));
+            }
+        });
+    }
+
+    @Test
+    public void testClosingTheOwningWorkerAbandonsAParkedRepair() throws Exception {
+        // Only the worker that parked a repair can continue it, so a worker on its way
+        // out abandons what it holds instead of leaving a pinned reader, an
+        // uncommitted replacement and a staged segment behind with nobody to claim
+        // them. The view keeps its pre-repair output and its timeline, the window
+        // state goes back to the one that output belongs to, and the next worker
+        // simply replans the same out-of-order row at a freshly pinned snapshot.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView();
+            final LiveViewInstance instance;
+            final long generationBefore;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                instance = buildHistory(job);
+                generationBefore = generation(instance);
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 'a', 100)");
+                drainWalQueue();
+                Assert.assertTrue(job.processNotificationsForTest());
+                Assert.assertNotNull(instance.getSuspendedRepair());
+                Assert.assertEquals(1, repairDescriptorCount());
+            }
+
+            Assert.assertNull("a closing worker must let go of its repair", instance.getSuspendedRepair());
+            Assert.assertEquals(
+                    "the abandoned candidate leaves nothing for a startup sweep",
+                    0,
+                    repairDescriptorCount()
+            );
+            Assert.assertEquals(generationBefore, generation(instance));
+            Assert.assertEquals(HISTORY_COMMITS, durableRowCount(instance));
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertNull(instance.getSuspendedRepair());
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
         });
     }
 
@@ -1141,6 +1329,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW" +
                         ") s FROM base"
         );
+    }
+
+    /** Rows the live view's own table durably holds. */
+    private long durableRowCount(LiveViewInstance instance) {
+        try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
+            return reader.size();
+        }
     }
 
     private long entryCount(LiveViewInstance instance) {

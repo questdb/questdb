@@ -311,6 +311,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
     private final long liveViewCheckpointMaxDurationMicros;
+    private final long liveViewCheckpointRepairReplayMaxRows;
     private final long liveViewCheckpointRepairScanMaxKeys;
     private final long liveViewCheckpointRepairScanMaxRows;
     private final int liveViewCheckpointRetentionCount;
@@ -1524,6 +1525,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // live-view config
             this.liveViewCheckpointMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 5L * Micros.MINUTE_MICROS);
+            this.liveViewCheckpointRepairReplayMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000L);
             this.liveViewCheckpointRepairScanMaxKeys = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 100_000L);
             this.liveViewCheckpointRepairScanMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, 1_000_000L);
             this.liveViewCheckpointRetentionCount = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 8);
@@ -4169,6 +4171,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getLiveViewCheckpointMaxDurationMicros() {
             return liveViewCheckpointMaxDurationMicros;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRepairReplayMaxRows() {
+            return liveViewCheckpointRepairReplayMaxRows;
         }
 
         @Override

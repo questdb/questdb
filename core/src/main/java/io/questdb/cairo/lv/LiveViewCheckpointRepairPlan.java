@@ -209,6 +209,29 @@ public final class LiveViewCheckpointRepairPlan {
     }
 
     /**
+     * Copies every derived coordinate out of {@code other}. A repair that yields
+     * on its turn budget keeps its own copy: the refresh worker refills its plan
+     * instance on the next repair it runs, while the suspended one must keep the
+     * bounds it derived against the snapshot it pinned.
+     */
+    public void copyFrom(@NotNull LiveViewCheckpointRepairPlan other) {
+        this.anchorLvSeqTxn = other.anchorLvSeqTxn;
+        this.anchorMaxTs = other.anchorMaxTs;
+        this.applyAheadMinTs = other.applyAheadMinTs;
+        this.changeMaxTs = other.changeMaxTs;
+        this.correctionTs = other.correctionTs;
+        this.disposition = other.disposition;
+        this.highBoundTag = other.highBoundTag;
+        this.highTsExclusive = other.highTsExclusive;
+        this.localized = other.localized;
+        this.outputLowTs = other.outputLowTs;
+        this.pinnedSeqTxn = other.pinnedSeqTxn;
+        this.replayLowTs = other.replayLowTs;
+        this.retireLowTs = other.retireLowTs;
+        this.triggerSeqTxn = other.triggerSeqTxn;
+    }
+
+    /**
      * @return the {@code lvSeqTxn} key of the checkpoint the resume restores from.
      * Meaningful only for {@link #DISPOSITION_RESUME_FROM_ANCHOR}.
      */

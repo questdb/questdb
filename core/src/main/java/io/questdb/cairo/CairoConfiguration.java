@@ -352,6 +352,21 @@ public interface CairoConfiguration {
     long getLiveViewCheckpointMaxDurationMicros();
 
     /**
+     * Per-turn budget on the base rows one localized out-of-order repair may
+     * replay. The repair's convergence boundary makes its work finite, but a
+     * dense interval can still hold more rows than one refresh turn should
+     * carry, so a replay that crosses this budget stops at the end of the
+     * current timestamp group and continues in a later turn. It publishes
+     * nothing while suspended: the replacement stays uncommitted in the
+     * live-view writer the repair holds, and no generation names its staged
+     * roots. The turn also ends on
+     * {@link #getLiveViewRefreshTurnMaxDurationMicros()}, whichever comes
+     * first. A value {@code <= 0} disables the row budget, leaving the
+     * wall-clock one alone to bound the turn.
+     */
+    long getLiveViewCheckpointRepairReplayMaxRows();
+
+    /**
      * Budget on the partition keys one localized out-of-order repair may plan
      * to re-emit. A timestamp-global replacement re-emits every key with a
      * qualifying row in the replacement interval, and the repair holds a

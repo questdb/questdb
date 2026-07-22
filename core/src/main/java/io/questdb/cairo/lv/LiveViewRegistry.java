@@ -71,6 +71,20 @@ public class LiveViewRegistry implements QuietCloseable {
     }
 
     /**
+     * Abandons any localized out-of-order repair parked between refresh turns
+     * across every registered view, releasing its pinned base reader, its
+     * live-view writer and its staged data segment. Called during engine teardown
+     * before those pools are freed, so a repair that yielded mid-run leaves
+     * nothing borrowed behind. Must run after the refresh workers have stopped
+     * (no concurrent turn can resume it).
+     */
+    public void discardSuspendedRepairs() {
+        for (LiveViewInstance instance : viewsByName.values()) {
+            instance.discardSuspendedRepair();
+        }
+    }
+
+    /**
      * Releases any base-table reader pinned by an in-flight seed sweep across
      * every registered view. Called during engine teardown before the reader pool
      * is freed, so a sweep that yielded mid-run does not leave its borrowed base

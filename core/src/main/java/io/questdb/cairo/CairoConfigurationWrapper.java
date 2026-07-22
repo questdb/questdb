@@ -489,6 +489,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointRepairReplayMaxRows() {
+        return getDelegate().getLiveViewCheckpointRepairReplayMaxRows();
+    }
+
+    @Override
     public long getLiveViewCheckpointRepairScanMaxKeys() {
         return getDelegate().getLiveViewCheckpointRepairScanMaxKeys();
     }

@@ -512,6 +512,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointRepairReplayMaxRows() {
+        return 1_000_000L;
+    }
+
+    @Override
     public long getLiveViewCheckpointRepairScanMaxKeys() {
         return 100_000L;
     }

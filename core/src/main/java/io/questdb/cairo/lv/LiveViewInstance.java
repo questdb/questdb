@@ -603,6 +603,18 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     // live_views().head_checkpoint_lv_seqtxn stays LONG_NULL for its lifetime.
     private volatile boolean snapshotCapability;
     private volatile boolean snapshotCapabilityComputed;
+    // The localized out-of-order repair this view has parked between refresh
+    // turns, or null when none is in flight. A repair whose replay spends its
+    // turn budget stops at a complete timestamp group and leaves everything the
+    // next turn continues from here: the pinned base snapshot, the live-view
+    // writer holding the still-uncommitted replacement, the staged root versions,
+    // and the window state it took aside. Nothing durable moved while it sits
+    // here, so a reader still sees the pre-repair view.
+    // Refresh for this view is blocked while it is set - every coordinate a turn
+    // would derive reads a runtime that is mid-replay - and only the refresh job
+    // the session names may continue it. Freed by the drop / invalidate /
+    // shutdown hooks the same way the seed sweep's pinned base reader is.
+    private LiveViewCheckpointRepairSession suspendedRepair;
     // Set true when an O3 in-mem tier rebuild is skipped because both slots were
     // reader-pinned: the published slot then keeps its pre-O3 rows, which the O3
     // replay has since re-sequenced on disk. The flag forces the next normal
@@ -791,6 +803,7 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
         dropped = true;
         if (!isClosed) {
             isClosed = true;
+            discardSuspendedRepair();
             freeSeedBaseReader();
             freeCachedRefreshState();
         }
@@ -817,6 +830,23 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
                 && RETAINED_CHECKPOINT_STATE_BYTES == LiveViewCheckpointRingManifest.ENTRY_STATE_BYTES
                 : "ring record layout has diverged from the manifest entry layout";
         dest.add(retainedCheckpoints);
+    }
+
+    /**
+     * Abandons a localized out-of-order repair parked between refresh turns,
+     * releasing the pinned base snapshot, rolling the uncommitted replacement
+     * back, unlinking the staged data segment and retiring the repair's durable
+     * descriptor. The candidate is worthless once nothing will resume it, and the
+     * files it staged have no other owner. Idempotent (null-safe).
+     * <p>
+     * The window state the replay had reached goes back to the pre-repair state the
+     * session took aside, which is the state the untouched durable output belongs
+     * to. Callers must therefore run before {@link #freeCachedRefreshState()}, and
+     * under the refresh latch (or after the workers have stopped) so no turn is
+     * driving those same window functions.
+     */
+    public void discardSuspendedRepair() {
+        suspendedRepair = Misc.free(suspendedRepair);
     }
 
     /**
@@ -1397,6 +1427,14 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
 
     public LiveViewStateReader getStateReader() {
         return stateReader;
+    }
+
+    /**
+     * @return the localized out-of-order repair parked between refresh turns, or
+     * null when none is in flight. See {@link LiveViewCheckpointRepairSession}.
+     */
+    public LiveViewCheckpointRepairSession getSuspendedRepair() {
+        return suspendedRepair;
     }
 
     public long getWriterStallStartUs() {
@@ -2194,6 +2232,16 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     }
 
     /**
+     * Parks a localized out-of-order repair that yielded on its turn budget, or
+     * clears the one that has ended. Refresh for this view is blocked while a
+     * session is parked, and only the refresh job the session names may continue
+     * it. Called under the refresh latch.
+     */
+    public void setSuspendedRepair(@Nullable LiveViewCheckpointRepairSession suspendedRepair) {
+        this.suspendedRepair = suspendedRepair;
+    }
+
+    /**
      * Marks (or clears) the published in-mem slot as possibly carrying stale
      * pre-O3 rows after a both-slots-pinned rebuild skip. The refresh worker
      * sets it from {@code rebuildInMemoryTier} when the skip happens and clears
@@ -2277,6 +2325,7 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
         try {
             if (!isClosed) {
                 isClosed = true;
+                discardSuspendedRepair();
                 freeSeedBaseReader();
                 freeCachedRefreshState();
             }
@@ -2315,6 +2364,7 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
             return;
         }
         try {
+            discardSuspendedRepair();
             freeSeedBaseReader();
             freeCachedRefreshState();
         } finally {

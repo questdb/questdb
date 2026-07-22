@@ -71,8 +71,10 @@ import java.io.Closeable;
  * so the snapshot {@code E} the bounds were derived against cannot be reopened.
  * Startup therefore validates temporary-segment ownership, discards the partial
  * candidate through {@link #sweep}, and lets a later refresh turn replan at a
- * freshly pinned {@code E}. Within one process, where the reader is still pinned,
- * the persisted cursor is what a later turn continues from.
+ * freshly pinned {@code E}. Within one process a repair that yields on its turn
+ * budget does continue - from the live {@link LiveViewCheckpointRepairSession},
+ * which still holds the pinned reader; what this record contributes there is the
+ * ownership claim over the segments the parked repair has already staged.
  *
  * <h2>Best-effort updates</h2>
  * {@link #begin} and {@link #sweep} report failure to their callers: the first

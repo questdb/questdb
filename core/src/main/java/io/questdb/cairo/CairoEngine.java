@@ -1212,6 +1212,11 @@ public class CairoEngine implements Closeable, WriterSource {
         // reader pool before it is freed below, so the pool teardown does not report
         // a still-borrowed reader as left behind. Safe here: close() runs after the
         // refresh workers have stopped, so no sweep turn is reading from them.
+        // Same for a localized out-of-order repair that yielded between refresh
+        // turns: it holds a pinned base reader, a live-view WAL writer carrying an
+        // uncommitted replacement, and a staged temporary data segment, none of
+        // which can outlive the pools below.
+        liveViewRegistry.discardSuspendedRepairs();
         liveViewRegistry.freeSeedBaseReaders();
         Misc.free(sqlCompilerPool);
         Misc.free(writerPool);
