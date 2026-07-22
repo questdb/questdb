@@ -138,6 +138,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         boolean epochRetry = false;
         while (true) {
             long orphanUpperBound = 0;
+            // A view created in this process reconciles here rather than at
+            // startup, so this is its only chance to learn what its catalogue
+            // holds. LONG_NULL when the reconciliation was skipped or adopted no
+            // generation, which leaves whatever an earlier sweep reported.
+            long liveSegmentCount = Numbers.LONG_NULL;
+            long obsoleteSegmentBytes = Numbers.LONG_NULL;
             if (!lifecycleReconciledDirs.contains(lifecycleKey)) {
                 final LiveViewCheckpointLifecycle.ReconcileResult reconciliation =
                         LiveViewCheckpointLifecycle.reconcile(
@@ -148,6 +154,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                                 true
                         );
                 orphanUpperBound = reconciliation.getFinalOrphanUpperBound();
+                if (reconciliation.getStats() != null) {
+                    liveSegmentCount = reconciliation.getLiveSegmentCount();
+                    obsoleteSegmentBytes = reconciliation.getObsoleteSegmentBytes();
+                }
                 if (reconciliation.getFailedOrphanCount() == 0
                         && reconciliation.getFailedPurgeCount() == 0
                         && reconciliation.getFailedRepairCount() == 0) {
@@ -168,7 +178,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         effectiveLvRowPosition,
                         batchMinTs,
                         seedCursorOffset,
-                        orphanUpperBound
+                        orphanUpperBound,
+                        liveSegmentCount,
+                        obsoleteSegmentBytes
                 );
             } catch (HistoryEpochChangedException e) {
                 lifecycleReconciledDirs.remove(lifecycleKey);
@@ -340,6 +352,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // nothing in it, and counting it would leave the segment referenced
             // after every root that reads it is gone.
             int captureSegmentRootRefs = 0;
+            // Signed: a re-versioned root can hold less state than the one it
+            // replaces, so the generation's logical total moves either way.
+            long logicalStateBytesDelta = 0;
             for (int i = 0; i < boundaryCount; i++) {
                 final FrozenBoundary boundary = capture.boundaries.getQuick(i);
                 final LiveViewCheckpointTimelineEntry oldEntry = boundary.oldEntry;
@@ -398,6 +413,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 );
                 newEntry.rootRef.of(newRootRef.getSegmentId(), newRootRef.getOffset(), newRootRef.getLength());
                 newEntries[i] = newEntry;
+                logicalStateBytesDelta += boundary.logicalStateBytes - oldEntry.logicalStateBytes;
             }
             nextSegmentId = roots.nextSegmentId;
             long metadataBytesAdded = roots.metadataBytesAdded;
@@ -420,6 +436,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPageRef newDeltaRoot = new LiveViewCheckpointPageRef();
             copy(oldDeltaRoot, newDeltaRoot);
             long suffixBreakpointTimestamp = Numbers.LONG_NULL;
+            long rowPositionDeltaBytesAdded = 0;
             if (suffixRowDelta != 0) {
                 final LiveViewCheckpointTimelineEntry suffixEntry = new LiveViewCheckpointTimelineEntry();
                 if (timelineReader.successor(oldTimelineRoot, highTsExclusive, suffixEntry)) {
@@ -432,7 +449,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             nextSegmentId++,
                             newDeltaRoot
                     );
-                    metadataBytesAdded = checkedAdd(metadataBytesAdded, deltaWriter.getLastSegmentBytes());
+                    rowPositionDeltaBytesAdded = deltaWriter.getLastSegmentBytes();
+                    metadataBytesAdded = checkedAdd(metadataBytesAdded, rowPositionDeltaBytesAdded);
                     suffixBreakpointTimestamp = suffixEntry.maxTimestamp;
                 }
             }
@@ -451,6 +469,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             superblock.nextSegmentId = nextSegmentId;
             superblock.metadataBytes = checkedAdd(superblock.metadataBytes, metadataBytesAdded);
             superblock.dataBytes = checkedAdd(superblock.dataBytes, dataSegmentBytes);
+            superblock.logicalStateBytes = checkedAdd(superblock.logicalStateBytes, logicalStateBytesDelta);
+            superblock.rowPositionDeltaBytes = checkedAdd(superblock.rowPositionDeltaBytes, rowPositionDeltaBytesAdded);
             // A repair only ever runs on an ACTIVE view, so the generation it
             // publishes is never a mid-sweep resume point. Clear the cursor
             // explicitly rather than letting the selected slot's value ride
@@ -468,7 +488,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     suffixBreakpointTimestamp,
                     dataSegmentBytes,
                     metadataBytesAdded,
-                    metaStore.getWalPurgeFloor()
+                    metaStore.getWalPurgeFloor(),
+                    new LiveViewCheckpointTimelineStats()
+                            .of(superblock, checkedAdd(dataSegmentBytes, metadataBytesAdded))
             );
         }
     }
@@ -491,7 +513,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             long effectiveLvRowPosition,
             long batchMinTs,
             long seedCursorOffset,
-            long orphanUpperBound
+            long orphanUpperBound,
+            long liveSegmentCount,
+            long obsoleteSegmentBytes
     ) {
         if (definitionTxn < 0
                 || createdLvSeqTxn < 0
@@ -662,6 +686,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             superblock.nextSegmentId = nextSegmentId;
             superblock.metadataBytes = checkedAdd(metaStore.isValid() ? superblock.metadataBytes : 0, metadataBytesAdded);
             superblock.dataBytes = checkedAdd(metaStore.isValid() ? superblock.dataBytes : 0, dataSegmentBytes);
+            superblock.logicalStateBytes = checkedAdd(
+                    metaStore.isValid() ? superblock.logicalStateBytes : 0,
+                    boundary.logicalStateBytes
+            );
+            // A cadence seal appends above every existing key, so it writes no
+            // row-position delta node and the running total carries forward.
+            superblock.rowPositionDeltaBytes = metaStore.isValid() ? superblock.rowPositionDeltaBytes : 0;
             superblock.seedCursorOffset = seedCursorOffset;
             copy(newTimelineRoot, superblock.timelineRootRef);
             copy(oldDeltaRoot, superblock.rowPositionDeltaRootRef);
@@ -681,7 +712,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     boundary.logicalStateBytes,
                     dataSegmentBytes,
                     metadataBytesAdded,
-                    metaStore.getWalPurgeFloor()
+                    metaStore.getWalPurgeFloor(),
+                    new LiveViewCheckpointTimelineStats()
+                            .of(superblock, checkedAdd(dataSegmentBytes, metadataBytesAdded)),
+                    liveSegmentCount,
+                    obsoleteSegmentBytes
             );
         }
     }
@@ -1100,6 +1135,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final long generation;
         private final long metadataBytesAdded;
         private final int rootsVersioned;
+        private final LiveViewCheckpointTimelineStats stats;
         private final long suffixBreakpointTimestamp;
         private final long suffixRowDelta;
         private final long walPurgeFloor;
@@ -1111,7 +1147,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 long suffixBreakpointTimestamp,
                 long dataBytesAdded,
                 long metadataBytesAdded,
-                long walPurgeFloor
+                long walPurgeFloor,
+                LiveViewCheckpointTimelineStats stats
         ) {
             this.generation = generation;
             this.rootsVersioned = rootsVersioned;
@@ -1120,6 +1157,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.dataBytesAdded = dataBytesAdded;
             this.metadataBytesAdded = metadataBytesAdded;
             this.walPurgeFloor = walPurgeFloor;
+            this.stats = stats;
         }
 
         public long getDataBytesAdded() {
@@ -1136,6 +1174,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         public int getRootsVersioned() {
             return rootsVersioned;
+        }
+
+        /**
+         * @return the shape of the generation this splice committed
+         */
+        public LiveViewCheckpointTimelineStats getStats() {
+            return stats;
         }
 
         /**
@@ -1159,8 +1204,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final long checkpointId;
         private final long dataBytesAdded;
         private final long generation;
+        private final long liveSegmentCount;
         private final long logicalStateBytes;
         private final long metadataBytesAdded;
+        private final long obsoleteSegmentBytes;
+        private final LiveViewCheckpointTimelineStats stats;
         private final long walPurgeFloor;
 
         private Result(
@@ -1169,7 +1217,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 long logicalStateBytes,
                 long dataBytesAdded,
                 long metadataBytesAdded,
-                long walPurgeFloor
+                long walPurgeFloor,
+                LiveViewCheckpointTimelineStats stats,
+                long liveSegmentCount,
+                long obsoleteSegmentBytes
         ) {
             this.generation = generation;
             this.checkpointId = checkpointId;
@@ -1177,6 +1228,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.dataBytesAdded = dataBytesAdded;
             this.metadataBytesAdded = metadataBytesAdded;
             this.walPurgeFloor = walPurgeFloor;
+            this.stats = stats;
+            this.liveSegmentCount = liveSegmentCount;
+            this.obsoleteSegmentBytes = obsoleteSegmentBytes;
         }
 
         public long getCheckpointId() {
@@ -1191,12 +1245,38 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return generation;
         }
 
+        /**
+         * @return data segments a current logical root named when this seal's
+         * lifecycle reconciliation swept the catalogue, or
+         * {@link Numbers#LONG_NULL} when this seal ran no sweep. Reconciliation
+         * runs once per writer per directory, so a steady cadence reports it on
+         * the first seal alone
+         */
+        public long getLiveSegmentCount() {
+            return liveSegmentCount;
+        }
+
         public long getLogicalStateBytes() {
             return logicalStateBytes;
         }
 
         public long getMetadataBytesAdded() {
             return metadataBytesAdded;
+        }
+
+        /**
+         * @return bytes of retired data segments that sweep left on disk, or
+         * {@link Numbers#LONG_NULL} when this seal ran no sweep
+         */
+        public long getObsoleteSegmentBytes() {
+            return obsoleteSegmentBytes;
+        }
+
+        /**
+         * @return the shape of the generation this seal committed
+         */
+        public LiveViewCheckpointTimelineStats getStats() {
+            return stats;
         }
 
         public long getWalPurgeFloor() {

@@ -718,6 +718,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // fed since the root that is actually on disk.
         instance.resetMinSeenTsSinceCheckpoint();
         instance.recordCheckpointTimelineWalPurgeFloor(timelineResult.getWalPurgeFloor());
+        instance.recordCheckpointTimelineStats(timelineResult.getStats());
+        if (timelineResult.getLiveSegmentCount() != Numbers.LONG_NULL) {
+            instance.recordCheckpointGcSweep(
+                    timelineResult.getLiveSegmentCount(),
+                    timelineResult.getObsoleteSegmentBytes()
+            );
+        }
         return timelineResult.getLogicalStateBytes();
     }
 
@@ -3361,6 +3368,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         final WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
         final TableReader reader = session.takeBaseReader();
+        instance.recordCheckpointRepairResume();
         boolean suspended = false;
         try {
             suspended = o3HeadMissReplay(instance, windowFactory, session.getPlan(), reader, false, session, true);
@@ -5380,6 +5388,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 roleLock.unlock();
             }
             instance.recordCheckpointTimelineWalPurgeFloor(result.getWalPurgeFloor());
+            instance.recordCheckpointTimelineStats(result.getStats());
+            instance.recordCheckpointRepairSplice(
+                    result.getRootsVersioned(),
+                    result.getDataBytesAdded() + result.getMetadataBytesAdded()
+            );
             LOG.info().$("live view checkpoint timeline repair published [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", generation=").$(result.getGeneration())
@@ -5390,6 +5403,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", newBytes=").$(result.getDataBytesAdded() + result.getMetadataBytesAdded()).I$();
             return true;
         } catch (Throwable t) {
+            instance.recordCheckpointRepairFailure();
             LOG.critical().$("could not publish live view checkpoint timeline repair [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", highTsExclusive=").$(highTsExclusive)
@@ -5565,7 +5579,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Baseline observability: elapsed micros of this head-checkpoint write
             // (state freeze + root append + generation publish), measured from the
             // cadence-gate clock read above. Surfaced via
-            // live_views().head_checkpoint_write_micros.
+            // live_views().checkpoint_last_write_micros.
             instance.recordCheckpointWriteMicros(engine.getConfiguration().getMicrosecondClock().getTicks() - nowUs);
         } catch (Throwable t) {
             // Derived state: the seal failed, so the head and the cadence counters
@@ -5892,6 +5906,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             instance.forceSetLatestSeenTs(restored.maxTimestamp);
             instance.setLvRowsTotal(restored.effectiveLvRowPosition);
+            instance.recordCheckpointLookupDepth(restored.lookupDepth);
 
             long replayedRows = 0;
             if (restored.maxTimestamp != Long.MAX_VALUE) {
@@ -7578,7 +7593,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // Baseline observability: time bounded generation selection,
                             // root restore, and the (B,F] replay. Recorded once
                             // per LV lifetime regardless of outcome. Surfaced via
-                            // live_views().head_checkpoint_restore_micros.
+                            // live_views().checkpoint_last_restore_micros.
                             final long restoreStartUs = engine.getConfiguration().getMicrosecondClock().getTicks();
                             tryRestoreFromTimeline(instance, getWindowFactory(instance));
                             instance.recordCheckpointRestoreMicros(

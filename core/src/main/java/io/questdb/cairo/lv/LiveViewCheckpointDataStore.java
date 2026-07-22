@@ -114,7 +114,13 @@ public class LiveViewCheckpointDataStore implements Closeable {
             // length: the tree carries one entry per segment however many logical
             // checkpoints reference it.
             segmentDirectory.iterateAll(sweep);
-            return new PurgeResult(sweep.purgedSegments, sweep.failedSegments, sweep.purgedBytes);
+            return new PurgeResult(
+                    sweep.purgedSegments,
+                    sweep.failedSegments,
+                    sweep.purgedBytes,
+                    sweep.liveSegments,
+                    sweep.obsoleteBytes
+            );
         }
     }
 
@@ -390,17 +396,44 @@ public class LiveViewCheckpointDataStore implements Closeable {
 
     public static final class PurgeResult {
         private final int failedSegmentCount;
+        private final int liveSegmentCount;
+        private final long obsoleteBytes;
         private final long purgedBytes;
         private final int purgedSegmentCount;
 
-        private PurgeResult(int purgedSegmentCount, int failedSegmentCount, long purgedBytes) {
+        private PurgeResult(
+                int purgedSegmentCount,
+                int failedSegmentCount,
+                long purgedBytes,
+                int liveSegmentCount,
+                long obsoleteBytes
+        ) {
             this.purgedSegmentCount = purgedSegmentCount;
             this.failedSegmentCount = failedSegmentCount;
             this.purgedBytes = purgedBytes;
+            this.liveSegmentCount = liveSegmentCount;
+            this.obsoleteBytes = obsoleteBytes;
         }
 
         public int getFailedSegmentCount() {
             return failedSegmentCount;
+        }
+
+        /**
+         * @return data segments a current logical root still names, counted over
+         * the same ordered walk the sweep makes
+         */
+        public int getLiveSegmentCount() {
+            return liveSegmentCount;
+        }
+
+        /**
+         * @return bytes held by retired segments this sweep could not unlink -
+         * still protected by the fallback slot or a reader pin, or failed to
+         * remove. The collection lag in bytes
+         */
+        public long getObsoleteBytes() {
+            return obsoleteBytes;
         }
 
         public long getPurgedBytes() {
@@ -466,7 +499,9 @@ public class LiveViewCheckpointDataStore implements Closeable {
     private final class PurgeSweep implements LiveViewCheckpointSegmentDirectoryReader.Visitor {
 
         private int failedSegments;
+        private int liveSegments;
         private long minPinnedGeneration;
+        private long obsoleteBytes;
         private long oldestValidSlotGeneration;
         private long purgedBytes;
         private int purgedSegments;
@@ -474,10 +509,16 @@ public class LiveViewCheckpointDataStore implements Closeable {
         @Override
         public void onEntry(LiveViewCheckpointSegmentDirectoryEntry entry) {
             final long segmentId = entry.segmentId;
+            if (entry.referenceCount != 0) {
+                liveSegments++;
+            }
             if (entry.referenceCount != 0 || isCandidateOwned(segmentId)) {
                 return;
             }
             if (oldestValidSlotGeneration < entry.retireGeneration || minPinnedGeneration <= entry.retireGeneration) {
+                // Retired but still protected by a slot or a reader, so its bytes
+                // are garbage this sweep may not collect yet.
+                obsoleteBytes = checkedAdd(obsoleteBytes, entry.fileLength);
                 return;
             }
             try (Path path = new Path()) {
@@ -490,6 +531,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
                     purgedBytes = checkedAdd(purgedBytes, entry.fileLength);
                 } else {
                     failedSegments++;
+                    obsoleteBytes = checkedAdd(obsoleteBytes, entry.fileLength);
                     LOG.error()
                             .$("could not purge live view checkpoint data segment [path=")
                             .$(path)
@@ -504,6 +546,8 @@ public class LiveViewCheckpointDataStore implements Closeable {
             purgedBytes = 0;
             purgedSegments = 0;
             failedSegments = 0;
+            liveSegments = 0;
+            obsoleteBytes = 0;
         }
     }
 }

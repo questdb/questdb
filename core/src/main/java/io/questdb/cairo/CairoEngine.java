@@ -1020,6 +1020,18 @@ public class CairoEngine implements Closeable, WriterSource {
                                                 reconciliation.getWalPurgeFloor()
                                         );
                                     }
+                                    // The adopted generation's shape, and what the
+                                    // purge sweep found while walking its segment
+                                    // catalogue. Both stay NULL/empty when no valid
+                                    // slot was adopted, which is the disposition of a
+                                    // view that has never sealed a root.
+                                    if (reconciliation.getStats() != null) {
+                                        instance.recordCheckpointTimelineStats(reconciliation.getStats());
+                                        instance.recordCheckpointGcSweep(
+                                                reconciliation.getLiveSegmentCount(),
+                                                reconciliation.getObsoleteSegmentBytes()
+                                        );
+                                    }
                                     // Publish the durable checkpoint head from the
                                     // generation's base coordinate so live_views()
                                     // reports a real head between restart and the

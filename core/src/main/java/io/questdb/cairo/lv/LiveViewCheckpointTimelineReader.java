@@ -62,6 +62,12 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
     private final LiveViewCheckpointTimelineEntry scratchEntry = new LiveViewCheckpointTimelineEntry();
     private final long[] segReaderSegId = new long[SEGMENT_CACHE_SIZE];
     private final LiveViewCheckpointMetaSegmentReader[] segReaders = new LiveViewCheckpointMetaSegmentReader[SEGMENT_CACHE_SIZE];
+    // Metadata pages the last point lookup - findExact, last, predecessor, and
+    // floor through them - decoded on its way down, which is the tree's height at
+    // that root. Observability only: the catalogue surfaces it as
+    // checkpoint_last_lookup_depth, where a value that climbs with checkpoint
+    // count rather than with its logarithm is the regression to catch.
+    private int lastLookupDepth;
     private LiveViewCheckpointTimelineNode[] nodePool = new LiveViewCheckpointTimelineNode[0];
     private int segReaderClock;
 
@@ -86,6 +92,7 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
      * {@code out} and returns true when the exact entry exists.
      */
     public boolean findExact(@NotNull LiveViewCheckpointPageRef rootRef, long maxTimestamp, long checkpointId, @NotNull LiveViewCheckpointTimelineEntry out) {
+        lastLookupDepth = 0;
         if (rootRef.isNull()) {
             return false;
         }
@@ -94,6 +101,7 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
         long len = rootRef.getLength();
         while (true) {
             openAndDecode(seg, off, len, navNode);
+            lastLookupDepth++;
             if (navNode.isLeaf()) {
                 final int idx = navNode.findEntry(maxTimestamp, checkpointId);
                 if (idx < 0) {
@@ -123,6 +131,14 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
     }
 
     /**
+     * @return metadata pages the last point lookup decoded, or 0 when none has
+     * run against this reader or the root was null
+     */
+    public int getLastLookupDepth() {
+        return lastLookupDepth;
+    }
+
+    /**
      * Visits every entry in ascending key order.
      */
     public void iterateAll(@NotNull LiveViewCheckpointPageRef rootRef, @NotNull Visitor visitor) {
@@ -138,6 +154,7 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
      * boundary is strictly above the current head before it freezes any state.
      */
     public boolean last(@NotNull LiveViewCheckpointPageRef rootRef, @NotNull LiveViewCheckpointTimelineEntry out) {
+        lastLookupDepth = 0;
         if (rootRef.isNull()) {
             return false;
         }
@@ -146,6 +163,7 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
         long length = rootRef.getLength();
         while (true) {
             openAndDecode(segmentId, offset, length, navNode);
+            lastLookupDepth++;
             final int count = navNode.count();
             if (count == 0) {
                 throw LiveViewCheckpointMetadata.invalid("timeline node is empty");
@@ -182,6 +200,7 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
      * above {@code correctionTimestamp}.
      */
     public boolean predecessor(@NotNull LiveViewCheckpointPageRef rootRef, long correctionTimestamp, @NotNull LiveViewCheckpointTimelineEntry out) {
+        lastLookupDepth = 0;
         if (rootRef.isNull()) {
             return false;
         }
@@ -190,6 +209,7 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
         long len = rootRef.getLength();
         while (true) {
             openAndDecode(seg, off, len, navNode);
+            lastLookupDepth++;
             if (navNode.isLeaf()) {
                 final int idx = navNode.leafLowerBoundByTimestamp(correctionTimestamp) - 1;
                 if (idx < 0) {

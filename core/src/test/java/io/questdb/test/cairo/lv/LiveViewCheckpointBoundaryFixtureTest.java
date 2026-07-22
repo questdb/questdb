@@ -341,6 +341,91 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
     }
 
     @Test
+    public void testRepairObservabilityReportsTheSpliceItPublished() throws Exception {
+        // The repair columns against the same fixture the bounds are measured
+        // on. What they have to show is the distinction the splice exists to
+        // make: a correction older than every boundary publishes a new
+        // generation over the SAME logical entry set, re-versioning roots in
+        // [C, H) rather than adding any. A repair that retired the timeline and
+        // re-sealed would move both numbers, so asserting them together is what
+        // separates the two.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+
+        final String viewSql = "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '"
+                + LOCALIZATION_RANGE_WIDTH_SECONDS + "' SECOND PRECEDING AND CURRENT ROW) AS s FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 1; commit <= LOCALIZATION_HISTORY_COMMITS; commit++) {
+                    setCurrentMicros(commit * 200_000L);
+                    final String rowTs = secondsTs(commit * 10);
+                    execute("INSERT INTO base (ts, sym, x) VALUES " +
+                            "('" + rowTs + "', 'a', " + commit + "), " +
+                            "('" + rowTs + "', 'b', " + (commit + 100) + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+
+                // A cadence that has published no splice reports zeros, not the
+                // NULLs an absent timeline would.
+                assertQuery("SELECT checkpoint_repair_in_progress, checkpoint_repair_correction_timestamp, " +
+                        "checkpoint_repair_high_timestamp, checkpoint_repair_roots_versioned, " +
+                        "checkpoint_repair_new_bytes, checkpoint_repair_resumes, checkpoint_repair_failures " +
+                        "FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_repair_in_progress\tcheckpoint_repair_correction_timestamp\t" +
+                                "checkpoint_repair_high_timestamp\tcheckpoint_repair_roots_versioned\t" +
+                                "checkpoint_repair_new_bytes\tcheckpoint_repair_resumes\t" +
+                                "checkpoint_repair_failures\n" +
+                                "false\t\t\t0\t0\t0\t0\n");
+
+                final long[] before = lv.getCheckpointTimeline();
+
+                setCurrentMicros((LOCALIZATION_HISTORY_COMMITS + 1) * 200_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('" + secondsTs(LOCALIZATION_O3_SECOND) + "', 'a', 9000), " +
+                        "('" + secondsTs(LOCALIZATION_O3_SECOND) + "', 'b', 9100)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertViewMatchesRecompute(viewSql);
+
+                final long[] after = lv.getCheckpointTimeline();
+                Assert.assertEquals(
+                        "a splice re-versions roots in place rather than adding or dropping boundaries",
+                        before[LiveViewInstance.CHECKPOINT_TIMELINE_ENTRIES],
+                        after[LiveViewInstance.CHECKPOINT_TIMELINE_ENTRIES]
+                );
+                Assert.assertEquals(
+                        "the splice publishes exactly one new generation",
+                        before[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] + 1,
+                        after[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION]
+                );
+
+                // The repair converged below the runtime frontier and finished
+                // inside one turn, so nothing is in flight, nothing resumed and
+                // nothing failed - but roots were versioned and bytes written.
+                assertQuery("SELECT checkpoint_repair_in_progress, checkpoint_repair_roots_versioned > 0 AS versioned, " +
+                        "checkpoint_repair_new_bytes > 0 AS wrote_bytes, checkpoint_repair_resumes, " +
+                        "checkpoint_repair_failures FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_repair_in_progress\tversioned\twrote_bytes\t" +
+                                "checkpoint_repair_resumes\tcheckpoint_repair_failures\n" +
+                                "false\ttrue\ttrue\t0\t0\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRowsDependencyBoundsADecimalAvgRebuild() throws Exception {
         // The same arm on the ROWS side, through avg() rather than sum(), which divides the
         // accumulator by the frame's own count. Both converge exactly, so the quotient does

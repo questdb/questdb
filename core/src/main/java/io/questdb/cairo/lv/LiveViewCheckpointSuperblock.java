@@ -57,8 +57,8 @@ import java.io.Closeable;
  * Each slot carries only authoritative metadata - generation and history/definition
  * identity, the two seqTxn coordinates ({@code normalizedBaseSeqTxn} in base-txn
  * space, {@code coveredLvSeqTxn} in live-view-writer space), the three root
- * references into metadata segments, the next-id counters, and physical byte
- * totals - plus a trailing CRC32. Publication durability follows
+ * references into metadata segments, the next-id counters, and the logical and
+ * physical byte totals - plus a trailing CRC32. Publication durability follows
  * {@code cairo.commit.mode}: under {@code NOSYNC} the write ordering holds across
  * a process crash but not power loss, matching the rest of the checkpoint path.
  * <p>
@@ -79,24 +79,25 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * Byte offset of the trailing CRC32 within a slot. The checksum covers
      * {@link #SLOT_CRC_COVERAGE} bytes from the slot base.
      */
-    public static final int SLOT_CRC_OFFSET = 156;
+    public static final int SLOT_CRC_OFFSET = 172;
     /**
      * Bytes of a slot the CRC32 covers: everything from the magic through the
-     * last root reference, excluding the CRC field itself.
+     * last accounting total, excluding the CRC field itself.
      */
     public static final int SLOT_CRC_COVERAGE = SLOT_CRC_OFFSET;
     public static final int SLOT_DATA_BYTES_OFFSET = 80;
     public static final int SLOT_DEFINITION_TXN_OFFSET = 24;
-    public static final int SLOT_FORMAT_VERSION = 1;
+    public static final int SLOT_FORMAT_VERSION = 2;
     public static final int SLOT_FORMAT_VERSION_OFFSET = 8;
     public static final int SLOT_GENERATION_OFFSET = 16;
     public static final int SLOT_HISTORY_EPOCH_OFFSET = 32;
+    public static final int SLOT_LOGICAL_STATE_BYTES_OFFSET = 156;
     /**
      * Magic marking a superblock slot: ASCII {@code "LVTMLN"} with a trailing
      * version nibble. A distinctive 8-byte value so a foreign or zeroed slot is
      * rejected before the checksum runs.
      */
-    public static final long SLOT_MAGIC = 0x4C56_544D_4C4E_0001L;
+    public static final long SLOT_MAGIC = 0x4C56_544D_4C4E_0002L;
     /**
      * The magic without its version nibble. A slot matching this under
      * {@link #SLOT_MAGIC_FAMILY_MASK} was written as a timeline superblock by
@@ -110,6 +111,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public static final int SLOT_NEXT_CHECKPOINT_ID_OFFSET = 56;
     public static final int SLOT_NEXT_SEGMENT_ID_OFFSET = 64;
     public static final int SLOT_NORMALIZED_BASE_SEQTXN_OFFSET = 40;
+    public static final int SLOT_ROW_POSITION_DELTA_BYTES_OFFSET = 164;
     public static final int SLOT_ROW_POSITION_DELTA_ROOT_REF_OFFSET = 108;
     /**
      * Byte offset of the seed sweep's resume cursor. It holds the base-cursor row
@@ -122,7 +124,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     /**
      * Fixed size of one slot. The file is exactly {@link #FILE_SIZE} = two slots.
      */
-    public static final int SLOT_SIZE = 160;
+    public static final int SLOT_SIZE = 176;
     public static final int SLOT_TIMELINE_ROOT_REF_OFFSET = 88;
     /**
      * Total size of the {@code _timeline} file: two slots back to back.
@@ -135,10 +137,26 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public long definitionTxn;
     public long generation;
     public long historyEpoch;
+    /**
+     * Running sum of {@code logicalStateBytes} over every current logical root:
+     * what this generation's state would cost if no root shared a page with the
+     * root beside it. Paired with {@link #metadataBytes} + {@link #dataBytes},
+     * which is what the timeline actually wrote, it is the sharing the persistent
+     * chunk layer buys. A cadence seal adds the appended root's value; a repair
+     * adds the signed difference of every root it re-versions.
+     */
+    public long logicalStateBytes;
     public long metadataBytes;
     public long nextCheckpointId;
     public long nextSegmentId;
     public long normalizedBaseSeqTxn;
+    /**
+     * The share of {@link #metadataBytes} the persistent row-position difference
+     * index wrote. Only a repair with a non-zero suffix delta adds to it, so it
+     * prices what keeping an unchanged suffix's cumulative recovery coordinate
+     * exact costs against the rest of the metadata.
+     */
+    public long rowPositionDeltaBytes;
     public final LiveViewCheckpointPageRef rowPositionDeltaRootRef = new LiveViewCheckpointPageRef();
     /**
      * The seed sweep's resume cursor for this generation: the row offset the
@@ -428,6 +446,8 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         nextSegmentId = mem.getLong(base + SLOT_NEXT_SEGMENT_ID_OFFSET);
         metadataBytes = mem.getLong(base + SLOT_METADATA_BYTES_OFFSET);
         dataBytes = mem.getLong(base + SLOT_DATA_BYTES_OFFSET);
+        logicalStateBytes = mem.getLong(base + SLOT_LOGICAL_STATE_BYTES_OFFSET);
+        rowPositionDeltaBytes = mem.getLong(base + SLOT_ROW_POSITION_DELTA_BYTES_OFFSET);
         seedCursorOffset = mem.getLong(base + SLOT_SEED_CURSOR_OFFSET_OFFSET);
         timelineRootRef.readFrom(mem, base + SLOT_TIMELINE_ROOT_REF_OFFSET);
         rowPositionDeltaRootRef.readFrom(mem, base + SLOT_ROW_POSITION_DELTA_ROOT_REF_OFFSET);
@@ -444,6 +464,8 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         nextSegmentId = 0;
         metadataBytes = 0;
         dataBytes = 0;
+        logicalStateBytes = 0;
+        rowPositionDeltaBytes = 0;
         seedCursorOffset = Numbers.LONG_NULL;
         timelineRootRef.clear();
         rowPositionDeltaRootRef.clear();
@@ -498,6 +520,8 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         mem.putLong(base + SLOT_NEXT_SEGMENT_ID_OFFSET, nextSegmentId);
         mem.putLong(base + SLOT_METADATA_BYTES_OFFSET, metadataBytes);
         mem.putLong(base + SLOT_DATA_BYTES_OFFSET, dataBytes);
+        mem.putLong(base + SLOT_LOGICAL_STATE_BYTES_OFFSET, logicalStateBytes);
+        mem.putLong(base + SLOT_ROW_POSITION_DELTA_BYTES_OFFSET, rowPositionDeltaBytes);
         mem.putLong(base + SLOT_SEED_CURSOR_OFFSET_OFFSET, seedCursorOffset);
         timelineRootRef.writeTo(mem, base + SLOT_TIMELINE_ROOT_REF_OFFSET);
         rowPositionDeltaRootRef.writeTo(mem, base + SLOT_ROW_POSITION_DELTA_ROOT_REF_OFFSET);

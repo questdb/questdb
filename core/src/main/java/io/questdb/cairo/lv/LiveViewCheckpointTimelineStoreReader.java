@@ -352,6 +352,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             throw invalid("logical root not found [maxTimestamp=").put(maxTimestamp)
                     .put(", checkpointId=").put(checkpointId).put(']');
         }
+        // Read before anything else navigates the tree and overwrites it.
+        final int lookupDepth = timelineReader.getLastLookupDepth();
         root.of(checkpointsDir, entry.rootRef);
         if (root.getCheckpointId() != checkpointId
                 || root.getMaxTimestamp() != maxTimestamp
@@ -381,7 +383,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 entry.checkpointId,
                 effectiveLvRowPosition,
                 entry.logicalStateBytes,
-                metaStore.getSuperblock().seedCursorOffset
+                metaStore.getSuperblock().seedCursorOffset,
+                lookupDepth
         );
     }
 
@@ -623,6 +626,11 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         public final long effectiveLvRowPosition;
         public final long generation;
         public final long logicalStateBytes;
+        /**
+         * Metadata pages the point lookup that found this root decoded, which is
+         * the timeline tree's height.
+         */
+        public final int lookupDepth;
         public final long maxTimestamp;
         public final long normalizedBaseSeqTxn;
         /**
@@ -641,7 +649,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 long checkpointId,
                 long effectiveLvRowPosition,
                 long logicalStateBytes,
-                long seedCursorOffset
+                long seedCursorOffset,
+                int lookupDepth
         ) {
             this.generation = generation;
             this.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
@@ -652,6 +661,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             this.effectiveLvRowPosition = effectiveLvRowPosition;
             this.logicalStateBytes = logicalStateBytes;
             this.seedCursorOffset = seedCursorOffset;
+            this.lookupDepth = lookupDepth;
         }
     }
 }

@@ -118,7 +118,7 @@ public final class LiveViewCheckpointLifecycle {
             LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
             if (!ff.exists(timelinePath.$())) {
                 final CleanupResult cleanup = cleanupOrphans(configuration, checkpointsDir, 0);
-                return result(false, -1, Numbers.LONG_NULL, cleanup, 0, 0, repairSweep);
+                return result(false, -1, Numbers.LONG_NULL, cleanup, null, null, repairSweep);
             }
         }
 
@@ -126,8 +126,8 @@ public final class LiveViewCheckpointLifecycle {
         long nextSegmentIdCeiling = 0;
         long walPurgeFloor = -1;
         long normalizedBaseSeqTxn = Numbers.LONG_NULL;
-        int purgedSegments = 0;
-        int failedPurges = 0;
+        LiveViewCheckpointDataStore.PurgeResult purgeResult = null;
+        LiveViewCheckpointTimelineStats stats = null;
         try (LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)) {
             metaStore.of(checkpointsDir);
             if (metaStore.isValid()) {
@@ -138,14 +138,16 @@ public final class LiveViewCheckpointLifecycle {
                     nextSegmentIdCeiling = superblock.getNextSegmentIdCeiling();
                     walPurgeFloor = metaStore.getWalPurgeFloor();
                     normalizedBaseSeqTxn = superblock.normalizedBaseSeqTxn;
+                    // This reconciliation publishes no root of its own, so the
+                    // adopted generation's last publication cost is not its to
+                    // report.
+                    stats = new LiveViewCheckpointTimelineStats().of(superblock, 0);
                     try (LiveViewCheckpointDataStore dataStore = new LiveViewCheckpointDataStore(
                             configuration,
                             metaStore
                     )) {
                         dataStore.of(checkpointsDir);
-                        final LiveViewCheckpointDataStore.PurgeResult purgeResult = dataStore.purge();
-                        purgedSegments = purgeResult.getPurgedSegmentCount();
-                        failedPurges = purgeResult.getFailedSegmentCount();
+                        purgeResult = dataStore.purge();
                     }
                 }
             }
@@ -167,15 +169,15 @@ public final class LiveViewCheckpointLifecycle {
                     0,
                     0,
                     0,
-                    0,
-                    0,
+                    null,
+                    null,
                     repairSweep.getDiscardedRepairCount(),
                     repairSweep.getFailedCount()
             );
         }
 
         final CleanupResult cleanup = cleanupOrphans(configuration, checkpointsDir, nextSegmentIdCeiling);
-        return result(false, walPurgeFloor, normalizedBaseSeqTxn, cleanup, purgedSegments, failedPurges, repairSweep);
+        return result(false, walPurgeFloor, normalizedBaseSeqTxn, cleanup, purgeResult, stats, repairSweep);
     }
 
     /** Removes final-name orphans after a new slot durably advances past them. */
@@ -493,8 +495,8 @@ public final class LiveViewCheckpointLifecycle {
             long walPurgeFloor,
             long normalizedBaseSeqTxn,
             CleanupResult cleanup,
-            int purgedSegments,
-            int failedPurges,
+            @Nullable LiveViewCheckpointDataStore.PurgeResult purge,
+            @Nullable LiveViewCheckpointTimelineStats stats,
             LiveViewCheckpointRepairState.SweepResult repairSweep
     ) {
         return new ReconcileResult(
@@ -505,8 +507,8 @@ public final class LiveViewCheckpointLifecycle {
                 cleanup.removed,
                 cleanup.failed,
                 cleanup.finalOrphanUpperBound,
-                purgedSegments,
-                failedPurges,
+                purge,
+                stats,
                 repairSweep.getDiscardedRepairCount(),
                 repairSweep.getFailedCount()
         );
@@ -524,9 +526,9 @@ public final class LiveViewCheckpointLifecycle {
 
     public static final class ReconcileResult {
         private static final ReconcileResult FORMAT_RESET =
-                new ReconcileResult(false, true, -1, Numbers.LONG_NULL, 0, 0, 0, 0, 0, 0, 0);
+                new ReconcileResult(false, true, -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0);
         private static final ReconcileResult NOT_OWNER =
-                new ReconcileResult(false, false, -1, Numbers.LONG_NULL, 0, 0, 0, 0, 0, 0, 0);
+                new ReconcileResult(false, false, -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0);
         private final int discardedRepairCount;
         private final boolean epochReplaced;
         private final int failedOrphanCount;
@@ -534,9 +536,12 @@ public final class LiveViewCheckpointLifecycle {
         private final int failedRepairCount;
         private final long finalOrphanUpperBound;
         private final boolean formatReset;
+        private final int liveSegmentCount;
         private final long normalizedBaseSeqTxn;
+        private final long obsoleteSegmentBytes;
         private final int purgedSegmentCount;
         private final int removedOrphanCount;
+        private final LiveViewCheckpointTimelineStats stats;
         private final long walPurgeFloor;
 
         private ReconcileResult(
@@ -547,8 +552,8 @@ public final class LiveViewCheckpointLifecycle {
                 int removedOrphanCount,
                 int failedOrphanCount,
                 long finalOrphanUpperBound,
-                int purgedSegmentCount,
-                int failedPurgeCount,
+                @Nullable LiveViewCheckpointDataStore.PurgeResult purge,
+                @Nullable LiveViewCheckpointTimelineStats stats,
                 int discardedRepairCount,
                 int failedRepairCount
         ) {
@@ -559,8 +564,11 @@ public final class LiveViewCheckpointLifecycle {
             this.removedOrphanCount = removedOrphanCount;
             this.failedOrphanCount = failedOrphanCount;
             this.finalOrphanUpperBound = finalOrphanUpperBound;
-            this.purgedSegmentCount = purgedSegmentCount;
-            this.failedPurgeCount = failedPurgeCount;
+            this.purgedSegmentCount = purge == null ? 0 : purge.getPurgedSegmentCount();
+            this.failedPurgeCount = purge == null ? 0 : purge.getFailedSegmentCount();
+            this.liveSegmentCount = purge == null ? 0 : purge.getLiveSegmentCount();
+            this.obsoleteSegmentBytes = purge == null ? 0 : purge.getObsoleteBytes();
+            this.stats = stats;
             this.discardedRepairCount = discardedRepairCount;
             this.failedRepairCount = failedRepairCount;
         }
@@ -593,6 +601,15 @@ public final class LiveViewCheckpointLifecycle {
         }
 
         /**
+         * @return data segments a current logical root still names, as counted by
+         * the purge sweep this reconciliation ran. Zero when no valid slot was
+         * adopted, so the sweep never walked the catalogue
+         */
+        public int getLiveSegmentCount() {
+            return liveSegmentCount;
+        }
+
+        /**
          * @return the selected generation's {@code normalizedBaseSeqTxn}, or
          * {@link Numbers#LONG_NULL} when no valid slot was adopted. This is the
          * base-transaction coordinate every current root is validated through, so
@@ -603,12 +620,28 @@ public final class LiveViewCheckpointLifecycle {
             return normalizedBaseSeqTxn;
         }
 
+        /**
+         * @return bytes of retired data segments the sweep left on disk, still
+         * protected by the fallback slot or a reader pin
+         */
+        public long getObsoleteSegmentBytes() {
+            return obsoleteSegmentBytes;
+        }
+
         public int getPurgedSegmentCount() {
             return purgedSegmentCount;
         }
 
         public int getRemovedOrphanCount() {
             return removedOrphanCount;
+        }
+
+        /**
+         * @return the shape of the adopted generation, or null when this
+         * reconciliation adopted none
+         */
+        public @Nullable LiveViewCheckpointTimelineStats getStats() {
+            return stats;
         }
 
         public long getWalPurgeFloor() {

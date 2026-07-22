@@ -68,21 +68,53 @@ import io.questdb.std.ObjList;
  * {@code last_processed_seqtxn} and {@code applied_watermark} are
  * surfaced as debug columns; both are useful for operators tracking
  * refresh-worker progress before the corresponding {@code lvConsumed} flow
- * catches up. Three head-checkpoint columns trail the documented column set as
- * additional debug surface for head checkpoints.
+ * catches up.
  * {@code o3_resume_replay_rows} and {@code o3_boundary_replay_rows} trail after
  * them as O3-replay observability: they split the rows an O3 re-emits by path -
  * bounded resume-from-anchor replays versus the residual O(view age) boundary
  * rebuild - so the two are disjoint. A resume count that grows while the boundary
  * count stays flat is the checkpoint timeline bounding O3 cost as intended; a
  * growing boundary count flags late rows the timeline holds no boundary below.
- * <p>
- * Three cost columns close the set. {@code head_checkpoint_write_micros} and
- * {@code head_checkpoint_restore_micros} time the most recent checkpoint seal and
- * the restart restore; both are NULL until the event first runs.
  * {@code o3_replay_scan_rows} counts base rows the O3 replay paths scanned, which
- * equals the emit counters without a WHERE filter and exceeds them with one. The
- * last one is an in-memory counter that resets on restart.
+ * equals the emit counters without a WHERE filter and exceeds them with one. All
+ * three are in-memory counters that reset on restart.
+ * <p>
+ * The {@code checkpoint_*} group describes the versioned checkpoint timeline, and
+ * splits four ways.
+ * <ul>
+ *     <li>The generation's shape - {@code checkpoint_timeline_generation},
+ *     {@code _entries}, {@code _normalized_base_seqtxn}, {@code _logical_bytes},
+ *     {@code _physical_bytes}, {@code _shared_bytes}, {@code _sharing_ratio} and
+ *     {@code _row_position_delta_bytes} - read off the superblock whichever seam
+ *     last committed or adopted a generation: a cadence seal, a repair splice or
+ *     startup reconciliation. Logical bytes is what the roots would cost as
+ *     complete independent state images and physical bytes is what the timeline
+ *     actually wrote, so the difference between them is the sharing the
+ *     persistent chunk layer and the copy-on-write trees buy. All are NULL for a
+ *     view holding no published generation.</li>
+ *     <li>Collection - {@code checkpoint_data_segment_count},
+ *     {@code checkpoint_obsolete_segment_bytes},
+ *     {@code checkpoint_oldest_pinned_generation} and
+ *     {@code checkpoint_gc_lag_generations}. The first two come from the ordered
+ *     catalogue walk the purge sweep makes, which runs at startup and at a
+ *     retrying publication rather than per seal, so they carry the last sweep's
+ *     verdict. The last two are per-publication: the A/B pair retains the
+ *     previous generation as its recovery fallback, so a healthy lag is 1.</li>
+ *     <li>Cost - {@code checkpoint_last_write_micros},
+ *     {@code checkpoint_last_restore_micros},
+ *     {@code checkpoint_last_write_new_bytes} and
+ *     {@code checkpoint_last_lookup_depth}. The last one is the tree height a
+ *     point lookup descended, which should track the logarithm of the checkpoint
+ *     count rather than the count.</li>
+ *     <li>Localized out-of-order repair - {@code checkpoint_repair_in_progress}
+ *     plus the bounds {@code _correction_timestamp} ({@code C}),
+ *     {@code _low_timestamp} ({@code L}) and {@code _high_timestamp} ({@code H},
+ *     NULL when the repair converges only at EOF), which are populated while a
+ *     repair is suspended across refresh turns. The counters
+ *     {@code checkpoint_repair_roots_versioned}, {@code _new_bytes},
+ *     {@code _resumes} and {@code _failures} are lifetime totals and reset on
+ *     restart.</li>
+ * </ul>
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
 
@@ -120,16 +152,34 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
     private static class LiveViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_APPLIED_WATERMARK = 17;
-        private static final int COLUMN_SEED_TARGET_SEQTXN = 21;
         private static final int COLUMN_BASE_TABLE_NAME = 2;
         private static final int COLUMN_BELOW_LOWER_BOUND_COUNT = 13;
+        private static final int COLUMN_CHECKPOINT_DATA_SEGMENT_COUNT = 33;
+        private static final int COLUMN_CHECKPOINT_GC_LAG_GENERATIONS = 36;
+        private static final int COLUMN_CHECKPOINT_LAST_LOOKUP_DEPTH = 40;
+        private static final int COLUMN_CHECKPOINT_LAST_RESTORE_MICROS = 38;
+        private static final int COLUMN_CHECKPOINT_LAST_WRITE_MICROS = 37;
+        private static final int COLUMN_CHECKPOINT_LAST_WRITE_NEW_BYTES = 39;
+        private static final int COLUMN_CHECKPOINT_OBSOLETE_SEGMENT_BYTES = 34;
+        private static final int COLUMN_CHECKPOINT_OLDEST_PINNED_GENERATION = 35;
+        private static final int COLUMN_CHECKPOINT_REPAIR_CORRECTION_TIMESTAMP = 42;
+        private static final int COLUMN_CHECKPOINT_REPAIR_FAILURES = 48;
+        private static final int COLUMN_CHECKPOINT_REPAIR_HIGH_TIMESTAMP = 44;
+        private static final int COLUMN_CHECKPOINT_REPAIR_IN_PROGRESS = 41;
+        private static final int COLUMN_CHECKPOINT_REPAIR_LOW_TIMESTAMP = 43;
+        private static final int COLUMN_CHECKPOINT_REPAIR_NEW_BYTES = 46;
+        private static final int COLUMN_CHECKPOINT_REPAIR_RESUMES = 47;
+        private static final int COLUMN_CHECKPOINT_REPAIR_ROOTS_VERSIONED = 45;
+        private static final int COLUMN_CHECKPOINT_TIMELINE_ENTRIES = 26;
+        private static final int COLUMN_CHECKPOINT_TIMELINE_GENERATION = 25;
+        private static final int COLUMN_CHECKPOINT_TIMELINE_LOGICAL_BYTES = 28;
+        private static final int COLUMN_CHECKPOINT_TIMELINE_NORMALIZED_BASE_SEQTXN = 27;
+        private static final int COLUMN_CHECKPOINT_TIMELINE_PHYSICAL_BYTES = 29;
+        private static final int COLUMN_CHECKPOINT_TIMELINE_ROW_POSITION_DELTA_BYTES = 32;
+        private static final int COLUMN_CHECKPOINT_TIMELINE_SHARED_BYTES = 30;
+        private static final int COLUMN_CHECKPOINT_TIMELINE_SHARING_RATIO = 31;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL = 6;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL_UNIT = 7;
-        private static final int COLUMN_HEAD_CHECKPOINT_LV_SEQTXN = 22;
-        private static final int COLUMN_HEAD_CHECKPOINT_MAX_TS = 23;
-        private static final int COLUMN_HEAD_CHECKPOINT_RESTORE_MICROS = 28;
-        private static final int COLUMN_HEAD_CHECKPOINT_STATE_BYTES = 24;
-        private static final int COLUMN_HEAD_CHECKPOINT_WRITE_MICROS = 27;
         private static final int COLUMN_INVALIDATION_REASON = 5;
         private static final int COLUMN_IN_MEMORY_INTERVAL = 8;
         private static final int COLUMN_IN_MEMORY_INTERVAL_UNIT = 9;
@@ -139,10 +189,11 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_LAG_SEQTXN = 14;
         private static final int COLUMN_LAST_PROCESSED_SEQTXN = 16;
         private static final int COLUMN_LV_CONSUMED_SEQTXN = 18;
-        private static final int COLUMN_O3_BOUNDARY_REPLAY_ROWS = 26;
+        private static final int COLUMN_O3_BOUNDARY_REPLAY_ROWS = 23;
         private static final int COLUMN_O3_REJECTED_COUNT = 12;
-        private static final int COLUMN_O3_REPLAY_SCAN_ROWS = 29;
-        private static final int COLUMN_O3_RESUME_REPLAY_ROWS = 25;
+        private static final int COLUMN_O3_REPLAY_SCAN_ROWS = 24;
+        private static final int COLUMN_O3_RESUME_REPLAY_ROWS = 22;
+        private static final int COLUMN_SEED_TARGET_SEQTXN = 21;
         private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 19;
         private static final int COLUMN_VIEW_NAME = 0;
         private static final int COLUMN_VIEW_SQL = 3;
@@ -229,6 +280,36 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                 private LiveViewInstance instance;
 
                 @Override
+                public boolean getBool(int col) {
+                    if (instance.isStub()) {
+                        return false;
+                    }
+                    if (col == COLUMN_CHECKPOINT_REPAIR_IN_PROGRESS) {
+                        return instance.getCheckpointRepair()[LiveViewInstance.CHECKPOINT_REPAIR_IN_PROGRESS] != 0;
+                    }
+                    return false;
+                }
+
+                @Override
+                public double getDouble(int col) {
+                    if (instance.isStub() || col != COLUMN_CHECKPOINT_TIMELINE_SHARING_RATIO) {
+                        return Double.NaN;
+                    }
+                    // Share of the logical state the timeline did not have to
+                    // write, so 0 means every root paid for its own complete
+                    // image. NULL rather than 0 while no generation exists, which
+                    // is a different statement from "shares nothing".
+                    final long[] timeline = instance.getCheckpointTimeline();
+                    final long logical = timeline[LiveViewInstance.CHECKPOINT_TIMELINE_LOGICAL_BYTES];
+                    if (timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                            || logical <= 0) {
+                        return Double.NaN;
+                    }
+                    final long physical = timeline[LiveViewInstance.CHECKPOINT_TIMELINE_PHYSICAL_BYTES];
+                    return (double) Math.max(0, logical - physical) / logical;
+                }
+
+                @Override
                 public long getLong(int col) {
                     if (instance.isStub()) {
                         // The stub has a null definition and default state; every
@@ -295,41 +376,109 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_LAST_PROCESSED_SEQTXN -> instance.getLastProcessedSeqTxn();
                         case COLUMN_APPLIED_WATERMARK -> instance.getStateReader().getAppliedWatermark();
                         case COLUMN_LV_CONSUMED_SEQTXN -> instance.getStateReader().getLvConsumedSeqTxn();
-                        case COLUMN_HEAD_CHECKPOINT_LV_SEQTXN -> instance.getHeadCheckpointLvSeqTxn();
-                        case COLUMN_HEAD_CHECKPOINT_MAX_TS -> {
-                            // Stored in base-table timestamp units; surface as TIMESTAMP_MICRO,
-                            // identity for MICRO bases and NS-to-MICRO rounding for NS bases.
-                            // LONG_NULL passes through unchanged so operators see a clear
-                            // "no head" sentinel.
-                            long raw = instance.getHeadCheckpointMaxTs();
-                            yield raw == Numbers.LONG_NULL ? Numbers.LONG_NULL :
-                                    ColumnType
-                                            .getTimestampDriver(definition.getBaseTimestampType())
-                                            .toMicros(raw);
+                        // Shape of the newest published timeline generation, read
+                        // as one tuple so a fresh generation number cannot pair
+                        // with the previous generation's byte totals. Every field
+                        // is NULL for a view holding no published generation.
+                        case COLUMN_CHECKPOINT_TIMELINE_GENERATION ->
+                                instance.getCheckpointTimeline()[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION];
+                        case COLUMN_CHECKPOINT_TIMELINE_ENTRIES -> {
+                            final long[] timeline = instance.getCheckpointTimeline();
+                            yield timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                                    ? Numbers.LONG_NULL
+                                    : timeline[LiveViewInstance.CHECKPOINT_TIMELINE_ENTRIES];
                         }
-                        case COLUMN_HEAD_CHECKPOINT_STATE_BYTES -> instance.getHeadCheckpointStateBytes();
-                        // Seal / restore timings. Both are LONG_NULL until the event
-                        // first runs (no root sealed yet / view never restored), which
-                        // passes through as NULL.
-                        case COLUMN_HEAD_CHECKPOINT_WRITE_MICROS -> instance.getHeadCheckpointWriteMicros();
-                        case COLUMN_HEAD_CHECKPOINT_RESTORE_MICROS -> instance.getHeadCheckpointRestoreMicros();
+                        case COLUMN_CHECKPOINT_TIMELINE_NORMALIZED_BASE_SEQTXN ->
+                                instance.getCheckpointTimeline()[LiveViewInstance.CHECKPOINT_TIMELINE_NORMALIZED_BASE_SEQ_TXN];
+                        case COLUMN_CHECKPOINT_TIMELINE_LOGICAL_BYTES -> {
+                            final long[] timeline = instance.getCheckpointTimeline();
+                            yield timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                                    ? Numbers.LONG_NULL
+                                    : timeline[LiveViewInstance.CHECKPOINT_TIMELINE_LOGICAL_BYTES];
+                        }
+                        case COLUMN_CHECKPOINT_TIMELINE_PHYSICAL_BYTES -> {
+                            final long[] timeline = instance.getCheckpointTimeline();
+                            yield timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                                    ? Numbers.LONG_NULL
+                                    : timeline[LiveViewInstance.CHECKPOINT_TIMELINE_PHYSICAL_BYTES];
+                        }
+                        case COLUMN_CHECKPOINT_TIMELINE_SHARED_BYTES -> {
+                            // Logical minus physical, floored at zero: a timeline
+                            // whose metadata outweighs the state it describes
+                            // shares nothing rather than a negative amount.
+                            final long[] timeline = instance.getCheckpointTimeline();
+                            if (timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL) {
+                                yield Numbers.LONG_NULL;
+                            }
+                            yield Math.max(
+                                    0,
+                                    timeline[LiveViewInstance.CHECKPOINT_TIMELINE_LOGICAL_BYTES]
+                                            - timeline[LiveViewInstance.CHECKPOINT_TIMELINE_PHYSICAL_BYTES]
+                            );
+                        }
+                        case COLUMN_CHECKPOINT_TIMELINE_ROW_POSITION_DELTA_BYTES -> {
+                            final long[] timeline = instance.getCheckpointTimeline();
+                            yield timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                                    ? Numbers.LONG_NULL
+                                    : timeline[LiveViewInstance.CHECKPOINT_TIMELINE_ROW_POSITION_DELTA_BYTES];
+                        }
+                        case COLUMN_CHECKPOINT_OLDEST_PINNED_GENERATION ->
+                                instance.getCheckpointTimeline()[LiveViewInstance.CHECKPOINT_TIMELINE_OLDEST_RETAINED_GENERATION];
+                        case COLUMN_CHECKPOINT_GC_LAG_GENERATIONS -> {
+                            // Generations the purge floor sits behind the current
+                            // one. The A/B pair keeps the previous generation as
+                            // its recovery fallback, so 1 is the healthy value and
+                            // a growing figure means retirement has stalled.
+                            final long[] timeline = instance.getCheckpointTimeline();
+                            final long current = timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION];
+                            final long oldest =
+                                    timeline[LiveViewInstance.CHECKPOINT_TIMELINE_OLDEST_RETAINED_GENERATION];
+                            yield current == Numbers.LONG_NULL || oldest == Numbers.LONG_NULL
+                                    ? Numbers.LONG_NULL
+                                    : Math.max(0, current - oldest);
+                        }
+                        // What the last lifecycle reconciliation's purge sweep found
+                        // while walking the catalogue. LONG_NULL until one has run.
+                        case COLUMN_CHECKPOINT_DATA_SEGMENT_COUNT -> instance.getCheckpointDataSegmentCount();
+                        case COLUMN_CHECKPOINT_OBSOLETE_SEGMENT_BYTES -> instance.getCheckpointObsoleteSegmentBytes();
+                        // Seal / restore cost. The timings are LONG_NULL until the
+                        // event first runs (no root sealed yet / view never
+                        // restored), which passes through as NULL.
+                        case COLUMN_CHECKPOINT_LAST_WRITE_MICROS -> instance.getHeadCheckpointWriteMicros();
+                        case COLUMN_CHECKPOINT_LAST_RESTORE_MICROS -> instance.getHeadCheckpointRestoreMicros();
+                        case COLUMN_CHECKPOINT_LAST_WRITE_NEW_BYTES -> {
+                            final long[] timeline = instance.getCheckpointTimeline();
+                            yield timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                                    ? Numbers.LONG_NULL
+                                    : timeline[LiveViewInstance.CHECKPOINT_TIMELINE_LAST_WRITE_NEW_BYTES];
+                        }
+                        case COLUMN_CHECKPOINT_LAST_LOOKUP_DEPTH -> instance.getCheckpointLastLookupDepth();
+                        // Bounds of a localized repair suspended across refresh
+                        // turns, read as one tuple. All NULL when none is in
+                        // flight; the high bound is also NULL for a repair that
+                        // converges only at EOF, which is a tag rather than a
+                        // timestamp.
+                        case COLUMN_CHECKPOINT_REPAIR_CORRECTION_TIMESTAMP -> toMicros(
+                                instance.getCheckpointRepair()[LiveViewInstance.CHECKPOINT_REPAIR_CORRECTION_TS]
+                        );
+                        case COLUMN_CHECKPOINT_REPAIR_LOW_TIMESTAMP -> toMicros(
+                                instance.getCheckpointRepair()[LiveViewInstance.CHECKPOINT_REPAIR_LOW_TS]
+                        );
+                        case COLUMN_CHECKPOINT_REPAIR_HIGH_TIMESTAMP -> toMicros(
+                                instance.getCheckpointRepair()[LiveViewInstance.CHECKPOINT_REPAIR_HIGH_TS]
+                        );
+                        case COLUMN_CHECKPOINT_REPAIR_ROOTS_VERSIONED -> instance.getCheckpointRepairRootsVersioned();
+                        case COLUMN_CHECKPOINT_REPAIR_NEW_BYTES -> instance.getCheckpointRepairNewBytes();
+                        case COLUMN_CHECKPOINT_REPAIR_RESUMES -> instance.getCheckpointRepairResumes();
+                        case COLUMN_CHECKPOINT_REPAIR_FAILURES -> instance.getCheckpointRepairFailures();
                         // Base rows the O3 replay paths scanned (>= the emit counters
                         // above; a WHERE filter makes scan exceed emit). In-memory
                         // counter, resets on restart.
                         case COLUMN_O3_REPLAY_SCAN_ROWS -> instance.getO3ReplayScanRows();
-                        case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP -> {
-                            // Persisted in base-table units; convert back to
-                            // TIMESTAMP_MICRO per the catalogue column's declared type. Identity for
-                            // MICRO bases; rounds NS bases down to the MICRO grid.
-                            // START FROM BEGINNING has no lower bound and persists LONG_NULL, which
-                            // passes through as NULL rather than through the driver, whose rescale
-                            // would turn the sentinel into an arbitrary timestamp.
-                            long raw = definition.getViewLowerBoundTimestamp();
-                            yield raw == Numbers.LONG_NULL ? Numbers.LONG_NULL :
-                                    ColumnType
-                                            .getTimestampDriver(definition.getBaseTimestampType())
-                                            .toMicros(raw);
-                        }
+                        // START FROM BEGINNING has no lower bound and persists
+                        // LONG_NULL, which passes through as NULL.
+                        case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP ->
+                                toMicros(definition.getViewLowerBoundTimestamp());
                         case COLUMN_WRITER_STALL_MICROS -> {
                             // Current uninterrupted stall duration.
                             // writerStallStartUs is set when the in-mem tier's slow-path
@@ -410,6 +559,19 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     this.instance = instance;
                     this.definition = instance.getDefinition();
                 }
+
+                /**
+                 * Converts a timestamp held in base-table units to the
+                 * TIMESTAMP_MICRO the catalogue declares - identity for MICRO
+                 * bases, rounding down to the MICRO grid for NS bases. LONG_NULL
+                 * passes through untouched rather than through the driver, whose
+                 * rescale would turn the sentinel into an arbitrary timestamp.
+                 */
+                private long toMicros(long raw) {
+                    return raw == Numbers.LONG_NULL
+                            ? Numbers.LONG_NULL
+                            : ColumnType.getTimestampDriver(definition.getBaseTimestampType()).toMicros(raw);
+                }
             }
         }
 
@@ -437,14 +599,33 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_lower_bound_timestamp", ColumnType.TIMESTAMP_MICRO));// 19
             metadata.add(new TableColumnMetadata("writer_stall_micros", ColumnType.LONG));                  // 20
             metadata.add(new TableColumnMetadata("seed_target_seqtxn", ColumnType.LONG));               // 21
-            metadata.add(new TableColumnMetadata("head_checkpoint_lv_seqtxn", ColumnType.LONG));            // 22
-            metadata.add(new TableColumnMetadata("head_checkpoint_max_ts", ColumnType.TIMESTAMP_MICRO));    // 23
-            metadata.add(new TableColumnMetadata("head_checkpoint_state_bytes", ColumnType.LONG));          // 24
-            metadata.add(new TableColumnMetadata("o3_resume_replay_rows", ColumnType.LONG));                // 25
-            metadata.add(new TableColumnMetadata("o3_boundary_replay_rows", ColumnType.LONG));              // 26
-            metadata.add(new TableColumnMetadata("head_checkpoint_write_micros", ColumnType.LONG));          // 27
-            metadata.add(new TableColumnMetadata("head_checkpoint_restore_micros", ColumnType.LONG));        // 28
-            metadata.add(new TableColumnMetadata("o3_replay_scan_rows", ColumnType.LONG));                   // 29
+            metadata.add(new TableColumnMetadata("o3_resume_replay_rows", ColumnType.LONG));                // 22
+            metadata.add(new TableColumnMetadata("o3_boundary_replay_rows", ColumnType.LONG));              // 23
+            metadata.add(new TableColumnMetadata("o3_replay_scan_rows", ColumnType.LONG));                  // 24
+            metadata.add(new TableColumnMetadata("checkpoint_timeline_generation", ColumnType.LONG));       // 25
+            metadata.add(new TableColumnMetadata("checkpoint_timeline_entries", ColumnType.LONG));          // 26
+            metadata.add(new TableColumnMetadata("checkpoint_timeline_normalized_base_seqtxn", ColumnType.LONG)); // 27
+            metadata.add(new TableColumnMetadata("checkpoint_timeline_logical_bytes", ColumnType.LONG));    // 28
+            metadata.add(new TableColumnMetadata("checkpoint_timeline_physical_bytes", ColumnType.LONG));   // 29
+            metadata.add(new TableColumnMetadata("checkpoint_timeline_shared_bytes", ColumnType.LONG));     // 30
+            metadata.add(new TableColumnMetadata("checkpoint_timeline_sharing_ratio", ColumnType.DOUBLE));  // 31
+            metadata.add(new TableColumnMetadata("checkpoint_timeline_row_position_delta_bytes", ColumnType.LONG)); // 32
+            metadata.add(new TableColumnMetadata("checkpoint_data_segment_count", ColumnType.LONG));        // 33
+            metadata.add(new TableColumnMetadata("checkpoint_obsolete_segment_bytes", ColumnType.LONG));    // 34
+            metadata.add(new TableColumnMetadata("checkpoint_oldest_pinned_generation", ColumnType.LONG));  // 35
+            metadata.add(new TableColumnMetadata("checkpoint_gc_lag_generations", ColumnType.LONG));        // 36
+            metadata.add(new TableColumnMetadata("checkpoint_last_write_micros", ColumnType.LONG));         // 37
+            metadata.add(new TableColumnMetadata("checkpoint_last_restore_micros", ColumnType.LONG));       // 38
+            metadata.add(new TableColumnMetadata("checkpoint_last_write_new_bytes", ColumnType.LONG));      // 39
+            metadata.add(new TableColumnMetadata("checkpoint_last_lookup_depth", ColumnType.LONG));         // 40
+            metadata.add(new TableColumnMetadata("checkpoint_repair_in_progress", ColumnType.BOOLEAN));     // 41
+            metadata.add(new TableColumnMetadata("checkpoint_repair_correction_timestamp", ColumnType.TIMESTAMP_MICRO)); // 42
+            metadata.add(new TableColumnMetadata("checkpoint_repair_low_timestamp", ColumnType.TIMESTAMP_MICRO));  // 43
+            metadata.add(new TableColumnMetadata("checkpoint_repair_high_timestamp", ColumnType.TIMESTAMP_MICRO)); // 44
+            metadata.add(new TableColumnMetadata("checkpoint_repair_roots_versioned", ColumnType.LONG));    // 45
+            metadata.add(new TableColumnMetadata("checkpoint_repair_new_bytes", ColumnType.LONG));          // 46
+            metadata.add(new TableColumnMetadata("checkpoint_repair_resumes", ColumnType.LONG));            // 47
+            metadata.add(new TableColumnMetadata("checkpoint_repair_failures", ColumnType.LONG));           // 48
             METADATA = metadata;
         }
     }

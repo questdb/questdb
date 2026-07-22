@@ -69,10 +69,28 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * WAL writer pool per FLUSH cycle rather than being owned by the instance.
  */
 public class LiveViewInstance implements QuietCloseable {
+    public static final int CHECKPOINT_REPAIR_CORRECTION_TS = 1;
+    public static final int CHECKPOINT_REPAIR_HIGH_TS = 3;
+    public static final int CHECKPOINT_REPAIR_IN_PROGRESS = 0;
+    public static final int CHECKPOINT_REPAIR_LOW_TS = 2;
+    public static final int CHECKPOINT_TIMELINE_ENTRIES = 1;
+    public static final int CHECKPOINT_TIMELINE_GENERATION = 0;
+    public static final int CHECKPOINT_TIMELINE_LAST_WRITE_NEW_BYTES = 7;
+    public static final int CHECKPOINT_TIMELINE_LOGICAL_BYTES = 3;
+    public static final int CHECKPOINT_TIMELINE_NORMALIZED_BASE_SEQ_TXN = 2;
+    public static final int CHECKPOINT_TIMELINE_OLDEST_RETAINED_GENERATION = 6;
+    public static final int CHECKPOINT_TIMELINE_PHYSICAL_BYTES = 4;
+    public static final int CHECKPOINT_TIMELINE_ROW_POSITION_DELTA_BYTES = 5;
     private static final int HEAD_CHECKPOINT_BASE_SEQ_TXN = 3;
     private static final int HEAD_CHECKPOINT_LV_SEQ_TXN = 0;
     private static final int HEAD_CHECKPOINT_MAX_TS = 1;
     private static final int HEAD_CHECKPOINT_STATE_BYTES = 2;
+    private static final long[] EMPTY_CHECKPOINT_REPAIR = {
+            0L, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL
+    };
+    private static final long[] EMPTY_CHECKPOINT_TIMELINE = {
+            Numbers.LONG_NULL, 0L, Numbers.LONG_NULL, 0L, 0L, 0L, Numbers.LONG_NULL, 0L
+    };
     private static final long[] EMPTY_HEAD_CHECKPOINT = {Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL};
     private final LiveViewDefinition definition;
     // Cancellation flag the refresh worker binds into its execution context's circuit
@@ -179,19 +197,65 @@ public class LiveViewInstance implements QuietCloseable {
     // purge job min-combines it with the head arm. LONG_NULL means no usable
     // timeline generation currently requires WAL.
     private volatile long checkpointTimelineWalPurgeFloor = Numbers.LONG_NULL;
+    // Live data segments the last lifecycle reconciliation's purge sweep counted,
+    // and the bytes of retired segments that sweep could not yet unlink. Both
+    // come from the ordered catalogue walk purge already makes, which runs at
+    // startup and at a retrying publication rather than per seal, so they carry
+    // the last sweep's verdict rather than a live figure. Surfaced via
+    // live_views().checkpoint_data_segment_count /
+    // checkpoint_obsolete_segment_bytes. LONG_NULL until a sweep has run: a view
+    // whose timeline holds no valid generation has no catalogue to report on,
+    // which zeroes would misreport as "swept, found nothing".
+    private volatile long checkpointDataSegmentCount = Numbers.LONG_NULL;
+    private volatile long checkpointObsoleteSegmentBytes = Numbers.LONG_NULL;
+    // Metadata pages the last timeline point lookup descended through - the
+    // tree's height at that root. Numbers.LONG_NULL until a lookup runs. Surfaced
+    // via live_views().checkpoint_last_lookup_depth, where the property worth
+    // watching is that it tracks log(checkpoint count), not the count itself.
+    private volatile long checkpointLastLookupDepth = Numbers.LONG_NULL;
+    // Bounds of the localized repair currently suspended across refresh turns:
+    // {inProgress, C, L, H}. Packed into one immutable long[] published by
+    // volatile store so the catalogue never pairs one repair's floor with
+    // another's high bound. An EOF-tagged H stores LONG_NULL - the bound is not a
+    // timestamp - as does every field of a view with no repair in flight.
+    // Indexes: CHECKPOINT_REPAIR_IN_PROGRESS / _CORRECTION_TS / _LOW_TS /
+    // _HIGH_TS.
+    private volatile long[] checkpointRepair = EMPTY_CHECKPOINT_REPAIR;
+    // Lifetime counts over the localized repair path: repairs that failed to
+    // publish a splice (each one retires the timeline and rebuilds), repairs that
+    // resumed a suspended session in a later refresh turn, roots re-versioned by
+    // published splices, and the metadata plus data bytes those splices wrote.
+    // Bumped only on the refresh worker; volatile for the catalogue thread.
+    // In-memory only - they reset on restart, like the o3_* counters.
+    private volatile long checkpointRepairFailures;
+    private volatile long checkpointRepairNewBytes;
+    private volatile long checkpointRepairResumes;
+    private volatile long checkpointRepairRootsVersioned;
+    // Shape of the newest published timeline generation, mirrored off the
+    // superblock by whichever seam last committed or adopted one: a cadence seal,
+    // a repair splice, or startup reconciliation. Packed into one immutable
+    // long[] published by volatile store, like headCheckpoint, so a catalogue
+    // reader cannot pair a fresh generation number with the previous
+    // generation's byte totals. Reset to the empty tuple when a repair retires
+    // the timeline, because no generation then exists to describe.
+    // Indexes: CHECKPOINT_TIMELINE_GENERATION / _ENTRIES /
+    // _NORMALIZED_BASE_SEQ_TXN / _LOGICAL_BYTES / _PHYSICAL_BYTES /
+    // _ROW_POSITION_DELTA_BYTES / _OLDEST_RETAINED_GENERATION /
+    // _LAST_WRITE_NEW_BYTES.
+    private volatile long[] checkpointTimeline = EMPTY_CHECKPOINT_TIMELINE;
     // Elapsed wall-clock (micros) of the most recent restart restore from the
     // checkpoint timeline (select a root, restore its state, replay-to-applied).
     // Numbers.LONG_NULL until a restore runs, which is single-shot per LV
     // lifetime, so it stays NULL for a view that never restored. Mutated only on
     // the refresh worker under the refresh latch; volatile for the catalogue
-    // thread. Surfaced via live_views().head_checkpoint_restore_micros.
+    // thread. Surfaced via live_views().checkpoint_last_restore_micros.
     private volatile long headCheckpointRestoreMicros = Numbers.LONG_NULL;
     // Elapsed wall-clock (micros) of the most recent head-checkpoint write
     // (maybeWriteHeadCheckpoint: freeze the function state, append a logical
     // root, publish the timeline generation). Numbers.LONG_NULL until the first
     // root is sealed. Mutated only on the refresh worker under the refresh
     // latch; volatile for the catalogue thread. Surfaced via
-    // live_views().head_checkpoint_write_micros.
+    // live_views().checkpoint_last_write_micros.
     private volatile long headCheckpointWriteMicros = Numbers.LONG_NULL;
     private volatile LiveViewInMemoryTier inMemoryTier;
     private volatile boolean isClosed;
@@ -482,7 +546,7 @@ public class LiveViewInstance implements QuietCloseable {
     // Computed once on the first refresh cycle after the LV's compiled factory
     // is ready, then cached. False means the flush cycle emits no checkpoints
     // (every restart / O3 falls back to the head-miss replay path); the LV's
-    // live_views().head_checkpoint_lv_seqtxn stays LONG_NULL for its lifetime.
+    // live_views().checkpoint_timeline_generation stays NULL for its lifetime.
     private volatile boolean snapshotCapability;
     private volatile boolean snapshotCapabilityComputed;
     // The localized out-of-order repair this view has parked between refresh
@@ -674,6 +738,7 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void discardSuspendedRepair() {
         suspendedRepair = Misc.free(suspendedRepair);
+        checkpointRepair = EMPTY_CHECKPOINT_REPAIR;
     }
 
     /**
@@ -847,6 +912,53 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long getFreezeFrozenAppliedWatermark() {
         return freezeFrozenAppliedWatermark;
+    }
+
+    public long getCheckpointDataSegmentCount() {
+        return checkpointDataSegmentCount;
+    }
+
+    public long getCheckpointLastLookupDepth() {
+        return checkpointLastLookupDepth;
+    }
+
+    public long getCheckpointObsoleteSegmentBytes() {
+        return checkpointObsoleteSegmentBytes;
+    }
+
+    /**
+     * @return the bounds of the localized repair currently suspended across
+     * refresh turns, as {@code {inProgress, C, L, H}}. The array is published by
+     * volatile store and never mutated afterwards, so the caller reads a
+     * consistent tuple without copying. See {@link #checkpointRepair}
+     */
+    public long[] getCheckpointRepair() {
+        return checkpointRepair;
+    }
+
+    public long getCheckpointRepairFailures() {
+        return checkpointRepairFailures;
+    }
+
+    public long getCheckpointRepairNewBytes() {
+        return checkpointRepairNewBytes;
+    }
+
+    public long getCheckpointRepairResumes() {
+        return checkpointRepairResumes;
+    }
+
+    public long getCheckpointRepairRootsVersioned() {
+        return checkpointRepairRootsVersioned;
+    }
+
+    /**
+     * @return the shape of the newest published timeline generation. The array is
+     * published by volatile store and never mutated afterwards, so the caller
+     * reads a consistent tuple without copying. See {@link #checkpointTimeline}
+     */
+    public long[] getCheckpointTimeline() {
+        return checkpointTimeline;
     }
 
     public long getCheckpointTimelineWalPurgeFloor() {
@@ -1395,9 +1507,18 @@ public class LiveViewInstance implements QuietCloseable {
         this.headCheckpointRestoreMicros = durationUs;
     }
 
-    /** Releases this primary's local timeline WAL-retention ownership. */
+    /**
+     * Releases this primary's local timeline WAL-retention ownership, and with it
+     * every figure describing the generation that ownership referred to. The
+     * caller has just removed the timeline, so reporting the retired
+     * generation's shape would outlive the files it measured.
+     */
     public void clearCheckpointTimelineOwnership() {
         checkpointTimelineWalPurgeFloor = Numbers.LONG_NULL;
+        checkpointTimeline = EMPTY_CHECKPOINT_TIMELINE;
+        checkpointDataSegmentCount = Numbers.LONG_NULL;
+        checkpointObsoleteSegmentBytes = Numbers.LONG_NULL;
+        checkpointLastLookupDepth = Numbers.LONG_NULL;
     }
 
     /**
@@ -1410,6 +1531,67 @@ public class LiveViewInstance implements QuietCloseable {
         this.seedCheckpointDataOffset = Numbers.LONG_NULL;
         this.seedCheckpointMaxTs = Numbers.LONG_NULL;
         this.lastCheckpointWrittenUs = Numbers.LONG_NULL;
+    }
+
+    /**
+     * Publishes what the last lifecycle reconciliation's purge sweep found while
+     * walking the pinned generation's segment catalogue.
+     */
+    public void recordCheckpointGcSweep(long liveSegmentCount, long obsoleteSegmentBytes) {
+        checkpointDataSegmentCount = liveSegmentCount;
+        checkpointObsoleteSegmentBytes = obsoleteSegmentBytes;
+    }
+
+    /**
+     * Publishes the depth of a timeline point lookup. Callers pass the value the
+     * lookup itself reported rather than a later reader's, since one reader's
+     * counter is overwritten by its next navigation.
+     */
+    public void recordCheckpointLookupDepth(long lookupDepth) {
+        checkpointLastLookupDepth = lookupDepth;
+    }
+
+    /**
+     * Records that a localized repair could not publish its splice, which retires
+     * the timeline and leaves the next seal to open a fresh history.
+     */
+    public void recordCheckpointRepairFailure() {
+        checkpointRepairFailures++;
+    }
+
+    /**
+     * Records that a suspended repair session continued in a later refresh turn.
+     */
+    public void recordCheckpointRepairResume() {
+        checkpointRepairResumes++;
+    }
+
+    /**
+     * Records one published repair splice: the roots it re-versioned and the
+     * bytes it wrote.
+     */
+    public void recordCheckpointRepairSplice(long rootsVersioned, long newBytes) {
+        checkpointRepairRootsVersioned += rootsVersioned;
+        checkpointRepairNewBytes += newBytes;
+    }
+
+    /**
+     * Mirrors the shape of a timeline generation this view just committed or
+     * adopted. See {@link #checkpointTimeline}.
+     */
+    public void recordCheckpointTimelineStats(@Nullable LiveViewCheckpointTimelineStats stats) {
+        checkpointTimeline = stats == null
+                ? EMPTY_CHECKPOINT_TIMELINE
+                : new long[]{
+                stats.getGeneration(),
+                stats.getEntryCount(),
+                stats.getNormalizedBaseSeqTxn(),
+                stats.getLogicalStateBytes(),
+                stats.getPhysicalBytes(),
+                stats.getRowPositionDeltaBytes(),
+                stats.getOldestRetainedGeneration(),
+                stats.getLastWriteNewBytes()
+        };
     }
 
     /**
@@ -1813,6 +1995,7 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void setSuspendedRepair(@Nullable LiveViewCheckpointRepairSession suspendedRepair) {
         this.suspendedRepair = suspendedRepair;
+        recordCheckpointRepairState(suspendedRepair == null ? null : suspendedRepair.getPlan());
     }
 
     /**
@@ -2013,6 +2196,24 @@ public class LiveViewInstance implements QuietCloseable {
         compiledFactory = Misc.free(compiledFactory);
         anchorWindow = Misc.free(anchorWindow);
         anchorFunction = Misc.free(anchorFunction);
+    }
+
+    /**
+     * Publishes the bounds of a repair that is now suspended across refresh
+     * turns, or clears them when {@code plan} is null because no repair is in
+     * flight. An EOF-tagged high bound publishes {@link Numbers#LONG_NULL}: the
+     * convergence boundary is a tag, not a timestamp, and passing
+     * {@code Long.MAX_VALUE} through would read as a real one.
+     */
+    private void recordCheckpointRepairState(@Nullable LiveViewCheckpointRepairPlan plan) {
+        checkpointRepair = plan == null
+                ? EMPTY_CHECKPOINT_REPAIR
+                : new long[]{
+                1L,
+                plan.getCorrectionTs(),
+                plan.getReplayLowTs(),
+                plan.isHighBoundEof() ? Numbers.LONG_NULL : plan.getHighTsExclusive()
+        };
     }
 
 }

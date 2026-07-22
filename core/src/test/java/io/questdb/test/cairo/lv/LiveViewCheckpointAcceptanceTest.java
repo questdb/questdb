@@ -74,7 +74,7 @@ import org.junit.Test;
  * Wall clock is asserted only where the operation under test dominates it - the
  * lookup case, which runs against nothing else. A checkpoint seal's own elapsed
  * time is not: the tests pin the clock, which makes {@code
- * head_checkpoint_write_micros} read zero, and a real timer around a commit
+ * checkpoint_last_write_micros} read zero, and a real timer around a commit
  * measures the WAL and SQL machinery around the seal rather than the seal. Bytes
  * and pages written are the write-cost proxy here.
  */

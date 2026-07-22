@@ -13630,11 +13630,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testLiveViewsCatalogueColumnOrderMatchesRfc() throws Exception {
         // Columns appear in the documented order so clients binding by
-        // ordinal see a stable shape. The documented columns come first; the
-        // three head_checkpoint_* columns and the two o3_*_replay_rows columns
-        // trail as debug surface, and the three cost columns
-        // (head_checkpoint_write_micros, head_checkpoint_restore_micros,
-        // o3_replay_scan_rows) trail last.
+        // ordinal see a stable shape. The documented columns come first, the
+        // three o3_*_rows columns trail as replay observability, and the
+        // checkpoint_* group closes the set in its four blocks: the
+        // generation's shape, collection, cost, and localized repair.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -13646,10 +13645,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "o3_rejected_count\tbelow_lower_bound_count\tlag_seqtxn\tlag_micros\t"
                         + "last_processed_seqtxn\tapplied_watermark\tlv_consumed_seqtxn\t"
                         + "view_lower_bound_timestamp\twriter_stall_micros\tseed_target_seqtxn\t"
-                        + "head_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\t"
-                        + "o3_resume_replay_rows\to3_boundary_replay_rows\t"
-                        + "head_checkpoint_write_micros\thead_checkpoint_restore_micros\t"
-                        + "o3_replay_scan_rows\n");
+                        + "o3_resume_replay_rows\to3_boundary_replay_rows\to3_replay_scan_rows\t"
+                        + "checkpoint_timeline_generation\tcheckpoint_timeline_entries\t"
+                        + "checkpoint_timeline_normalized_base_seqtxn\tcheckpoint_timeline_logical_bytes\t"
+                        + "checkpoint_timeline_physical_bytes\tcheckpoint_timeline_shared_bytes\t"
+                        + "checkpoint_timeline_sharing_ratio\tcheckpoint_timeline_row_position_delta_bytes\t"
+                        + "checkpoint_data_segment_count\tcheckpoint_obsolete_segment_bytes\t"
+                        + "checkpoint_oldest_pinned_generation\tcheckpoint_gc_lag_generations\t"
+                        + "checkpoint_last_write_micros\tcheckpoint_last_restore_micros\t"
+                        + "checkpoint_last_write_new_bytes\tcheckpoint_last_lookup_depth\t"
+                        + "checkpoint_repair_in_progress\tcheckpoint_repair_correction_timestamp\t"
+                        + "checkpoint_repair_low_timestamp\tcheckpoint_repair_high_timestamp\t"
+                        + "checkpoint_repair_roots_versioned\tcheckpoint_repair_new_bytes\t"
+                        + "checkpoint_repair_resumes\tcheckpoint_repair_failures\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
@@ -15498,12 +15506,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 // honor the row / duration cadence.
                 Assert.assertTrue("snapshot capability computed and true", lv.isSnapshotCapability());
                 Assert.assertNotEquals(
-                        "head_checkpoint_lv_seqtxn populated after first commit",
+                        "head checkpoint lv seqTxn populated after first commit",
                         Numbers.LONG_NULL,
                         lv.getHeadCheckpointLvSeqTxn()
                 );
                 Assert.assertTrue(
-                        "head_checkpoint_state_bytes is positive",
+                        "head checkpoint state bytes are positive",
                         lv.getHeadCheckpointStateBytes() > 0
                 );
                 Assert.assertEquals(
@@ -15512,12 +15520,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         lv.getRowsSinceLastCheckpointWritten()
                 );
 
-                // The live_views() catalogue surfaces the same trio the
-                // refresh worker stamped via setHeadCheckpoint(). Asserting
-                // here closes the end-to-end loop: write hook -> instance
-                // setter -> LiveViewsFunctionFactory -> SQL.
-                assertQuery("SELECT view_name, head_checkpoint_lv_seqtxn, head_checkpoint_state_bytes FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\thead_checkpoint_lv_seqtxn\thead_checkpoint_state_bytes\n" +
-                        "lv\t" + lv.getHeadCheckpointLvSeqTxn() + '\t' + lv.getHeadCheckpointStateBytes() + '\n');
+                // The live_views() catalogue surfaces the generation the seal
+                // just published. Asserting here closes the end-to-end loop:
+                // write hook -> superblock -> instance mirror ->
+                // LiveViewsFunctionFactory -> SQL.
+                assertQuery("SELECT view_name, checkpoint_timeline_generation, checkpoint_timeline_entries, " +
+                        "checkpoint_timeline_normalized_base_seqtxn FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("view_name\tcheckpoint_timeline_generation\tcheckpoint_timeline_entries\t" +
+                                "checkpoint_timeline_normalized_base_seqtxn\n" +
+                                "lv\t1\t1\t" + lv.getHeadCheckpointBaseSeqTxn() + '\n');
             }
 
             execute("DROP LIVE VIEW lv");
@@ -17301,12 +17313,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                             postO3HeadLvSeqTxn
                     );
                     Assert.assertNotEquals(
-                            "head_checkpoint_max_ts populated post O3 replay",
+                            "head checkpoint max ts populated post O3 replay",
                             Numbers.LONG_NULL,
                             lv.getHeadCheckpointMaxTs()
                     );
                     Assert.assertNotEquals(
-                            "head_checkpoint_state_bytes populated post O3 replay",
+                            "head checkpoint state bytes populated post O3 replay",
                             0L,
                             lv.getHeadCheckpointStateBytes()
                     );
@@ -19251,25 +19263,107 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testLiveViewsCatalogueExposesHeadCheckpointColumns() throws Exception {
-        // head_checkpoint_* columns are preallocated; values stay
-        // at LONG_NULL / 0 until the flush-cycle write hook starts
-        // populating them.
+    public void testLiveViewsCatalogueExposesCheckpointTimelineColumns() throws Exception {
+        // A view that has published no generation reports NULL across the
+        // checkpoint_* group rather than zero: "no timeline" and "a timeline
+        // that measures zero" are different statements, and only the counters
+        // that genuinely start at zero say so. The first sealed root then fills
+        // the group in, which is what makes the NULLs an assertion about the
+        // publication seam rather than about a column that is never written.
+        // One boundary per flush, so a second commit publishes a second
+        // generation rather than riding the default row cadence.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW)");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                assertQuery("SELECT checkpoint_timeline_generation, checkpoint_timeline_entries, " +
+                        "checkpoint_timeline_logical_bytes, checkpoint_timeline_physical_bytes, " +
+                        "checkpoint_timeline_shared_bytes, checkpoint_timeline_sharing_ratio, " +
+                        "checkpoint_oldest_pinned_generation, checkpoint_gc_lag_generations, " +
+                        "checkpoint_last_write_micros, checkpoint_last_lookup_depth, " +
+                        "checkpoint_repair_in_progress, checkpoint_repair_correction_timestamp, " +
+                        "checkpoint_repair_roots_versioned, checkpoint_repair_failures FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_timeline_generation\tcheckpoint_timeline_entries\t" +
+                                "checkpoint_timeline_logical_bytes\tcheckpoint_timeline_physical_bytes\t" +
+                                "checkpoint_timeline_shared_bytes\tcheckpoint_timeline_sharing_ratio\t" +
+                                "checkpoint_oldest_pinned_generation\tcheckpoint_gc_lag_generations\t" +
+                                "checkpoint_last_write_micros\tcheckpoint_last_lookup_depth\t" +
+                                "checkpoint_repair_in_progress\tcheckpoint_repair_correction_timestamp\t" +
+                                "checkpoint_repair_roots_versioned\tcheckpoint_repair_failures\n" +
+                                "null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tfalse\t\t0\t0\n");
+
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-08-01T00:00:01.000000Z', 'b', 3.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // One generation holding one boundary, valid through base
+                // seqTxn 1, and a first publication that wrote every byte the
+                // timeline holds. The A/B pair has only one valid slot yet, so
+                // the collection floor is the current generation and the lag is
+                // zero; it becomes 1 once a second publication leaves the first
+                // slot behind as the fallback. The collection columns stay NULL:
+                // this view's only reconciliation ran against a directory that
+                // held no generation to sweep.
+                assertQuery("SELECT checkpoint_timeline_generation, checkpoint_timeline_entries, " +
+                        "checkpoint_timeline_normalized_base_seqtxn, " +
+                        "checkpoint_timeline_physical_bytes = checkpoint_last_write_new_bytes AS first_write_is_all, " +
+                        "checkpoint_timeline_logical_bytes > 0 AS has_logical_bytes, " +
+                        "checkpoint_timeline_row_position_delta_bytes, " +
+                        "checkpoint_oldest_pinned_generation, checkpoint_gc_lag_generations, " +
+                        "checkpoint_data_segment_count, checkpoint_obsolete_segment_bytes FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_timeline_generation\tcheckpoint_timeline_entries\t" +
+                                "checkpoint_timeline_normalized_base_seqtxn\tfirst_write_is_all\t" +
+                                "has_logical_bytes\tcheckpoint_timeline_row_position_delta_bytes\t" +
+                                "checkpoint_oldest_pinned_generation\tcheckpoint_gc_lag_generations\t" +
+                                "checkpoint_data_segment_count\tcheckpoint_obsolete_segment_bytes\n" +
+                                "1\t1\t1\ttrue\ttrue\t0\t1\t0\tnull\tnull\n");
+
+                // A second cadence seal leaves the first generation in the
+                // other slot, which is the fallback the WAL floor and the purge
+                // guard are both held at.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-08-01T00:00:02.000000Z', 'a', 5.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT checkpoint_timeline_generation, checkpoint_timeline_entries, " +
+                        "checkpoint_oldest_pinned_generation, checkpoint_gc_lag_generations, " +
+                        "checkpoint_last_write_new_bytes < checkpoint_timeline_physical_bytes AS write_is_marginal " +
+                        "FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_timeline_generation\tcheckpoint_timeline_entries\t" +
+                                "checkpoint_oldest_pinned_generation\tcheckpoint_gc_lag_generations\t" +
+                                "write_is_marginal\n" +
+                                "2\t2\t1\t1\ttrue\n");
+            }
+
             try {
-                assertQuery("SELECT view_name, head_checkpoint_lv_seqtxn, head_checkpoint_max_ts, head_checkpoint_state_bytes FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\thead_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n" +
-                        "lv\tnull\t\t0\n");
+                // Startup reconciliation is the seam that sweeps the catalogue,
+                // so a restart is what fills the collection columns in - off the
+                // durable superblock and the sweep beside it, with no seal of its
+                // own, which is why the marginal write cost reads NULL again.
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
 
-                // Direct mutation via the setter (the 2a.4 write hook will call this).
-                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                lv.setHeadCheckpoint(42L, 40L, 1_700_000_000_000_000L, 4096L, 0L);
-
-                assertQuery("SELECT view_name, head_checkpoint_lv_seqtxn, head_checkpoint_max_ts, head_checkpoint_state_bytes FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\thead_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n" +
-                        "lv\t42\t2023-11-14T22:13:20.000000Z\t4096\n");
+                assertQuery("SELECT checkpoint_timeline_generation, checkpoint_timeline_entries, " +
+                        "checkpoint_timeline_physical_bytes > 0 AS has_physical_bytes, " +
+                        "checkpoint_data_segment_count > 0 AS has_live_segments, " +
+                        "checkpoint_obsolete_segment_bytes, checkpoint_last_write_new_bytes FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_timeline_generation\tcheckpoint_timeline_entries\t" +
+                                "has_physical_bytes\thas_live_segments\t" +
+                                "checkpoint_obsolete_segment_bytes\tcheckpoint_last_write_new_bytes\n" +
+                                "2\t2\ttrue\ttrue\t0\t0\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
