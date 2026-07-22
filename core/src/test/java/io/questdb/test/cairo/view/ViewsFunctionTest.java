@@ -31,6 +31,32 @@ import org.junit.Test;
 public class ViewsFunctionTest extends AbstractViewTest {
 
     @Test
+    public void testMaterializedViewsExpireRowsBeforeStartupHydration() throws Exception {
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
+                    "EXPIRE ROWS WHEN v < 2.0 CLEANUP EVERY 30m");
+            drainWalAndMatViewQueues();
+
+            // Simulate the startup window: the registry and materialized-view graph are populated, but the
+            // asynchronous metadata-cache hydrator has not run yet.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            assertQuery("SELECT expire_clause, expire_cleanup_every FROM materialized_views() WHERE view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            expire_clause\texpire_cleanup_every
+                            v < 2.0\t30m
+                            """);
+        });
+    }
+
+    @Test
     public void testMaterializedViewsExpireRowsColumns() throws Exception {
         // Mat views are gated behind dev mode, exactly as MatViewTest enables them.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");

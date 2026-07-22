@@ -258,9 +258,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         final boolean retrying = state != null && state.getRefreshRetryAfterMicros() != Numbers.LONG_NULL;
 
                         // The row-expiry policy lives in the view's table metadata (_meta), not the
-                        // mat-view definition; read it from the in-memory metadata cache.
+                        // mat-view definition. The graph is populated synchronously at startup while the
+                        // metadata cache is hydrated asynchronously, so hydrate this view before reading it.
                         CharSequence expirePredicate = null;
                         long expireCleanupMicros = 0;
+                        engine.getMetadataCache().hydrateTableOnDemand(viewToken);
                         try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                             final CairoTable viewTable = metadataRO.getTable(viewToken);
                             if (viewTable != null) {
