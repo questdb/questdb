@@ -5067,7 +5067,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordMetadata masterMetadata,
             final CharSequence masterAlias,
             final RecordCursorFactory slave,
-            final RecordMetadata slaveMetadata
+            final RecordMetadata slaveMetadata,
+            final SqlExecutionContext executionContext
     ) throws SqlException {
         long toleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
         CharSequence slaveAlias = slaveModel.getName();
@@ -5452,6 +5453,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    // Cheap plan-time base-table row-count estimate. Returns -1 when unknown (subquery/join/no token).
+    // NOTE: getTableToken() on a filtered factory returns the BASE table, so a filtered master is
+    // over-estimated - that only ever makes us MORE conservative (skip index), never wrong results.
+    private long estimateBaseRowCount(RecordCursorFactory f, SqlExecutionContext ec) {
+        final TableToken token = f.getTableToken();
+        if (token == null) {
+            return -1;
+        }
+        final long tracked = ec.getCairoEngine().getRecentWriteTracker().getRowCount(token);
+        if (tracked != Numbers.LONG_NULL) {
+            return tracked;
+        }
+        try (TableReader r = ec.getReader(token)) {
+            return r.size();
+        } catch (CairoException e) {
+            return -1;
+        }
+    }
+
+    private static long masterLimitOrMinus1(IQueryModel masterModel) {
+        final ExpressionNode lo = masterModel.getLimitLo();
+        final ExpressionNode hi = masterModel.getLimitHi();
+        final ExpressionNode lim = hi != null ? hi : lo;
+        if (lim != null && lim.type == ExpressionNode.CONSTANT) {
+            try {
+                return Numbers.parseLong(lim.token);
+            } catch (NumericException ignore) {
+                return -1;
+            }
+        }
+        return -1;
+    }
+
     private @NotNull RecordCursorFactory generateJoinLt(
             IQueryModel model,
             IQueryModel slaveModel,
@@ -5717,7 +5751,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateTimestampNotInJoinKeys(slaveModel, masterMetadata, slaveMetadata);
                                 master = joinType == IQueryModel.JOIN_ASOF
-                                        ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata)
+                                        ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata, executionContext)
                                         : generateJoinLt(model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata);
                                 masterAlias = null;
                                 // from now on, master owns slave, so we don't have to close it
