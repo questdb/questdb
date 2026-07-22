@@ -107,11 +107,6 @@ public class SqlParser {
     public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
-    // Every window function whose state accumulates over the frame it is given,
-    // so an unbounded frame start leaves it with no finite out-of-order
-    // influence boundary. Mirrors the aggregate half of the window function
-    // factory registry; ema()/vwema() register under avg().
-    private static final LowerCaseAsciiCharSequenceHashSet cumulativeAggregates = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final LowerCaseAsciiCharSequenceHashSet pivotForStop = new LowerCaseAsciiCharSequenceHashSet();
@@ -1565,19 +1560,23 @@ public class SqlParser {
         // we walk the named-window map here.
         validateLiveViewAnchors(queryModel);
 
-        // Enforce the finite-influence scope cut: unanchored ranking functions
-        // (row_number / rank / dense_rank) have no finite forward influence and
-        // are rejected at CREATE. Runs after validateLiveViewAnchors so the
-        // named-window anchor kinds it inspects are already validated.
-        validateLiveViewFiniteInfluence(queryModel);
-
         // Defense-in-depth lead() reject. The factory-side check inside
         // CairoEngine only fires when the planner picks a window factory
         // that exposes lead - a future planner path that bypasses both
         // CachedWindowRecordCursorFactory and WindowRecordCursorFactory
         // would silently accept lead-only LVs. Surface it at the parser
-        // level too.
+        // level too. Runs before the finite-influence gate so a lead() over
+        // the default frame is named for what actually disqualifies it: lead
+        // reads forward and ignores the frame entirely, so "bound the frame"
+        // would be advice that cannot help.
         rejectLeadInSelect(queryModel);
+
+        // Enforce the finite-influence scope cut: unanchored ranking functions
+        // (row_number / rank / dense_rank) and unbounded frame starts have no
+        // finite forward influence and are rejected at CREATE. Runs after
+        // validateLiveViewAnchors so the named-window anchor kinds it inspects
+        // are already validated.
+        validateLiveViewFiniteInfluence(queryModel);
 
         // Capture the (at most one) anchored named WINDOW for persistence in _lv.
         // The runtime side reads this back to compile the anchor expression and
@@ -1893,10 +1892,22 @@ public class SqlParser {
      *     <li>Ranking functions - {@code row_number()}, {@code rank()},
      *     {@code dense_rank()} - running unanchored: an out-of-order row shifts
      *     every following row's rank without bound.</li>
-     *     <li>Window aggregates over a frame starting at UNBOUNDED PRECEDING:
-     *     an out-of-order row joins the frame of every following row, so it
-     *     moves every later value of the accumulator without bound.</li>
+     *     <li>Any window function over a frame starting at UNBOUNDED PRECEDING:
+     *     an out-of-order row joins the frame of every following row, so it can
+     *     move every later value the function produces. That is plainly true of
+     *     an accumulator, and true of the value functions too - a row inserted
+     *     below a partition's current earliest row becomes the
+     *     {@code first_value} of every frame above it, and shifts what
+     *     {@code nth_value} counts to.</li>
      * </ul>
+     * The rule reads the frame rather than the function, so a window function
+     * added later is covered without being listed anywhere. It costs the shapes
+     * whose influence would in fact be finite - {@code last_value} over an
+     * unbounded start moves only until the next existing row supersedes it -
+     * but nothing proves that bound today, and an unproven bound means a late
+     * row replays the whole history rather than an interval. A frame the
+     * planner can bound is the price of admission.
+     * <p>
      * The anchored, per-segment-reset forms have a finite {@code H} (the
      * segment end) and stay eligible; they route through the fixed-anchor
      * dependency kind.
@@ -1906,19 +1917,10 @@ public class SqlParser {
      * {@link #validateLiveViewAnchors}' bare-unbounded reject; this closes the
      * remaining single-partition {@code OVER ()} / {@code OVER (ORDER BY ts)}
      * hole, which {@code validateLiveViewAnchors} deliberately leaves open for
-     * O(1)-state single-partition windows. The aggregate reject closes that
-     * same hole plus the one an explicit frame opens: a window declaring
+     * O(1)-state single-partition windows. The frame reject closes that same
+     * hole plus the one an explicit frame opens: a window declaring
      * {@code ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} is a non-default
      * frame, so the bare-unbounded rule skips it however it is partitioned.
-     * <p>
-     * Value functions - {@code first_value()}, {@code last_value()},
-     * {@code nth_value()} - are deliberately left standing over an unbounded
-     * frame start. They are not accumulators, and their influence is decided
-     * per function rather than by frame shape: an out-of-order row changes
-     * {@code last_value} only until the next existing row supersedes it, which
-     * is finite. Proving that bound belongs to the dependency descriptor, not
-     * to a parser-side name list, so those shapes keep compiling and simply
-     * carry no repair plan.
      */
     private static void validateLiveViewFiniteInfluence(IQueryModel queryModel) throws SqlException {
         LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
@@ -1972,28 +1974,25 @@ public class SqlParser {
             return;
         }
         rejectUnanchoredRanking(fn, window, named);
-        rejectUnboundedCumulative(fn, window, named);
+        rejectUnboundedFrameStart(fn, window, named);
     }
 
     /**
-     * Throws when {@code fn} is a window aggregate accumulating from an
-     * unbounded frame start over a window no anchor resets. See
-     * {@link #validateLiveViewFiniteInfluence}.
+     * Throws when {@code fn} reads from an unbounded frame start over a window
+     * no anchor resets. See {@link #validateLiveViewFiniteInfluence}.
      */
-    private static void rejectUnboundedCumulative(
+    private static void rejectUnboundedFrameStart(
             ExpressionNode fn,
             WindowExpression window,
             LowerCaseCharSequenceObjHashMap<WindowExpression> named
     ) throws SqlException {
-        if (!cumulativeAggregates.contains(fn.token)) {
-            return;
-        }
         if (isAnchoredWindow(window, named) || !hasUnboundedFrameStart(window, named)) {
             return;
         }
         throw SqlException.$(fn.position, "live view select cannot use ")
                 .put(fn.token)
-                .put("() over a frame starting at UNBOUNDED PRECEDING; it has no finite out-of-order influence boundary. ")
+                .put("() over a frame starting at UNBOUNDED PRECEDING; it has no finite out-of-order influence boundary, ")
+                .put("so a late row would replay the whole history. ")
                 .put("Bound the frame, e.g. ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW, or add an ANCHOR to reset per segment, ")
                 .put("e.g. WINDOW w AS (PARTITION BY <key> ORDER BY <ts> ANCHOR EXPRESSION timestamp_floor('1d', <ts>))");
     }
@@ -6718,22 +6717,6 @@ public class SqlParser {
         columnAliasStop.add(")");
         columnAliasStop.add(";");
         columnAliasStop.add("FOR");
-        //
-        cumulativeAggregates.add("avg");
-        cumulativeAggregates.add("corr");
-        cumulativeAggregates.add("count");
-        cumulativeAggregates.add("covar_pop");
-        cumulativeAggregates.add("covar_samp");
-        cumulativeAggregates.add("ksum");
-        cumulativeAggregates.add("max");
-        cumulativeAggregates.add("min");
-        cumulativeAggregates.add("stddev");
-        cumulativeAggregates.add("stddev_pop");
-        cumulativeAggregates.add("stddev_samp");
-        cumulativeAggregates.add("sum");
-        cumulativeAggregates.add("var_pop");
-        cumulativeAggregates.add("var_samp");
-        cumulativeAggregates.add("variance");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");

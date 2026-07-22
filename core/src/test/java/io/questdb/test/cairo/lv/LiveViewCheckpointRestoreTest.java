@@ -603,21 +603,19 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testCheckpointRestoresFirstValueIgnoreNullsUnboundedDouble() throws Exception {
-        // first_value(DOUBLE) IGNORE NULLS over a RANGE frame with an UNBOUNDED PRECEDING lower bound
-        // and a non-current-row upper bound (frameLoBounded == false) captures the first non-null value
-        // at physical ring index 0 and then uses firstIdx as a 0/1 capture flag. The window function
-        // accumulator is snapshotted into the head checkpoint; restore must reload it so post-restore rows
-        // still report the captured value. Regression for the snapshot that serialized in logical
-        // (firstIdx + i) order and so read a never-written slot once the flag flipped.
-        assertFirstValueIgnoreNullsUnboundedRestore("DOUBLE", "1.0", "2.0", "3.0");
+    public void testCheckpointRestoresFirstValueIgnoreNullsLaggingRangeDouble() throws Exception {
+        // first_value(DOUBLE) IGNORE NULLS over a RANGE frame whose upper bound lags the current row.
+        // The window function accumulator is snapshotted into the head checkpoint; restore must reload
+        // it so post-restore rows still report the captured value. See the helper for what this used to
+        // cover and why its lower bound is now a wide finite look-behind.
+        assertFirstValueIgnoreNullsLaggingRangeRestore("DOUBLE", "1.0", "2.0", "3.0");
     }
 
     @Test
-    public void testCheckpointRestoresFirstValueIgnoreNullsUnboundedLong() throws Exception {
-        // As testCheckpointRestoresFirstValueIgnoreNullsUnboundedDouble but for first_value(LONG),
-        // which shares the same buggy inline snapshot/restore in FirstValueLongWindowFunctionFactory.
-        assertFirstValueIgnoreNullsUnboundedRestore("LONG", "10", "20", "30");
+    public void testCheckpointRestoresFirstValueIgnoreNullsLaggingRangeLong() throws Exception {
+        // As testCheckpointRestoresFirstValueIgnoreNullsLaggingRangeDouble but for first_value(LONG),
+        // which carries its own inline snapshot/restore in FirstValueLongWindowFunctionFactory.
+        assertFirstValueIgnoreNullsLaggingRangeRestore("LONG", "10", "20", "30");
     }
 
     @Test
@@ -1136,23 +1134,26 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         }
     }
 
-    // Drives a first_value(valueType) IGNORE NULLS live view over a RANGE frame with an UNBOUNDED
-    // PRECEDING lower bound (frameLoBounded == false) through checkpoint/restore and asserts
-    // convergence to a from-scratch recompute. The three pre-checkpoint rows per partition are
-    // (null, v, w): the null exercises IGNORE NULLS, v is captured at physical ring index 0, and w
-    // (more than the '2' SECOND upper offset past v) flips the accumulator's firstIdx to its 0/1
-    // capture-flag state. After restore, a fourth row (x) still holds v in its frame, so the reloaded
-    // accumulator - not a fresh one - decides its first_value. Under the pre-fix snapshot the restored
-    // ring holds garbage at index 0 and the fourth row reports it instead of v, diverging from the
-    // recompute.
-    private void assertFirstValueIgnoreNullsUnboundedRestore(
+    // Drives a first_value(valueType) IGNORE NULLS live view over a RANGE frame whose upper bound
+    // lags the current row through checkpoint/restore and asserts convergence to a from-scratch
+    // recompute. The three pre-checkpoint rows per partition are (null, v, w): the null exercises
+    // IGNORE NULLS, and w lands more than the '2' SECOND upper offset past v. After restore, a fourth
+    // row (x) still holds v in its frame, so the reloaded accumulator - not a fresh one - decides its
+    // first_value.
+    // The lower bound is a wide finite look-behind rather than UNBOUNDED PRECEDING. This began as a
+    // regression for the frameLoBounded == false accumulator, whose snapshot walked logical order over
+    // a value parked at physical ring index 0 and so read a never-written slot; a live view can no
+    // longer create that shape, since the finite-influence gate rejects an unbounded frame start. Over
+    // this data the wide look-behind selects the same rows, so the assertions are unchanged and what
+    // they now cover is the bounded-lo accumulator.
+    private void assertFirstValueIgnoreNullsLaggingRangeRestore(
             String valueType,
             String v,
             String w,
             String x
     ) throws Exception {
         final String viewSql = "SELECT ts, sym, first_value(val) IGNORE NULLS OVER w AS fv FROM base " +
-                "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '2' SECOND PRECEDING)";
+                "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '24' HOUR PRECEDING AND '2' SECOND PRECEDING)";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, val " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);

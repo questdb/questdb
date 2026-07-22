@@ -225,8 +225,10 @@ public final class LiveViewCheckpointContracts {
          * Unbounded cumulative aggregate without a fixed reset. An out-of-order
          * row joins the frame of every following row, so there is no finite
          * influence boundary. {@code SqlParser.validateLiveViewFiniteInfluence}
-         * rejects it at CREATE, naming the aggregate. The anchored form resets
-         * at every segment start and remains eligible via
+         * rejects it at CREATE, naming the aggregate; it applies the same test
+         * to every other window function over an unbounded frame start, since
+         * the frame - not the function - is what leaves the boundary open. The
+         * anchored form resets at every segment start and remains eligible via
          * {@link #FIXED_ANCHOR_SEGMENT}.
          */
         UNBOUNDED_CUMULATIVE_NO_RESET(

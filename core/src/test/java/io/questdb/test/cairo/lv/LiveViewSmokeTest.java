@@ -129,11 +129,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // The two framings assertMaxMinBoundedRestoresDequeAcrossRestart drives. Over the hourly rows it
     // ingests they select exactly the same rows, so both share one expected result - but they compile
     // to different production functions with their own snapshot/restore paths.
-    // w2's look-behind is wide rather than UNBOUNDED: an aggregate reading from UNBOUNDED PRECEDING
-    // has no finite out-of-order influence boundary and the finite-influence gate turns it away at
-    // CREATE. Over three hourly rows a 24-hour / 1,000,000-row look-behind selects the same rows the
-    // unbounded one did, so every expected value below is unchanged; what w2 still contributes is a
-    // high bound that lags the current row.
+    // w2's look-behind is wide rather than UNBOUNDED: a window function reading from UNBOUNDED
+    // PRECEDING has no finite out-of-order influence boundary and the finite-influence gate turns it
+    // away at CREATE. Over three hourly rows a 24-hour / 1,000,000-row look-behind selects the same
+    // rows the unbounded one did, so every expected value below is unchanged; what w2 still
+    // contributes is a high bound that lags the current row.
     private static final String RANGE_FRAME_WINDOW = "WINDOW " +
             "  w1 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW), " +
             "  w2 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '24' HOUR PRECEDING AND '1' HOUR PRECEDING)";
@@ -494,18 +494,20 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         });
     }
 
-    // Regression for the first_value(DOUBLE|LONG) IGNORE NULLS unbounded-preceding-lo range frame
-    // accumulator snapshot. That path (FirstNotNullValueOverPartitionRangeFrameFunction with
-    // frameLoBounded == false, reached by a RANGE frame whose lower bound is UNBOUNDED PRECEDING and
-    // whose upper bound is not the current row) stores the first non-null value at physical ring index
-    // 0 and then uses firstIdx as a 0/1 capture flag. The pre-fix snapshot serialized in logical
-    // (firstIdx + i) order over size elements, so once the flag flipped to 1 it read a never-written
-    // slot instead of index 0, losing the captured value on restore. This drives (null, v, w) so v is
-    // captured and the flag flips (w lands more than the '2' SECOND upper offset past v), restarts
-    // in-process (which rehydrates the accumulator from the head checkpoint), then appends a fourth row (x).
-    // The restored accumulator - not a fresh one - decides x's first_value, so a lost captured value
-    // diverges from the recompute over the base.
-    private void assertFirstValueIgnoreNullsUnboundedRestartThenAppend(
+    // first_value(DOUBLE|LONG) IGNORE NULLS over a RANGE frame whose upper bound lags the current
+    // row: the accumulator must survive a restart and keep deciding later rows. This drives
+    // (null, v, w) so v is captured (w lands more than the '2' SECOND upper offset past v), restarts
+    // in-process (which rehydrates the accumulator from the head checkpoint), then appends a fourth
+    // row (x). The restored accumulator - not a fresh one - decides x's first_value, so a lost
+    // captured value diverges from the recompute over the base.
+    // This began as a regression for the frameLoBounded == false variant of
+    // FirstNotNullValueOverPartitionRangeFrameFunction, which stores the captured value at physical
+    // ring index 0 and uses firstIdx as a 0/1 flag; the pre-fix snapshot walked logical order and
+    // read a never-written slot. A live view can no longer create that variant - the
+    // finite-influence gate rejects an unbounded frame start - so the low bound here is a wide
+    // finite look-behind, which selects the same rows over this data and leaves every expected value
+    // unchanged while driving the bounded-lo path that remains reachable.
+    private void assertFirstValueIgnoreNullsLaggingRangeRestartThenAppend(
             String valueType,
             String v,
             String w,
@@ -516,7 +518,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, val " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, first_value(val) IGNORE NULLS OVER w AS a FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '2' SECOND PRECEDING)");
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '24' HOUR PRECEDING AND '2' SECOND PRECEDING)");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, val) VALUES " +
@@ -530,7 +532,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 setCurrentMicros(250_000L);
                 drainJob(job);
                 drainWalQueue();
-                assertFirstValueUnboundedLvMatchesRecompute();
+                assertFirstValueLaggingRangeLvMatchesRecompute();
             }
 
             // Simulated restart: rebuild the registry from on-disk state, then drive one refresh so the
@@ -552,7 +554,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainJob(job);
                 drainWalQueue();
             }
-            assertFirstValueUnboundedLvMatchesRecompute();
+            assertFirstValueLaggingRangeLvMatchesRecompute();
 
             execute("DROP LIVE VIEW lv");
         });
@@ -1275,15 +1277,18 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // window and a plain PARTITION BY ... ORDER BY ts unbounded-preceding window
     // resolve to the identical migrated function class, so the recompute is a
     // bit-exact oracle - no hand-computed Welford/EMA expectations needed.
-    // Drives nth_value(v, 2) over ROWS BETWEEN UNBOUNDED PRECEDING AND
-    // 1 PRECEDING (the O(1) [count, lockedValue] shape) across a simulated
-    // restart: the head checkpoint must round-trip the position bookkeeping so the
-    // first post-restart row still reports the value locked by the 2nd
-    // pre-restart row. The restore-succeeded + seqTxn asserts prove the
+    // Drives nth_value(v, 2) over a ROWS frame ending one row behind the current
+    // row across a simulated restart: the head checkpoint must round-trip the
+    // position bookkeeping so the first post-restart row still reports the value
+    // the 2nd pre-restart row settled. The O(1) [count, lockedValue] shape this
+    // used to drive needs an unbounded frame start, which a live view can no
+    // longer create; the wide finite look-behind below selects the same rows over
+    // this data, so every expected value is unchanged. The restore-succeeded +
+    // seqTxn asserts prove the
     // asserted cells flow from the restored state, not from a head-miss replay
     // recompute. Uses an INT partition key to side-step the per-WAL-segment
     // SYMBOL index collision.
-    private void assertNthValueRestoresLockedValueAcrossRestart(
+    private void assertNthValueRestoresKPrecedingFrameAcrossRestart(
             String valueType,
             String v0,
             String v1,
@@ -1296,7 +1301,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(v, 2) OVER w AS a FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)");
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND 1 PRECEDING)");
 
             final long preLastProcessed;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -1532,12 +1537,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // Differential oracle for the first_value IGNORE NULLS unbounded-lo range restart test: the LV must
     // equal the same windowed first_value recomputed straight over the base with the identical frame.
     // ORDER BY sym, ts is a total order (timestamps are unique per sym).
-    private void assertFirstValueUnboundedLvMatchesRecompute() throws SqlException {
+    private void assertFirstValueLaggingRangeLvMatchesRecompute() throws SqlException {
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
                 "(SELECT ts, sym, first_value(val) IGNORE NULLS OVER (PARTITION BY sym ORDER BY ts " +
-                        "RANGE BETWEEN UNBOUNDED PRECEDING AND '2' SECOND PRECEDING) AS a FROM base) ORDER BY 2, 1",
+                        "RANGE BETWEEN '24' HOUR PRECEDING AND '2' SECOND PRECEDING) AS a FROM base) ORDER BY 2, 1",
                 "(SELECT ts, sym, a FROM lv) ORDER BY 2, 1",
                 LOG,
                 true
@@ -4420,13 +4425,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testFirstValueIgnoreNullsUnboundedRestartThenAppendDouble() throws Exception {
-        assertFirstValueIgnoreNullsUnboundedRestartThenAppend("DOUBLE", "1.5", "2.5", "3.5");
+    public void testFirstValueIgnoreNullsLaggingRangeRestartThenAppendDouble() throws Exception {
+        assertFirstValueIgnoreNullsLaggingRangeRestartThenAppend("DOUBLE", "1.5", "2.5", "3.5");
     }
 
     @Test
-    public void testFirstValueIgnoreNullsUnboundedRestartThenAppendLong() throws Exception {
-        assertFirstValueIgnoreNullsUnboundedRestartThenAppend("LONG", "15", "25", "35");
+    public void testFirstValueIgnoreNullsLaggingRangeRestartThenAppendLong() throws Exception {
+        assertFirstValueIgnoreNullsLaggingRangeRestartThenAppend("LONG", "15", "25", "35");
     }
 
     @Test
@@ -14295,11 +14300,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testNthValueDecimal128OverPartitionRowsUnboundedSnapshotRoundTrip() throws Exception {
+    public void testNthValueDecimal128OverPartitionRowsKPrecedingSnapshotRoundTrip() throws Exception {
         assertNthValueDecimalFrameRoundTrip(
                 "DECIMAL(38, 6)",
                 2,
-                "ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING",
+                "ROWS BETWEEN 1000000 PRECEDING AND 1 PRECEDING",
                 "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
                         "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
                         "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
@@ -14430,11 +14435,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testNthValueDecimal256OverPartitionRowsUnboundedSnapshotRoundTrip() throws Exception {
+    public void testNthValueDecimal256OverPartitionRowsKPrecedingSnapshotRoundTrip() throws Exception {
         assertNthValueDecimalFrameRoundTrip(
                 "DECIMAL(60, 0)",
                 2,
-                "ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING",
+                "ROWS BETWEEN 1000000 PRECEDING AND 1 PRECEDING",
                 "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
                         "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
                         "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
@@ -14616,14 +14621,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testNthValueDecimal64OverPartitionRowsUnboundedSnapshotRoundTrip() throws Exception {
-        // nth_value(DECIMAL(18,2), 2) over ROWS UNBOUNDED PRECEDING AND 1 PRECEDING
-        // - the O(1) [count, lockedValue] shape; the 2nd value locks and is emitted
-        // once the frame contains at least n rows.
+    public void testNthValueDecimal64OverPartitionRowsKPrecedingSnapshotRoundTrip() throws Exception {
+        // nth_value(DECIMAL(18,2), 2) over a ROWS frame ending one row behind the
+        // current row: the 2nd value is emitted once the frame holds at least n rows.
         assertNthValueDecimalFrameRoundTrip(
                 "DECIMAL(18, 2)",
                 2,
-                "ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING",
+                "ROWS BETWEEN 1000000 PRECEDING AND 1 PRECEDING",
                 "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
                         "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
                         "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
@@ -14645,28 +14649,28 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testNthValueDoubleRestoresLockedValueAcrossRestart() throws Exception {
-        assertNthValueRestoresLockedValueAcrossRestart("DOUBLE", "5.0", "50.0", "20.0", "13.0", "50.0", "null");
+    public void testNthValueDoubleRestoresKPrecedingFrameAcrossRestart() throws Exception {
+        assertNthValueRestoresKPrecedingFrameAcrossRestart("DOUBLE", "5.0", "50.0", "20.0", "13.0", "50.0", "null");
     }
 
     @Test
-    public void testNthValueLongRestoresLockedValueAcrossRestart() throws Exception {
-        assertNthValueRestoresLockedValueAcrossRestart("LONG", "5", "50", "20", "13", "50", "null");
+    public void testNthValueLongRestoresKPrecedingFrameAcrossRestart() throws Exception {
+        assertNthValueRestoresKPrecedingFrameAcrossRestart("LONG", "5", "50", "20", "13", "50", "null");
     }
 
     @Test
-    public void testNthValueDecimal64RestoresLockedValueAcrossRestart() throws Exception {
-        assertNthValueRestoresLockedValueAcrossRestart("DECIMAL(18, 2)", "5.00m", "50.00m", "20.00m", "13.00m", "50.00", "");
+    public void testNthValueDecimal64RestoresKPrecedingFrameAcrossRestart() throws Exception {
+        assertNthValueRestoresKPrecedingFrameAcrossRestart("DECIMAL(18, 2)", "5.00m", "50.00m", "20.00m", "13.00m", "50.00", "");
     }
 
     @Test
-    public void testNthValueDecimal128RestoresLockedValueAcrossRestart() throws Exception {
-        assertNthValueRestoresLockedValueAcrossRestart("DECIMAL(38, 6)", "5.000000m", "50.000000m", "20.000000m", "13.000000m", "50.000000", "");
+    public void testNthValueDecimal128RestoresKPrecedingFrameAcrossRestart() throws Exception {
+        assertNthValueRestoresKPrecedingFrameAcrossRestart("DECIMAL(38, 6)", "5.000000m", "50.000000m", "20.000000m", "13.000000m", "50.000000", "");
     }
 
     @Test
-    public void testNthValueDecimal256RestoresLockedValueAcrossRestart() throws Exception {
-        assertNthValueRestoresLockedValueAcrossRestart("DECIMAL(60, 0)", "5m", "50m", "20m", "13m", "50", "");
+    public void testNthValueDecimal256RestoresKPrecedingFrameAcrossRestart() throws Exception {
+        assertNthValueRestoresKPrecedingFrameAcrossRestart("DECIMAL(60, 0)", "5m", "50m", "20m", "13m", "50", "");
     }
 
     @Test
@@ -14725,14 +14729,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testNthValueDoubleOverPartitionRowsKPrecedingSnapshotRoundTrip() throws Exception {
-        // nth_value() Step 2 -- DOUBLE variant, ROWS BETWEEN UNBOUNDED
-        // PRECEDING AND K PRECEDING (non-anchored). State per partition is
-        // [count: LONG, lockedValue: LONG (double bits), tombstone: BYTE].
+        // nth_value() Step 2 -- DOUBLE variant, ROWS BETWEEN <wide> PRECEDING AND
+        // K PRECEDING (non-anchored). A live view cannot start a frame at UNBOUNDED
+        // PRECEDING, so this drives the ring-backed bounded-lo shape.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(x, 2) OVER w AS nv FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)");
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND 1 PRECEDING)");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 setCurrentMicros(0L);
@@ -14753,21 +14757,22 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
-                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    LiveViewFunctionSnapshot.write(sink, nvFunc);
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, nvFunc);
+                    final long len = s1.getAppendOffset();
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
-
-                    // lockedValue is the value at count == n == 2: 'a' -> 50.0, 'b' -> 11.0. Sum 61.0.
-                    MapRecordCursor mc = fnMap.getCursor();
-                    MapRecord rec = fnMap.getRecord();
-                    double total = 0;
-                    while (mc.hasNext()) {
-                        total += Double.longBitsToDouble(rec.getValue().getLong(1));
+                    // Re-freezing the restored state must reproduce the image byte for byte.
+                    // Asserting the round-trip this way rather than reading a named map slot
+                    // keeps the test independent of which state layout the frame compiles to.
+                    LiveViewFunctionSnapshot.write(s2, nvFunc);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
                     }
-                    Assert.assertEquals(61.0, total, 0.0);
                 }
             }
 
@@ -14777,14 +14782,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testNthValueLongOverPartitionRowsKPrecedingSnapshotRoundTrip() throws Exception {
-        // nth_value() Step 2 -- LONG variant, ROWS BETWEEN UNBOUNDED
-        // PRECEDING AND K PRECEDING (non-anchored). State per partition is
-        // [count: LONG, lockedValue: LONG, tombstone: BYTE].
+        // nth_value() Step 2 -- LONG variant, ROWS BETWEEN <wide> PRECEDING AND
+        // K PRECEDING (non-anchored). A live view cannot start a frame at UNBOUNDED
+        // PRECEDING, so this drives the ring-backed bounded-lo shape.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(x, 2) OVER w AS nv FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)");
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND 1 PRECEDING)");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 setCurrentMicros(0L);
@@ -14805,21 +14810,22 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
-                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    LiveViewFunctionSnapshot.write(sink, nvFunc);
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, nvFunc);
+                    final long len = s1.getAppendOffset();
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
-
-                    // lockedValue is the value at count == n == 2: 'a' -> 50, 'b' -> 11. Sum 61.
-                    MapRecordCursor mc = fnMap.getCursor();
-                    MapRecord rec = fnMap.getRecord();
-                    long total = 0;
-                    while (mc.hasNext()) {
-                        total += rec.getValue().getLong(1);
+                    // Re-freezing the restored state must reproduce the image byte for byte.
+                    // Asserting the round-trip this way rather than reading a named map slot
+                    // keeps the test independent of which state layout the frame compiles to.
+                    LiveViewFunctionSnapshot.write(s2, nvFunc);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
                     }
-                    Assert.assertEquals(61L, total);
                 }
             }
 
@@ -14829,14 +14835,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testNthValueTimestampOverPartitionRowsKPrecedingSnapshotRoundTrip() throws Exception {
-        // nth_value() Step 2 -- TIMESTAMP variant, ROWS BETWEEN UNBOUNDED
-        // PRECEDING AND K PRECEDING (non-anchored). State per partition is
-        // [count: LONG, lockedValue: TIMESTAMP-as-LONG, tombstone: BYTE].
+        // nth_value() Step 2 -- TIMESTAMP variant, ROWS BETWEEN <wide> PRECEDING AND
+        // K PRECEDING (non-anchored). A live view cannot start a frame at UNBOUNDED
+        // PRECEDING, so this drives the ring-backed bounded-lo shape.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(ts, 2) OVER w AS nv FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)");
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND 1 PRECEDING)");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 setCurrentMicros(0L);
@@ -14857,22 +14863,22 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
-                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    LiveViewFunctionSnapshot.write(sink, nvFunc);
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, nvFunc);
+                    final long len = s1.getAppendOffset();
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
-
-                    // lockedValue is ts at count == 2 = '2026-08-01T01:00:00' for both partitions.
-                    final long expected = 2L * MicrosFormatUtils.parseUTCTimestamp("2026-08-01T01:00:00.000000Z");
-                    MapRecordCursor mc = fnMap.getCursor();
-                    MapRecord rec = fnMap.getRecord();
-                    long total = 0;
-                    while (mc.hasNext()) {
-                        total += rec.getValue().getLong(1);
+                    // Re-freezing the restored state must reproduce the image byte for byte.
+                    // Asserting the round-trip this way rather than reading a named map slot
+                    // keeps the test independent of which state layout the frame compiles to.
+                    LiveViewFunctionSnapshot.write(s2, nvFunc);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
                     }
-                    Assert.assertEquals(expected, total);
                 }
             }
 
@@ -16708,8 +16714,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // covers Min* and Max* factories at once.
         // The class's other state shape - frameLoBounded == false, a ring plus
         // a scalar max/min - is no longer reachable from a live view: the
-        // finite-influence gate rejects an aggregate reading from UNBOUNDED
-        // PRECEDING at CREATE, so nothing here can exercise it.
+        // finite-influence gate rejects any window function reading from
+        // UNBOUNDED PRECEDING at CREATE, so nothing here can exercise it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
@@ -16911,8 +16917,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // covers Min* and Max* factories at once.
         // The class's other state shape - frameLoBounded == false, a ring plus
         // a scalar max/min - is no longer reachable from a live view: the
-        // finite-influence gate rejects an aggregate reading from UNBOUNDED
-        // PRECEDING at CREATE, so nothing here can exercise it.
+        // finite-influence gate rejects any window function reading from
+        // UNBOUNDED PRECEDING at CREATE, so nothing here can exercise it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
