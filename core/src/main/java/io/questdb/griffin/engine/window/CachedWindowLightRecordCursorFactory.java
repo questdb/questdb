@@ -555,7 +555,13 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             if (hasOrdered || forwardFnCount > 0) {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    narrowChain.beginRecord();
+                    // Fused row-selecting mode: the sole function's boolean output is never
+                    // materialized (see the "Row-selecting fusion" comment below) nor read back
+                    // (positionRecordA/positionRecordB skip repositioning the chain too), so
+                    // allocating a per-row narrow-chain slot here would be pure overhead. Skip it.
+                    if (!rowSelecting) {
+                        narrowChain.beginRecord();
+                    }
                     baseRowIds.add(baseRecord.getRowId());
                     if (hasOrdered) {
                         for (int i = 0; i < orderedGroupCount; i++) {
@@ -579,7 +585,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             } else {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    narrowChain.beginRecord();
+                    if (!rowSelecting) {
+                        narrowChain.beginRecord();
+                    }
                     baseRowIds.add(baseRecord.getRowId());
                     rowIndex++;
                 }
@@ -737,7 +745,14 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
         private void positionRecordA(long rowIndex) {
             baseCursor.recordAt(baseCursor.getRecord(), baseRowIds.get(rowIndex));
-            narrowChain.recordAtRowIndex(narrowChain.getRecord(), rowIndex);
+            // Fused row-selecting mode never wrote a narrow-chain slot for any row (see
+            // computeWindow's buffering loop), so repositioning into it here would read
+            // unallocated/out-of-bounds native memory. Safe to skip: projected columns resolve
+            // to base columns and the sole function's boolean output is dropped by the outer
+            // projection (see getSingleRowSelectingFunction/tryFuseKeepFlagFilter).
+            if (!rowSelecting) {
+                narrowChain.recordAtRowIndex(narrowChain.getRecord(), rowIndex);
+            }
             recordA.setRowIndex(rowIndex);
         }
 
@@ -748,7 +763,10 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
         private void positionRecordB(long rowIndex) {
             baseCursor.recordAt(baseCursor.getRecordB(), baseRowIds.get(rowIndex));
-            narrowChain.recordAtRowIndex(narrowChain.getRecordB(), rowIndex);
+            // See positionRecordA: no narrow-chain row exists in fused mode.
+            if (!rowSelecting) {
+                narrowChain.recordAtRowIndex(narrowChain.getRecordB(), rowIndex);
+            }
             recordB.setRowIndex(rowIndex);
         }
 

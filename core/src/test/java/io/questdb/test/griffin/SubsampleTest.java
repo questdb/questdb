@@ -699,6 +699,56 @@ public class SubsampleTest extends AbstractCairoTest {
         });
     }
 
+    // Byte-identity guard for the fused row-selecting path (CachedWindowLightRecordCursorFactory):
+    // interleaved NULL rows + normal rows, exercising the desugared SUBSAMPLE keep-flag fusion for
+    // m4/minmax/lttb. This locks the exact kept rows so a change that skips per-row narrowChain
+    // materialization on the fused path cannot silently alter which rows are emitted.
+    @Test
+    public void testFusedKeepFlagByteIdentityInterleavedNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (NULL, '2024-01-01T01:00:00.000000Z'),
+                    (50.0, '2024-01-01T02:00:00.000000Z'),
+                    (NULL, '2024-01-01T03:00:00.000000Z'),
+                    (20.0, '2024-01-01T04:00:00.000000Z'),
+                    (5.0, '2024-01-01T05:00:00.000000Z'),
+                    (NULL, '2024-01-01T06:00:00.000000Z'),
+                    (80.0, '2024-01-01T07:00:00.000000Z'),
+                    (15.0, '2024-01-01T08:00:00.000000Z'),
+                    (NULL, '2024-01-01T09:00:00.000000Z'),
+                    (60.0, '2024-01-01T10:00:00.000000Z'),
+                    (25.0, '2024-01-01T11:00:00.000000Z')
+                    """);
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "5.0\t2024-01-01T05:00:00.000000Z\n" +
+                            "80.0\t2024-01-01T07:00:00.000000Z\n" +
+                            "25.0\t2024-01-01T11:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 4)"
+            );
+            assertSql(
+                    "price\tts\n" +
+                            "50.0\t2024-01-01T02:00:00.000000Z\n" +
+                            "5.0\t2024-01-01T05:00:00.000000Z\n" +
+                            "80.0\t2024-01-01T07:00:00.000000Z\n" +
+                            "15.0\t2024-01-01T08:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)"
+            );
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "50.0\t2024-01-01T02:00:00.000000Z\n" +
+                            "80.0\t2024-01-01T07:00:00.000000Z\n" +
+                            "25.0\t2024-01-01T11:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 4)"
+            );
+        });
+    }
+
     @Test
     public void testLttbGapPreserving() throws Exception {
         assertMemoryLeak(() -> {
