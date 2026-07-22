@@ -1667,7 +1667,18 @@ public class CairoEngine implements Closeable, WriterSource {
      * {@code ALTER TABLE ... RESUME WAL}.
      */
     public boolean isWalApplySuspended(TableToken tableToken) {
-        if (tableSequencerAPI.getTxnTracker(tableToken).isHardSuspended()) {
+        return isWalApplySuspended(tableToken, tableSequencerAPI.getTxnTracker(tableToken));
+    }
+
+    /**
+     * Same as {@link #isWalApplySuspended(TableToken)}, but takes an already-resolved tracker so a
+     * caller that has one in hand (e.g. from {@link TableSequencerAPI#getTxnTrackerIfExists}) does
+     * not pay for a second lookup. A {@code null} tracker means none has been installed yet, which
+     * cannot be hard-suspended (hard-suspension is tracked on the tracker itself), so only the
+     * config-list leg still applies.
+     */
+    public boolean isWalApplySuspended(TableToken tableToken, @Nullable SeqTxnTracker tracker) {
+        if (tracker != null && tracker.isHardSuspended()) {
             return true;
         }
         final ObjHashSet<String> configured = configuration.getWalApplySuspendedTables();
