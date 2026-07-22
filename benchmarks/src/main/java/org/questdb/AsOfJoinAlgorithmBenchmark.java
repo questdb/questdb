@@ -89,6 +89,8 @@ public class AsOfJoinAlgorithmBenchmark {
     private static final int KEYS = Integer.getInteger("asof.bench.keys", 10_000);
     // idx_sweep symbol cardinality: high = illiquid (few rows/symbol), low = liquid (many rows/symbol).
     private static final int IDX_CARD = Integer.getInteger("asof.bench.idx.card", 100_000);
+    // idx_sweep master (left) row count: sweep to find the asof_index vs Dense master/slave-ratio crossover.
+    private static final long MASTER_ROWS = Long.getLong("asof.bench.master.rows", 1000L);
     private static final long RIGHT_ROWS = Long.getLong("asof.bench.right.rows", 2_000_000L);
     private static final String ROOT = System.getProperty("java.io.tmpdir") + java.io.File.separator + "asof-adaptive-bench";
     private static final long ROWS = Long.getLong("asof.bench.rows", 300_000L);
@@ -194,7 +196,7 @@ public class AsOfJoinAlgorithmBenchmark {
         engine.execute("INSERT INTO md_sweep SELECT ((x-1)%" + IDX_CARD + ")::symbol, (x-1)::timestamp, x-1 FROM long_sequence(" + RIGHT_ROWS + ")", ctx);
         engine.execute("DROP TABLE IF EXISTS ord_sweep", ctx);
         engine.execute("CREATE TABLE ord_sweep (sym SYMBOL, ts TIMESTAMP, oid LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
-        engine.execute("INSERT INTO ord_sweep SELECT '0', ((x-1)*" + (RIGHT_ROWS / 1000) + ")::timestamp, x-1 FROM long_sequence(1000)", ctx);
+        engine.execute("INSERT INTO ord_sweep SELECT '0', ((x-1)*" + Math.max(1L, RIGHT_ROWS / MASTER_ROWS) + ")::timestamp, x-1 FROM long_sequence(" + MASTER_ROWS + ")", ctx);
         engine.releaseAllWriters();
         System.out.println("asof-bench data built (rows/table=" + ROWS + ", right=" + RIGHT_ROWS + ", keys=" + KEYS
                 + ", dense=" + DENSE + ") in " + (System.nanoTime() - t0) / 1_000_000 + "ms");
