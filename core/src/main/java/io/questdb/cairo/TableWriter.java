@@ -12350,6 +12350,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void recoverFromTodoWriteFailure() {
         restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex);
+        // The compensating rename must reach the directory before the caller clears the restore marker.
+        // Otherwise a crash could retain the failed forward rename, lose this rollback rename, and find no
+        // _todo marker on restart. If this barrier also fails, runFragile distresses the writer while leaving
+        // the marker armed for open-time recovery.
+        fsyncTableDirAfterMetadataRename();
         openMetaFile(ff, path, pathSize, ddlMem, metadata);
         columnCount = metadata.getColumnCount();
     }
@@ -13175,18 +13180,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // IO fault, real EIO), and only with the marker already in place does a failure here
         // leave a recoverable state.
         if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
-            final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
-            if (dirFd != -1) {
-                ff.fsyncAndClose(dirFd);
+            try {
+                final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
+                if (dirFd != -1) {
+                    ff.fsyncAndClose(dirFd);
+                }
+            } catch (CairoException e) {
+                // _meta has already moved to _meta.prev and the restore marker is armed. Recover the old
+                // metadata now so this live writer is safe to reuse/retry, rather than relying on open-time
+                // recovery that only a newly constructed writer would run.
+                runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, e);
             }
         }
 
         // rename _meta.swp to _meta
         renameSwapMetaToMeta();
         if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
-            final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
-            if (dirFd != -1) {
-                ff.fsyncAndClose(dirFd);
+            try {
+                final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
+                if (dirFd != -1) {
+                    ff.fsyncAndClose(dirFd);
+                }
+            } catch (CairoException e) {
+                // The directory entry is not known durable, so roll the DDL back through _meta.prev and
+                // leave the writer consistent for the caller's retry.
+                runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, e);
             }
         }
     }
@@ -14610,6 +14628,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Mirror syncColumns(): forward indexer purge entries safe for the committed txn.
         publishPendingPostingSealPurges(txWriter.getTxn());
+    }
+
+    private void fsyncTableDirAfterMetadataRename() {
+        if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
+            final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
+            if (dirFd != -1) {
+                ff.fsyncAndClose(dirFd);
+            }
+        }
     }
 
     /**

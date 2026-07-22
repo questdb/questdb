@@ -512,6 +512,68 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnPostSwapTableDirFsyncFailureCanBeRetried() throws Exception {
+        testAddColumnTableDirFsyncFailureCanBeRetried(2);
+    }
+
+    @Test
+    public void testAddColumnPreSwapTableDirFsyncFailureCanBeRetried() throws Exception {
+        testAddColumnTableDirFsyncFailureCanBeRetried(1);
+    }
+
+    private void testAddColumnTableDirFsyncFailureCanBeRetried(int failAtDirOpen) throws Exception {
+        assertMemoryLeak(() -> {
+            populateTable();
+            final class TableDirOpenFailureFacade extends TestFilesFacadeImpl {
+                private int tableDirOpensUntilFailure;
+
+                void arm(int failAt) {
+                    tableDirOpensUntilFailure = failAt;
+                }
+
+                @Override
+                public long openRONoCache(LPSZ name) {
+                    if (tableDirOpensUntilFailure > 0
+                            && Utf8s.endsWithAscii(name, PRODUCT_FS)
+                            && --tableDirOpensUntilFailure == 0) {
+                        return -1;
+                    }
+                    return super.openRONoCache(name);
+                }
+            }
+            final TableDirOpenFailureFacade ff = new TableDirOpenFailureFacade();
+            final CairoConfiguration testConfiguration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
+                Assert.assertEquals(20, writer.getColumnCount());
+                ff.arm(failAtDirOpen);
+                try {
+                    writer.addColumn("retry_col", ColumnType.BINARY, AllowAllSecurityContext.INSTANCE);
+                    Assert.fail("directory fsync failure expected");
+                } catch (CairoException expected) {
+                    // The failed DDL must restore the live writer before reporting the failure.
+                }
+                Assert.assertEquals(20, writer.getColumnCount());
+            }
+
+            try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
+                Assert.assertEquals("failed DDL must stay rolled back after reopen", 20, writer.getColumnCount());
+                writer.addColumn("retry_col", ColumnType.BINARY, AllowAllSecurityContext.INSTANCE);
+                Assert.assertEquals(22, writer.getColumnCount());
+            }
+
+            try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
+                Assert.assertEquals("retried DDL must survive reopen", 22, writer.getColumnCount());
+            }
+        });
+    }
+
+    @Test
     public void testAddColumnNonPartitioned() {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
