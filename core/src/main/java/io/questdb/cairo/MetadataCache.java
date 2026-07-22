@@ -1040,10 +1040,21 @@ public class MetadataCache implements QuietCloseable {
                     }
                 }
             }
+            final ExpiryPolicySnapshot previous = expiryPolicySnapshot;
             expiryPolicySnapshot = tables.size() == 0 && tableIds.size() == 0
                     ? ExpiryPolicySnapshot.EMPTY
                     : new ExpiryPolicySnapshot(tableIds, copyTableIds(pendingExpiryPolicyIds, 0), tables);
-            expiryPolicyVersion++;
+            // Advance the policy epoch only when the policy topology actually changed. A routine
+            // hydration of a policy-less table (e.g. a freshly created plain view) rebuilds an
+            // identical id set; a spurious bump makes policy-version-guarded compilation (CREATE VIEW,
+            // SELECT, INSERT SELECT, UPDATE, EXPLAIN) retry for no reason, and CREATE VIEW additionally
+            // persists a redundant VIEW_DEFINITION that advances the view's seqTxn. Real SET/DROP
+            // transitions still bump the epoch directly via markExpiryPolicyPossible() and
+            // publishExpiryPolicyUpdate(), so predicate edits remain observable to compilers.
+            if (!sameTableIds(previous.tableIds, expiryPolicySnapshot.tableIds)
+                    || !sameTableIds(previous.pendingTableIds, expiryPolicySnapshot.pendingTableIds)) {
+                expiryPolicyVersion++;
+            }
         }
     }
 
@@ -1058,6 +1069,18 @@ public class MetadataCache implements QuietCloseable {
             }
         }
         return null;
+    }
+
+    private static boolean sameTableIds(LongHashSet a, LongHashSet b) {
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (int i = 0, n = a.size(); i < n; i++) {
+            if (!b.contains(a.get(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static int toDenseIndex(CairoTable table, int writerIndex) {
