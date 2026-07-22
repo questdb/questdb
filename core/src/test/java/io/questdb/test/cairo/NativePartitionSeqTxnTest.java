@@ -1070,11 +1070,14 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
                 Assert.assertEquals(1L, tx.getNativePartitionSeqTxn(0));
                 Assert.assertTrue("precondition: open reader sees the generated bit",
                         tx.isPartitionParquetGenerated(0));
+                final long partitionTableVersion = tx.getPartitionTableVersion();
 
                 execute("INSERT INTO t VALUES ('2024-01-01T01:00:00', 2)");
                 drainWalQueue();
 
                 Assert.assertTrue("open reader must observe the second WAL apply", reader.reload());
+                Assert.assertEquals("a plain WAL append must not bump partitionTableVersion; the reload must take the fast path this test exercises",
+                        partitionTableVersion, tx.getPartitionTableVersion());
                 Assert.assertEquals("the serial drain fully commits its only WAL transaction",
                         0L, tx.getLagRowCount());
                 Assert.assertEquals(2L, tx.getSeqTxn());
