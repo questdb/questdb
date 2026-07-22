@@ -834,17 +834,30 @@ fn create_partition_descriptor(
     row_count: jlong,
     timestamp_index: jint,
 ) -> ParquetResult<Partition> {
-    let col_count = col_count as usize;
-    let col_names_len = col_names_len as usize;
-    let col_data_len = col_data_len as usize;
-
     const COL_DATA_ENTRY_SIZE: usize = 10;
+    // These arrive straight from JNI; a corrupt _txn can make any of them negative
+    // (e.g. a negative symbol count from a damaged symbol-count section), so validate
+    // before the raw pointers and lengths reach `from_raw_parts`/`split_at`.
+    let col_count = checked_non_negative_usize(i64::from(col_count), "column count")?;
+    let col_names_len = checked_slice_len::<u8>(i64::from(col_names_len), "column names length")?;
+    let table_name_size = checked_slice_len::<u8>(i64::from(table_name_size), "table name size")?;
+    let row_count = checked_non_negative_usize(row_count, "row count")?;
+    let col_data_len = checked_slice_len::<i64>(col_data_len, "column data length")?;
+
     if !col_data_len.is_multiple_of(COL_DATA_ENTRY_SIZE) {
         return Err(fmt_err!(
             Layout,
             "col_data_len {} is not a multiple of {}",
             col_data_len,
             COL_DATA_ENTRY_SIZE
+        ));
+    }
+    if col_count > col_data_len / COL_DATA_ENTRY_SIZE {
+        return Err(fmt_err!(
+            Layout,
+            "column count {} exceeds column data entries {}",
+            col_count,
+            col_data_len / COL_DATA_ENTRY_SIZE
         ));
     }
 
@@ -858,13 +871,20 @@ fn create_partition_descriptor(
     // The memory is backed by Java and remains valid for the JNI call duration.
     let col_data = unsafe { slice::from_raw_parts(col_data_ptr, col_data_len) };
 
-    let row_count = row_count as usize;
     let mut columns = vec![];
     for col_idx in 0..col_count {
         let raw_idx = col_idx * COL_DATA_ENTRY_SIZE;
 
-        let col_name_size = col_data[raw_idx];
-        let (col_name, tail) = col_names.split_at(col_name_size as usize);
+        let col_name_size = checked_slice_len::<u8>(col_data[raw_idx], "column name size")?;
+        let (col_name, tail) = col_names.split_at_checked(col_name_size).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "column name size {} is invalid for remaining name buffer {}, column index: {}",
+                col_name_size,
+                col_names.len(),
+                col_idx
+            )
+        })?;
         col_names = tail;
 
         let packed = col_data[raw_idx + 1];
@@ -872,15 +892,27 @@ fn create_partition_descriptor(
         let col_type = (packed & 0xFFFFFFFF) as i32;
 
         let col_top = col_data[raw_idx + 2];
+        if checked_non_negative_usize(col_top, "column top")? > row_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "column top {} exceeds row count {}, column index: {}",
+                col_top,
+                row_count,
+                col_idx
+            ));
+        }
 
         let primary_col_addr = col_data[raw_idx + 3];
-        let primary_col_size = col_data[raw_idx + 4];
+        let primary_col_size =
+            checked_slice_len::<u8>(col_data[raw_idx + 4], "primary column size")?;
 
         let secondary_col_addr = col_data[raw_idx + 5];
-        let secondary_col_size = col_data[raw_idx + 6];
+        let secondary_col_size =
+            checked_slice_len::<u8>(col_data[raw_idx + 6], "secondary column size")?;
 
         let symbol_offsets_addr = col_data[raw_idx + 7];
-        let symbol_offsets_count = col_data[raw_idx + 8];
+        let symbol_offsets_count =
+            checked_slice_len::<u64>(col_data[raw_idx + 8], "symbol offsets count")?;
 
         let parquet_encoding_config = col_data[raw_idx + 9] as i32;
 
@@ -893,11 +925,11 @@ fn create_partition_descriptor(
             col_top,
             row_count,
             primary_col_addr as *const u8,
-            primary_col_size as usize,
+            primary_col_size,
             secondary_col_addr as *const u8,
-            secondary_col_size as usize,
+            secondary_col_size,
             symbol_offsets_addr as *const u64,
-            symbol_offsets_count as usize,
+            symbol_offsets_count,
             designated_timestamp,
             true,
             parquet_encoding_config,
@@ -910,10 +942,7 @@ fn create_partition_descriptor(
     // The memory is backed by Java and remains valid for the JNI call duration.
     // Java guarantees valid UTF-8 for table names (validated on creation).
     let table = unsafe {
-        std::str::from_utf8_unchecked(slice::from_raw_parts(
-            table_name_ptr,
-            table_name_size as usize,
-        ))
+        std::str::from_utf8_unchecked(slice::from_raw_parts(table_name_ptr, table_name_size))
     }
     .to_string();
 
@@ -1552,7 +1581,8 @@ fn update_partition_data(
         column.primary_data = if primary_ptr.is_null() {
             &[]
         } else {
-            let primary_col_size = checked_slice_len::<u8>(primary_col_size, "primary column size")?;
+            let primary_col_size =
+                checked_slice_len::<u8>(primary_col_size, "primary column size")?;
             // SAFETY: JNI caller guarantees a valid pointer to `primary_col_size` bytes of column data.
             // The memory is backed by Java memory-mapped files and remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(primary_ptr, primary_col_size) }
@@ -2227,6 +2257,113 @@ mod validation_tests {
         assert!(validate_row_group_bounds(&row_group_sizes, 0, 0, 11).is_err());
         assert!(validate_row_group_bounds(&row_group_sizes, 1, 21, 21).is_err());
         assert!(validate_row_group_bounds(&row_group_sizes, 2, 0, 0).is_err());
+    }
+
+    fn int_column_entry() -> [i64; 10] {
+        // stride: [name_size, packed(id<<32|type), col_top, prim_addr, prim_size,
+        //          sec_addr, sec_size, sym_addr, sym_count, encoding]
+        let mut entry = [0i64; 10];
+        entry[0] = 1; // one-byte column name "c"
+        entry[1] = i64::from(ColumnType::new(ColumnTypeTag::Int, 0).code());
+        entry
+    }
+
+    fn encode_one_column(col_data: &[i64; 10], row_count: i64) -> ParquetResult<Partition> {
+        create_partition_descriptor(
+            b"t".as_ptr(),
+            1,
+            1,
+            b"c".as_ptr(),
+            1,
+            col_data.as_ptr(),
+            10,
+            row_count,
+            -1,
+        )
+    }
+
+    #[test]
+    fn encode_partition_accepts_absent_columns_with_zero_sizes() {
+        // populateEmptyPartition and absent secondary/symbol columns pass null pointers
+        // with zero sizes; the unconditional non-negative checks must not reject them.
+        let partition =
+            encode_one_column(&int_column_entry(), 1).expect("null pointers with zero sizes");
+        assert_eq!(partition.columns.len(), 1);
+        assert!(partition.columns[0].primary_data.is_empty());
+    }
+
+    #[test]
+    fn encode_partition_rejects_negative_column_sizes() {
+        let live = [0u64; 1];
+        let live_addr = live.as_ptr() as i64;
+        for (expected, addr_slot, size_slot) in [
+            ("primary column size must not be negative", 3, 4),
+            ("secondary column size must not be negative", 5, 6),
+            ("symbol offsets count must not be negative", 7, 8),
+        ] {
+            let mut entry = int_column_entry();
+            entry[addr_slot] = live_addr;
+            entry[size_slot] = -1;
+            assert_error_contains(encode_one_column(&entry, 1), expected);
+        }
+    }
+
+    #[test]
+    fn encode_partition_rejects_negative_column_top_and_top_past_row_count() {
+        let mut entry = int_column_entry();
+        entry[2] = -1;
+        assert_error_contains(
+            encode_one_column(&entry, 1),
+            "column top must not be negative",
+        );
+
+        entry[2] = 5;
+        assert_error_contains(
+            encode_one_column(&entry, 1),
+            "column top 5 exceeds row count 1",
+        );
+    }
+
+    #[test]
+    fn encode_partition_rejects_oversized_column_name() {
+        // A corrupt name size that overruns the name buffer must error, not panic-abort
+        // the JVM through str::split_at.
+        let mut entry = int_column_entry();
+        entry[0] = 5; // name buffer is only one byte
+        assert!(encode_one_column(&entry, 1).is_err());
+    }
+
+    #[test]
+    fn encode_partition_rejects_negative_function_level_sizes() {
+        let empty: [i64; 0] = [];
+        assert_error_contains(
+            create_partition_descriptor(
+                b"t".as_ptr(),
+                1,
+                0,
+                b"".as_ptr(),
+                0,
+                empty.as_ptr(),
+                0,
+                -1,
+                -1,
+            ),
+            "row count must not be negative",
+        );
+        assert_error_contains(
+            create_partition_descriptor(
+                b"t".as_ptr(),
+                1,
+                -1,
+                b"".as_ptr(),
+                0,
+                empty.as_ptr(),
+                0,
+                0,
+                -1,
+            ),
+            "column count must not be negative",
+        );
     }
 }
 
