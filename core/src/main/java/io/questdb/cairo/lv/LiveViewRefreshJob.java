@@ -6063,9 +6063,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Computes the AND of (a) anchor-map key codec support and (b) every
-     * compiled window function's {@code supportsCheckpointState()}. Called once
-     * per LV lifetime on the first refresh after the compiled factory is
-     * available; subsequent calls short-circuit on the cached flag.
+     * compiled window function either supporting checkpoint state or declaring
+     * it holds none. Called once per LV lifetime on the first refresh after the
+     * compiled factory is available; subsequent calls short-circuit on the
+     * cached flag.
      */
     protected static boolean computeSnapshotCapability(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
@@ -6074,7 +6075,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
         for (int i = 0, n = functions.size(); i < n; i++) {
-            if (!functions.getQuick(i).supportsCheckpointState()) {
+            final WindowFunction function = functions.getQuick(i);
+            // A stateless function contributes nothing to the image, so it is no obstacle to
+            // one: every capture and restore site skips it and the round trip is complete
+            // without it.
+            if (!function.supportsCheckpointState() && !function.isCheckpointStateless()) {
                 return false;
             }
         }

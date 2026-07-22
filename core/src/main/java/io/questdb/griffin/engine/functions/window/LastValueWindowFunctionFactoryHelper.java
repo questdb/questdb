@@ -441,6 +441,11 @@ public class LastValueWindowFunctionFactoryHelper {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     //same as for rows because calculation stops at current rows even if there are 'equal' following rows
+                    // A live view reads that deviation as a repair bound: the class below
+                    // declares itself stateless, which claims zero forward influence. Restoring
+                    // the standard peer semantics here gives the shape a one-tie-group reach and
+                    // must widen that bound with it - see isCheckpointStateless() on
+                    // LastValueIncludeCurrentPartitionRowsFrameBase.
                     return includeCurrentPartitionRowsConstructor.newFunction(
                             rowsLo,
                             true,
@@ -560,6 +565,11 @@ public class LastValueWindowFunctionFactoryHelper {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
+                    // A live view reads that deviation as a repair bound: the class below
+                    // declares itself stateless, which claims zero forward influence. Restoring
+                    // the standard peer semantics here gives the shape a one-tie-group reach and
+                    // must widen that bound with it - see isCheckpointStateless() on
+                    // LastValueIncludeCurrentPartitionRowsFrameBase.
                     return includeCurrentConstructor.newFunction(rowsLo, true, args.get(0));
                 } // range between [unbounded | x] preceding and [y preceding | current row]
                 else {
@@ -2183,6 +2193,24 @@ public class LastValueWindowFunctionFactoryHelper {
         }
 
         /**
+         * Reports frame-local state trivially: the state extent the descriptor declares for a
+         * stateless function is empty, and a value read off the current row is determined by
+         * it, so a replay warmed up over nothing reproduces every value from its first row on.
+         */
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            return true;
+        }
+
+        /**
+         * @see LastValueIncludeCurrentPartitionRowsFrameBase#isCheckpointStateless()
+         */
+        @Override
+        public boolean isCheckpointStateless() {
+            return true;
+        }
+
+        /**
          * Advance the function's state for the given input record and write the resulting timestamp
          * to the output column at the provided record offset.
          * <p>
@@ -2308,6 +2336,37 @@ public class LastValueWindowFunctionFactoryHelper {
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        /**
+         * Reports frame-local state trivially: the state extent the descriptor declares for a
+         * stateless function is empty, and a value read off the current row is determined by
+         * it, so a replay warmed up over nothing reproduces every value from its first row on.
+         */
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            return true;
+        }
+
+        /**
+         * Declares the family {@code last_value} over a frame ending at the current row
+         * compiles to: {@code computeNext} is {@code value = readArgValue(record)} and the
+         * base is constructed with a null map, so the call is equivalent to projecting its own
+         * argument. The frame's start does not participate - an unbounded one and a bounded
+         * one land on this same class.
+         * <p>
+         * The zero forward influence that buys is QuestDB's, not the standard's. A
+         * {@code RANGE ... AND CURRENT ROW} frame stops here at the current row rather than
+         * taking the last row of its tie group, which the RANGE dispatch above states outright.
+         * Correcting the peer semantics would give this shape a one-tie-group forward reach,
+         * and the live-view repair's high bound for
+         * {@link io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind#STATELESS_CURRENT_ROW}
+         * - one tick above the highest changed timestamp - would have to grow with it. The
+         * bound is still finite and small either way; it stops being zero.
+         */
+        @Override
+        public boolean isCheckpointStateless() {
+            return true;
         }
 
         /**

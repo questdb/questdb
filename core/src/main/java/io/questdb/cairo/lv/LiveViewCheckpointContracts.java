@@ -241,6 +241,34 @@ public final class LiveViewCheckpointContracts {
                 Disposition.ELIGIBLE
         ),
         /**
+         * A window function whose value at a row is that row's alone, so it
+         * carries no state a checkpoint has to hold and no influence beyond the
+         * row that changed. {@code last_value} over a frame ending at the
+         * current row is the family: the whole of its {@code computeNext} reads
+         * the argument off the record it was handed, however far back its frame
+         * nominally starts.
+         * <p>
+         * The kind is assigned off the compiled function's
+         * {@code isCheckpointStateless()} rather than off the frame, because the
+         * frame is what the shape does not depend on - an unbounded frame start
+         * and a bounded one compile to the same class and read the same single
+         * row. Its
+         * {@link LiveViewCheckpointDependency#getStateExtentLo() state extent} is
+         * zero, which makes both strategies below the degenerate case of the
+         * RANGE ones: {@code R - 0} and {@code maxChangedTimestamp + 0}.
+         * <p>
+         * The zero forward influence rests on QuestDB's RANGE peer handling,
+         * which stops {@code last_value} at the current row instead of taking
+         * the last row of its tie group. Correcting that to the standard
+         * semantics would give this shape a one-tie-group forward reach, and the
+         * high bound below would have to grow with it.
+         */
+        STATELESS_CURRENT_ROW(
+                "R itself; the replay warms nothing up",
+                "after maxChangedTimestamp, including the complete tie",
+                Disposition.ELIGIBLE
+        ),
+        /**
          * Fixed compiler-derived anchor segment, including anchored
          * {@code row_number}/{@code rank}/{@code dense_rank} with per-segment
          * reset. The segment boundaries give an exact {@code [L, H)}.
@@ -257,9 +285,11 @@ public final class LiveViewCheckpointContracts {
          * rejects it at CREATE, naming the aggregate; it applies the same test
          * to every other window function over an unbounded frame start, since
          * the frame - not the function - is what leaves an accumulator's
-         * boundary open. The one exception it carves out is {@code last_value}
-         * over {@code ROWS ... AND K PRECEDING}, which accumulates nothing and
-         * whose influence the lag bounds. The anchored form resets at every
+         * boundary open. The two exceptions it carves out are both
+         * {@code last_value}: over {@code ROWS ... AND K PRECEDING} it
+         * accumulates nothing and the lag bounds its influence, and over a frame
+         * ending at {@code CURRENT ROW} it reads the row it is handed and lands
+         * on {@link #STATELESS_CURRENT_ROW}. The anchored form resets at every
          * segment start and remains eligible via
          * {@link #FIXED_ANCHOR_SEGMENT}.
          */

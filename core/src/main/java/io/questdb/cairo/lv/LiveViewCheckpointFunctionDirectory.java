@@ -96,7 +96,9 @@ public class LiveViewCheckpointFunctionDirectory implements Closeable {
         }
         final int version = reader.getInt(0);
         final int count = reader.getInt(Integer.BYTES);
-        if (version != FORMAT_VERSION || count <= 0 || count > LiveViewCheckpointMetadata.MAX_ENTRY_COUNT) {
+        // Zero entries is a directory, not a truncation: a view whose every window function
+        // is stateless writes one, and the header alone is its whole payload.
+        if (version != FORMAT_VERSION || count < 0 || count > LiveViewCheckpointMetadata.MAX_ENTRY_COUNT) {
             throw LiveViewCheckpointMetadata.invalid("function directory version or count invalid")
                     .put(" [version=").put(version).put(", count=").put(count).put(']');
         }

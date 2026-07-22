@@ -301,6 +301,28 @@ public final class LiveViewCheckpointDependency {
                 && ColumnType.isTimestamp(timestampType);
     }
 
+    /**
+     * Returns true when this descriptor carries no state at all: the function emits the row it
+     * was handed, so the extent a warm-up replays is empty and no changed row reaches output
+     * above its own timestamp tie.
+     * <p>
+     * The repair bounds are the RANGE ones at {@code W = 0} - {@code L = R}, so the replay
+     * emits from the first row it scans, and {@code H = changeMaxTs + 1}. Both are the identity
+     * of the union a mixed factory takes, so a stateless function widens no other function's
+     * interval; what it does do is make a plan exist for a view carrying nothing else.
+     * <p>
+     * The compiler assigns the kind off the compiled function rather than off the frame. The
+     * frame is exactly what this shape does not read - {@code last_value} over
+     * {@code ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} and over
+     * {@code ROWS BETWEEN 10 PRECEDING AND CURRENT ROW} compile to one class that reads one row
+     * - so the frame bounds recorded beside this are zero rather than the ones the user wrote.
+     */
+    public boolean isStateless() {
+        return kind == DependencyKind.STATELESS_CURRENT_ROW
+                && stateExtentLo == 0
+                && ColumnType.isTimestamp(timestampType);
+    }
+
     public boolean supportsKeyReset() {
         return supportsKeyReset;
     }

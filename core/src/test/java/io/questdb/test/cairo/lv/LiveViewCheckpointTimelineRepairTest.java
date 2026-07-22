@@ -523,6 +523,75 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testStatelessLastValueSplicesTheChangedRowAlone() throws Exception {
+        // last_value over a frame ending at the current row, which is the whole of the
+        // view: the call reads the argument off the row it was handed, so it holds no
+        // checkpoint state and the view seals an empty function set. The bounds are the
+        // cheapest the system can express - L = R, so the replay emits from the first row
+        // it scans and warms nothing up, and H = changeMaxTs + 1, so it stops on the
+        // changed row's own timestamp tie. That is one row read and one row re-emitted;
+        // withhold the empty extent and the same change takes the resume from the sealed
+        // boundary below it, which replays 11 of the 13 rows in the base.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                            "SELECT ts, sym, last_value(x) OVER (" +
+                            "PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW" +
+                            ") l FROM base"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+
+                appendAndRefresh(job, 25, 100);
+
+                Assert.assertEquals("no anchor survives below the change", 0, instance.getO3ResumeReplayRows());
+                Assert.assertEquals("the rebuild must stop at changeMaxTs + 1", 1, instance.getO3ReplayScanRows());
+                Assert.assertEquals("the rebuild must re-emit the changed row alone", 1, instance.getO3BoundaryReplayRows());
+                Assert.assertEquals(generationBefore + 1, generation(instance));
+
+                // H sits inside the changed row's own timestamp tie, below the next sealed
+                // boundary at 30s, so the repaired interval contains no logical entry at all:
+                // every root the history built keeps its payload by page identity and none is
+                // versioned. That is the sharpest form of the localization - a resume from
+                // the boundary at 20s would version every root above it.
+                final LongList after = snapshotTimeline(instance);
+                Assert.assertEquals(
+                        "a spliced timeline keeps every logical entry it had",
+                        HISTORY_COMMITS,
+                        entryCount(instance)
+                );
+                for (int i = 0; i < HISTORY_COMMITS; i++) {
+                    assertSameRoot(before, after, i);
+                }
+            }
+            assertNoRefreshFaults("lv");
+
+            // The oracle: the projection the call reduces to. Every row emits its own x,
+            // which is what makes the repair's forward influence zero.
+            assertQuery("select ts, sym, l from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\tl\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t2\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t100\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t3\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t4\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t5\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t6\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t7\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t8\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t9\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t10\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t11\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t12\n");
+        });
+    }
+
+    @Test
     public void testCostPrefersTheSpliceOverASurvivingAnchor() throws Exception {
         // Every logical root retained, which is the shape the versioned timeline makes
         // ordinary: a sealed predecessor almost always sits below a correction, here at

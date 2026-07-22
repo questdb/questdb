@@ -453,7 +453,11 @@ public class CairoEngine implements Closeable, WriterSource {
      * aggregate window (e.g. {@code avg(x) OVER (ORDER BY ts ROWS ...)} with no
      * {@code PARTITION BY}) is {@link WindowFunction#ZERO_PASS} but has no partition Map to
      * snapshot, so it clears the pass-count check and is rejected here - and, lacking a
-     * partition Map, it is never live-view-eligible, so this reject is permanent. The
+     * partition Map, it is never live-view-eligible, so this reject is permanent. A function
+     * that answers {@link WindowFunction#isCheckpointStateless()} clears the same gate from the
+     * other side: it has no state for the checkpoint to carry, which is a different claim from
+     * having state the checkpoint cannot encode, and only the second is a reason to refuse the
+     * view. The two are exclusive, so a function claiming both is refused ahead of either. The
      * partitioned ZERO_PASS aggregate frame shapes - including the full DECIMAL aggregate
      * window family - are migrated to the snapshot contract and accepted. A partitioned
      * {@code rank()} / {@code dense_rank()} whose ORDER BY key is a wide-fixed type
@@ -479,7 +483,15 @@ public class CairoEngine implements Closeable, WriterSource {
         if (f.getPassCount() != WindowFunction.ZERO_PASS) {
             throw SqlException.$(position, "live view select may only use window functions that support incremental refresh");
         }
-        if (!f.supportsCheckpointState()) {
+        if (f.supportsCheckpointState() && f.isCheckpointStateless()) {
+            // Defensive: the two are exclusive dispositions, and a function claiming both
+            // would be carried through the checkpoint image by one call site and skipped by
+            // the next.
+            throw SqlException.$(position, "live view window function ")
+                    .put(f.getName())
+                    .put("() declares both checkpoint state and no checkpoint state");
+        }
+        if (!f.supportsCheckpointState() && !f.isCheckpointStateless()) {
             throw SqlException.$(position, "live view select cannot use window function ")
                     .put(f.getName())
                     .put("(); incremental snapshot is not supported for this function yet");

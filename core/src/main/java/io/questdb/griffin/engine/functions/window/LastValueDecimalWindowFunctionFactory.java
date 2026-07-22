@@ -2701,6 +2701,24 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
+        }
+
+        @Override
         public int getType() {
             return type;
         }
@@ -2780,6 +2798,24 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
         }
 
         @Override
@@ -4806,6 +4842,24 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
+        }
+
+        @Override
         public int getType() {
             return type;
         }
@@ -4882,6 +4936,24 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
         }
 
         @Override
@@ -6951,6 +7023,24 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
+        }
+
+        @Override
         public int getType() {
             return type;
         }
@@ -7032,6 +7122,24 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
         }
 
         @Override
@@ -9072,6 +9180,24 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
+        }
+
+        @Override
         public int getType() {
             return type;
         }
@@ -9148,6 +9274,24 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
         }
 
         @Override
@@ -11134,6 +11278,24 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
+        }
+
+        @Override
         public int getType() {
             return type;
         }
@@ -11210,6 +11372,24 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
         }
 
         @Override
@@ -13196,6 +13376,24 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
+        }
+
+        @Override
         public int getType() {
             return type;
         }
@@ -13272,6 +13470,24 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
         }
 
         @Override

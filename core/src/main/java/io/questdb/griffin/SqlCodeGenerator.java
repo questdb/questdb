@@ -10002,7 +10002,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     qc.getOrderBy(), qc.getOrderByDirection());
                         }
                         final WindowFunction windowFunction = (WindowFunction) func;
-                        if (lvCompile && windowFunction.supportsCheckpointState()) {
+                        // A stateless function needs the descriptor too. It writes no state,
+                        // but the repair still has to read that its influence is bounded,
+                        // which is what the descriptor rather than the absence of state says.
+                        if (lvCompile
+                                && (windowFunction.supportsCheckpointState() || windowFunction.isCheckpointStateless())) {
                             final String factorySignature = checkpointFactorySignatures.getQuick(i);
                             if (factorySignature == null) {
                                 throw SqlException.$(qc.getAst().position, "live view checkpoint function factory identity is unavailable");

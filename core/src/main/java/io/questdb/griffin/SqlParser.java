@@ -1902,13 +1902,16 @@ public class SqlParser {
      * </ul>
      * The rule reads the frame rather than the function, so a window function
      * added later is covered without being listed anywhere. It still costs the
-     * shapes whose influence is in fact finite, and one of those is now proven
-     * and carved out by {@link #hasHighBoundStateExtent}: {@code last_value}
-     * over {@code ROWS ... AND K PRECEDING} accumulates nothing, so its state is
-     * the {@code K} values behind it and a late row moves only the {@code K}
-     * outputs above it. Every other unbounded start keeps the reject, because an
-     * unproven bound means a late row replays the whole history rather than an
-     * interval, and a frame the planner can bound is the price of admission.
+     * shapes whose influence is in fact finite, and two of those are now proven
+     * and carved out, both of them {@code last_value} respecting nulls:
+     * {@link #hasHighBoundStateExtent} admits {@code ROWS ... AND K PRECEDING},
+     * which accumulates nothing, so its state is the {@code K} values behind it
+     * and a late row moves only the {@code K} outputs above it; and
+     * {@link #hasStatelessCurrentRowShape} admits a frame ending at
+     * {@code CURRENT ROW}, which reads the row it is handed and moves nothing at
+     * all. Every other unbounded start keeps the reject, because an unproven
+     * bound means a late row replays the whole history rather than an interval,
+     * and a frame the planner can bound is the price of admission.
      * <p>
      * The anchored, per-segment-reset forms have a finite {@code H} (the
      * segment end) and stay eligible; they route through the fixed-anchor
@@ -1990,7 +1993,8 @@ public class SqlParser {
     ) throws SqlException {
         if (isAnchoredWindow(window, named)
                 || !hasUnboundedFrameStart(window, named)
-                || hasHighBoundStateExtent(fn, window, named)) {
+                || hasHighBoundStateExtent(fn, window, named)
+                || hasStatelessCurrentRowShape(fn, window, named)) {
             return;
         }
         throw SqlException.$(fn.position, "live view select cannot use ")
@@ -2078,6 +2082,57 @@ public class SqlParser {
                 // sees it, so the ring holds a single value.
                 || (frame.getRowsHiKind() == WindowExpression.CURRENT
                 && frame.getExclusionKind() == WindowExpression.EXCLUDE_CURRENT_ROW));
+    }
+
+    /**
+     * Reports whether {@code fn} is the call that reads no history at all over an
+     * unbounded frame start: {@code last_value} respecting nulls over a frame
+     * ending at {@code CURRENT ROW}.
+     * <p>
+     * Its whole {@code computeNext} is a read of the argument off the row it was
+     * handed, so it accumulates nothing, keeps nothing, and moves no output but
+     * the changed row's own. That holds however far back the frame says it
+     * starts - an unbounded start and a bounded one compile to one class - which
+     * is what makes the reject an over-rejection here rather than a scope cut.
+     * <p>
+     * The two narrowings match the family the factory dispatches to.
+     * {@code IGNORE NULLS} keeps the last non-null across rows and so is bounded
+     * by the frame's start like an accumulator. {@code EXCLUDE CURRENT ROW}
+     * rewrites the frame end to one row below the current one before any factory
+     * sees it, which is a ring of one value rather than no ring, and
+     * {@link #hasHighBoundStateExtent} is what admits that shape.
+     * <p>
+     * Read syntactically like its sibling, so a spelling that folds to some other
+     * family passes here and is turned away downstream instead: a {@code RANGE}
+     * default frame with no {@code ORDER BY} makes every row a peer of every
+     * other and compiles to the whole-partition or whole-result-set
+     * {@code last_value}, whose influence really is unbounded, and the
+     * per-function checkpoint gate or the factory-shape one names it. This
+     * decides which reject such a query gets, not whether it is one.
+     * <p>
+     * What it does not reach is a PARTITION-BY-keyed window carrying the default
+     * frame - {@code OVER (PARTITION BY <key> ORDER BY <ts>)} and its explicit
+     * {@code RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} spelling, which
+     * {@code WindowExpression.isNonDefaultFrame()} reads as the same thing. Those
+     * are refused by the bare-unbounded-window rule, which is evaluated per
+     * window rather than per call and so cannot read which function uses it. The
+     * {@code ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} spelling is a
+     * non-default frame, escapes that rule, and is admitted here; so is either
+     * spelling over a window with no {@code PARTITION BY}, which the rule leaves
+     * alone for holding one partition's worth of state.
+     */
+    private static boolean hasStatelessCurrentRowShape(
+            ExpressionNode fn,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) {
+        if (window.isIgnoreNulls() || !Chars.equalsLowerCaseAscii(fn.token, "last_value")) {
+            return false;
+        }
+        final WindowExpression frame = resolveFrameWindow(window, named);
+        return frame != null
+                && frame.getRowsHiKind() == WindowExpression.CURRENT
+                && frame.getExclusionKind() != WindowExpression.EXCLUDE_CURRENT_ROW;
     }
 
     /**

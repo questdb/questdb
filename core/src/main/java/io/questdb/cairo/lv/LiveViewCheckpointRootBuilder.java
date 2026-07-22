@@ -108,11 +108,16 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         initialized = true;
     }
 
+    /**
+     * Writes the root and its function directory, and reports the page reference naming it.
+     * <p>
+     * An empty function directory is a legitimate root rather than a lost one: a view whose
+     * every window function is stateless has no state to image, and what the root still
+     * carries - the boundary's timestamp, its {@code lvSeqTxn} and its segment catalogue - is
+     * what a resume and a restart read off it.
+     */
     public void build(long metadataSegmentId, @NotNull LiveViewCheckpointPageRef out) {
         ensureInitialized();
-        if (functionCount == 0) {
-            throw CairoException.critical(0).put("cannot build live view checkpoint root without functions");
-        }
         sortFunctions();
         for (int i = 1; i < functionCount; i++) {
             if (LiveViewCheckpointMetadata.compareBytes(functionIdentities[i - 1], functionIdentities[i]) == 0) {

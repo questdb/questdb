@@ -60,7 +60,10 @@ import org.jetbrains.annotations.Nullable;
  * that report {@link WindowFunction#supportsCheckpointState()} are carried;
  * {@link #capture} and {@link #restore} walk the same list through the same
  * filter, and the frame count is reconciled on the way back so a mismatched pair
- * fails loudly instead of restoring one function's bytes into another.
+ * fails loudly instead of restoring one function's bytes into another. A
+ * {@link WindowFunction#isCheckpointStateless() stateless} function is skipped by
+ * both, which is the whole of what it needs: the replay leaves it holding the last
+ * row it read, and its next value is the next row's rather than that one's.
  * <p>
  * An anchored view's per-partition last-seen anchor value is runtime state on the
  * same terms, and it travels here through {@link LiveViewWindow}'s own snapshot

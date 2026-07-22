@@ -873,6 +873,58 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRestartRestoresATimelineWhoseFunctionsHoldNoState() throws Exception {
+        // Every window function of this view is stateless - last_value over a frame ending at
+        // the current row reads the argument off the row it was handed - so each root seals an
+        // empty function set and a restore puts nothing back. What the root still carries is
+        // the boundary itself, and that is what has to survive: the restart resumes from it
+        // and replays only the gap above it rather than the whole view from START FROM.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                            "SELECT ts, sym, last_value(x) OVER (" +
+                            "PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW" +
+                            ") l FROM base"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1); // first cadence event always seals
+                appendAndRefresh(job, 20, 2); // durable output beyond the root, no seal
+            }
+
+            final LiveViewInstance before = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(before);
+            Assert.assertNotEquals(Numbers.LONG_NULL, before.getHeadCheckpointLvSeqTxn());
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 30, 3);
+                Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+                Assert.assertEquals(3, reloaded.getLvRowsTotal());
+                Assert.assertEquals(
+                        "an empty state image is a valid root, not a missing one",
+                        0,
+                        reloaded.getO3BoundaryReplayRows()
+                );
+            }
+
+            assertQuery("select ts, sym, l from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\tl\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t2\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t3\n");
+        });
+    }
+
+    @Test
     public void testRestartExcludesApplyAheadO3BelowFrontierUntilOrdinaryClassification() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 100);
         assertMemoryLeak(() -> {

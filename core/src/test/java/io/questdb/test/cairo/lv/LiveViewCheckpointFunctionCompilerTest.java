@@ -1100,10 +1100,143 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertFalse(range.isDependencyComplete);
 
             // A high bound at the current row is the stateless family rather than a ring of
-            // zero values: it carries no checkpoint surface at all, so no descriptor is built
-            // for it and the repair declines however many plans the factory holds.
-            assertNoCheckpointDependency("select ts, sym, last_value(x) over (partition by sym order by ts "
-                    + "rows between unbounded preceding and current row) l from base");
+            // zero values, so it is not this kind's - it carries its own, which
+            // testStatelessLastValueCarriesAZeroExtent pins.
+            final Metadata stateless = compileMetadata(
+                    "select ts, sym, last_value(x) over (partition by sym order by ts "
+                            + "rows between unbounded preceding and current row) l from base",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.STATELESS_CURRENT_ROW, stateless.dependency.getKind());
+            Assert.assertFalse(stateless.dependency.isFiniteRows());
+        });
+    }
+
+    /**
+     * {@code last_value} over a frame ending at the current row reads the row it was handed
+     * and nothing else - the whole of its {@code computeNext} is
+     * {@code value = readArgValue(record)} - so it holds no state a checkpoint carries and
+     * moves no output but the changed row's own.
+     * <p>
+     * The descriptor says so with zeros throughout, and it says so off the compiled function
+     * rather than off the frame: the frame is precisely what this shape does not read, so
+     * every frame start below lands on the same descriptor.
+     */
+    @Test
+    public void testStatelessLastValueCarriesAZeroExtent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+
+            // The shape the CREATE-time reject turned away, admitted here at zero cost: no
+            // warm-up to replay, and a plan whose width is zero.
+            final Metadata unbounded = compileMetadata(
+                    "select ts, sym, last_value(x) over (partition by sym order by ts "
+                            + "rows between unbounded preceding and current row) l from base",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.STATELESS_CURRENT_ROW, unbounded.dependency.getKind());
+            Assert.assertEquals(0, unbounded.dependency.getFrameLo());
+            Assert.assertEquals(0, unbounded.dependency.getFrameHi());
+            Assert.assertEquals(0, unbounded.dependency.getStateExtentLo());
+            Assert.assertTrue(unbounded.dependency.isStateless());
+            Assert.assertFalse(unbounded.dependency.isFiniteRows());
+            Assert.assertFalse(unbounded.dependency.isFiniteRange());
+            Assert.assertTrue(unbounded.dependency.hasFrameLocalState());
+            Assert.assertNotNull(unbounded.rangePlan);
+            Assert.assertEquals(0, unbounded.rangePlan.getMaxFrameWidth());
+            Assert.assertEquals(1, unbounded.rangePlan.getFunctionCount());
+            Assert.assertNull(unbounded.rowsPlan);
+            Assert.assertTrue(unbounded.isDependencyComplete);
+
+            // A bounded ROWS start compiles to the same class and so to the same descriptor:
+            // the ten rows the frame names are not rows this function reads.
+            final Metadata boundedRows = compileMetadata(
+                    "select ts, sym, last_value(x) over (partition by sym order by ts "
+                            + "rows between 10 preceding and current row) l from base",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.STATELESS_CURRENT_ROW, boundedRows.dependency.getKind());
+            Assert.assertEquals(0, boundedRows.dependency.getFrameLo());
+            Assert.assertEquals(0, boundedRows.dependency.getStateExtentLo());
+            Assert.assertNotNull(boundedRows.rangePlan);
+            Assert.assertEquals(0, boundedRows.rangePlan.getMaxFrameWidth());
+            Assert.assertNull(boundedRows.rowsPlan);
+
+            // And so does a RANGE one, whose width would otherwise have been normalized into
+            // designated-timestamp ticks. A zero needs no unit.
+            final Metadata boundedRange = compileMetadata(
+                    "select ts, sym, last_value(x) over (partition by sym order by ts "
+                            + "range between '3' hour preceding and current row) l from base",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.STATELESS_CURRENT_ROW, boundedRange.dependency.getKind());
+            Assert.assertEquals(0, boundedRange.dependency.getFrameLo());
+            Assert.assertEquals(0, boundedRange.dependency.getStateExtentLo());
+            Assert.assertNotNull(boundedRange.rangePlan);
+            Assert.assertEquals(0, boundedRange.rangePlan.getMaxFrameWidth());
+
+            // Zero is the identity of the width the RANGE plan maximizes, so a stateless
+            // function declared beside an accumulator widens nothing - and is covered by the
+            // same plan, which is why the factory is complete.
+            final Metadata mixed = compileMetadata(
+                    "select ts, sym, "
+                            + "last_value(x) over (partition by sym order by ts "
+                            + "range between '3' hour preceding and current row) l, "
+                            + "avg(x) over (partition by sym order by ts "
+                            + "range between 10 preceding and current row) a "
+                            + "from base",
+                    0
+            );
+            Assert.assertNotNull(mixed.rangePlan);
+            Assert.assertEquals(2, mixed.rangePlan.getFunctionCount());
+            Assert.assertEquals(10, mixed.rangePlan.getMaxFrameWidth());
+            Assert.assertTrue(mixed.isDependencyComplete);
+
+            // It takes no part in the domain check either: a function reading one row agrees
+            // with every key and order domain there is, so this is not the compile error two
+            // RANGE accumulators over these two domains would be.
+            final Metadata domains = compileMetadata(
+                    "select ts, sym, "
+                            + "last_value(x) over (order by ts "
+                            + "range between '3' hour preceding and current row) l, "
+                            + "avg(x) over (partition by sym order by ts "
+                            + "range between 10 preceding and current row) a "
+                            + "from base",
+                    0
+            );
+            Assert.assertNotNull(domains.rangePlan);
+            Assert.assertEquals(2, domains.rangePlan.getFunctionCount());
+            Assert.assertEquals(10, domains.rangePlan.getMaxFrameWidth());
+            Assert.assertTrue(domains.isDependencyComplete);
+
+            // IGNORE NULLS keeps the last non-null across rows, so the same frame compiles to
+            // a stateful family instead: a ROWS descriptor bounded by the frame's own start,
+            // which is the ten rows this one ignores.
+            final Metadata ignoreNulls = compileMetadata(
+                    "select ts, sym, last_value(x) ignore nulls over (partition by sym order by ts "
+                            + "rows between 10 preceding and current row) l from base",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_BOUNDED_HI, ignoreNulls.dependency.getKind());
+            Assert.assertFalse(ignoreNulls.dependency.isStateless());
+            Assert.assertEquals(-10, ignoreNulls.dependency.getStateExtentLo());
+            Assert.assertEquals(10, ignoreNulls.dependency.getRowsPrecedingCount());
+            Assert.assertNull(ignoreNulls.rangePlan);
+
+            // An anchored window is the default frame, which is this family too, and the
+            // function outranks the anchor: a segment bounds what a reset leaves behind, and
+            // there is nothing here to reset. The stateless bounds are the tighter pair
+            // anyway - the segment holding the change against the change's own timestamp.
+            final Metadata anchored = compileMetadata(
+                    "select ts, sym, last_value(x) over w l from base "
+                            + "window w as (partition by sym order by ts anchor expression timestamp_floor('1d', ts))",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.STATELESS_CURRENT_ROW, anchored.dependency.getKind());
+            Assert.assertEquals(0, anchored.dependency.getStateExtentLo());
+            Assert.assertNotNull(anchored.rangePlan);
+            Assert.assertEquals(0, anchored.rangePlan.getMaxFrameWidth());
+            Assert.assertTrue(anchored.isDependencyComplete);
         });
     }
 

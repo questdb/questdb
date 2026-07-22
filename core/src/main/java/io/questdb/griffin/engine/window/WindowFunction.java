@@ -431,6 +431,34 @@ public interface WindowFunction extends Function {
     ) throws SqlException {
     }
 
+    /**
+     * Reports whether this function holds no checkpoint state at all: the value it emits at a
+     * row is that row's alone, so a freeze has nothing to write and a restore nothing to put
+     * back. {@code last_value} over a frame ending at the current row is the family that
+     * answers true - whatever its frame nominally spans, the whole of its {@code computeNext}
+     * is {@code value = readArgValue(record)}, which makes the call equivalent to projecting
+     * its own argument.
+     * <p>
+     * This is a disposition rather than an empty implementation of the freeze/restore pair. A
+     * freeze that writes nothing is indistinguishable, at the call site, from one that forgot
+     * to write something, and the whole checkpoint contract rests on that call site being
+     * honest. Declaring the absence instead keeps {@link #supportsCheckpointState()} meaning
+     * what it says, so every site that walks the checkpoint image keeps skipping this function
+     * rather than carrying a zero-length entry for it. The two answers are therefore exclusive,
+     * and {@code CairoEngine.validateLiveViewWindowFunction} rejects a function claiming both.
+     * <p>
+     * A live view still needs a dependency descriptor from such a function, because a repair
+     * has to know the influence is bounded rather than merely that the state is empty. The
+     * compiler gives it a state extent of zero under
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind#STATELESS_CURRENT_ROW},
+     * and the bounds that follow are the cheapest the system can express: the replay floor is
+     * the output floor itself, so no warm-up runs at all, and convergence is one tick above the
+     * highest changed timestamp.
+     */
+    default boolean isCheckpointStateless() {
+        return false;
+    }
+
     default boolean isIgnoreNulls() {
         return false;
     }

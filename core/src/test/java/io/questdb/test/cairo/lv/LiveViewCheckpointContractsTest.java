@@ -46,10 +46,10 @@ public class LiveViewCheckpointContractsTest {
 
     @Test
     public void testDependencyKindSetIsFrozen() {
-        // The matrix has exactly six rows. Adding or removing a shape must
+        // The matrix has exactly seven rows. Adding or removing a shape must
         // force a conscious update to this test and the expected-disposition
         // map below.
-        Assert.assertEquals(6, DependencyKind.values().length);
+        Assert.assertEquals(7, DependencyKind.values().length);
         Assert.assertEquals(3, Disposition.values().length);
     }
 
@@ -192,6 +192,7 @@ public class LiveViewCheckpointContractsTest {
         final Map<DependencyKind, Disposition> expected = new EnumMap<>(DependencyKind.class);
         expected.put(DependencyKind.ROWS_N_PRECEDING_BOUNDED_HI, Disposition.ELIGIBLE);
         expected.put(DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI, Disposition.ELIGIBLE);
+        expected.put(DependencyKind.STATELESS_CURRENT_ROW, Disposition.ELIGIBLE);
         expected.put(DependencyKind.FIXED_ANCHOR_SEGMENT, Disposition.ELIGIBLE);
         expected.put(DependencyKind.UNBOUNDED_CUMULATIVE_NO_RESET, Disposition.REJECT);
         expected.put(DependencyKind.UNANCHORED_RANK, Disposition.REJECT);

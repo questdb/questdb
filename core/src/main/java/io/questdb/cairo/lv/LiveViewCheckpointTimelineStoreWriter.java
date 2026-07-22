@@ -864,7 +864,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             );
             boundary.functions.add(frozen);
         }
-        if (boundary.functions.size() == 0) {
+        // A view every one of whose window functions is stateless seals an empty function set,
+        // and that is the whole of its state: the root still records the boundary a resume
+        // rolls back to, and a restore from it has nothing to put back because there was
+        // nothing to take. What stays a break is a factory with no window function at all -
+        // the live view eligibility gate does not admit one, so reaching here means the
+        // compiled runtime the seal was handed is not the one the view was built from.
+        if (functions.size() == 0) {
             throw CairoException.critical(0).put("cannot seal live view checkpoint without functions");
         }
         boundary.logicalStateBytes = logicalStateBytes;

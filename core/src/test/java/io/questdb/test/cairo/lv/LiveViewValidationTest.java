@@ -252,10 +252,16 @@ public class LiveViewValidationTest extends AbstractCairoTest {
                             + "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)",
                     "nth_value"
             );
-            // last_value keeps the reject wherever its state is not the ring the lag names.
-            // The default frame ends at the current row, so this one reduces to a per-row
-            // projection with no checkpoint surface at all.
-            assertUnboundedFrameStartRejected("SELECT ts, x, last_value(x) OVER () AS l FROM base", "last_value");
+            // last_value keeps the reject wherever its state is not the ring the lag names
+            // and not the single row a frame ending at the current row hands it. OVER () ends
+            // at the current row but orders by nothing, so RANGE makes every row a peer of
+            // every other and it compiles to the whole-result-set family instead - which the
+            // planner routes through a cached factory, and which the factory-shape gate
+            // rather than this one names.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, x, last_value(x) OVER () AS l FROM base",
+                    "may only use window functions that support incremental refresh"
+            );
             // IGNORE NULLS scans the whole frame for the last non-null, so an unbounded
             // start leaves it as unbounded as an accumulator.
             assertUnboundedFrameStartRejected(
@@ -322,6 +328,31 @@ public class LiveViewValidationTest extends AbstractCairoTest {
                     + "WINDOW w AS (PARTITION BY sym ORDER BY ts "
                     + "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)");
             execute("DROP LIVE VIEW lv_last_excl");
+            // Positive control: the other carve-out, where the frame ends at the current row
+            // and the call reduces to a projection of its own argument. It reads no history
+            // at all, so the unbounded start costs it nothing - in ROWS...
+            execute("CREATE LIVE VIEW lv_last_cur_rows FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, last_value(y) OVER w AS l FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)");
+            execute("DROP LIVE VIEW lv_last_cur_rows");
+            // ...and in RANGE, where QuestDB stops the call at the current row rather than at
+            // the last row of its tie group, which is what leaves the forward influence at
+            // zero. Spelled without PARTITION BY because the RANGE spelling of an unbounded
+            // start is the default frame, and a PARTITION-BY-keyed default frame never
+            // reaches this reject - the bare-unbounded-window rule takes it first, which the
+            // negative control below states.
+            execute("CREATE LIVE VIEW lv_last_cur_range FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, last_value(y) OVER w AS l FROM base "
+                    + "WINDOW w AS (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)");
+            execute("DROP LIVE VIEW lv_last_cur_range");
+            // Negative control for the scope line above: the same function over the same
+            // frame, keyed, is refused - not by this rule, which the shape now clears, but by
+            // the per-window one that cannot see which call uses the window.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, last_value(y) OVER w AS l FROM base "
+                            + "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                    "live view unbounded window must have an ANCHOR clause"
+            );
         });
     }
 

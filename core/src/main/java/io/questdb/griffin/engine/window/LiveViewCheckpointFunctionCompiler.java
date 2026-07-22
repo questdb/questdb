@@ -173,30 +173,49 @@ public final class LiveViewCheckpointFunctionCompiler {
         final String orderSignature = expressionListSignature(window.getOrderBy(), window.getOrderByDirection());
         final boolean anchored = window.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE
                 || window.isResolvedWindowAnchored();
-        final DependencyKind kind = dependencyKind(function.getName(), window);
+        // The kind of a stateless function follows the function rather than the frame, because
+        // the frame is precisely what such a function does not read: last_value over
+        // ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW and over ROWS BETWEEN 10 PRECEDING
+        // AND CURRENT ROW compile to one class whose computeNext reads the row it was handed.
+        final boolean isStateless = function.isCheckpointStateless();
+        final DependencyKind kind = isStateless
+                ? DependencyKind.STATELESS_CURRENT_ROW
+                : dependencyKind(function.getName(), window);
         final boolean keyed = function.getCheckpointKeyColumnTypes() != null;
         // The RANGE kind is only assigned to a W PRECEDING frame ending at or below the
         // current row, and SqlCodeGenerator has already run validateRange() over every
         // live-view window expression, so such a frame is known to be ordered by the
         // designated timestamp ascending and its width is safe to read as a timestamp offset.
         final boolean isRange = kind == DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI;
-        final long frameLo = isRange
-                ? rangeFrameLo(function.getName(), window, timestampType)
-                : window.getRowsLo();
-        // Both RANGE bounds carry the unit the user wrote, so both go through the same
-        // conversion, and the descriptor holds two commensurable timestamp offsets. A ROWS
-        // frame counts rows at either end and carries no unit, so its bounds stay as the
-        // model records them.
-        final long frameHi = isRange
-                ? rangeFrameHi(function.getName(), window, timestampType)
-                : effectiveRowsHi(window);
-        // An accumulator's state is the frame's own contents, so the look-behind that feeds
-        // the frame is also the one a warm-up replays and the extent is the frame's low bound.
-        // last_value reads a single row instead, the one its high bound names, so its extent
-        // is that lag however far back the frame nominally starts.
-        final long stateExtentLo = hasHighBoundStateExtent(function.getName(), window, frameHi)
-                ? frameHi
-                : frameLo;
+        final long frameLo;
+        final long frameHi;
+        final long stateExtentLo;
+        if (isStateless) {
+            // Zeros throughout rather than the bounds the user wrote: the declared frame
+            // describes no row this function reads and no bound a repair derives, and a zero
+            // needs no unit to be commensurable with the other two.
+            frameLo = 0;
+            frameHi = 0;
+            stateExtentLo = 0;
+        } else {
+            frameLo = isRange
+                    ? rangeFrameLo(function.getName(), window, timestampType)
+                    : window.getRowsLo();
+            // Both RANGE bounds carry the unit the user wrote, so both go through the same
+            // conversion, and the descriptor holds two commensurable timestamp offsets. A ROWS
+            // frame counts rows at either end and carries no unit, so its bounds stay as the
+            // model records them.
+            frameHi = isRange
+                    ? rangeFrameHi(function.getName(), window, timestampType)
+                    : effectiveRowsHi(window);
+            // An accumulator's state is the frame's own contents, so the look-behind that feeds
+            // the frame is also the one a warm-up replays and the extent is the frame's low
+            // bound. last_value reads a single row instead, the one its high bound names, so
+            // its extent is that lag however far back the frame nominally starts.
+            stateExtentLo = hasHighBoundStateExtent(function.getName(), window, frameHi)
+                    ? frameHi
+                    : frameLo;
+        }
         final LiveViewCheckpointDependency dependency = new LiveViewCheckpointDependency(
                 kind,
                 partitionSignature,
@@ -264,7 +283,11 @@ public final class LiveViewCheckpointFunctionCompiler {
                 return false;
             }
             final boolean covered;
-            if (dependency.isFiniteRange()) {
+            // The RANGE plan describes a stateless function too, at the zero width its empty
+            // extent proves. Such a function always contributes that arm, so the plan is
+            // missing here only when another RANGE function in the same factory declined it -
+            // and then nothing localizes, which is the answer this returns.
+            if (dependency.isStateless() || dependency.isFiniteRange()) {
                 covered = hasRangePlan;
             } else if (dependency.isFiniteRows()) {
                 covered = hasRowsPlan;
@@ -292,6 +315,15 @@ public final class LiveViewCheckpointFunctionCompiler {
      * repair warms up over the declared state extent and nothing below it. The domain check
      * still runs for a factory a non-frame-local function declines, so an incompatible pair
      * is named at CREATE either way.
+     * <p>
+     * A {@link LiveViewCheckpointDependency#isStateless() stateless} function joins the union
+     * as a zero-width arm, which is why this plan and not a fourth one describes it. Zero is
+     * the identity of the width the union maximizes, so such a function never widens the
+     * interval another one proves; the bounds it is left with when it is all the factory
+     * carries are {@code L = R} and {@code H = changeMaxTs + 1}, which is what its empty state
+     * extent proves. It sits outside the domain check for the same reason - a function reading
+     * one row agrees with every key and order domain - so declaring one beside a RANGE window
+     * over a different domain is not a compile error.
      */
     @Nullable
     public static LiveViewCheckpointRangePlan rangePlan(
@@ -299,9 +331,11 @@ public final class LiveViewCheckpointFunctionCompiler {
             @NotNull ObjList<QueryColumn> columns
     ) throws SqlException {
         LiveViewCheckpointDependency firstRange = null;
+        LiveViewCheckpointDependency firstStateless = null;
         LiveViewCheckpointFunctionIdentity firstIdentity = null;
         boolean allFrameLocal = true;
         int rangeFunctionCount = 0;
+        int statelessFunctionCount = 0;
         long maxFrameWidth = 0;
 
         for (int i = 0, n = functions.size(); i < n; i++) {
@@ -310,6 +344,18 @@ public final class LiveViewCheckpointFunctionCompiler {
                 continue;
             }
             final LiveViewCheckpointDependency dependency = windowFunction.checkpointDependency();
+            if (dependency != null && dependency.isStateless()) {
+                // A zero-width arm. It widens nothing - zero is the identity of the width
+                // union - and it takes no part in the domain check either, because a function
+                // that reads one row agrees with every key and order domain there is. What it
+                // does is make the plan exist for a view carrying nothing else.
+                if (firstStateless == null) {
+                    firstStateless = dependency;
+                }
+                allFrameLocal &= dependency.hasFrameLocalState();
+                statelessFunctionCount++;
+                continue;
+            }
             if (dependency == null || !dependency.isFiniteRange()) {
                 // Another kind's function, or one with no contract at all. Either way it
                 // is not this plan's to describe.
@@ -334,15 +380,23 @@ public final class LiveViewCheckpointFunctionCompiler {
             rangeFunctionCount++;
         }
 
-        if (!allFrameLocal || firstRange == null) {
+        if (!allFrameLocal) {
+            return null;
+        }
+        // The domain the plan reports is a RANGE function's when the factory has one; a
+        // stateless-only factory reports the one its own function was declared over, which
+        // nothing downstream reads - the repair takes only the width - and which keeps the
+        // plan's fields describing a window the view actually carries.
+        final LiveViewCheckpointDependency first = firstRange != null ? firstRange : firstStateless;
+        if (first == null) {
             return null;
         }
         return new LiveViewCheckpointRangePlan(
-                rangeFunctionCount,
+                rangeFunctionCount + statelessFunctionCount,
                 maxFrameWidth,
-                firstRange.getPartitionSignature(),
-                firstRange.getOrderSignature(),
-                firstRange.getTimestampType()
+                first.getPartitionSignature(),
+                first.getOrderSignature(),
+                first.getTimestampType()
         );
     }
 
