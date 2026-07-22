@@ -54,6 +54,30 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcatenationRegroupsNumericLookingConstants() throws Exception {
+        // concat(V) renders each operand through that operand's own type adapter, so no
+        // operand's rendering depends on its neighbours. The numeric guards that close the
+        // regroup for the arithmetic operators therefore do not apply to '||', whatever the
+        // constants look like.
+
+        // A quoted numeric-looking literal is marked widening, because '*' and '+' resolve it
+        // against a numeric operand (l * '02' * 4 is integer arithmetic). '||' never does, so
+        // the pair still regroups - this is the shape that silently stopped regrouping when
+        // the widening mark was introduced.
+        assertReassociation("d || '02' || '4'", "d || ('02' || '4')");
+        assertReassociation("'02' || ('4' || d)", "'02' || '4' || d");
+
+        // Integer literals are excluded from arithmetic regrouping because an intermediate can
+        // wrap onto the INT_NULL / LONG_NULL sentinel. Concatenation has no sentinel to hit.
+        assertReassociation("d || 2_147_483_647 || 1", "d || (2_147_483_647 || 1)");
+
+        // Floating-point and DECIMAL literals are excluded from arithmetic regrouping because
+        // rounding and scale are not associative. Concatenation only renders them.
+        assertReassociation("d || 1.5 || 2.5", "d || (1.5 || 2.5)");
+        assertReassociation("d || 1.5m || 2.5m", "d || (1.5m || 2.5m)");
+    }
+
+    @Test
     public void testDeepConstantChainFoldsAndGuardsViaCachedFold() throws Exception {
         // A long left-associative chain drives the O(n) cached-fold guard path: each level reads the
         // accumulating constant subtree's cached triple in O(1) rather than re-walking it, so the

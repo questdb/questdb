@@ -406,6 +406,14 @@ sentinel. A **quoted** literal counts as widening for this purpose: overload res
 casts `'02'` to a number, so `l * '02' * 4` is integer arithmetic and regrouping it would
 change the result exactly as `l * 2 * 4` would.
 
+Concatenation is the one operator that escapes all of it. `isReassociationSafe` short-circuits
+to `true` for `||`, because `concat(V)` renders each operand through that operand's own type
+adapter and appends the characters to a sink — no operand's rendering depends on its
+neighbours, and no overload resolution turns one into a number. `(A || B) || C` and
+`A || (B || C)` therefore emit the same characters for every operand type. Without that
+short-circuit the quoted-literal widening mark alone disables `||` regrouping outright, since
+a concatenated constant is almost always a quoted string.
+
 ## NULL Sentinels by Type
 
 | Type | Null Sentinel | Notes |

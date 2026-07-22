@@ -122,6 +122,37 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantPairRegroupingAgreesWithLiteralForm() throws Exception {
+        // reassociateConstants regroups a || C1 || C2 into a || (C1 || C2) for the column
+        // spelling, and never regroups the all-literal one (it returns early once both sides
+        // are constant, so that form folds left to right). The two must still agree: concat
+        // renders each operand through that operand's own type adapter, so regrouping cannot
+        // move a character. Every constant shape below carries a guard that closes the regroup
+        // for the arithmetic operators - a quoted numeric-looking literal, an integer literal
+        // that can wrap onto a NULL sentinel, and a floating-point / DECIMAL literal whose fold
+        // can round. None of those hazards reaches concatenation.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a VARCHAR)");
+            execute("INSERT INTO t VALUES ('x')");
+
+            assertQuery("SELECT 'x' || '02' || '4' AS v").noLeakCheck().expectSize().returns("v\nx024\n");
+            assertQuery("SELECT a || '02' || '4' AS v FROM t").noLeakCheck().expectSize().returns("v\nx024\n");
+
+            assertQuery("SELECT 'x' || 2_147_483_647 || 1 AS v").noLeakCheck().expectSize().returns("v\nx21474836471\n");
+            assertQuery("SELECT a || 2_147_483_647 || 1 AS v FROM t").noLeakCheck().expectSize().returns("v\nx21474836471\n");
+
+            assertQuery("SELECT 'x' || 1.5 || 2.5 AS v").noLeakCheck().expectSize().returns("v\nx1.52.5\n");
+            assertQuery("SELECT a || 1.5 || 2.5 AS v FROM t").noLeakCheck().expectSize().returns("v\nx1.52.5\n");
+
+            assertQuery("SELECT 'x' || 1.5m || 2.5m AS v").noLeakCheck().expectSize().returns("v\nx1.52.5\n");
+            assertQuery("SELECT a || 1.5m || 2.5m AS v FROM t").noLeakCheck().expectSize().returns("v\nx1.52.5\n");
+
+            // Mirror B: C2 || (C1 || a) regroups to (C2 || C1) || a
+            assertQuery("SELECT '02' || ('4' || a) AS v FROM t").noLeakCheck().expectSize().returns("v\n024x\n");
+        });
+    }
+
+    @Test
     public void testCursor() throws Exception {
         assertQuery("select concat('hehe', select max(a) from test), concat('hoho', 'haha')")
                 .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
