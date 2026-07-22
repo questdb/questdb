@@ -876,6 +876,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAsOfMemoizedDenseRunThreshold() {
+        return 4096; // provisional; finalized by the K sweep (Task 11)
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return 8;
     }

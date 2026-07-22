@@ -874,6 +874,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAsOfMemoizedDenseRunThreshold() {
+        return getDelegate().getSqlAsOfMemoizedDenseRunThreshold();
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return getDelegate().getQueryRegistryPoolSize();
     }

@@ -595,6 +595,10 @@ public interface CairoConfiguration {
     /** Max master/slave row ratio (in basis points, /10000) below which asof_index is auto-selected. */
     int getSqlAsOfIndexMaxMasterBp();
 
+    /** Equal-timestamp run length past which the memoized ASOF cursor abandons memoization for a
+     * resilient Dense forward scan (guards the dense-timestamp cliff). */
+    int getSqlAsOfMemoizedDenseRunThreshold();
+
     int getQueryRegistryPoolSize();
 
     /**
