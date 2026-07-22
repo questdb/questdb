@@ -357,18 +357,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int columnCount;
     private long commitRowCount;
     private long committedMasterRef;
-    // Composite single-cell fast-append (spec 1, Task 1 -- detection only): a writer-instance-scoped
-    // cache of the real max timestamp this writer has itself observed committed for a given cellKey,
-    // consulted by isCompositeSingleCellFastAppendPossible(...) to decide "append-only into that
-    // cell" for a cell that already has committed rows (there is no cheap persisted per-cell
-    // max-timestamp today -- see that method's own docs). Keyed by cellKey alone (not by day): safe
-    // because the method only ever consults/updates it for a commit landing in the table's CURRENT
-    // last day partition, and a cell's (day, cellKey) existence is independently verified via the
-    // _txn attached-partition record first, so a stale cross-day value can never cause a false
-    // "empty cell" or false "append-only" read. Cleared (not merely stale) on any multi-cell commit,
-    // since this method cannot cheaply attribute per-cell max timestamps for that shape and a stale
-    // entry could otherwise cause a false-positive read later. Null until the first composite commit
-    // this method observes (never allocated for a plain table, or while the flag is off).
+    // Composite fast-append (spec 1 + spec 2, Task 2 -- SHARED per-cell max cache): a writer-instance-
+    // scoped cache of the real max timestamp this writer has itself observed committed for a given
+    // cellKey, read by BOTH isCompositeSingleCellFastAppendPossible(...) and
+    // isCompositeMultiCellFastAppendPossible(...) to decide "append-only into that cell" for a cell that
+    // already has committed rows (there is no cheap persisted per-cell max-timestamp today -- see those
+    // methods' own docs). Keyed by cellKey alone (not by day): safe because the predicates only ever
+    // consult/update it for a commit landing in the table's CURRENT last day partition, and a cell's
+    // (day, cellKey) existence is independently verified via the _txn attached-partition record first,
+    // so a stale cross-day value can never cause a false "empty cell" or false "append-only" read.
+    // FOLD-NOT-WIPE (Task 2, replacing Task 1's dedicated compositeMultiCellMaxTimestamp + its wipe):
+    // every flag-on composite commit folds each touched cell's real observed max (Math.max) into this
+    // ONE cache -- the single-cell predicate/action for single-cell commits, the multi-cell predicate
+    // (which ALWAYS folds -- even on a per-cell ordering violation, even on an ineligible verdict) for
+    // every other shape. So the cache is never stale-low and can never drive a false-positive
+    // append-only read; because the single-cell fast-append ACTS on that read, a stale-low value would
+    // corrupt the cell, so never-false-positive is the hard invariant. A cell this writer has not itself
+    // observed is cold (absent) and fails closed. Both predicates read the cache BEFORE this commit's own
+    // fold mutates it (the single-cell predicate deliberately does NOT fold on a multi-cell commit -- it
+    // runs first, and folding there would mask the multi-cell predicate's own pre-commit read). Null
+    // until the first composite commit this writer observes (never allocated for a plain table, or while
+    // the flag is off).
     private IntLongHashMap compositeCellMaxTimestamp;
     // Non-owning holder for a composite table's write-side interners (dedicated dicts + _cell
     // registry). Null for plain/cluster-only tables. The interner SymbolMapWriters themselves live
@@ -418,55 +427,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // full path and does NOT increment this. Static for the same reason as ...EligibleCount above.
     // Test-visible via getCompositeFastAppendCommittedCount().
     private static final AtomicLong compositeFastAppendCommittedCount = new AtomicLong();
-    // Composite single-cell fast-append (spec 1, Task 2): the ACTIVE cell's kept-open last-partition
-    // column-file handles -- one primary MemoryMA per column (the fast-append path is fixed-size only,
-    // so no aux handles are needed; var-size-column tables fall back to the full path). Reused across
-    // consecutive single-cell commits into the SAME (cellKey, day) to avoid the async dispatch's
-    // re-open-every-commit; repositioned (via MemoryMA.of) when the target cell changes; closed on any
-    // full-path commit, rollback(), and doClose(). null until the first fast-append actually runs.
-    private ObjList<MemoryMA> compositeFastAppendCellColumns;
-    private int compositeFastAppendOpenCellKey = -1;                  // cellKey the handles point at; -1 = none open
-    private long compositeFastAppendOpenPartitionTs = Long.MIN_VALUE; // the day the handles point at
+    // Composite fast-append (spec 1 + spec 2, Task 2 -- N-cell handle cache): cellKey -> that cell's
+    // kept-open last-partition column-file handles (one primary MemoryMA per column; fixed-size only, so
+    // no aux handles -- var-size-column tables fall back to the full path). Bounded to
+    // getWalCompositeFastAppendMaxOpenCells() entries by the LRU order list compositeFastAppendCellLru
+    // (index 0 == least-recently-used, last == most-recently-used): a miss opens the cell at its CURRENT
+    // committed size and inserts it, evicting the LRU cell if over the cap. EVERY close site (LRU
+    // eviction, full-path fall-through, rollback, doClose) closes NON-TRUNCATING (close(false)) -- a
+    // truncating close would shrink a committed cell to 0 bytes, the spec-1 T3 corruption the crash suite
+    // guards. One shared open-partition-ts: all cached cells belong to the last day, so a commit into a
+    // DIFFERENT day (partition roll) drops the whole cache first. Reused across consecutive commits into
+    // the same cell(s) to avoid the async dispatch's re-open-every-commit. Null until the first
+    // fast-append actually runs (never allocated for a plain table or while the flag is off). Replaces
+    // spec-1's single scalar handle -- removes the dual-handle-on-one-file corruption hazard before Task 3
+    // lets two paths share a cell.
+    private IntObjHashMap<ObjList<MemoryMA>> compositeFastAppendCellCache;
+    private IntList compositeFastAppendCellLru;                        // LRU order over cached cellKeys
+    private long compositeFastAppendOpenPartitionTs = Long.MIN_VALUE; // the day all cached cells belong to
     // Composite MULTI-cell fast-append (spec 2, Task 1 -- detection only): counts commits
     // isCompositeMultiCellFastAppendPossible(...) found eligible while the flag is on. Static for the
     // same reason as compositeFastAppendEligibleCount (spec 1's own analog) above: the writer that
     // processes a WAL commit is internal to drainWalQueue()/the WAL-apply job and released right
     // after. Test-visible via getCompositeMultiCellFastAppendEligibleCount().
     private static final AtomicLong compositeMultiCellFastAppendEligibleCount = new AtomicLong();
-    // Composite MULTI-cell fast-append (spec 2, Task 1 -- detection only): a writer-instance-scoped
-    // cache of the real max timestamp this writer has itself observed committed for a given cellKey,
-    // consulted by isCompositeMultiCellFastAppendPossible(...) -- the multi-cell analog of single-
-    // cell's own compositeCellMaxTimestamp above, populated/read the same way (folded in from every
-    // commit this method examines, keyed by cellKey alone, regardless of this method's own eligibility
-    // verdict for that commit -- including single-cell-shaped commits, which is how a cell seeded by
-    // ordinary single-cell traffic ever gets warm enough for a LATER multi-cell commit into it to
-    // pass the append-only check).
-    // <p>
-    // Deliberately a SEPARATE field from compositeCellMaxTimestamp, not a shared one, even though both
-    // exist to answer the identical question ("what is this cellKey's real committed max, per this
-    // writer's own observations?"): isCompositeSingleCellFastAppendPossible unconditionally CLEARS
-    // compositeCellMaxTimestamp the instant its own single-row-forward scan finds a second distinct
-    // cellKey -- i.e. on every genuinely multi-cell commit, before isCompositeMultiCellFastAppendPossible
-    // (called strictly after it -- see the processWalCommit hook) would ever get a chance to consult
-    // it. Reusing that field verbatim, as originally sketched, is a self-defeating design: the exact
-    // shape this method exists to detect always finds the shared cache freshly wiped by the sibling
-    // call that ran immediately before it on the SAME commit, making every multi-cell commit a
-    // guaranteed conservative miss forever (verified empirically while implementing this method). A
-    // dedicated field sidesteps that interaction entirely without touching spec 1's method or its
-    // behavior (single-cell stays byte-for-byte untouched, per this task's own scope).
-    // <p>
-    // Known residual gap (documented, not closed here -- see the Task 1 report): a cell most recently
-    // advanced by an ACTUAL single-cell fast-append action (spec 1, Task 2's real early-return path)
-    // never reaches this method at all (that path returns before this hook branch runs), so this
-    // cache can go stale (too low) for such a cell until a later commit into it that DOES reach this
-    // method refreshes it. Stale-too-low only ever risks a missed detection turning into this
-    // method's OWN false positive for a subsequent multi-cell commit that lands strictly between the
-    // stale value and the cell's true current max -- never a false negative. Task 1 never acts on
-    // this method's result (counter only), so this has no data-correctness consequence today; it must
-    // be resolved (most likely by unifying with a real persisted per-cell max-timestamp, the same
-    // follow-up spec 1's own docs already call for) before any future task lets this predicate's
-    // result skip real work.
-    private IntLongHashMap compositeMultiCellMaxTimestamp;
+    // (Task 2 removed the dedicated compositeMultiCellMaxTimestamp cache Task 1 had added as a
+    // workaround: isCompositeMultiCellFastAppendPossible now reads and folds the SHARED
+    // compositeCellMaxTimestamp above -- see its FOLD-NOT-WIPE docs -- so one source of truth exists for
+    // both predicates before Task 3's multi-cell routine relies on it.)
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
@@ -4044,10 +4031,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
                 partitionRemoveCandidates.clear();
-                // Composite single-cell fast-append (spec 1, Task 2): drop the kept-open cell handle.
-                // Any bytes it appended for the rolled-back txn are past the cell's still-committed
-                // _txn size (ignored on reopen); the next commit reopens at the committed size.
-                closeCompositeFastAppendCell();
+                // Composite fast-append (spec 1 + spec 2, Task 2): drop ALL kept-open cell handles,
+                // NON-TRUNCATING. Any bytes appended for the rolled-back txn are past each cell's
+                // still-committed _txn size (ignored on reopen); the next commit reopens at the committed
+                // size.
+                closeAllCompositeFastAppendCells();
                 rollbackDeferredPostingSealPurges();
                 o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
@@ -5204,13 +5192,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int cellKey = resolveRowCellKey(rowLo, dimScratch);
         for (long row = rowLo + 1; row < rowHi; row++) {
             if (resolveRowCellKey(row, dimScratch) != cellKey) {
-                // Multi-cell: out of spec 1 scope. This commit may have advanced any number of
-                // OTHER cells' real max timestamps in ways this method does not attribute per-cell;
-                // invalidate the whole cache rather than risk a stale, too-low entry causing a
-                // false-positive "append-only" read on a later single-cell commit into one of them.
-                if (compositeCellMaxTimestamp != null) {
-                    compositeCellMaxTimestamp.clear();
-                }
+                // Multi-cell: out of the single-cell branch's scope. FOLD-NOT-WIPE (Task 2): do NOT wipe
+                // the shared compositeCellMaxTimestamp (Task 1 did, to avoid a stale-low false positive) --
+                // and, deliberately, do NOT fold this commit's touched cells here either. This predicate
+                // runs strictly BEFORE isCompositeMultiCellFastAppendPossible in the processWalCommit hook;
+                // that method reads the shared cache's PRE-commit state to decide per-cell append-only, so
+                // folding this commit's contribution here would mask its read and make every multi-cell
+                // commit a false "not append-only" miss. The multi-cell predicate is the folder for every
+                // multi-cell commit (it ALWAYS folds, even on a per-cell ordering violation), which keeps
+                // the shared cache never stale-low without this masking. Just bail.
                 return -1;
             }
         }
@@ -5306,23 +5296,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *     <li><b>Every touched cell append-only:</b> this commit's minimum timestamp INTO THAT CELL
      *     (the timestamp of the first row in {@code [rowLo, rowHi)} resolving to it, which -- given
      *     internal ordering just verified above -- is that cell's true minimum in this commit) is
-     *     strictly greater than the cell's real committed max, per {@link
-     *     #compositeMultiCellMaxTimestamp} (see that field's own docs for why this is a SEPARATE cache
-     *     from single-cell's {@link #compositeCellMaxTimestamp}, not the same one, and for its own
-     *     residual staleness caveat). A cell this writer has not itself observed a max timestamp for
+     *     strictly greater than the cell's real committed max, per the SHARED {@link
+     *     #compositeCellMaxTimestamp} (Task 2 unified this with the single-cell predicate's cache -- see
+     *     its FOLD-NOT-WIPE docs). A cell this writer has not itself observed a max timestamp for
      *     is conservatively treated as NOT append-only -- a missed detection, never a false positive,
      *     exactly mirroring the single-cell method's own cold-cache handling.</li>
      * </ul>
-     * Every distinct cell touched by this commit has its observed max (this commit's own last-seen
-     * timestamp for that cell) folded into {@link #compositeMultiCellMaxTimestamp} before returning,
-     * REGARDLESS of the eligibility verdict above (including when {@code distinctCount < 2}, i.e. for
-     * an ordinary single-cell-shaped commit) -- the full O3 composite path this task never skips
+     * Every distinct cell touched by this commit has its observed max (this commit's own MAX ts for that
+     * cell over the whole scan) folded into the shared {@link #compositeCellMaxTimestamp} before
+     * returning, REGARDLESS of the eligibility verdict above (including when {@code distinctCount < 2},
+     * i.e. for an ordinary single-cell-shaped commit, AND when a per-cell ordering violation made the
+     * commit ineligible) -- the full O3 composite path this task never skips
      * commits these rows regardless, so each touched cell's real max genuinely does advance to {@code
      * max(old, new)} whether or not THIS commit counted as "eligible"; this is also the only way a
      * cell ever becomes warm enough for a LATER multi-cell commit's append-only check to consult (see
-     * the field's own docs). The one exception: a per-cell ordering violation aborts the whole method
-     * immediately, folding in nothing from this scan -- the simplest safe choice when this scan's own
-     * picture of a cell's max is unreliable.
+     * the field's own docs). Task 2 tightened this: even a per-cell ordering violation still folds every
+     * touched cell's true max (the scan runs to completion rather than bailing) -- the shared cache the
+     * single-cell fast-append ACTION reads must never go stale-low, so it must be folded on EVERY commit.
      * <p>
      * <b>Does NOT check the fixed-size-column / column-top-0 gates.</b> This is, deliberately, a
      * DETECTION-only method that mirrors {@link #isCompositeSingleCellFastAppendPossible}'s own
@@ -5362,14 +5352,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int maxOpenCells = configuration.getWalCompositeFastAppendMaxOpenCells();
 
         // Single forward pass: resolve each row's cellKey, track the distinct cellKey set touched by
-        // this commit plus, per cell, its minimum ts (cellMinTs, set once on first sight) and its
-        // running last-seen ts (cellLastTs, updated every sight) -- verifying per-cell internal
-        // ordering as we go (a later row for an already-seen cell must never be < that cell's own
-        // last-seen ts). -1 is IntLongHashMap's own "no entry" sentinel, not a real timestamp value
-        // (same simplification as the single-cell method's own cache reads).
+        // this commit plus, per cell, its minimum ts (cellMinTs, set once on first sight), its running
+        // last-seen ts (cellLastTs) and its running MAX ts (cellMaxTs, == last-seen when internally
+        // ordered). Detect per-cell internal ordering (a later row for an already-seen cell that is < that
+        // cell's own last-seen ts). -1 is IntLongHashMap's own "no entry" sentinel, not a real timestamp
+        // value (same simplification as the single-cell method's own cache reads). Unlike Task 1 this does
+        // NOT bail mid-scan on an ordering violation: it scans the WHOLE commit so the FOLD below sees each
+        // touched cell's true max even for an ineligible/out-of-order commit (Task 2 shares one cache with
+        // the single-cell fast-append ACTION, so this cache must never go stale-low; folding each cell's
+        // real max keeps it correct -- see compositeCellMaxTimestamp's FOLD-NOT-WIPE docs).
         final IntList distinctCells = new IntList();
         final IntLongHashMap cellMinTs = new IntLongHashMap();
         final IntLongHashMap cellLastTs = new IntLongHashMap();
+        final IntLongHashMap cellMaxTs = new IntLongHashMap();
+        boolean orderingViolated = false;
         for (long row = rowLo; row < rowHi; row++) {
             final int cellKey = resolveRowCellKey(row, dimScratch);
             final long ts = o3TsColumn.getLong(row << 4);
@@ -5378,22 +5374,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 distinctCells.add(cellKey);
                 cellMinTs.put(cellKey, ts);
                 cellLastTs.put(cellKey, ts);
-            } else if (ts < last) {
-                // Per-cell ordering violated within this commit: never fast-append-eligible, and this
-                // scan's own picture of per-cell maxes is unreliable -- bail without folding in
-                // anything (see this method's own docs).
-                return false;
+                cellMaxTs.put(cellKey, ts);
             } else {
+                if (ts < last) {
+                    // Per-cell internal ordering violated -> never fast-append-eligible (recorded, not
+                    // bailed: keep scanning so the fold still sees this cell's true max).
+                    orderingViolated = true;
+                }
                 cellLastTs.put(cellKey, ts);
+                if (ts > cellMaxTs.get(cellKey)) {
+                    cellMaxTs.put(cellKey, ts);
+                }
             }
         }
 
         final int distinctCount = distinctCells.size();
 
-        // Decide eligibility using the cache's state as it stood BEFORE this commit's own fold-in
-        // below mutates it (else this commit's own contribution could mask a real violation of its
-        // own -- mirrors isCompositeSingleCellFastAppendPossible's own read-then-fold-in order).
-        boolean eligible = distinctCount >= 2 && distinctCount <= maxOpenCells;
+        // Decide eligibility reading the shared cache's state as it stood BEFORE this commit's own fold-in
+        // below mutates it. The single-cell predicate ran first in the hook but deliberately did NOT fold
+        // this commit's cells (see its own docs), so these reads see genuinely pre-commit values.
+        boolean eligible = !orderingViolated && distinctCount >= 2 && distinctCount <= maxOpenCells;
         if (eligible) {
             for (int i = 0; i < distinctCount; i++) {
                 final int cellKey = distinctCells.getQuick(i);
@@ -5402,7 +5402,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     eligible = false; // brand-new/empty cell -- not pre-existing
                     continue;
                 }
-                final long cachedMax = compositeMultiCellMaxTimestamp != null ? compositeMultiCellMaxTimestamp.get(cellKey) : -1;
+                final long cachedMax = compositeCellMaxTimestamp != null ? compositeCellMaxTimestamp.get(cellKey) : -1;
                 final long cellMin = cellMinTs.get(cellKey);
                 if (cachedMax == -1 || cellMin <= cachedMax) {
                     eligible = false; // never observed by this writer, or not append-only
@@ -5410,17 +5410,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        // Fold in every touched cell's observed max, regardless of the verdict above (see this
-        // method's own docs for why).
-        if (compositeMultiCellMaxTimestamp == null) {
-            compositeMultiCellMaxTimestamp = new IntLongHashMap();
+        // Fold every touched cell's real observed max into the SHARED cache, ALWAYS -- regardless of the
+        // eligibility verdict AND regardless of an ordering violation. This is the guaranteed folder for
+        // every multi-cell (and every out-of-order) commit: the single-cell fast-append action reads this
+        // same cache to gate append-only, so a stale-low entry here would let it corrupt a cell. cellMaxTs
+        // is the cell's true max over the whole commit (== last-seen when ordered).
+        if (compositeCellMaxTimestamp == null) {
+            compositeCellMaxTimestamp = new IntLongHashMap();
         }
         for (int i = 0; i < distinctCount; i++) {
             final int cellKey = distinctCells.getQuick(i);
-            final long observedMax = cellLastTs.get(cellKey);
-            final long priorCached = compositeMultiCellMaxTimestamp.get(cellKey);
+            final long observedMax = cellMaxTs.get(cellKey);
+            final long priorCached = compositeCellMaxTimestamp.get(cellKey);
             if (priorCached == -1 || observedMax > priorCached) {
-                compositeMultiCellMaxTimestamp.put(cellKey, observedMax);
+                compositeCellMaxTimestamp.put(cellKey, observedMax);
             }
         }
 
@@ -5466,7 +5469,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long newSize = srcDataMax + copyRowCount;
 
         try {
-            ensureCompositeFastAppendCellOpen(cellKey, partitionTs, partitionIndexRaw, srcDataMax);
+            // Cache-backed (Task 2): a hit reuses the cell's kept-open handles, a miss opens them at the
+            // cell's current committed size and evicts the LRU cell if over the cap.
+            final ObjList<MemoryMA> cellColumns = ensureCompositeFastAppendCellOpen(cellKey, partitionTs, partitionIndexRaw, srcDataMax);
             final int timestampIndex = metadata.getTimestampIndex();
             for (int i = 0; i < columnCount; i++) {
                 final int columnType = metadata.getColumnType(i);
@@ -5475,13 +5480,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 // Column top is 0 for every column here (canCompositeFastAppendCell gated on it), so the
                 // destination physical row index is the cell's committed size directly.
-                appendCompositeFastAppendColumn(i, columnType, i == timestampIndex, rowLo, copyRowCount, compositeFastAppendCellColumns.getQuick(i), srcDataMax);
+                appendCompositeFastAppendColumn(i, columnType, i == timestampIndex, rowLo, copyRowCount, cellColumns.getQuick(i), srcDataMax);
             }
             // Durability: flush the cell's column files (respecting commitMode, exactly like
             // syncColumns0) BEFORE the _txn size bump lands durably in commit00 -- so a crash can never
             // leave _txn recording rows whose bytes were not flushed. Under NOSYNC this is a no-op, at
             // parity with the full composite path and plain's fast-append.
-            syncCompositeFastAppendCell();
+            syncCompositeFastAppendCell(cellColumns);
         } catch (Throwable th) {
             // A half-written cell leaves in-memory state untrustworthy. The appended bytes are past the
             // cell's still-committed size (ignored on reopen -> the WAL replays this un-acked txn), so
@@ -5600,23 +5605,65 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Opens (or repositions to) the target cell's {@code <day>/<cell>} column files into
-     * {@link #compositeFastAppendCellColumns}, positioned at the cell's committed size, and remembers
-     * the open (cellKey, day). A no-op when already open for that exact cell (the kept-open reuse across
-     * consecutive same-cell commits). Mirrors {@link #openColumnFiles}'s own {@code MemoryMA.of} call.
+     * Test-visible count of cells whose {@code <day>/<cell>} column handles are currently kept open in the
+     * N-cell fast-append handle cache ({@link #compositeFastAppendCellCache}) -- bounded by
+     * {@link CairoConfiguration#getWalCompositeFastAppendMaxOpenCells()}. Zero until the first fast-append
+     * runs. Task 3's multi-cell routine + this cache's own tests consume it.
      */
-    private void ensureCompositeFastAppendCellOpen(int cellKey, long partitionTs, int partitionIndexRaw, long srcDataMax) {
-        if (compositeFastAppendCellColumns != null
-                && compositeFastAppendOpenCellKey == cellKey
-                && compositeFastAppendOpenPartitionTs == partitionTs) {
-            return;
+    public int getCompositeFastAppendOpenCellCount() {
+        return compositeFastAppendCellCache == null ? 0 : compositeFastAppendCellCache.size();
+    }
+
+    /**
+     * Returns the target cell's {@code <day>/<cell>} column-file handles from the N-cell handle cache
+     * ({@link #compositeFastAppendCellCache}), opening them on a miss. On a HIT the cell's kept-open
+     * handles are reused (the whole point -- no re-open per commit) and marked most-recently-used. A MISS
+     * opens the files at the cell's CURRENT committed size (see
+     * {@link #openCompositeFastAppendCellColumns}), inserts the entry, and evicts the least-recently-used
+     * cell (NON-TRUNCATING close) if the cache now exceeds
+     * {@link CairoConfiguration#getWalCompositeFastAppendMaxOpenCells()}. All cached cells belong to ONE
+     * day: a commit into a different {@code partitionTs} (a partition roll) drops the whole cache first.
+     */
+    private ObjList<MemoryMA> ensureCompositeFastAppendCellOpen(int cellKey, long partitionTs, int partitionIndexRaw, long srcDataMax) {
+        if (compositeFastAppendOpenPartitionTs != partitionTs) {
+            // Partition rolled (new last day), or first-ever open: every cached handle points at the prior
+            // day -- close them all NON-TRUNCATING before caching a cell of the new day.
+            closeAllCompositeFastAppendCells();
+            compositeFastAppendOpenPartitionTs = partitionTs;
         }
-        closeCompositeFastAppendCell();
-        if (compositeFastAppendCellColumns == null) {
-            compositeFastAppendCellColumns = new ObjList<>(columnCount);
+        if (compositeFastAppendCellCache == null) {
+            compositeFastAppendCellCache = new IntObjHashMap<>();
+            compositeFastAppendCellLru = new IntList();
         }
-        while (compositeFastAppendCellColumns.size() < columnCount) {
-            compositeFastAppendCellColumns.add(Vm.getPMARInstance(configuration));
+        final int keyIndex = compositeFastAppendCellCache.keyIndex(cellKey);
+        if (keyIndex < 0) {
+            // Hit: reuse the kept-open handles, mark most-recently-used.
+            touchCompositeFastAppendCellLru(cellKey);
+            return compositeFastAppendCellCache.valueAt(keyIndex);
+        }
+        // Miss: open at the cell's CURRENT committed size (srcDataMax, never 0), insert, then evict the LRU
+        // cell if now over the cap (never the just-added cell -- guarded by the LRU size check).
+        final ObjList<MemoryMA> cellColumns = openCompositeFastAppendCellColumns(cellKey, partitionTs, partitionIndexRaw, srcDataMax);
+        compositeFastAppendCellCache.putAt(keyIndex, cellKey, cellColumns);
+        compositeFastAppendCellLru.add(cellKey); // most-recently-used at the tail
+        final int maxOpenCells = configuration.getWalCompositeFastAppendMaxOpenCells();
+        while (compositeFastAppendCellCache.size() > maxOpenCells && compositeFastAppendCellLru.size() > 1) {
+            evictLruCompositeFastAppendCell();
+        }
+        return cellColumns;
+    }
+
+    /**
+     * Opens the cell's {@code <day>/<cell>} column files into a FRESH handle list, each positioned at the
+     * cell's committed size {@code srcDataMax} (never 0 -- the fast-append writes PAST the committed rows).
+     * Mirrors {@link #openColumnFiles}'s own {@code MemoryMA.of} call. On a partial-open failure every
+     * handle opened so far is closed NON-TRUNCATING (so a committed cell column is never shrunk below its
+     * committed size) and the throwable rethrown -- the caller never caches a half-open cell.
+     */
+    private ObjList<MemoryMA> openCompositeFastAppendCellColumns(int cellKey, long partitionTs, int partitionIndexRaw, long srcDataMax) {
+        final ObjList<MemoryMA> cellColumns = new ObjList<>(columnCount);
+        while (cellColumns.size() < columnCount) {
+            cellColumns.add(Vm.getPMARInstance(configuration));
         }
         final long cellNameTxn = txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw);
         final StringSink cellSegmentSink = Misc.getThreadLocalSink();
@@ -5631,7 +5678,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue; // deleted column: leave its handle closed
                 }
                 final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTs, cellKey, i);
-                final MemoryMA mem = compositeFastAppendCellColumns.getQuick(i);
+                final MemoryMA mem = cellColumns.getQuick(i);
                 mem.of(
                         ff,
                         dFile(path.trimTo(cellDirLen), metadata.getColumnName(i), columnNameTxn),
@@ -5644,18 +5691,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 mem.jumpTo(srcDataMax << ColumnType.pow2SizeOf(columnType)); // column top is 0 (gated)
             }
         } catch (Throwable th) {
-            // Partial open: some column handles were opened + positioned at the committed size, but one
-            // failed (e.g. a mid-flight ff.mmap failure while positioning). A failed handle's append offset
-            // is 0 -- so a TRUNCATING close (the default, via closeCompositeFastAppendCell / doClose's
-            // freeObjList) would shrink that committed cell column file BELOW its committed size and corrupt
-            // already-committed rows. This open runs before the _txn size bump, so the cell's committed size
-            // is unchanged; close every handle WITHOUT truncation (fd -> -1, making the later truncating
-            // closes no-ops) so the bytes past the committed size are merely ignored on reopen and the WAL
-            // replays the un-acked txn == plain twin. openCellKey stays -1: this cell never became open.
-            // Guard each close so a throw from one handle's cleanup (e.g. a page msync under commitMode!=
-            // NOSYNC) cannot leave a LATER handle un-neutralized for doClose's truncating close to shrink.
-            for (int i = 0, n = compositeFastAppendCellColumns.size(); i < n; i++) {
-                final MemoryMA mem = compositeFastAppendCellColumns.getQuick(i);
+            // Partial open: some handles opened + positioned at the committed size, one failed (e.g. a
+            // mid-flight ff.mmap failure while positioning). A failed handle's append offset is 0 -- so a
+            // TRUNCATING close would shrink that committed cell column file BELOW its committed size and
+            // corrupt already-committed rows. This open runs before the _txn size bump, so the cell's
+            // committed size is unchanged; close every handle WITHOUT truncation so the bytes past the
+            // committed size are merely ignored on reopen and the WAL replays the un-acked txn == plain
+            // twin. The cell is never inserted into the cache (the caller inserts only on success). Guard
+            // each close so a throw from one handle's cleanup cannot leave a LATER handle un-neutralized.
+            for (int i = 0, n = cellColumns.size(); i < n; i++) {
+                final MemoryMA mem = cellColumns.getQuick(i);
                 if (mem != null) {
                     try {
                         mem.close(false);
@@ -5668,30 +5713,68 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
         }
-        compositeFastAppendOpenCellKey = cellKey;
-        compositeFastAppendOpenPartitionTs = partitionTs;
+        return cellColumns;
+    }
+
+    // Marks cellKey most-recently-used: move it to the tail of the LRU order list.
+    private void touchCompositeFastAppendCellLru(int cellKey) {
+        final int at = compositeFastAppendCellLru.indexOf(cellKey, 0, compositeFastAppendCellLru.size());
+        if (at != -1) {
+            compositeFastAppendCellLru.removeIndex(at);
+        }
+        compositeFastAppendCellLru.add(cellKey);
+    }
+
+    // Evicts the least-recently-used cell (head of the LRU order list): drop it from the cache and close
+    // its handles NON-TRUNCATING (a truncating close would shrink a committed cell to 0 bytes -- the
+    // spec-1 T3 corruption). The evicted cell's committed rows were already synced after their own commit,
+    // so a later miss simply reopens the file at its committed size.
+    private void evictLruCompositeFastAppendCell() {
+        final int lruCellKey = compositeFastAppendCellLru.getQuick(0);
+        compositeFastAppendCellLru.removeIndex(0);
+        final ObjList<MemoryMA> cellColumns = compositeFastAppendCellCache.get(lruCellKey);
+        compositeFastAppendCellCache.remove(lruCellKey);
+        closeCompositeFastAppendCellColumns(cellColumns);
     }
 
     /**
-     * Releases the kept-open cell handle (truncating each column file to its committed size), leaving the
-     * MemoryMA objects allocated for reuse. Called when the fast-append target changes, before any
-     * full-path commit, on rollback(), and (via doClose) on writer close.
+     * Closes + drops EVERY cached cell's handles NON-TRUNCATING, and resets the shared open-partition-ts.
+     * Called on a partition roll, before any full-path commit (the full O3 path rewrites the partition, so
+     * the kept-open handles must be released first), on rollback(), and (via doClose) on writer close.
+     * Durability of each cell's committed rows was already ensured by {@link #syncCompositeFastAppendCell}
+     * after every fast-append, so this only releases the mmap/fd -- never truncating.
      */
-    private void closeCompositeFastAppendCell() {
-        if (compositeFastAppendCellColumns == null || compositeFastAppendOpenCellKey == -1) {
-            return;
-        }
-        for (int i = 0, n = compositeFastAppendCellColumns.size(); i < n; i++) {
-            final MemoryMA mem = compositeFastAppendCellColumns.getQuick(i);
-            if (mem != null) {
-                mem.close(true);
+    private void closeAllCompositeFastAppendCells() {
+        // Iterate the LRU order list -- it holds exactly the cached cellKeys (kept in lock-step with the
+        // cache on every insert/evict), avoiding the cache's raw backing array with its empty null slots.
+        if (compositeFastAppendCellLru != null) {
+            for (int i = 0, n = compositeFastAppendCellLru.size(); i < n; i++) {
+                closeCompositeFastAppendCellColumns(compositeFastAppendCellCache.get(compositeFastAppendCellLru.getQuick(i)));
             }
+            compositeFastAppendCellLru.clear();
         }
-        compositeFastAppendOpenCellKey = -1;
+        if (compositeFastAppendCellCache != null) {
+            compositeFastAppendCellCache.clear();
+        }
         compositeFastAppendOpenPartitionTs = Long.MIN_VALUE;
     }
 
-    private void syncCompositeFastAppendCell() {
+    // Closes one cell's column handles NON-TRUNCATING (close(false)); the MemoryMA objects are then
+    // garbage (getPMARInstance returns a fresh unpooled instance). A null cellColumns (never-cached) or a
+    // null per-column handle (a deleted column) is skipped.
+    private void closeCompositeFastAppendCellColumns(ObjList<MemoryMA> cellColumns) {
+        if (cellColumns == null) {
+            return;
+        }
+        for (int i = 0, n = cellColumns.size(); i < n; i++) {
+            final MemoryMA mem = cellColumns.getQuick(i);
+            if (mem != null) {
+                mem.close(false);
+            }
+        }
+    }
+
+    private void syncCompositeFastAppendCell(ObjList<MemoryMA> cellColumns) {
         final int commitMode = configuration.getCommitMode();
         if (commitMode == CommitMode.NOSYNC) {
             return;
@@ -5699,7 +5782,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean async = commitMode == CommitMode.ASYNC;
         for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) > 0) {
-                compositeFastAppendCellColumns.getQuick(i).sync(async);
+                cellColumns.getQuick(i).sync(async);
             }
         }
     }
@@ -7967,8 +8050,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         freeSymbolMapWriters();
         Misc.freeObjList(indexers);
         denseIndexers.clear();
-        // Composite single-cell fast-append (spec 1, Task 2): free the kept-open cell segment handles.
-        Misc.freeObjList(compositeFastAppendCellColumns);
+        // Composite fast-append (spec 1 + spec 2, Task 2): close ALL kept-open cell segment handles,
+        // NON-TRUNCATING (a truncating close on writer teardown would shrink a committed cell to 0 bytes).
+        closeAllCompositeFastAppendCells();
         Misc.free(txWriter);
         Misc.free(ddlMem);
         Misc.free(other);
@@ -13152,28 +13236,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         if (canCompositeFastAppendCell(fastAppendCellKey)) {
                             applyCompositeSingleCellFastAppend(fastAppendCellKey, rowLo, rowHi, o3TimestampMax);
                             compositeFastAppendCommittedCount.incrementAndGet();
-                            // Review fix (spec 2, Task 1): this real action advances fastAppendCellKey's
-                            // true committed max, but returns below WITHOUT ever reaching this method's
-                            // own multi-cell branch (see the block just below) -- the only other place
-                            // that folds into compositeMultiCellMaxTimestamp. Left unfolded, that cache
-                            // would go stale (too low) for this cell, and a LATER multi-cell commit
-                            // landing between the stale value and this real new max would be wrongly
-                            // judged append-only (a false positive -- see
-                            // isCompositeMultiCellFastAppendPossible's own docs on this cache and
-                            // CompositeMultiCellFastAppendEligibilityTest#
-                            // testStaleMultiCellCacheAfterRealSingleCellFastAppendDoesNotFalsePositive).
-                            // Fold here too, identical max(old,new) guard as every other fold-in site.
-                            if (compositeMultiCellMaxTimestamp == null) {
-                                compositeMultiCellMaxTimestamp = new IntLongHashMap();
-                            }
-                            final long priorMultiCellCached = compositeMultiCellMaxTimestamp.get(fastAppendCellKey);
-                            if (priorMultiCellCached == -1 || o3TimestampMax > priorMultiCellCached) {
-                                compositeMultiCellMaxTimestamp.put(fastAppendCellKey, o3TimestampMax);
-                            }
+                            // FOLD-NOT-WIPE (Task 2): the fast-append action already folds this cell's new
+                            // max into the SHARED compositeCellMaxTimestamp (the multi-cell predicate reads
+                            // the same cache), so Task 1's separate fold-into-compositeMultiCellMaxTimestamp
+                            // patch that used to live here is now redundant and was removed with that field.
                             return true;
                         }
                     }
-                    closeCompositeFastAppendCell();
+                    closeAllCompositeFastAppendCells();
                 }
 
                 // Composite MULTI-cell fast-append (spec 2, Task 1 -- detection only). Placed AFTER

@@ -192,6 +192,119 @@ public class CompositeFastAppendTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Part A (composite-partitioning fast-append spec 2, Task 2 -- N-cell handle cache): alternating
+     * single-cell fast-append commits into two DIFFERENT cells ({@code A}, {@code B}, {@code A}) each
+     * take the spec-1 fast path, and BOTH cells' column-file handles stay cached open across the
+     * alternation -- proven via {@link TableWriter#getCompositeFastAppendOpenCellCount()} == 2. Spec-1's
+     * single scalar handle held at most ONE open cell, re-opening on every A->B->A switch; the bounded
+     * cache keeps them both open. Correctness oracle throughout: composite {@code c} == plain twin
+     * {@code p}.
+     */
+    @Test
+    public void testAlternatingSingleCellCommitsKeepBothCellHandlesCached() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            // Warm both cells (create on the first commit -> full path; warm the per-cell max cache on
+            // the second -> fast-append) so the alternating phase below fast-appends every commit.
+            insBatch("A", 10);
+            drainWalQueue();
+            insBatch("A", 11);
+            drainWalQueue();
+            insBatch("B", 12);
+            drainWalQueue();
+            insBatch("B", 13);
+            drainWalQueue();
+
+            // Alternating single-cell fast-appends: A, B, A -- each a separate ordered single-cell commit.
+            long before = TableWriter.getCompositeFastAppendCommittedCount();
+            insBatch("A", 14);
+            drainWalQueue();
+            insBatch("B", 15);
+            drainWalQueue();
+            insBatch("A", 16);
+            drainWalQueue();
+            long after = TableWriter.getCompositeFastAppendCommittedCount();
+            Assert.assertEquals(
+                    "each alternating single-cell commit into a warm cell must fast-append",
+                    before + 3, after);
+
+            Assert.assertEquals(
+                    "both cells' handles must stay cached open across the A/B/A alternation (spec-1's single"
+                            + " scalar handle would have held only one)",
+                    2, openCellCount("c"));
+
+            engine.releaseInactive();
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            assertSqlCursors("select ts, exch, px from p order by ts, exch", "select ts, exch, px from c order by ts, exch");
+            assertSqlCursors("select count() from p", "select count() from c");
+            // order by exch: LATEST ON output row-order differs between plain (by latest ts) and composite
+            // (by cell) when the two cells' latest timestamps are cell-order-inverted -- compare by cell.
+            assertSqlCursors(
+                    "select ts, exch, px from p latest on ts partition by exch order by exch",
+                    "select ts, exch, px from c latest on ts partition by exch order by exch");
+        });
+    }
+
+    /**
+     * Part A LRU eviction: with {@code cairo.wal.composite.fastappend.max.open.cells=1}, alternating
+     * single-cell fast-appends into {@code A}, {@code B}, {@code A} must still each fast-append while the
+     * cache never holds more than one open cell (the least-recently-used cell is evicted on each switch,
+     * NON-TRUNCATING so its committed rows survive). Correctness oracle: {@code c} == {@code p} across the
+     * eviction cycles.
+     */
+    @Test
+    public void testMaxOpenCellsCapOneEvictsLruAndStaysCorrect() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_WAL_COMPOSITE_FASTAPPEND_MAX_OPEN_CELLS, "1");
+
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            insBatch("A", 10);
+            drainWalQueue();
+            insBatch("A", 11);
+            drainWalQueue();
+            insBatch("B", 12);
+            drainWalQueue();
+            insBatch("B", 13);
+            drainWalQueue();
+
+            long before = TableWriter.getCompositeFastAppendCommittedCount();
+            insBatch("A", 14);
+            drainWalQueue();
+            Assert.assertTrue("cap=1 must keep at most one cell open", openCellCount("c") <= 1);
+            insBatch("B", 15);
+            drainWalQueue();
+            Assert.assertTrue("cap=1 must keep at most one cell open", openCellCount("c") <= 1);
+            insBatch("A", 16);
+            drainWalQueue();
+            Assert.assertTrue("cap=1 must keep at most one cell open", openCellCount("c") <= 1);
+            long after = TableWriter.getCompositeFastAppendCommittedCount();
+            Assert.assertEquals(
+                    "each alternating commit must still fast-append despite LRU eviction",
+                    before + 3, after);
+
+            engine.releaseInactive();
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            assertSqlCursors("select ts, exch, px from p order by ts, exch", "select ts, exch, px from c order by ts, exch");
+            assertSqlCursors("select count() from p", "select count() from c");
+        });
+    }
+
+    // Reads the composite WAL-apply writer's live open-cell-handle count. drainWalQueue() parks that same
+    // pooled writer (cache intact) after applying; getWriterUnsafe returns that instance. Read the count
+    // BEFORE the try-with-resources close (a pool-return may roll back, which drops the cache).
+    private int openCellCount(String table) {
+        try (TableWriter w = engine.getWriterUnsafe(engine.verifyTableName(table), "test")) {
+            return w.getCompositeFastAppendOpenCellCount();
+        }
+    }
+
     private static String tsOf(int hour) {
         return String.format("2020-01-01T%02d:00:00.000000Z", hour);
     }
