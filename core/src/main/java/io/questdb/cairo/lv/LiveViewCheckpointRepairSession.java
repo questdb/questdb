@@ -28,8 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -82,6 +84,10 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private final LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay();
     private final LiveViewRefreshJob owner;
     private final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+    // The compiled factory whose window functions the replay is standing part-way
+    // through. Identity only - the session never calls it - so a later turn can refuse
+    // a runtime that drifted out from under the candidate. See getWindowFactory().
+    private final WindowRecordCursorFactory windowFactory;
     private LiveViewWindow anchorWindow;
     private long appendedRows;
     private TableReader baseReader;
@@ -102,9 +108,11 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
 
     public LiveViewCheckpointRepairSession(
             @NotNull CairoConfiguration configuration,
-            @NotNull LiveViewRefreshJob owner
+            @NotNull LiveViewRefreshJob owner,
+            @NotNull WindowRecordCursorFactory windowFactory
     ) {
         this.owner = owner;
+        this.windowFactory = windowFactory;
         this.descriptor = new LiveViewCheckpointRepairState(configuration);
     }
 
@@ -156,9 +164,19 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * Copies the compiled factory's window state - and the anchor map, when the
      * view has one - aside before the replay runs over it, and remembers what it
      * came out of so {@link #close()} can put it back if the repair is abandoned.
+     * <p>
+     * {@code memoryTracker} is the view's own, so the copy counts against
+     * {@code cairo.live.view.refresh.memory.limit.bytes} like the state it duplicates.
+     * A repair holds it for the whole repair, across every turn the replay takes, and
+     * it is as large as the window state itself - the one allocation on this path big
+     * enough for the operator's ceiling to be the right instrument.
      */
-    public void captureRuntime(@NotNull ObjList<WindowFunction> functions, @Nullable LiveViewWindow anchorWindow) {
-        overlay.capture(functions, anchorWindow);
+    public void captureRuntime(
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            @Nullable MemoryTracker memoryTracker
+    ) {
+        overlay.capture(functions, anchorWindow, memoryTracker);
         this.functions = functions;
         this.anchorWindow = anchorWindow;
     }
@@ -170,6 +188,20 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      */
     public void discardDescriptor() {
         descriptor.discard();
+    }
+
+    /**
+     * Drops the captured runtime state without putting it back, for a caller that has
+     * established the compiled factory it came out of is gone - a base-metadata
+     * recompile freed it, say. Restoring into a factory rebuilt since the capture would
+     * write one set of functions' bytes into another's, so a candidate whose runtime
+     * drifted is discarded by forgetting it rather than by unwinding it; the recovery
+     * that replaced the factory owns rebuilding the state.
+     */
+    public void forgetRuntime() {
+        functions = null;
+        anchorWindow = null;
+        overlay.clear();
     }
 
     /**
@@ -300,6 +332,15 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      */
     public int getTurns() {
         return turns;
+    }
+
+    /**
+     * @return the compiled factory the replay is standing part-way through. A turn that
+     * finds the view holding a different one is looking at a runtime rebuilt since the
+     * capture, and must abandon the candidate rather than continue in it.
+     */
+    public WindowRecordCursorFactory getWindowFactory() {
+        return windowFactory;
     }
 
     /**

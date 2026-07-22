@@ -56,6 +56,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -852,10 +853,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * replay segments on, and a private copy of the bounds it derived. A repair
      * that never yields disposes of it on the way out; one that yields leaves it
      * on the instance for its next turn.
+     * <p>
+     * The session also names the compiled factory it is replaying through, so a later
+     * turn can prove the runtime it is about to continue in is still the one the
+     * capture came out of. See {@link #resumeSuspendedRepair}.
      */
-    private LiveViewCheckpointRepairSession openRepairSession(LiveViewCheckpointRepairPlan plan) {
+    private LiveViewCheckpointRepairSession openRepairSession(
+            LiveViewCheckpointRepairPlan plan,
+            WindowRecordCursorFactory windowFactory
+    ) {
         final LiveViewCheckpointRepairSession session =
-                new LiveViewCheckpointRepairSession(engine.getConfiguration(), this);
+                new LiveViewCheckpointRepairSession(engine.getConfiguration(), this, windowFactory);
         session.of(plan);
         return session;
     }
@@ -3453,9 +3461,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * store writer. A crash instead loses {@code E} for good, and startup
      * reconciliation discards the candidate so a later turn replans at a freshly
      * pinned one.
+     * <p>
+     * What it will not do is continue in a runtime that drifted. The whole premise is
+     * that the compiled factory still stands where the last turn left it, so a factory
+     * rebuilt since the capture - a base-metadata recompile is the one path that does
+     * that - takes the candidate away rather than the replay: its bounds and its staged
+     * roots describe a state those functions no longer hold, and its overlay holds
+     * bytes that belong to functions now freed. Discarding is bounded and cheap, and
+     * the change that triggered the repair is still unconsumed in the base, so the next
+     * tick replans it at a freshly pinned snapshot. {@code prepareForBaseSchemaRecompile}
+     * discards on that path already; this is the guard that keeps a future one honest.
      */
     private void resumeSuspendedRepair(LiveViewInstance instance, LiveViewCheckpointRepairSession session)
             throws SqlException {
+        final RecordCursorFactory compiledFactory = instance.getCompiledFactory();
+        if (compiledFactory == null || unwrapWindowFactory(compiledFactory) != session.getWindowFactory()) {
+            LOG.info().$("live view runtime changed under a parked O3 repair, discarding the candidate [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", turns=").$(session.getTurns())
+                    .$(", highTsExclusive=").$(session.getPlan().getHighTsExclusive()).I$();
+            // Forget rather than restore: close() would otherwise put the capture's bytes
+            // back into whichever functions the view holds now, which are not the ones
+            // they came out of.
+            session.forgetRuntime();
+            instance.discardSuspendedRepair();
+            return;
+        }
         final WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
         final TableReader reader = session.takeBaseReader();
         boolean suspended = false;
@@ -4124,7 +4155,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final boolean resuming = resumed != null;
         final LiveViewCheckpointRepairSession session = resuming
                 ? resumed
-                : finiteHighBound ? openRepairSession(plan) : null;
+                : finiteHighBound ? openRepairSession(plan, windowFactory) : null;
         boolean readerAttached = false;
         // The scratch overlay is captured once, by the first turn, before the wipe
         // reaches the published state.
@@ -4314,7 +4345,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // instances - the compiled cursor stack owns them and there is only
                         // one of it - so the overlay is what keeps the repair from
                         // overwriting state it has already proved correct.
-                        session.captureRuntime(windowFactory.getWindowFunctions(), anchorWindow);
+                        session.captureRuntime(
+                                windowFactory.getWindowFunctions(),
+                                anchorWindow,
+                                instance.getMemoryTracker()
+                        );
                         overlayCaptured = true;
                     }
                     // Reset per-function accumulator state and the anchor map to
@@ -4374,7 +4409,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 (filter != null ? filteringCursor : pageCursor)
                                         .skipRows(repairSkipCounter, RecordCursor.UNBOUNDED_ROW_COUNT);
                             }
+                            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
                             while (windowCursor.hasNext()) {
+                                // The turn budget below ends a localized repair, but only a
+                                // localized one: an unlocalized rebuild recomputes the whole
+                                // view in this loop and may not yield, so the breaker is the
+                                // only thing that stops it early. It answers to DROP,
+                                // invalidation and engine shutdown - none of which is worth
+                                // finishing a rebuild for, and all of which otherwise wait it
+                                // out.
+                                circuitBreaker.statefulThrowExceptionIfTripped();
                                 long ts = outRecord.getTimestamp(cursorTimestampIndex);
                                 // Segment the replay at the logical boundaries it crosses.
                                 // The cursor has already folded this row into the window
@@ -4588,10 +4632,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     && timelineCapture != null
                     && (!replayCompleted || capturedBoundaries < repairBoundaries.size())) {
                 // The replay is unwinding, or stopped short of a boundary it owed a
-                // root version, so the splice below never publishes. The retire it
-                // displaced has to happen after all: the replacement may already have
-                // committed, and a timeline nothing corrects must not outlive the
-                // output it describes.
+                // root version, so the splice below never publishes.
                 //
                 // A parked repair owes those boundaries by design and has handed the
                 // capture to its session, so it keeps the timeline it is going to
@@ -4599,7 +4640,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 timelineCapture = Misc.free(timelineCapture);
                 session.discardDescriptor();
                 repairBoundaries.clear();
-                retireCheckpointTimelineOnO3(instance);
+                if (repairPublication.hasCommittedReplacement()) {
+                    // The durable output has moved under every root and no splice
+                    // corrected them, so the retire this repair displaced on its first
+                    // turn has to happen after all: a timeline nothing corrects must not
+                    // outlive the output it describes.
+                    retireCheckpointTimelineOnO3(instance);
+                }
+                // Otherwise the candidate is discarded having changed nothing durable -
+                // a cancelled turn is the ordinary case - and the generation the capture
+                // pinned still describes exactly the output on disk: it was never
+                // advanced, the replacement never committed, and the watermarks the
+                // publication tail moves are untouched, so the change stays unconsumed
+                // and a later turn replans it. Retiring here instead would delete every
+                // historical root and leave that replan with no anchor below the
+                // correction, which is the age-unbounded rebuild the timeline exists to
+                // avoid.
             }
             if (!replayCompleted) {
                 // The turn is unwinding, so the publication tail below never runs and
@@ -9046,9 +9102,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // return null, and the rebuild even calls recordRefreshSuccess(), so nothing else survives to
         // tell a test that the incremental path faulted at all.
         instance.recordRefreshFault();
+        // A parked repair cannot survive a fault on this view, whichever branch below
+        // takes it. Every recovery here rebuilds the window state the candidate's replay
+        // was standing in and rewrites the durable output its staged roots describe; a
+        // back-off leaves a pinned base snapshot and an uncommitted replacement held over
+        // a view that just failed. Discarding rolls the replacement back, unlinks the
+        // staged segment, retires the descriptor and puts the pre-repair state back, which
+        // is also what makes the mid-drain rebuild below correct rather than merely safe.
+        // Idempotent: a repair that faulted inside its own turn was already released by
+        // the executor's unwind. Runs under the refresh latch, as discardSuspendedRepair
+        // requires.
+        instance.discardSuspendedRepair();
         // Captured before the metadata-drift block reassigns t: that path already
         // rebuilds, so the mid-drain rebuild below must not fire a second time.
         final boolean wasMetadataDrift = t instanceof TableReferenceOutOfDateException;
+        if (t instanceof CairoException cancelled && cancelled.isCancellation()) {
+            // The circuit breaker tripped. Only three things trip it, and none is a refresh
+            // fault: DROP and invalidation, both of which end this view's refreshing life
+            // outright (the guards at the top of refreshInstance refuse it from here on),
+            // and engine shutdown, where restart recovery rebuilds the runtime from _lv.s
+            // and the checkpoint timeline anyway. So the accumulators being left ahead of
+            // the last durable commit costs nothing: no later turn drains over them.
+            // Counting a cancellation toward the flush-retry budget would let a shutdown
+            // that caught several views mid-scan invalidate them durably on the way down,
+            // and running the mid-drain rebuild below would re-enter a scan the same
+            // breaker is still tripping.
+            LOG.info().$("live view refresh cancelled [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", dropped=").$(instance.isDropped())
+                    .$(", invalid=").$(instance.isInvalid()).I$();
+            return null;
+        }
         if (t instanceof CairoException ce && ce.isAuthorizationError()) {
             // A demote flipped the read-only flag after this cycle acquired its WalWriter but before the
             // commit; fencedLiveViewCommit re-checked isReadOnlyMode() under the role-switch read lock and

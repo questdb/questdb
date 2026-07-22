@@ -85,6 +85,12 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     private static final int RETAINED_CHECKPOINT_STATE_BYTES = 4;
     private static final long[] EMPTY_HEAD_CHECKPOINT = {Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL};
     private final LiveViewDefinition definition;
+    // Cancellation flag the refresh worker binds into its execution context's circuit
+    // breaker for the duration of a cycle over this view. DROP and invalidation set it,
+    // so a scan already inside the compiled cursor unwinds instead of running to
+    // completion while the caller spins in fenceRefresh(). Terminal by construction -
+    // both sources end the view's refreshing life - so nothing clears it.
+    private final AtomicBoolean refreshCancelled = new AtomicBoolean(false);
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
     private final LiveViewStateReader stateReader = new LiveViewStateReader();
     // Cached compiled factory. Window functions carry per-row state, so refresh must
@@ -797,6 +803,21 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
         o3ResumeReplayRows += n;
     }
 
+    /**
+     * Trips the refresh cancellation flag this view's cycles run under, so a scan
+     * already inside the compiled cursor throws on its next circuit-breaker check
+     * instead of finishing. Called by DROP and by invalidation - the two events that
+     * end the view's refreshing life - which is why the flag is never cleared: a view
+     * past either one is refused at the top of {@code refreshInstance} anyway.
+     * <p>
+     * Safe from any thread, and it does not wait: the cancelled cycle unwinds through
+     * its own error path, discarding an in-flight repair candidate with it. See
+     * {@link #getRefreshCancelledFlag()}.
+     */
+    public void cancelRefresh() {
+        refreshCancelled.set(true);
+    }
+
     @Override
     public void close() {
         // Shutdown path only — called from CairoEngine.close after all workers stopped.
@@ -1317,6 +1338,15 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     }
 
     /**
+     * @return the flag the refresh worker binds into its circuit breaker while it holds
+     * this view's refresh latch, so a cancelled cycle throws out of whatever scan it is
+     * in. Set by {@link #cancelRefresh()} and never cleared. See {@link #refreshCancelled}.
+     */
+    public AtomicBoolean getRefreshCancelledFlag() {
+        return refreshCancelled;
+    }
+
+    /**
      * @return the in-RAM refresh cursor (highest base seqTxn drained into the tier
      * as lead). Falls back to {@link #getLastProcessedSeqTxn()} (the applied point)
      * when not yet initialised, so a fresh / restarted instance resumes refresh
@@ -1635,10 +1665,14 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
         stateReader.setInvalidationReason(reason);
         stateReader.setInvalidationTimestampUs(invalidationTimestampUs);
         stateReader.setInvalid(true);
+        // An invalid view never refreshes again, so a cycle still running over it is
+        // producing output nothing will keep. Cut it short rather than let it finish.
+        cancelRefresh();
     }
 
     public void markAsDropped() {
         dropped = true;
+        cancelRefresh();
     }
 
     /**
@@ -1661,6 +1695,12 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     public void markDroppedAndAwaitCheckpoint() {
         synchronized (this) {
             dropped = true;
+            // Trip the breaker before waiting on anything: the fenceRefresh() that follows
+            // this call spins until the in-flight cycle releases the latch, and an
+            // unlocalized rebuild scanning a large base holds it for as long as that scan
+            // takes. Cancelling first makes that cycle unwind at its next breaker
+            // consultation rather than at the end of its scan.
+            cancelRefresh();
             waitForUnfrozen();
         }
     }
@@ -1680,6 +1720,13 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
      * Must be called on the refresh worker under the refresh latch.
      */
     public void prepareForBaseSchemaRecompile() {
+        // Before anything is freed. A parked repair borrowed the very window functions and
+        // anchor window below, both to replay through and to hold the pre-repair state its
+        // overlay took aside; a session outliving them would restore into freed objects, and
+        // a resumed turn would continue a half-finished replay through a factory rebuilt at
+        // identity. The snapshot the candidate pinned is still fine; the runtime its replay
+        // was standing in is not, so the candidate goes and a later turn replans.
+        discardSuspendedRepair();
         // Frees only the compiled artifacts, keeping the in-memory tier AND the per-view tracker:
         // the tier stays queryable and stays charged to the tracker across the recompile, and the
         // rebuilt factory recharges the same tracker (so the refresh memory limit still accounts

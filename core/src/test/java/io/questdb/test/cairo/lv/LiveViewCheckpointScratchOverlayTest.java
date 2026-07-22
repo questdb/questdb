@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
@@ -35,12 +36,15 @@ import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -96,7 +100,7 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
                 Assert.assertEquals(2, window.getAnchorMapSize());
                 Assert.assertEquals(2, function.resets);
 
-                overlay.capture(functions, window);
+                overlay.capture(functions, window, null);
                 window.toTop();
                 Assert.assertEquals(0, window.getAnchorMapSize());
 
@@ -111,6 +115,40 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaptureChargesTheViewRefreshMemoryTracker() throws Exception {
+        // The overlay is as large as the whole window state and a repair holds it across
+        // every turn it takes, so it is the one allocation on the repair path big enough
+        // for cairo.live.view.refresh.memory.limit.bytes to be the right instrument. It
+        // used to account globally only, which left the operator's ceiling blind to it.
+        assertMemoryLeak(() -> {
+            final MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
+                    AllowAllSecurityContext.INSTANCE,
+                    1,
+                    MemoryTrackerWorkload.LIVE_VIEW_REFRESH
+            );
+            try {
+                final StateStub function = new StateStub(5L);
+                final ObjList<WindowFunction> functions = functions(function);
+                try (LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()) {
+                    Assert.assertEquals(0, tracker.getUsed());
+                    overlay.capture(functions, NO_ANCHOR, tracker);
+                    Assert.assertTrue("the capture must charge the view", tracker.getUsed() > 0);
+
+                    function.state = -1L;
+                    overlay.restore(functions, NO_ANCHOR);
+                    Assert.assertEquals(5L, function.state);
+                    // restore() releases the buffer with the state it handed back, so the
+                    // charge is symmetric across the repair rather than retained for the
+                    // worker's life.
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
+            } finally {
+                tracker.close();
+            }
+        });
+    }
+
+    @Test
     public void testCaptureDiscardsAnEarlierUnrestoredCapture() throws Exception {
         // A repair that failed between capture and restore leaves state behind. The
         // next one must not put it back over a runtime it never described.
@@ -118,12 +156,44 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
             final StateStub f = new StateStub(7L);
             final ObjList<WindowFunction> functions = functions(f);
             try (LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()) {
-                overlay.capture(functions, NO_ANCHOR);
+                overlay.capture(functions, NO_ANCHOR, null);
                 f.state = 8L;
-                overlay.capture(functions, NO_ANCHOR);
+                overlay.capture(functions, NO_ANCHOR, null);
                 f.state = 9L;
                 overlay.restore(functions, NO_ANCHOR);
                 Assert.assertEquals(8L, f.state);
+            }
+        });
+    }
+
+    @Test
+    public void testCaptureRefusesToExceedTheRefreshMemoryLimit() throws Exception {
+        // A view whose scratch does not fit the budget its operator set: the breach lands
+        // in capture(), before the replay has touched the runtime and long before
+        // anything durable moves, so the repair unwinds through its ordinary discard
+        // path. The overlay reports no capture and frees what it had - assertMemoryLeak
+        // is what proves the second half.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1024);
+        assertMemoryLeak(() -> {
+            final MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
+                    AllowAllSecurityContext.INSTANCE,
+                    1,
+                    MemoryTrackerWorkload.LIVE_VIEW_REFRESH
+            );
+            try {
+                final ObjList<WindowFunction> functions = functions(new StateStub(5L));
+                try (LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()) {
+                    try {
+                        overlay.capture(functions, NO_ANCHOR, tracker);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    }
+                    Assert.assertFalse(overlay.isCaptured());
+                }
+            } finally {
+                tracker.close();
             }
         });
     }
@@ -137,7 +207,7 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
             final StateStub captured = new StateStub(1L);
             final StateStub added = new StateStub(2L);
             try (LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()) {
-                overlay.capture(functions(captured), NO_ANCHOR);
+                overlay.capture(functions(captured), NO_ANCHOR, null);
                 try {
                     overlay.restore(functions(captured, added), NO_ANCHOR);
                     Assert.fail();
@@ -154,7 +224,7 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
             final StateStub first = new StateStub(1L);
             final StateStub second = new StateStub(2L);
             try (LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()) {
-                overlay.capture(functions(first, second), NO_ANCHOR);
+                overlay.capture(functions(first, second), NO_ANCHOR, null);
                 try {
                     overlay.restore(functions(first), NO_ANCHOR);
                     Assert.fail();
@@ -176,7 +246,7 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
                     LiveViewWindow window = anchorWindow(functions);
                     LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()
             ) {
-                overlay.capture(functions, NO_ANCHOR);
+                overlay.capture(functions, NO_ANCHOR, null);
                 try {
                     overlay.restore(functions, window);
                     Assert.fail();
@@ -184,7 +254,7 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "anchor state does not match the runtime");
                 }
 
-                overlay.capture(functions, window);
+                overlay.capture(functions, window, null);
                 try {
                     overlay.restore(functions, NO_ANCHOR);
                     Assert.fail();
@@ -223,7 +293,7 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
             final ObjList<WindowFunction> functions = functions(first, incapable, second);
             try (LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()) {
                 Assert.assertFalse(overlay.isCaptured());
-                overlay.capture(functions, NO_ANCHOR);
+                overlay.capture(functions, NO_ANCHOR, null);
                 Assert.assertTrue(overlay.isCaptured());
 
                 first.state = -1L;

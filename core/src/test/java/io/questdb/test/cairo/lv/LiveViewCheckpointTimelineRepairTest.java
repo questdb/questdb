@@ -558,6 +558,135 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testABaseSchemaRecompileDiscardsAParkedRepair() throws Exception {
+        // A base-metadata recompile frees the compiled factory, and with it both the
+        // window functions the parked replay is standing part-way through and the ones
+        // its overlay holds the pre-repair state of. The candidate cannot outlive them:
+        // resuming would continue a half-finished replay through a factory rebuilt at
+        // identity, and putting the overlay back would write into freed objects. Drift
+        // discards the candidate - the pinned snapshot was fine, the runtime was not -
+        // and because nothing durable moved, the change is still unconsumed and the
+        // timeline still describes exactly the output on disk, so the replan that
+        // follows is the same localized repair rather than an age-unbounded rebuild.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long generationBefore = generation(instance);
+
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 'a', 100)");
+                drainWalQueue();
+                Assert.assertTrue(job.processNotificationsForTest());
+                Assert.assertNotNull("the first turn must park the repair", instance.getSuspendedRepair());
+                Assert.assertEquals(1, repairDescriptorCount());
+
+                // What recoverFromBaseMetadataDrift does before it rebuilds.
+                instance.prepareForBaseSchemaRecompile();
+
+                Assert.assertNull("a recompile must let go of the candidate", instance.getSuspendedRepair());
+                Assert.assertEquals(
+                        "the discarded candidate leaves nothing for a startup sweep",
+                        0,
+                        repairDescriptorCount()
+                );
+                Assert.assertFalse("a discarded candidate is not a view failure", instance.isInvalid());
+                Assert.assertEquals(generationBefore, generation(instance));
+                Assert.assertEquals(HISTORY_COMMITS, durableRowCount(instance));
+                Assert.assertEquals(
+                        "the timeline the candidate would have spliced into survives it",
+                        HISTORY_COMMITS,
+                        entryCount(instance)
+                );
+
+                // The out-of-order row is still unconsumed, so the next turns replan it
+                // against the surviving timeline and reach the single-turn answer.
+                for (int turn = 0; turn < 64 && instance.getLastProcessedSeqTxn() < HISTORY_COMMITS + 1; turn++) {
+                    job.processNotificationsForTest();
+                }
+                drainWalQueue();
+                Assert.assertNull(instance.getSuspendedRepair());
+                Assert.assertEquals(generationBefore + 1, generation(instance));
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+        });
+    }
+
+    @Test
+    public void testACancelledTurnDiscardsTheCandidateAndKeepsTheTimeline() throws Exception {
+        // DROP, invalidation and engine shutdown all trip the refresh circuit breaker, so
+        // a repair in flight throws out of its replay rather than finishing. That is a
+        // cancellation, not a failure: the view must not invalidate, nothing durable may
+        // move, and the candidate is discarded and replanned rather than routed into a
+        // full-history rebuild. The unwind used to retire the whole timeline
+        // unconditionally, which would have left the replan with no anchor below the
+        // correction at all.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long generationBefore = generation(instance);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                final long faultsBefore = instance.getRefreshFaultCount();
+
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 'a', 100)");
+                drainWalQueue();
+                Assert.assertTrue(job.processNotificationsForTest());
+                Assert.assertNotNull("the first turn must park the repair", instance.getSuspendedRepair());
+                Assert.assertEquals(1, repairDescriptorCount());
+
+                instance.cancelRefresh();
+                job.processNotificationsForTest();
+
+                Assert.assertNull("a cancelled turn must let go of the candidate", instance.getSuspendedRepair());
+                Assert.assertEquals(
+                        "the cancelled candidate leaves nothing for a startup sweep",
+                        0,
+                        repairDescriptorCount()
+                );
+                Assert.assertFalse("a cancellation is not a refresh failure", instance.isInvalid());
+                Assert.assertTrue(instance.getRefreshFaultCount() > faultsBefore);
+                Assert.assertEquals(generationBefore, generation(instance));
+                Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals(HISTORY_COMMITS, durableRowCount(instance));
+                Assert.assertEquals(
+                        "a candidate that committed nothing must not take the timeline with it",
+                        HISTORY_COMMITS,
+                        entryCount(instance)
+                );
+            }
+
+            // The pre-repair output, unchanged: the replacement never committed.
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t6.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t10.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t14.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+        });
+    }
+
+    @Test
     public void testRangeSpliceReVersionsOnlyTheRepairedInterval() throws Exception {
         assertMemoryLeak(() -> {
             createView();

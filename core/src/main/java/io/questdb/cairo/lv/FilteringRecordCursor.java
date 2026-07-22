@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -51,6 +52,7 @@ final class FilteringRecordCursor implements RecordCursor {
     // the filter drops rows, so the output-row count understates how far the
     // base cursor advanced. Only the seed path consults it.
     private long baseRowsConsumed;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private Function filter;
     private Record record;
 
@@ -59,6 +61,7 @@ final class FilteringRecordCursor implements RecordCursor {
         base = null;
         record = null;
         filter = null;
+        circuitBreaker = null;
         baseRowsConsumed = 0;
     }
 
@@ -84,6 +87,13 @@ final class FilteringRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         while (base.hasNext()) {
+            // The one loop in the refresh path that can pull an unbounded number of base
+            // rows without producing one, so it is where a cancelled or shutting-down
+            // refresh would otherwise be invisible: a caller counting output rows against
+            // a turn budget sees nothing tick while a rejecting filter walks the whole
+            // scan range. The breaker's own throttle keeps this to one real check per
+            // window.
+            circuitBreaker.statefulThrowExceptionIfTripped();
             baseRowsConsumed++;
             if (filter.getBool(record)) {
                 return true;
@@ -101,6 +111,7 @@ final class FilteringRecordCursor implements RecordCursor {
         this.base = base;
         this.record = base.getRecord();
         this.filter = filter;
+        this.circuitBreaker = executionContext.getCircuitBreaker();
         this.baseRowsConsumed = 0;
         filter.init(base, executionContext);
     }

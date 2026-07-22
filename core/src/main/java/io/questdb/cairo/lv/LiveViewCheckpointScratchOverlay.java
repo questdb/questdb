@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -92,10 +93,25 @@ public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
      * view has one, out of the compiled factory. Discards whatever the overlay held
      * before, so a repair that failed to restore cannot leak stale state into the
      * next one.
+     * <p>
+     * The buffer charges {@code memoryTracker} - the view's own - so the copy counts
+     * against {@code cairo.live.view.refresh.memory.limit.bytes} exactly like the state
+     * it duplicates. A breach throws out of the {@code put} that crossed it, which
+     * unwinds the repair through its ordinary discard path: nothing durable has moved
+     * at capture time, and the runtime is still the one this method was reading. The
+     * view then invalidates carrying the tracker's own diagnostic, the same outcome any
+     * other refresh allocation over the ceiling produces - retrying would re-capture the
+     * same state into the same limit. The default limit of 0 accounts without ever
+     * throwing, and a null tracker accounts globally only.
      */
-    public void capture(@NotNull ObjList<WindowFunction> functions, @Nullable LiveViewWindow anchorWindow) {
+    public void capture(
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            @Nullable MemoryTracker memoryTracker
+    ) {
         clear();
         mem = Vm.getCARWInstance(PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+        mem.setMemoryTracker(memoryTracker);
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction f = functions.getQuick(i);
             if (!f.supportsCheckpointState()) {

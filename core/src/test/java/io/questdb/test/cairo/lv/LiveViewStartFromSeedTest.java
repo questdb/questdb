@@ -112,6 +112,52 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCancelledSeedSweepStopsInsideTheFilterAndDoesNotInvalidate() throws Exception {
+        // The seed's filter loop is the one place in the refresh path that pulls an
+        // unbounded run of base rows without producing any: a WHERE that rejects
+        // everything walks the whole scan range while the caller's row budget never
+        // ticks. It is therefore where a DROP, an invalidation or a shutdown would
+        // otherwise be invisible, and now it consults the refresh circuit breaker.
+        // Being cancelled is not a refresh failure: the view stays valid and stays
+        // SEEDING with nothing swept, which is exactly the state a later turn resumes
+        // from (or, for the events that actually trip it, the state the view is torn
+        // down in).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-04-01T00:00:10.000000Z', 'a', 10)," +
+                    "('2026-04-01T00:00:20.000000Z', 'a', 20)," +
+                    "('2026-04-01T00:00:30.000000Z', 'a', 30)");
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
+                    "SELECT ts, sym, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym = 'a'");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                instance.cancelRefresh();
+
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertFalse("a cancellation must not invalidate the view", instance.isInvalid());
+                Assert.assertEquals(
+                        LiveViewState.SEED_STATE_SEEDING,
+                        instance.getStateReader().getSeedState()
+                );
+            }
+
+            assertQuery("SELECT ts, sym, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tsym\tx\trn\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testExplicitBoundaryAdmitsRowExactlyOnIt() throws Exception {
         // The boundary is inclusive: a row whose timestamp equals it belongs to the view.
         assertMemoryLeak(() -> {

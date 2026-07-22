@@ -35,6 +35,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
@@ -446,9 +447,11 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
                 outputLowTs,
                 Long.MAX_VALUE
         )) {
+            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             final RecordCursor source = openSource(plan, pageCursor, filter, executionContext);
             final Record record = source.getRecord();
             while (source.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (isOverScanRowBudget(filter, ++pulled)) {
                     // Q is a fragment of the interval at this point, so neither bound may
                     // be read off it: the caller keeps H at end-of-frame and L at S.
@@ -587,9 +590,11 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
                 viewLowerBoundTs,
                 outputLowTs - 1
         )) {
+            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             final RecordCursor source = openSource(plan, pageCursor, filter, executionContext);
             final Record record = source.getRecord();
             while (source.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 backwardScanRows++;
                 if (isOverScanRowBudget(filter, backwardScanRows)) {
                     // L stays at S, the floor a walk that ran out of history also lands on.
@@ -641,10 +646,12 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             long viewLowerBoundTs,
             long outputLowTs
     ) throws SqlException {
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final long precedingRows = plan.getMaxPrecedingRows();
         final int timestampIndex = plan.getTimestampIndex();
         long floor = Long.MAX_VALUE;
         for (int i = 0, n = outputKeys.size(); i < n; i++) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             indexedKeyLookups++;
             long preceding = 0;
             long keyLowTs = Numbers.LONG_NULL;

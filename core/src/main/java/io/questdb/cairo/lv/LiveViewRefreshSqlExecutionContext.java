@@ -28,11 +28,15 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.MemoryTracker;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Execution context used by {@link LiveViewRefreshJob} when compiling and running
@@ -41,6 +45,10 @@ import org.jetbrains.annotations.Nullable;
  * {@code getReader} calls return a snapshot at a consistent transaction.
  */
 public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
+    // Bound while no view is being refreshed. AtomicBooleanCircuitBreaker reads a null
+    // flag as "cancelled", so the unbound state needs a real flag that is never set
+    // rather than none at all.
+    private static final AtomicBoolean NEVER_CANCELLED = new AtomicBoolean(false);
 
     private TableReader baseTableReader;
     private LiveViewInstance refreshingInstance;
@@ -53,6 +61,24 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
 
     public void clearReader() {
         this.baseTableReader = null;
+    }
+
+    /**
+     * The cancellable breaker rather than the no-op default, mirroring
+     * {@code MatViewRefreshSqlExecutionContext}. Two things trip it: the flag
+     * {@link #ofRefreshingInstance} binds, which DROP and invalidation set, and
+     * {@code CairoEngine.isClosing()}, which {@code ServerMain} raises through
+     * {@code signalClose()} while the refresh workers are still running.
+     * <p>
+     * It matters because the live-view refresh scans are serial pulls over a
+     * {@code PageFrameRecordCursorFactory}, and that cursor consults no breaker of its
+     * own. The unlocalized rebuild in particular has no turn budget - it recomputes the
+     * whole view in one call - so before this, a shutdown or a DROP issued against a view
+     * over a large base waited out the entire scan.
+     */
+    @Override
+    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return getSimpleCircuitBreaker();
     }
 
     /**
@@ -121,9 +147,14 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
     }
 
     /**
-     * Binds the view whose refresh cycle is running, or null to clear it.
+     * Binds the view whose refresh cycle is running, or null to clear it. Also hands the
+     * breaker that view's cancellation flag, so DROP and invalidation reach a scan already
+     * in flight, and starts a fresh throttle window so the next consultation performs a
+     * real check rather than riding out the previous cycle's count.
      */
     public void ofRefreshingInstance(@Nullable LiveViewInstance refreshingInstance) {
         this.refreshingInstance = refreshingInstance;
+        setCancelledFlag(refreshingInstance != null ? refreshingInstance.getRefreshCancelledFlag() : NEVER_CANCELLED);
+        getCircuitBreaker().resetTimer();
     }
 }
