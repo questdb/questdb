@@ -138,17 +138,32 @@ public class CompositeMultiCellFastAppendEligibilityTest extends AbstractCairoTe
             seedCell("K", "2020-01-01T00:10:00.000000Z", 2.0);
             seedCell("L", "2020-01-01T00:10:00.000000Z", 3.0);
 
+            // Boundary check: exactly 2 distinct cells, at (not over) the cap, otherwise eligible --
+            // must still be eligible. Proves the cap comparison is "<=", not an off-by-one "<".
+            long beforeAtCap = TableWriter.getCompositeMultiCellFastAppendEligibleCount();
+            execute("insert into c values " +
+                    "('2020-01-01T00:20:00.000000Z','J',1.1)," +
+                    "('2020-01-01T00:20:01.000000Z','K',2.1)");
+            execute("insert into p values " +
+                    "('2020-01-01T00:20:00.000000Z','J',1.1)," +
+                    "('2020-01-01T00:20:01.000000Z','K',2.1)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            Assert.assertEquals(
+                    "exactly 2 distinct cells at a configured cap of 2 should still be eligible",
+                    beforeAtCap + 1, TableWriter.getCompositeMultiCellFastAppendEligibleCount());
+
             // 3 distinct cells, all pre-existing, ordered, append-only into every one of them -- would
             // be eligible under the default cap (64, proven by scenario (a)), but the cap here is 2.
             long before = TableWriter.getCompositeMultiCellFastAppendEligibleCount();
             execute("insert into c values " +
-                    "('2020-01-01T00:20:00.000000Z','J',1.1)," +
-                    "('2020-01-01T00:20:01.000000Z','K',2.1)," +
-                    "('2020-01-01T00:20:02.000000Z','L',3.1)");
+                    "('2020-01-01T00:30:00.000000Z','J',1.2)," +
+                    "('2020-01-01T00:30:01.000000Z','K',2.2)," +
+                    "('2020-01-01T00:30:02.000000Z','L',3.1)");
             execute("insert into p values " +
-                    "('2020-01-01T00:20:00.000000Z','J',1.1)," +
-                    "('2020-01-01T00:20:01.000000Z','K',2.1)," +
-                    "('2020-01-01T00:20:02.000000Z','L',3.1)");
+                    "('2020-01-01T00:30:00.000000Z','J',1.2)," +
+                    "('2020-01-01T00:30:01.000000Z','K',2.2)," +
+                    "('2020-01-01T00:30:02.000000Z','L',3.1)");
             drainWalQueue();
             assertWalTableNotSuspended("c");
             Assert.assertEquals(
