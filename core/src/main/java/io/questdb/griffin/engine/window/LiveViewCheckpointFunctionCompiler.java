@@ -175,10 +175,10 @@ public final class LiveViewCheckpointFunctionCompiler {
                 || window.isResolvedWindowAnchored();
         final DependencyKind kind = dependencyKind(function.getName(), window);
         final boolean keyed = function.getCheckpointKeyColumnTypes() != null;
-        // The RANGE kind is only assigned to a W PRECEDING ... CURRENT ROW frame, and
-        // SqlCodeGenerator has already run validateRange() over every live-view window
-        // expression, so such a frame is known to be ordered by the designated timestamp
-        // ascending and its width is safe to read as a timestamp offset.
+        // The RANGE kind is only assigned to a W PRECEDING frame ending at or below the
+        // current row, and SqlCodeGenerator has already run validateRange() over every
+        // live-view window expression, so such a frame is known to be ordered by the
+        // designated timestamp ascending and its width is safe to read as a timestamp offset.
         final long frameLo = kind == DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW
                 ? rangeFrameLo(function.getName(), window, timestampType)
                 : window.getRowsLo();
@@ -472,15 +472,15 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Validates the ordering domain of a {@code RANGE W PRECEDING ... CURRENT ROW} frame -
-     * the one RANGE shape whose forward influence boundary {@code H} follows from timestamp
-     * arithmetic, and therefore the only one this phase plans a localized repair against.
-     * The width is meaningless unless the frame is ordered by the designated timestamp
-     * ascending, so a frame that claims the shape but orders by something else is turned
-     * away at CREATE rather than silently given a bound that does not describe it.
+     * Validates the ordering domain of a {@code RANGE W PRECEDING} frame ending at or below
+     * the current row - the RANGE shapes whose forward influence boundary {@code H} follows
+     * from timestamp arithmetic, and therefore the only ones this phase plans a localized
+     * repair against. The width is meaningless unless the frame is ordered by the designated
+     * timestamp ascending, so a frame that claims the shape but orders by something else is
+     * turned away at CREATE rather than silently given a bound that does not describe it.
      * <p>
-     * Every other RANGE shape - a frame ending before the current row, an unbounded
-     * look-behind, a FOLLOWING bound, a frame exclusion - keeps its existing behavior. Those
+     * Every other RANGE shape - an unbounded look-behind, a {@code FOLLOWING} bound, an
+     * exclusion mode the runtime does not implement - keeps its existing behavior. Those
      * frames simply do not produce a finite RANGE descriptor, so no repair plan claims them;
      * narrowing what a live view accepts is a separate, deliberate scope decision.
      * <p>
@@ -498,6 +498,26 @@ public final class LiveViewCheckpointFunctionCompiler {
         }
     }
 
+    /**
+     * Classifies a frame into the dependency kind whose bounds a repair can prove, reading
+     * the high bound the runtime evaluates rather than the one the model records - see
+     * {@link #effectiveRowsHi}.
+     * <p>
+     * The two eligible kinds admit any high bound at or below the current row, not just the
+     * current row itself. A frame that ends {@code V} below its own row reads a subset of
+     * what the same-width frame ending at that row reads, so the bounds both plans derive
+     * from the look-behind alone stay valid: the RANGE floor {@code R - W} still feeds every
+     * base row the frame admits, the RANGE ceiling {@code changeMaxTs + W + 1} still sits
+     * above every output a changed row can reach, and the ROWS discovery still converges
+     * from a key's {@code (Nmax + 1)}-th row above the change because a lagging bound only
+     * removes rows from the affected set. Both are looser than a lagging frame needs, which
+     * widens the repair interval and never narrows it.
+     * <p>
+     * A {@code FOLLOWING} high bound is what must keep falling through to
+     * {@code FOLLOWING_OR_DATA_DEPENDENT}: a base row at {@code m} then joins the frame of
+     * output below {@code m}, and neither bound holds. That case stays a visible branch here
+     * rather than a sign folded into the eligible test.
+     */
     private static DependencyKind dependencyKind(CharSequence functionName, WindowExpression window) {
         if (window.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE || window.isResolvedWindowAnchored()) {
             return DependencyKind.FIXED_ANCHOR_SEGMENT;
@@ -508,14 +528,21 @@ public final class LiveViewCheckpointFunctionCompiler {
                 && rowsHi == Long.MAX_VALUE) {
             return DependencyKind.UNANCHORED_RANK;
         }
-        if (window.getRowsLo() != Long.MIN_VALUE && window.getRowsLo() <= 0 && rowsHi == 0) {
+        // Long.MIN_VALUE is the encoding an unbounded look-behind uses, and
+        // SqlOptimiser.normalizeWindowFrame() reaches it on the high bound too - a literal
+        // Long.MAX_VALUE PRECEDING negates into it, leaving a frame that ends below its own
+        // start. Such a bound names no finite lag, so it is turned away here alongside the
+        // unbounded frame starts.
+        if (window.getRowsLo() != Long.MIN_VALUE && window.getRowsLo() <= 0
+                && rowsHi != Long.MIN_VALUE && rowsHi <= 0
+                && hasSupportedExclusion(window)) {
             if (window.getFramingMode() == WindowExpression.FRAMING_ROWS) {
                 return DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW;
             }
             if (window.getFramingMode() == WindowExpression.FRAMING_RANGE
                     && window.getRowsLoKind() == WindowExpression.PRECEDING
-                    && window.getRowsHiKind() == WindowExpression.CURRENT
-                    && window.getExclusionKind() == WindowExpression.EXCLUDE_NO_OTHERS) {
+                    && (window.getRowsHiKind() == WindowExpression.CURRENT
+                    || window.getRowsHiKind() == WindowExpression.PRECEDING)) {
                 return DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW;
             }
         }
@@ -534,17 +561,15 @@ public final class LiveViewCheckpointFunctionCompiler {
      * row for ROWS.
      * <p>
      * Reading the model value instead leaves the descriptor claiming a frame the runtime does
-     * not evaluate, and the two kinds disagree about it: the RANGE arm of
-     * {@link #dependencyKind} turns the exclusion away through its
-     * {@code EXCLUDE_NO_OTHERS} test while the ROWS arm admits it and records
-     * {@code frameHi = 0}. That over-states the ROWS frame, which is conservative rather than
-     * wrong - a repair bound derived from a wider frame still covers the narrower one - but it
-     * is accidental, and it stops being harmless the moment a bound is derived from
-     * {@link LiveViewCheckpointDependency#getFrameHi()} itself.
+     * not evaluate, and it stops being harmless the moment a bound is derived from
+     * {@link LiveViewCheckpointDependency#getFrameHi()} itself. Folding the exclusion into the
+     * high bound here is also what lets {@link #dependencyKind} classify the exclusion with
+     * one test on both arms rather than turning it away on the RANGE arm alone: an
+     * {@code EXCLUDE CURRENT ROW} frame is a lagging high bound with the smallest possible lag,
+     * and the eligible kinds already admit those.
      * <p>
-     * {@code WindowExpression} carries no other exclusion mode this far: only
-     * {@code EXCLUDE NO OTHERS} and {@code EXCLUDE CURRENT ROW} pass
-     * {@code WindowContextImpl.validate()}.
+     * {@link #hasSupportedExclusion} is what keeps the other two exclusion modes out; this
+     * method describes only the one the runtime turns into a frame adjustment.
      */
     private static long effectiveRowsHi(WindowExpression window) {
         return window.getExclusionKind() == WindowExpression.EXCLUDE_CURRENT_ROW && window.getRowsHi() == 0
@@ -643,6 +668,20 @@ public final class LiveViewCheckpointFunctionCompiler {
         return identity.getCanonicalWindowName().isEmpty()
                 ? identity.getFactorySignature()
                 : identity.getFactorySignature() + " OVER " + identity.getCanonicalWindowName();
+    }
+
+    /**
+     * Whether the frame exclusion is one the window runtime implements.
+     * {@code WindowContextImpl.validate()} accepts {@code EXCLUDE NO OTHERS} and
+     * {@code EXCLUDE CURRENT ROW} and rejects the other two, so a descriptor claiming an
+     * {@code EXCLUDE GROUP} or {@code EXCLUDE TIES} frame would describe a frame no factory
+     * evaluates. The two the runtime does implement need no separate handling here:
+     * {@link #effectiveRowsHi} has already folded {@code EXCLUDE CURRENT ROW} into the high
+     * bound, which is the whole of what it does to the frame.
+     */
+    private static boolean hasSupportedExclusion(WindowExpression window) {
+        return window.getExclusionKind() == WindowExpression.EXCLUDE_NO_OTHERS
+                || window.getExclusionKind() == WindowExpression.EXCLUDE_CURRENT_ROW;
     }
 
     /**

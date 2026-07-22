@@ -505,25 +505,129 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
     }
 
     /**
-     * The RANGE shapes outside {@code W PRECEDING ... CURRENT ROW} stay compilable, but must
-     * not present themselves as a finite RANGE dependency - a repair planner that claimed
-     * them would derive a bound the frame does not obey.
+     * The RANGE shapes outside {@code W PRECEDING} ending at the current row stay compilable,
+     * but must not present themselves as a finite RANGE dependency - a repair planner that
+     * claimed them would derive a bound the frame does not obey.
+     * <p>
+     * The lagging high bounds among them are eligible by kind and held back only by the
+     * descriptor's own high-bound gate; {@link #testLaggingHighBoundIsAnEligibleKind} owns
+     * that distinction.
      */
     @Test
     public void testRangeShapesOutsideTheSupportedFrameAreNotFiniteRange() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
 
-            // Ends before the current row: finite, but its influence boundary is not the
-            // one RANGE W PRECEDING ... CURRENT ROW arithmetic derives.
+            // Ends before the current row: finite, and the width still bounds its influence,
+            // but the descriptor gate has not widened to say so.
             assertNotFiniteRange("select ts, sym, last_value(x) over (partition by sym order by ts "
                     + "range between '3' hour preceding and '1' hour preceding) a from base");
             // Unbounded look-behind: no dependency floor below the correction.
             assertNotFiniteRange("select ts, sym, first_value(x) ignore nulls over (partition by sym order by ts "
                     + "range between unbounded preceding and '2' second preceding) a from base");
-            // A frame exclusion changes membership inside the window.
+            // A frame exclusion ends the runtime frame one tick below the current row.
             assertNotFiniteRange("select ts, sym, avg(x) over (partition by sym order by ts "
                     + "range between 2 preceding and current row exclude current row) a from base");
+        });
+    }
+
+    /**
+     * A frame ending below its own row reads a subset of what the same-width frame ending at
+     * that row reads: the RANGE floor {@code R - W} still feeds every base row the frame
+     * admits, the RANGE ceiling {@code changeMaxTs + W + 1} still sits above every output a
+     * changed row reaches, and the ROWS discovery still converges from a key's
+     * {@code (Nmax + 1)}-th row above the change. So the look-behind alone keeps bounding the
+     * repair and the classifier hands out the eligible kind.
+     * <p>
+     * The descriptor's own finite-frame gates still ask for a high bound at exactly the
+     * current row, so no plan follows yet - the kind is all this step widens, and asserting
+     * both together is what separates the two gates.
+     */
+    @Test
+    public void testLaggingHighBoundIsAnEligibleKind() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+
+            // RANGE, ending an hour below its own row. frameLo carries the parser's unit
+            // conversion; the high bound does not go through it yet, so frameHi is still the
+            // raw model value and nothing may read it as a tick offset.
+            final Metadata range = compileMetadata(
+                    "select ts, sym, avg(x) over (partition by sym order by ts "
+                            + "range between '3' hour preceding and '1' hour preceding) a from base",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW, range.dependency.getKind());
+            Assert.assertEquals(-10_800_000_000L, range.dependency.getFrameLo());
+            Assert.assertEquals(-1, range.dependency.getFrameHi());
+            Assert.assertFalse(range.dependency.isFiniteRange());
+            Assert.assertNull(range.rangePlan);
+            Assert.assertFalse(range.isDependencyComplete);
+
+            // ROWS, ending two rows below its own row. Both bounds are row counts and carry
+            // no unit, so the descriptor holds what the model does.
+            final Metadata rows = compileMetadata(
+                    "select ts, sym, sum(x) over (partition by sym order by ts "
+                            + "rows between 10 preceding and 2 preceding) s from base",
+                    0
+            );
+            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW, rows.dependency.getKind());
+            Assert.assertEquals(-10, rows.dependency.getFrameLo());
+            Assert.assertEquals(-2, rows.dependency.getFrameHi());
+            Assert.assertFalse(rows.dependency.isFiniteRows());
+            Assert.assertNull(rows.rowsPlan);
+            Assert.assertFalse(rows.isDependencyComplete);
+
+            // A FOLLOWING high bound is what must keep falling through: a base row then joins
+            // the frame of output below itself and neither bound holds. No descriptor for one
+            // is reachable from here - WindowContextImpl.validate() turns every finite
+            // FOLLOWING bound away outright, and the UNBOUNDED FOLLOWING spelling compiles to
+            // the two-pass factory this harness does not build - so what is assertable is the
+            // rejection, and the classifier's own fall-through stands behind it.
+            try {
+                compileMetadata(
+                        "select ts, sym, sum(x) over (partition by sym order by ts "
+                                + "rows between 3 preceding and 2 following) s from base",
+                        0
+                );
+                Assert.fail("expected FOLLOWING frame end rejection");
+            } catch (SqlException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "frame end supports _number_ PRECEDING and CURRENT ROW only"
+                );
+            }
+
+            // SqlOptimiser.normalizeWindowFrame() negates a Long.MAX_VALUE PRECEDING bound
+            // into Long.MIN_VALUE, the encoding an unbounded look-behind uses, which leaves
+            // the frame ending below its own start. The window layer answers that with a
+            // constant null function carrying no descriptor at all, so the shape never
+            // reaches the eligible kinds - and the classifier's own Long.MIN_VALUE test is
+            // what keeps it out if that empty-frame handling ever changes.
+            assertNoCheckpointDependency("select ts, sym, sum(x) over (partition by sym order by ts "
+                    + "rows between 10 preceding and 9223372036854775807 preceding) s from base");
+        });
+    }
+
+    /**
+     * The compiler must never claim a frame the window factories cannot evaluate.
+     * {@code WindowContextImpl.validate()} implements only {@code EXCLUDE NO OTHERS} and
+     * {@code EXCLUDE CURRENT ROW}, and it is what turns the other two away - before the
+     * descriptor is ever built, which is why these assert the compile failure rather than a
+     * kind. The classifier's own exclusion test is the guard that keeps the two in agreement
+     * if that ever stops being true.
+     */
+    @Test
+    public void testUnsupportedExclusionModesFailCompilation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            assertExclusionRejected("select ts, sym, avg(x) over (partition by sym order by ts "
+                    + "range between 2 preceding and current row exclude group) a from base");
+            assertExclusionRejected("select ts, sym, avg(x) over (partition by sym order by ts "
+                    + "range between 2 preceding and current row exclude ties) a from base");
+            assertExclusionRejected("select ts, sym, sum(x) over (partition by sym order by ts "
+                    + "rows between 3 preceding and current row exclude group) s from base");
+            assertExclusionRejected("select ts, sym, sum(x) over (partition by sym order by ts "
+                    + "rows between 3 preceding and current row exclude ties) s from base");
         });
     }
 
@@ -534,10 +638,10 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
      * model would claim a frame ending at the current row while the factory evaluates one
      * ending below it.
      * <p>
-     * Neither spelling is a finite descriptor: the two frame gates still ask for a high bound
-     * at exactly the current row. That is what makes this an honesty fix rather than a
-     * widening - it costs the ROWS spelling the plan it used to get by accident, and the plan
-     * it gets back is the one a widened gate hands out deliberately.
+     * That {@code -1} is a lagging high bound with the smallest possible lag, so both
+     * spellings now reach the same eligible kind through the same test rather than the RANGE
+     * one being turned away by an exclusion check of its own. Neither is a finite descriptor
+     * yet: the two frame gates still ask for a high bound at exactly the current row.
      */
     @Test
     public void testExcludeCurrentRowDescribesTheRuntimeFrameHighBound() throws Exception {
@@ -550,7 +654,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             );
             Assert.assertEquals(-3, rows.dependency.getFrameLo());
             Assert.assertEquals(-1, rows.dependency.getFrameHi());
-            Assert.assertEquals(DependencyKind.FOLLOWING_OR_DATA_DEPENDENT, rows.dependency.getKind());
+            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW, rows.dependency.getKind());
             Assert.assertFalse(rows.dependency.isFiniteRows());
             Assert.assertNull(rows.rowsPlan);
             Assert.assertFalse(rows.isDependencyComplete);
@@ -564,7 +668,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                     0
             );
             Assert.assertEquals(-1, range.dependency.getFrameHi());
-            Assert.assertEquals(DependencyKind.FOLLOWING_OR_DATA_DEPENDENT, range.dependency.getKind());
+            Assert.assertEquals(DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW, range.dependency.getKind());
             Assert.assertFalse(range.dependency.isFiniteRange());
             Assert.assertNull(range.rangePlan);
             Assert.assertFalse(range.isDependencyComplete);
@@ -643,6 +747,18 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertExclusionRejected(String sql) throws Exception {
+        try {
+            compileMetadata(sql, 0);
+            Assert.fail(sql);
+        } catch (SqlException e) {
+            TestUtils.assertContains(
+                    e.getFlyweightMessage(),
+                    "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported"
+            );
+        }
+    }
+
     private static void assertFrameLocalOverBothFrames(String projection) throws Exception {
         assertFrameLocalOverBothFrames(projection, NumericConvergence.EXACT);
     }
@@ -673,6 +789,29 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
         Assert.assertTrue(projection, range.dependency.hasFrameLocalState());
         Assert.assertEquals(projection, convergence, range.dependency.getNumericConvergence());
         Assert.assertNotNull(projection, range.rangePlan);
+    }
+
+    /**
+     * Asserts that {@code sql} compiles to a window function carrying no checkpoint
+     * descriptor at all. That is a stronger refusal than an ineligible kind: with no
+     * dependency to read, {@code isDependencyComplete} declines the repair however many
+     * plans the factory holds.
+     */
+    private static void assertNoCheckpointDependency(String sql) throws Exception {
+        sqlExecutionContext.setLiveViewCompile(true);
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+            RecordCursorFactory root = factory;
+            while (root instanceof QueryProgress) {
+                root = root.getBaseFactory();
+            }
+            Assert.assertTrue(sql, root instanceof WindowRecordCursorFactory);
+            final ObjList<WindowFunction> functions = ((WindowRecordCursorFactory) root).getWindowFunctions();
+            Assert.assertNull(sql, functions.getQuick(0).checkpointDependency());
+            Assert.assertFalse(sql, LiveViewCheckpointFunctionCompiler.isDependencyComplete(functions, true, true, true));
+        } finally {
+            sqlExecutionContext.setLiveViewCompile(false);
+        }
     }
 
     private static void assertNoRowsPlan(String sql) throws Exception {

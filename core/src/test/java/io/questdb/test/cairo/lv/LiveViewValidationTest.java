@@ -61,11 +61,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class LiveViewValidationTest extends AbstractCairoTest {
 
     /**
-     * {@code RANGE W PRECEDING ... CURRENT ROW} is the shape the localized out-of-order
-     * repair bounds by timestamp arithmetic, and the width only means anything while the
-     * frame is ordered by the designated timestamp ascending. A frame that claims the shape
-     * but orders by something else is turned away at CREATE, as is a pair of RANGE functions
-     * that disagree on the key domain the repair would have to plan against.
+     * {@code RANGE W PRECEDING} ending at or below the current row is the family the
+     * localized out-of-order repair bounds by timestamp arithmetic, and the width only means
+     * anything while the frame is ordered by the designated timestamp ascending. A frame that
+     * claims the shape but orders by something else is turned away at CREATE, as is a pair of
+     * RANGE functions that disagree on the key domain the repair would have to plan against.
      * <p>
      * Every other RANGE shape keeps the behavior it has today: accepted, and simply not
      * claimed by a repair plan.
@@ -83,6 +83,18 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             assertLiveViewShapeRejected(
                     "SELECT ts, sym, avg(x) OVER (PARTITION BY sym ORDER BY ts DESC "
                             + "RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) a FROM base",
+                    "RANGE window function must ORDER BY the designated timestamp ASC"
+            );
+            // A lagging high bound is the same family and answers to the same gate: its
+            // width is the look-behind, and a look-behind means nothing in a foreign order.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, avg(x) OVER (PARTITION BY sym ORDER BY x "
+                            + "RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING) a FROM base",
+                    "RANGE window function must ORDER BY the designated timestamp ASC"
+            );
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, avg(x) OVER (PARTITION BY sym ORDER BY ts DESC "
+                            + "RANGE BETWEEN 2 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) a FROM base",
                     "RANGE window function must ORDER BY the designated timestamp ASC"
             );
 
@@ -118,8 +130,8 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             execute("DROP LIVE VIEW lv");
 
             // The RANGE shapes this phase does not plan against must keep working, as long
-            // as their frame starts somewhere. They are not W PRECEDING ... CURRENT ROW,
-            // so no repair plan claims them, but that is a reason to leave them alone -
+            // as their frame starts somewhere and is ordered by the designated timestamp.
+            // No repair plan claims them yet, but that is a reason to leave them alone -
             // not to stop accepting them. An unbounded start is the one exception, and
             // testRejectUnboundedFrameStart owns it.
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
