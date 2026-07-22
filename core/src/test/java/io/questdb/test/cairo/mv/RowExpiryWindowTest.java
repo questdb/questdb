@@ -425,7 +425,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                 predicate = metadata.getExpiryPredicate();
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                Assert.assertTrue(job.cleanupTable(token, predicate));
+                Assert.assertFalse(job.cleanupTable(token, predicate));
             }
             drainWalAndMatViewQueues();
             assertQuery("SELECT * FROM \"m v\" ORDER BY k").noLeakCheck().returns(expected);
@@ -569,7 +569,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCleanupCompactsAndWipes() throws Exception {
+    public void testCleanupDeferredForKeepHighest() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into base values " +
@@ -589,15 +589,12 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                 predicate = m.getExpiryPredicate();
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.cleanupTable(token, predicate);
-                Assert.assertEquals("all replacement partitions share one survivor stream",
-                        1, job.getSurvivorStreamOpenCount());
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+                Assert.assertEquals(0, job.getSurvivorStreamOpenCount());
             }
             drainWalAndMatViewQueues();
 
-            // d1 partial (A@d1 expired, B@d1 kept) -> compacted to 1 row; d2 fully expired -> wiped; active
-            // d3 untouched. 3 partitions/4 rows -> 2 partitions/2 rows. The read result is unchanged.
-            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             assertQuery("select k, v, ts from mv order by k").noLeakCheck().returns("""
                     k\tv\tts
                     A\t9.0\t2024-01-03T00:00:00.000000Z
@@ -607,8 +604,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCleanupKeepLowest() throws Exception {
-        // Physical cleanup for the LOWEST direction (mirror of testCleanupCompactsAndWipes, inverted values).
+    public void testCleanupDeferredForKeepLowest() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into base values " +
@@ -623,8 +619,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             runCleanup();
 
-            // d1 partial (A@d1 expired, B@d1 kept) -> 1 row; d2 fully expired -> wiped; active d3 untouched.
-            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             assertQuery("select k, v, ts from mv order by k").noLeakCheck().returns("""
                     k\tv\tts
                     A\t1.0\t2024-01-03T00:00:00.000000Z
@@ -634,8 +629,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCleanupTopN() throws Exception {
-        // Physical cleanup for KEEP <N> (the row_number() ranking path, distinct from the max/min keep-by path).
+    public void testCleanupDeferredForTopN() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into base values " +
@@ -650,8 +644,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             runCleanup();
 
-            // top-2 by v desc = {10@d3, 9@d1}. d1 partial (9 kept, 5 expired) -> 1 row; d2 wiped; active d3 kept.
-            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             assertQuery("select k, v, ts from mv order by v desc").noLeakCheck().returns("""
                     k\tv\tts
                     A\t10.0\t2024-01-03T00:00:00.000000Z
@@ -695,10 +688,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCleanupKeepsNullValueGroup() throws Exception {
-        // A group whose values are all NULL is KEPT (v < max(v) is UNKNOWN). Physical cleanup must NOT delete
-        // those rows: the partial partition compacts but retains the NULL row; the all-NULL partition is
-        // skipped (all survivors).
+    public void testCleanupDeferredWithNullValueGroup() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into base values " +
@@ -713,8 +703,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             runCleanup();
 
-            // d1 partial (A expired, C null kept) -> 1 row; d2 all-NULL kept -> skipped; d3 active untouched.
-            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t3\n");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             assertQuery("select k, v, ts from mv order by ts").timestamp("ts").noLeakCheck().returns("""
                     k\tv\tts
                     C\tnull\t2024-01-01T00:00:00.000000Z
@@ -814,7 +803,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         }
     }
 
-    // Runs one cleanup sweep over "mv" and asserts it reclaimed (returned true).
+    // Runs one cleanup sweep over "mv" and asserts structural cleanup was deferred.
     private void runCleanup() throws Exception {
         final TableToken token = engine.verifyTableName("mv");
         final String predicate;
@@ -822,7 +811,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             predicate = m.getExpiryPredicate();
         }
         try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-            Assert.assertTrue("sweep should reclaim", job.cleanupTable(token, predicate));
+            Assert.assertFalse("structural cleanup must preserve fallback rows", job.cleanupTable(token, predicate));
         }
         drainWalAndMatViewQueues();
     }

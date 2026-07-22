@@ -25,9 +25,11 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -35,6 +37,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
  * Verifies {@code EXPIRE ROWS KEEP LATEST [ON <ts>] PARTITION BY <cols>} on PASSTHROUGH materialized views
@@ -230,7 +234,49 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeepLatestCleanupReclaimsSupersededPartitions() throws Exception {
+    public void testKeepLatestCleanupDoesNotLoseFallbackAfterBaseReplaceRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('B', 3.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS KEEP LATEST PARTITION BY k");
+            drainWalAndMatViewQueues();
+
+            final TableToken mvToken = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata metadata = engine.getTableMetadata(mvToken)) {
+                predicate = metadata.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertFalse(job.cleanupTable(mvToken, predicate));
+            }
+            drainWalAndMatViewQueues();
+
+            final TableToken baseToken = engine.verifyTableName("base");
+            try (WalWriter writer = engine.getWalWriter(baseToken)) {
+                writer.commitWithParams(
+                        MicrosTimestampDriver.floor("2024-01-02T00:00:00.000000Z"),
+                        MicrosTimestampDriver.floor("2024-01-03T00:00:00.000000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalAndMatViewQueues();
+
+            assertQuery("SELECT k, v, ts FROM mv ORDER BY k").expectSize().noLeakCheck().returns("""
+                    k\tv\tts
+                    A\t1.0\t2024-01-01T00:00:00.000000Z
+                    B\t3.0\t2024-01-03T00:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testKeepLatestCleanupPreservesSupersededPartitions() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into base values " +
@@ -251,13 +297,13 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
                 predicate = m.getExpiryPredicate();
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.cleanupTable(token, predicate);
+                Assert.assertFalse(job.cleanupTable(token, predicate));
             }
             drainWalAndMatViewQueues();
 
-            // 01-01 (A superseded) and 01-02 (B superseded) are fully expired -> dropped; the active 01-03
-            // (both latest) is protected. The read-filter result is unchanged.
-            assertQuery("select count() c from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("c\n1\n");
+            // A later refresh can remove either current winner and reveal its older row again, so cleanup
+            // preserves every partition. The read filter remains authoritative for visibility.
+            assertQuery("select count() c from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("c\n3\n");
             assertQuery("select k, v, ts from mv order by k").expectSize().noLeakCheck().returns("""
                     k\tv\tts
                     A\t3.0\t2024-01-03T00:00:00.000000Z
@@ -267,7 +313,7 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeepLatestCleanupCompactsPartialPartition() throws Exception {
+    public void testKeepLatestCleanupPreservesPartialPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into base values " +
@@ -288,14 +334,12 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
                 predicate = m.getExpiryPredicate();
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.cleanupTable(token, predicate);
+                Assert.assertFalse(job.cleanupTable(token, predicate));
             }
             drainWalAndMatViewQueues();
 
-            // 01-01 is PARTIALLY expired (A superseded, C latest) -> compacted to 1 row (REPLACE_RANGE);
-            // 01-02 (A latest) and active 01-03 untouched. Partition count stays 3; the superseded A@01-01
-            // row is physically removed (4 -> 3). The read-filter result is unchanged.
-            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t3\n");
+            // A@01-01 must remain available in case a later refresh removes A@01-02.
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             assertQuery("select k, v, ts from mv order by k").expectSize().noLeakCheck().returns("""
                     k\tv\tts
                     A\t2.0\t2024-01-02T00:00:00.000000Z
@@ -324,13 +368,11 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeepLatestTiedMaxTimestampReadAndCleanupAgree() throws Exception {
+    public void testKeepLatestTiedMaxTimestampCleanupIsDeferred() throws Exception {
         // TIED max timestamps: key A has TWO rows sharing the SAME max ts, both in NON-active partitions.
         // The read filter rewrites to LATEST ON ts PARTITION BY k, so it keeps exactly ONE of the tied rows
-        // (LATEST ON breaks the ts tie deterministically). Physical cleanup must use that SAME LATEST ON
-        // survivor query, so the visible set MUST be identical before and after cleanup — they cannot diverge
-        // on which tied row survives. (If cleanup picked the other tied row, the post-cleanup read would show
-        // a different v, or two rows, which this pins.)
+        // (LATEST ON breaks the ts tie deterministically). Cleanup must preserve both candidates because a
+        // later refresh can remove the current winner.
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into base values " +
@@ -363,13 +405,11 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
                 predicate = m.getExpiryPredicate();
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.cleanupTable(token, predicate);
+                Assert.assertFalse(job.cleanupTable(token, predicate));
             }
             drainWalAndMatViewQueues();
 
-            // The 01-02 partition is partially expired (one tied A kept, one expired, one older A expired) so it
-            // compacts; the read-filtered set must be byte-identical to the pre-cleanup set — read and cleanup
-            // agree on WHICH tied row survives.
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             sink.clear();
             printSql("select k, v, ts from mv order by k", sink);
             Assert.assertEquals("read filter and cleanup must agree on the tied survivor", visibleBefore, sink.toString());

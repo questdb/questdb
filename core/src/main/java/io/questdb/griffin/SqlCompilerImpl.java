@@ -6475,16 +6475,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (predicate == null) {
             return false;
         }
-        // KEEP LATEST / KEEP [N] HIGHEST/LOWEST are structural: their keep-set is determined by other
-        // (immutable) rows in the same group, and rows only ever arrive (append-only), so a row that drops
-        // out of the keep-set never re-enters it. Monotonic by construction; no clock involved.
+        // KEEP LATEST / KEEP [N] HIGHEST/LOWEST are not safe for physical cleanup. A materialized-view
+        // refresh can remove or replace the current winner, making an older row visible again. Once cleanup
+        // has physically deleted that fallback from another timestamp range, an incremental refresh cannot
+        // reconstruct it without a full historical rebuild.
         if (RowExpiryUtil.isKeepLatest(predicate) || RowExpiryUtil.isKeepBy(predicate)) {
-            return true;
+            return false;
         }
         // An arbitrary window predicate is not necessarily monotonic even when it is clock-free: adding a row
         // can change another row's rank, aggregate, or frame result and make a previously expired row visible
-        // again. The generated KEEP modes above have separate structural proofs; skip physical cleanup for raw
-        // windows unless a future implementation can prove the specific window expression monotonic.
+        // again. Skip physical cleanup for raw windows unless a future implementation can prove the specific
+        // window expression monotonic.
         if (RowExpiryUtil.isWindow(predicate)) {
             return false;
         }

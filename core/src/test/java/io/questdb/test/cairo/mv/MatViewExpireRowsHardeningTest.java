@@ -288,7 +288,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMemoryLimitFailureDefersWithoutWalMutation() throws Exception {
+    public void testStructuralCleanupDefersWithoutWalMutation() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base SELECT 'A', x, dateadd('d', x::int, '2024-01-01'::timestamp) FROM long_sequence(4)");
@@ -300,7 +300,6 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             final TableToken token = engine.verifyTableName("mv");
             final String predicate = RowExpiryUtil.encodeKeepBy(1, true, "v", "k");
 
-            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1L);
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
                 Assert.assertFalse(job.cleanupTable(token, predicate));
             }
@@ -309,8 +308,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck().returns("p\tr\n4\t4\n");
 
-            // A second breach exercises pooled tracker reuse; it must defer again rather than inherit
-            // unbalanced accounting or mutate WAL state.
+            // Repeated sweeps remain no-ops and never mutate WAL state.
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
                 Assert.assertFalse(job.cleanupTable(token, predicate));
             }
@@ -322,10 +320,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMemoryLimitBreachThenRecoveryReclaimsAndBalances() throws Exception {
-        // (C12) The breach path must defer WITHOUT mutating the WAL; then, under a sufficient budget, cleanup
-        // must SUCCEED and physically reclaim. Success on the same engine after a breach also proves the pooled
-        // MAT_VIEW_REFRESH tracker was left balanced -- leaked bytes would re-breach here instead of completing.
+    public void testStructuralCleanupRemainsDeferredAfterMemoryLimitChange() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base VALUES " +
@@ -344,7 +339,6 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 predicate = m.getExpiryPredicate();
             }
 
-            // Breach: a 1-byte budget must DEFER, leaving every partition physically intact.
             setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1L);
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
                 Assert.assertFalse(job.cleanupTable(token, predicate));
@@ -352,16 +346,14 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
                     .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
 
-            // Recovery: a sufficient budget must SUCCEED -- d1 compacted (B survives), d2 wiped, active d3
-            // untouched -> 2 partitions / 2 rows. Reaching this reclaimed state after a breach also proves the
-            // pooled tracker was left balanced (a leak would re-breach and leave the partitions at 3/4).
+            // Structural cleanup remains disabled independently of the available query-memory budget.
             setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 256L * 1024 * 1024);
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                Assert.assertTrue(job.cleanupTable(token, predicate));
+                Assert.assertFalse(job.cleanupTable(token, predicate));
             }
             drainWalAndMatViewQueues();
             assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
-                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().returns("k\tv\nA\t9.0\nB\t8.0\n");
         });
     }

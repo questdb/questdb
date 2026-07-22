@@ -89,11 +89,12 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     /**
      * Returns true when the EXPIRE ROWS policy {@code predicate} is <b>monotonic</b>, i.e. safe for the
      * background cleanup job to physically reclaim: a row it classifies as expired now can never re-enter the
-     * keep-set. Monotonic by construction: the relative modes (KEEP LATEST / KEEP HIGHEST/LOWEST / KEEP N) and
-     * any scalar/window {@code WHEN} predicate that is either clock-free (mat-view rows are immutable, so a
-     * clock-free predicate's per-row value never changes) or reduces to a designated-timestamp threshold
-     * ({@code ts < now()} / {@code ts <= T}). NOT monotonic: a predicate that references a non-deterministic
-     * clock in a non-threshold position (e.g. {@code ts > now()}), which un-expires rows as time advances.
+     * keep-set. Eligible scalar {@code WHEN} predicates are monotonic when they are clock-free or reduce to a
+     * designated-timestamp threshold ({@code ts < now()} / {@code ts <= T}). Structural KEEP and raw window
+     * policies are not safe: a later materialized-view refresh can remove a winner and reveal an older fallback
+     * that cleanup had physically deleted. A scalar predicate that references a non-deterministic clock in a
+     * non-threshold position (e.g. {@code ts > now()}) is also not monotonic because it can un-expire rows as
+     * time advances.
      * <p>
      * The check is conservative — any doubt (parse/bind issue, a non-deterministic function it cannot prove
      * monotonic) returns false, so cleanup is SKIPPED and the authoritative read filter alone enforces

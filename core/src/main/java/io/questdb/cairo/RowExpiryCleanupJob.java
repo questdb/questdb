@@ -87,9 +87,9 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * filter and are reclaimed once that day ages out of the active slot.
  * <p>
  * <b>Read-filter interaction:</b> the cleanup runs on its own execution context with the read-time row-expiry
- * filter DISABLED ({@code setExpiryReadFilterEnabled(false)}), so the survivor query expresses the keep set
- * explicitly — a CASE keep-filter for a WHEN predicate, or {@code LATEST ON} for KEEP LATEST — without being
- * re-wrapped.
+ * filter DISABLED ({@code setExpiryReadFilterEnabled(false)}), so the survivor query expresses a scalar WHEN
+ * predicate's keep set explicitly without being re-wrapped. Structural KEEP and raw window policies skip
+ * physical cleanup because later refreshes can make a physically deleted fallback visible again.
  * <p>
  * <b>Concurrency (reclamation never deletes a row a concurrent writer back-filled):</b> the only writers to a
  * policied view are this job and the materialized-view refresh job, and BOTH guard every view write with the
@@ -103,8 +103,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * is never shown even when reclamation is deferred.
  * <p>
  * A <i>bounds</i> wipe of a logical partition lying wholly below a designated-timestamp threshold ({@code ts <
- * T}) needs no survivor scan: every row there is expired. KEEP LATEST has no such threshold and always uses
- * the survivor-count scan.
+ * T}) needs no survivor scan: every row there is expired.
  */
 public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private static final int ACTION_DROP = 1;
@@ -179,13 +178,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
      * Snapshots non-active LOGICAL partition totals from a reader, classifies each as DROP/REPLACE/SKIP
      * via the keep-filter, then compacts via REPLACE_RANGE and batch-drops fully expired partitions.
      * <p>
-     * Reclamation requires <b>monotonic</b> expiry: a row classified as expired now must stay expired. This
-     * holds by construction for the relative modes and for a designated-timestamp predicate (e.g. {@code ts <
-     * now()}). A non-monotonic policy (e.g. a scalar {@code WHEN ts > now()}, which un-expires future rows as
-     * time advances) is detected up front via {@link SqlCompiler#isExpiryCleanupMonotonic} and this method
-     * returns early WITHOUT reclaiming — the read filter stays authoritative for visibility, so such a policy
-     * is query-correct but accrues physical residue until a full refresh. See docs/row-expiry.md
-     * ("Monotonicity = cleanup safety").
+     * Reclamation requires <b>monotonic</b> expiry: a row classified as expired now must stay expired. A
+     * non-monotonic policy, including every structural KEEP/window mode, returns early WITHOUT reclaiming.
+     * The read filter stays authoritative for visibility, so such a policy is query-correct but accrues
+     * physical residue until a full refresh. See {@link SqlCompiler#isExpiryCleanupMonotonic}.
      */
     public boolean cleanupTable(TableToken tableToken, String predicate) {
         isLastCleanupFailed = false;
@@ -218,14 +214,17 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
 
     private boolean cleanupTable0(TableToken tableToken, String predicate) {
         final String tableName = tableToken.getTableName();
-        // KEEP LATEST (relative) policies reclaim via a different survivor query (the global latest-per-key
-        // set, intersected with each partition) and have no "<ts> < T" bounds fast-path; a plain WHEN
-        // predicate uses the CASE keep-filter plus the bounds fast-path.
+        // Structural KEEP and raw window policies can reveal an older row after a later materialized-view
+        // refresh removes the current winner. Preserve their physical history until cleanup has a
+        // deletion-aware rebuild mechanism.
         final boolean isKeepLatest = RowExpiryUtil.isKeepLatest(predicate);
         final boolean isWindow = RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate);
+        if (isKeepLatest || isWindow) {
+            return false;
+        }
 
-        // Freeze now() once per sweep for ALL modes, BEFORE any survivor query runs (the bounds threshold,
-        // the one-pass scan, and the per-partition count/select). A window WHEN predicate may reference now();
+        // Freeze now() once per scalar-policy sweep, BEFORE any survivor query runs (the bounds threshold,
+        // the one-pass scan, and the per-partition count/select). A scalar WHEN predicate may reference now();
         // without this its survivor query would evaluate now() against an uninitialised clock and diverge from
         // the authoritative read filter (which freezes now() per query), risking deletion of visible rows.
         initNow();
@@ -326,8 +325,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
 
             // Resolve the cleanup-safety (monotonicity) gate and the fast-path timestamp threshold once per
             // table (now() was already frozen above). The gate authoritatively decides whether physical
-            // reclamation is safe; only a scalar "<ts> < T" WHEN predicate additionally has a bounds threshold
-            // (KEEP LATEST / window modes always fall to the survivor-count scan).
+            // reclamation is safe; only a scalar "<ts> < T" WHEN predicate additionally has a bounds threshold.
             if (partitionFloors.size() > 0) {
                 final String source = RowExpiryUtil.quoteIdentifier(tableName);
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -344,8 +342,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // Non-monotonic policy (e.g. a now()-referencing predicate that does not reduce to a "<ts> < T"
         // threshold, like "ts > now()"): the background job must NOT physically delete rows it might have to
         // show again as time advances. The read filter stays authoritative for correctness; here we simply
-        // skip disk reclamation for this policy. (Monotonic policies — relative modes, clock-free predicates,
-        // and "ts < now()"-style thresholds — proceed normally.)
+        // skip disk reclamation for this policy. Monotonic clock-free predicates and "ts < now()"-style
+        // thresholds proceed normally.
         if (!isCleanupMonotonic) {
             return false;
         }
@@ -434,14 +432,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         int selectTsIndex = -1;
         WalWriter walWriter = null;
         // M1: bound every survivor query on this sweep to the MAT_VIEW_REFRESH per-workload memory budget.
-        // The KEEP LATEST / window survivor queries build a global LATEST ON / window map sized to the WHOLE
-        // view (the partition range sits OUTSIDE the sub-query, so it cannot be pushed down) and run on the
-        // shared write-worker pool; with no budget an oversized view could exhaust the heap. A bound tracker
-        // makes such a sweep trip the configured limit and throw ("query memory limit exceeded"); the
-        // survivor-scan catch and the per-partition catch below then log and DEFER to a later sweep (cleanup
-        // is best-effort — reads stay correct regardless). EXPIRE ROWS is materialized-view-only, so cleanup
-        // shares the mat-view refresh budget, exactly as MatViewRefreshJob binds its own tracker on its
-        // execution context before running inner SQL.
+        // A bound tracker makes an oversized scalar survivor query trip the configured limit and DEFER to a
+        // later sweep. EXPIRE ROWS is materialized-view-only, so cleanup shares the mat-view refresh budget,
+        // exactly as MatViewRefreshJob binds its own tracker before running inner SQL.
         final MemoryTracker memoryTracker = engine.getMemoryTrackerProvider().acquire(
                 sqlExecutionContext.getSecurityContext(),
                 tableToken.getTableId(),
