@@ -701,9 +701,16 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
 
     /**
      * A RANGE bound the designated timestamp's units cannot carry produces a runtime frame
-     * that is not the one the user wrote, so the compiler names it at its own position rather
-     * than checkpointing a view against it. Both bounds run the same check, and each names
-     * itself, so an error over a two-unit frame says which end failed.
+     * that is not the one the user wrote, so nothing checkpoints a view against it. The window
+     * runtime now refuses such a bound while it builds the frame, which is a wider fix than a
+     * live view needs - it covers plain window queries too - and it runs before the compiler
+     * ever sees the function, so it is what a CREATE LIVE VIEW reports. The compiler keeps its
+     * own test behind it, reading the same ceiling, because a descriptor that disagrees with
+     * the compiled frame is worse than a rejected view.
+     * <p>
+     * A bound finer than the timestamp's resolution is the compiler's alone to refuse: the
+     * runtime rounds the frame rather than corrupting it, so a plain query keeps working, while
+     * a view would record a dependency nobody asked for.
      */
     @Test
     public void testRangeFrameBoundOutOfRangeFailsCompilation() throws Exception {
@@ -711,54 +718,46 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
             execute("create table base_ns (ts timestamp_ns, sym symbol, x double) timestamp(ts) partition by day wal");
 
-            // TimestampDriver.from(long, char) narrows days to int, so this width collapses to
-            // a zero-wide runtime frame.
+            // TimestampDriver.from(long, char) narrows days to int, so this width used to
+            // collapse to a zero-wide runtime frame.
             assertRangeBoundRejected(
                     "select ts, sym, avg(x) over (partition by sym order by ts "
                             + "range between 4294967296 days preceding and current row) a from base",
-                    "RANGE frame width is out of range for the designated timestamp"
+                    "RANGE frame start is out of range for the designated timestamp"
             );
-            // The same narrowing on the high bound, which reaches the descriptor through the
-            // same conversion and is named as the frame's end.
+            // The same narrowing on the high bound, which reaches the frame through the same
+            // conversion and is named as the frame's end.
             assertRangeBoundRejected(
                     "select ts, sym, avg(x) over (partition by sym order by ts "
                             + "range between 5000 days preceding and 4294967296 days preceding) a from base",
-                    "RANGE frame end lag is out of range for the designated timestamp"
+                    "RANGE frame end is out of range for the designated timestamp"
             );
-            // A bound finer than the timestamp's resolution divides down to zero, which is the
-            // same failure seen from the other side: the frame the runtime evaluates ends at
-            // the current row, not one nanosecond below it.
-            assertRangeBoundRejected(
-                    "select ts, sym, avg(x) over (partition by sym order by ts "
-                            + "range between 2 seconds preceding and 1 nanosecond preceding) a from base",
-                    "RANGE frame end lag is out of range for the designated timestamp"
-            );
-            // The unchecked multiply inside from() wraps 200000 days of nanoseconds onto a
-            // positive value. The runtime's own frame validation runs first and turns it away
-            // as a FOLLOWING bound, which is the right refusal for the wrong reason - the
-            // frame is not one the user wrote at all. The live view is rejected either way,
-            // and the compiler's sign test stands behind the runtime's.
+            // The unchecked multiply wraps 200000 days of nanoseconds onto a positive value,
+            // and 300000 days onto a negative one of about a third the magnitude. The first
+            // used to be turned away as a FOLLOWING frame start - the right refusal for a
+            // cause the user did not write - and the second used to be accepted outright,
+            // leaving the descriptor holding a 236-year lag where 821 years were asked for.
             assertRangeBoundRejected(
                     "select ts, sym, avg(x) over (partition by sym order by ts "
                             + "range between 100000 days preceding and 200000 days preceding) a from base_ns",
-                    "frame end supports _number_ PRECEDING and CURRENT ROW only"
+                    "RANGE frame end is out of range for the designated timestamp"
             );
-
-            // What the sign test cannot catch: 300000 days of nanoseconds wraps onto a
-            // negative value, so it reads here as a legal lag of the wrong magnitude - about
-            // 236 years rather than the 821 asked for. The descriptor still agrees with the
-            // frame the runtime evaluates, since WindowContextImpl.of() calls the same
-            // conversion, so the repair bounds stay sound and what is lost is the user's
-            // frame, in a plain window query as much as in a live view. Closing it belongs in
-            // the conversion rather than in either caller's guard, which is why both bounds
-            // share one test here.
-            final Metadata wrapped = compileMetadata(
+            assertRangeBoundRejected(
                     "select ts, sym, avg(x) over (partition by sym order by ts "
                             + "range between 100000 days preceding and 300000 days preceding) a from base_ns",
-                    0
+                    "RANGE frame end is out of range for the designated timestamp"
             );
-            Assert.assertEquals(-8_640_000_000_000_000_000L, wrapped.dependency.getFrameLo());
-            Assert.assertEquals(-7_473_255_926_290_448_384L, wrapped.dependency.getFrameHi());
+
+            // A bound finer than the timestamp's resolution divides down to zero: the frame
+            // the runtime evaluates ends at the current row, not one nanosecond below it. The
+            // compiler is the only gate that reads this one, so its own message is what a
+            // CREATE LIVE VIEW reports.
+            assertRangeBoundRejected(
+                    "select ts, sym, avg(x) over (partition by sym order by ts "
+                            + "range between 2 seconds preceding and 1 nanosecond preceding) a from base",
+                    "live view RANGE frame end lag is below the designated timestamp resolution "
+                            + "[function=avg(), width=1n]"
+            );
         });
     }
 

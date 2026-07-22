@@ -184,7 +184,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
-    ) {
+    ) throws SqlException {
         windowContext.of(
                 partitionByRecord,
                 partitionBySink,

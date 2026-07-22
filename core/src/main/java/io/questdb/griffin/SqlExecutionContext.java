@@ -91,7 +91,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
             int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
-    );
+    ) throws SqlException;
 
     default void containsSecret(boolean b) {
     }

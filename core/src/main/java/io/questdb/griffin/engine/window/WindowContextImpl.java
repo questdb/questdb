@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.window;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.SqlException;
@@ -200,7 +201,16 @@ public class WindowContextImpl implements WindowContext, Mutable {
             int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
-    ) {
+    ) throws SqlException {
+        // Both bounds convert before any field is written: the caller clears the context after
+        // the function it configures, not after a configuration that failed, so a rejected
+        // bound must leave the context as it found it rather than half-configured.
+        final long convertedRowsLo = rowsLoUint != 0 && ColumnType.isTimestamp(timestampType)
+                ? toTimestampUnits(timestampType, rowsLo, rowsLoUint, rowsLoKindPos, "start")
+                : rowsLo;
+        final long convertedRowsHi = rowsHiUint != 0 && ColumnType.isTimestamp(timestampType)
+                ? toTimestampUnits(timestampType, rowsHi, rowsHiUint, rowsHiKindPos, "end")
+                : rowsHi;
         this.empty = false;
         this.partitionByRecord = partitionByRecord;
         this.partitionBySink = partitionBySink;
@@ -209,15 +219,9 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.orderByDirection = orderByDirection;
         this.orderByPos = orderByPos;
         this.framingMode = framingMode;
-        this.rowsLo = rowsLo;
-        if (rowsLoUint != 0 && ColumnType.isTimestamp(timestampType)) {
-            this.rowsLo = ColumnType.getTimestampDriver(timestampType).from(rowsLo, rowsLoUint);
-        }
+        this.rowsLo = convertedRowsLo;
         this.rowsLoKindPos = rowsLoKindPos;
-        this.rowsHi = rowsHi;
-        if (rowsHiUint != 0 && ColumnType.isTimestamp(timestampType)) {
-            this.rowsHi = ColumnType.getTimestampDriver(timestampType).from(rowsHi, rowsHiUint);
-        }
+        this.rowsHi = convertedRowsHi;
         this.rowsHiKindPos = rowsHiKindPos;
         this.exclusionKind = exclusionKind;
         this.exclusionKindPos = exclusionKindPos;
@@ -272,5 +276,46 @@ public class WindowContextImpl implements WindowContext, Mutable {
         if (getFramingMode() == WindowExpression.FRAMING_GROUPS) {
             throw SqlException.$(position, "function not implemented for given window parameters");
         }
+    }
+
+    /**
+     * Converts one RANGE frame bound from the time unit the user wrote into the designated
+     * timestamp's native units, refusing a count the conversion cannot carry.
+     * <p>
+     * {@link TimestampDriver#from(long, char)} checks neither its multiply for overflow nor its
+     * {@code int} narrowing for width, so a bound wider than the timestamp's units can hold comes
+     * back as a different width - positive, or negative but far too small, or exactly zero - and
+     * the frame the query evaluates is then not the one anybody wrote. {@link #validate(int,
+     * boolean)} sees only the sign flip, and reports it as an unsupported frame start, naming a
+     * cause the user did not write. The reject belongs here instead, at the bound's own position,
+     * where it can name both the width that does not fit and the widest one that does.
+     *
+     * @param timestampType the designated timestamp type the frame is evaluated against
+     * @param bound         the frame bound, negated for PRECEDING, in {@code unit}s
+     * @param unit          the time unit the bound is written in
+     * @param position      the SQL position of the bound
+     * @param boundName     "start" or "end", for the message
+     * @return the bound in the designated timestamp's native units
+     * @throws SqlException if the bound is too wide for the designated timestamp's units
+     */
+    private static long toTimestampUnits(
+            int timestampType,
+            long bound,
+            char unit,
+            int position,
+            CharSequence boundName
+    ) throws SqlException {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        final long maxUnitValue = driver.getMaxUnitValue(unit);
+        if (bound < -maxUnitValue || bound > maxUnitValue) {
+            // A PRECEDING bound arrives negated, and the widest count the parser accepts,
+            // Long.MAX_VALUE, negates onto Long.MIN_VALUE - which negates back onto itself.
+            final long width = bound == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(bound);
+            throw SqlException.$(position, "RANGE frame ").put(boundName)
+                    .put(" is out of range for the designated timestamp [width=").put(width).put(unit)
+                    .put(", max=").put(maxUnitValue).put(unit)
+                    .put(']');
+        }
+        return driver.from(bound, unit);
     }
 }

@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
@@ -569,6 +570,14 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
+     * Points a frame-bound error at the unit token the user wrote, falling back to the window
+     * function itself for a bound whose unit position the parser did not record.
+     */
+    private static int boundPosition(WindowExpression window, int unitPosition) {
+        return unitPosition > 0 ? unitPosition : window.getAst().position;
+    }
+
+    /**
      * Classifies a frame into the dependency kind whose bounds a repair can prove, reading
      * the high bound the runtime evaluates rather than the one the model records - see
      * {@link #effectiveRowsHi}.
@@ -923,19 +932,21 @@ public final class LiveViewCheckpointFunctionCompiler {
      * descriptor mixing a converted low bound with a raw high one holds two numbers that
      * cannot be compared to each other.
      * <p>
-     * {@code from(long, char)} yields 0 for an unrecognized unit and narrows minutes, hours,
-     * days and weeks to {@code int}, so a bound beyond that range silently collapses to zero
-     * or flips sign. Such a frame has no usable dependency bound, so the compiler names it at
-     * its own position rather than checkpointing a view whose runtime frame is not the one the
-     * user asked for.
-     * <p>
-     * The test below is a sign flip, and that catches less than the whole of the problem: the
-     * unchecked {@code long} multiply inside {@code from()} can also wrap onto a negative
-     * value, which reads here as a legal bound of the wrong magnitude. The descriptor still
-     * agrees with the frame the runtime evaluates - both sides call the same conversion - so
-     * the repair bounds stay sound and what is lost is the user's frame, in a live view and in
-     * a plain window query alike. Closing that hole belongs in the conversion itself; keeping
-     * both bounds on one test here is what lets a single fix reach both.
+     * Two ways of writing a bound produce a runtime frame that is not the one the user asked
+     * for, and the compiler turns both away rather than checkpointing a view against a frame
+     * nobody wrote:
+     * <ul>
+     *     <li>a bound wider than the timestamp's units can carry, which {@code from()} wraps or
+     *     narrows onto a legal-looking width. The ceiling the test reads is
+     *     {@link TimestampDriver#getMaxUnitValue(char)}, the same primitive
+     *     {@code WindowContextImpl.of()} guards the compiled frame with - one ceiling serves
+     *     both, because two parallel range checks would agree only by inspection;</li>
+     *     <li>a bound finer than the timestamp's resolution, which divides down to zero. The
+     *     runtime accepts that one: it rounds the frame rather than corrupting it, and a query
+     *     asking for a nanosecond lag over a micros column keeps working. A live view cannot,
+     *     because the descriptor would record a dependency the user did not ask for and the
+     *     repair would then be bounded by it.</li>
+     * </ul>
      */
     private static long rangeFrameBound(
             CharSequence functionName,
@@ -949,12 +960,22 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (unit == 0 || !ColumnType.isTimestamp(timestampType)) {
             return bound;
         }
-        final long converted = ColumnType.getTimestampDriver(timestampType).from(bound, unit);
-        if (converted >= 0 && bound < 0) {
-            final int position = unitPosition > 0 ? unitPosition : window.getAst().position;
-            throw SqlException.$(position, "live view RANGE frame ").put(boundName)
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        final long maxUnitValue = driver.getMaxUnitValue(unit);
+        // A PRECEDING bound arrives negated, and the widest count the parser accepts,
+        // Long.MAX_VALUE, negates onto Long.MIN_VALUE - which negates back onto itself.
+        final long width = bound == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(bound);
+        if (bound < -maxUnitValue || bound > maxUnitValue) {
+            throw SqlException.$(boundPosition(window, unitPosition), "live view RANGE frame ").put(boundName)
                     .put(" is out of range for the designated timestamp [function=")
-                    .put(functionName).put("(), value=").put(-bound).put(unit).put(']');
+                    .put(functionName).put("(), width=").put(width).put(unit)
+                    .put(", max=").put(maxUnitValue).put(unit).put(']');
+        }
+        final long converted = driver.from(bound, unit);
+        if (converted == 0 && bound != 0) {
+            throw SqlException.$(boundPosition(window, unitPosition), "live view RANGE frame ").put(boundName)
+                    .put(" is below the designated timestamp resolution [function=")
+                    .put(functionName).put("(), width=").put(width).put(unit).put(']');
         }
         return converted;
     }

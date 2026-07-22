@@ -48,6 +48,7 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -1143,7 +1144,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 int timestampType,
                 boolean ignoreNulls,
                 int nullsDescPos
-        ) {
+        ) throws SqlException {
             sqlExecutionContext.configureWindowContext(
                     partitionByRecord,
                     partitionBySink,
