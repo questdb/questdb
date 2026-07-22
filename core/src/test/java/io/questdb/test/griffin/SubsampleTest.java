@@ -3207,14 +3207,14 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testM4OverJoinFallsThroughToCursor() throws Exception {
-        // Confirms the join-context guard shared with lttb (see testSubsampleWithActualJoin /
-        // testSubsampleNotHoistedFromJoinBranch / testSubsampleBranchLocalInJoin) also protects m4:
-        // a SUBSAMPLE m4(...) attached to (or nested inside) a join must stay on the untouched cursor,
-        // not desugar into `OVER (ORDER BY ts)`, whose bare `ts` would be ambiguous across the join's
-        // branches. Verified two ways: the plan still shows the Subsample cursor node (not a window
-        // filter), and the query runs to completion with the cursor's result instead of throwing
-        // "Ambiguous column [name=ts]".
+    public void testM4OverJoinMigratesToWindow() throws Exception {
+        // Phase-5 Task 2b: a SUBSAMPLE m4(...) sitting directly on a join (Shape A) now MIGRATES to the
+        // keep-flag window path instead of falling through to the legacy cursor. The desugared
+        // `OVER (ORDER BY ts)` and the m4 ts arg are synthesised with the master (left/driving) table's
+        // alias-qualified `p.ts` so they are not ambiguous across the join's two `ts` columns; the
+        // qualifier resolves away once the join projection makes `ts` unambiguous, so the final plan
+        // renders bare `[ts]`. Verified two ways: the plan shows the window keep-filter (NO `Subsample`
+        // cursor node), and the query returns the identical rows the cursor produced.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE prices (price DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE volumes (volume DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -3231,22 +3231,22 @@ public class SubsampleTest extends AbstractCairoTest {
                     (1500.0, 'BTC', '2024-01-01T02:00:00.000000Z')
                     """);
             final String query = "SELECT p.price, p.ts, v.volume FROM prices p ASOF JOIN volumes v ON (symbol) SUBSAMPLE m4(price, 4)";
-            // Plan must still show the Subsample cursor node, not a desugared window filter.
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                try (RecordCursorFactory fact = compiler.compile("EXPLAIN " + query, sqlExecutionContext).getRecordCursorFactory()) {
-                    try (RecordCursor cursor = fact.getCursor(sqlExecutionContext)) {
-                        StringBuilder sb = new StringBuilder();
-                        while (cursor.hasNext()) {
-                            sb.append(cursor.getRecord().getStrA(0)).append('\n');
-                        }
-                        String plan = sb.toString();
-                        Assert.assertTrue("Plan should contain 'Subsample': " + plan, plan.contains("Subsample"));
-                        Assert.assertFalse("Plan should not contain a window filter: " + plan, plan.contains("over (order by"));
-                    }
-                }
-            }
-            // The query must run to completion (no "Ambiguous column [name=ts]") and return the
-            // cursor's result.
+            // Plan must show the desugared window keep-filter over the join, NOT the Subsample cursor.
+            assertQuery(query)
+                    .assertsPlan("SelectedRecord\n" +
+                            "    Filter filter: __keep_subsample\n" +
+                            "        CachedWindow\n" +
+                            "          unorderedFunctions: [m4(ts,price,4) over (order by [ts])]\n" +
+                            "            SelectedRecord\n" +
+                            "                AsOf Join Fast\n" +
+                            "                  condition: v.symbol=p.symbol\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: prices\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: volumes\n");
+            // Byte-identical rows to what the legacy cursor produced.
             assertSql(
                     "price\tts\tvolume\n" +
                             "100.0\t2024-01-01T00:00:00.000000Z\t1000.0\n" +

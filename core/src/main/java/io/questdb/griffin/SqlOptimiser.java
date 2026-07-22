@@ -9344,6 +9344,30 @@ public class SqlOptimiser implements Mutable {
             final ExpressionNode subsample = nested.getSubsample();
             if (subsample != null) {
                 final ExpressionNode timestamp = nested.getTimestamp();
+                // The timestamp reference the injected keep-flag window will see. Normally the bare
+                // designated-timestamp name off a single-table FROM. But when the SUBSAMPLE sits
+                // DIRECTLY on a multi-branch join (`nested` IS the join, i.e. getJoinModels().size() > 1),
+                // both branches expose a timestamp column of the same name, so a bare reference throws
+                // "Ambiguous column [name=ts]". Qualify it with the master (index-0, left / driving) join
+                // model's alias (falling back to its table name) - the join result's designated timestamp
+                // is the master's, so ordering by <master>.<ts> is well-defined even for outer/right
+                // joins that NULL-extend the master. A branch-local SUBSAMPLE reached via the per-branch
+                // recursion below has a single-table `nested`, so it keeps the bare, unambiguous name.
+                CharSequence windowTsToken = timestamp != null ? timestamp.token : null;
+                if (timestamp != null && nested.getJoinModels().size() > 1) {
+                    final CharSequence masterAlias = nested.getJoinModels().getQuick(0).getName();
+                    if (masterAlias != null) {
+                        final int dot = Chars.indexOfLastUnquoted(timestamp.token, '.');
+                        final CharacterStoreEntry e = characterStore.newEntry();
+                        e.put(masterAlias).put('.');
+                        if (dot == -1) {
+                            e.put(timestamp.token);
+                        } else {
+                            e.put(timestamp.token, dot + 1, timestamp.token.length());
+                        }
+                        windowTsToken = e.toImmutable();
+                    }
+                }
                 // Kill-switch: cairo.subsample.window.enabled (default true) gates ONLY the five
                 // count/value migration arms below (uniform/cadence/m4/minmax/lttb) - when false, they
                 // all fall through to the untouched pre-migration custom cursor path, exactly as if none
@@ -9362,7 +9386,7 @@ public class SqlOptimiser implements Mutable {
                     final ExpressionNode targetNode = subsample.args.getQuick(0);
                     if (timestamp != null
                             && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
-                        model = desugarUniformSubsample(model, nested, subsample, timestamp);
+                        model = desugarUniformSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin);
                     }
                 } else if (subsampleWindowEnabled
                         && (subsample.paramCount == 1 || subsample.paramCount == 2)
@@ -9380,7 +9404,7 @@ public class SqlOptimiser implements Mutable {
                             && isConstantUniformTarget(strideNode, sqlExecutionContext)
                             && (subsample.paramCount == 1
                             || isConstantCadenceSeed(subsample.args.getQuick(1), sqlExecutionContext))) {
-                        model = desugarCadenceSubsample(model, nested, subsample, timestamp);
+                        model = desugarCadenceSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin);
                     }
                 } else if (subsampleWindowEnabled
                         && subsample.paramCount == 2
@@ -9401,22 +9425,16 @@ public class SqlOptimiser implements Mutable {
                     //    window path, by contrast, deep-clones the value arg and evaluates it as a full
                     //    DOUBLE expression, which would silently return a result instead of reproducing
                     //    that error. So non-literal value args fall through to the untouched cursor.
-                    //  - the SUBSAMPLE is not inside any join branch (subsampleInJoinContext). The
-                    //    desugared `OVER (ORDER BY ts)` / keep-filter reference the designated timestamp
-                    //    by its bare name, which is ambiguous once there are two branches sharing that
-                    //    name (e.g. an ASOF JOIN), and even a single-table branch loses its designated
-                    //    timestamp once wrapped in the extra window/filter models when it is consumed as
-                    //    a join operand. The cursor has neither problem, so any join context - whether
-                    //    the SUBSAMPLE sits directly on the join node or arbitrarily deep inside one of
-                    //    its branches - falls through untouched.
+                    // A join context is NOT gated out: `windowTsToken` above qualifies the ORDER BY / ts
+                    // arg with the master alias when the SUBSAMPLE sits directly on a multi-branch join,
+                    // and a branch-local SUBSAMPLE (single-table `nested`) migrates with the bare name.
                     final ExpressionNode valueNode = subsample.args.getQuick(0);
                     final ExpressionNode targetNode = subsample.args.getQuick(1);
                     if (timestamp != null
-                            && !subsampleInJoinContext
                             && valueNode != null
                             && valueNode.type == ExpressionNode.LITERAL
                             && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
-                        model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, subsample.token);
+                        model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin, subsample.token);
                     }
                 } else if (subsampleWindowEnabled
                         && (subsample.paramCount == 2 || subsample.paramCount == 3)
@@ -9434,18 +9452,17 @@ public class SqlOptimiser implements Mutable {
                     //    non-constant / non-string / invalid / overflowing gap falls through so the cursor
                     //    re-reports the identical error at its own position. A 4th+ arg makes paramCount
                     //    miss this gate and fall through to the cursor's "at most 3 arguments" error.
-                    //  - the SUBSAMPLE is not inside any join branch (subsampleInJoinContext) - same
-                    //    ambiguous-timestamp / lost-designated-timestamp reasoning as m4/minmax above.
+                    // A join context is NOT gated out - same alias-qualified-timestamp handling via
+                    // `windowTsToken` as m4/minmax above.
                     final ExpressionNode valueNode = subsample.args.getQuick(0);
                     final ExpressionNode targetNode = subsample.args.getQuick(1);
                     if (timestamp != null
-                            && !subsampleInJoinContext
                             && valueNode != null
                             && valueNode.type == ExpressionNode.LITERAL
                             && isConstantUniformTarget(targetNode, sqlExecutionContext)
                             && (subsample.paramCount == 2
                             || isConstantLttbGap(subsample.args.getQuick(2), sqlExecutionContext))) {
-                        model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, subsample.token);
+                        model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin, subsample.token);
                     }
                 } else if (Chars.equalsIgnoreCase(subsample.token, "sdt")) {
                     // TOTAL GATE for sdt. Unlike the other methods, sdt has NO custom SUBSAMPLE cursor,
@@ -9480,7 +9497,9 @@ public class SqlOptimiser implements Mutable {
                     if (!isConstantSdtCompdev(subsample.args.getQuick(1), sqlExecutionContext)) {
                         throw SqlException.$(subsample.position, "SUBSAMPLE sdt requires a constant, non-negative compdev");
                     }
-                    model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, subsample.token);
+                    // sdt-in-join already threw above (subsampleInJoinContext), so windowTsToken here is
+                    // always the bare designated-timestamp name.
+                    model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin, subsample.token);
                 }
             }
         }
@@ -9654,20 +9673,24 @@ public class SqlOptimiser implements Mutable {
             IQueryModel model,
             IQueryModel nested,
             ExpressionNode subsample,
-            ExpressionNode timestamp
+            ExpressionNode timestamp,
+            CharSequence windowTsToken,
+            boolean joinOperand
     ) throws SqlException {
         // uniform(N) window call. paramCount == 1 => the argument lives in rhs (ExpressionNode invariant).
         final ExpressionNode uni = expressionNodePool.next().of(FUNCTION, "uniform", 0, subsample.position);
         uni.paramCount = 1;
         uni.rhs = ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(0));
-        return desugarSubsample(model, nested, timestamp, uni);
+        return desugarSubsample(model, nested, timestamp, windowTsToken, joinOperand, uni);
     }
 
     private IQueryModel desugarCadenceSubsample(
             IQueryModel model,
             IQueryModel nested,
             ExpressionNode subsample,
-            ExpressionNode timestamp
+            ExpressionNode timestamp,
+            CharSequence windowTsToken,
+            boolean joinOperand
     ) throws SqlException {
         // cadence(stride[, seed]) window call. 1 arg => stride in rhs; 2 args => stride in lhs, seed in
         // rhs (ExpressionNode 2-arg invariant). The gate has already proved stride is a constant in
@@ -9682,7 +9705,7 @@ public class SqlOptimiser implements Mutable {
             cadence.lhs = ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(0));
             cadence.rhs = ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(1));
         }
-        return desugarSubsample(model, nested, timestamp, cadence);
+        return desugarSubsample(model, nested, timestamp, windowTsToken, joinOperand, cadence);
     }
 
     /**
@@ -9698,12 +9721,18 @@ public class SqlOptimiser implements Mutable {
             IQueryModel nested,
             ExpressionNode subsample,
             ExpressionNode timestamp,
+            CharSequence windowTsToken,
+            boolean joinOperand,
             CharSequence fnName
     ) throws SqlException {
         // fnName(ts, value, target[, gap]) window call. FunctionParser reverses argument order for
         // paramCount > 2 (confirmed via rewriteSampleBy's tsFloorFunc), so the args list is built
         // back-to-front: the window factory then reads args.getQuick(0)=ts, (1)=value, (2)=target,
         // (3)=gap.
+        // `windowTsToken` is the timestamp reference the window sees: the bare designated-timestamp
+        // name off a single-table FROM, or - when the SUBSAMPLE sits directly on a multi-branch join -
+        // the master (left / driving) table's alias-qualified `<alias>.<ts>` so the reference is not
+        // ambiguous across the join's branches (both sides expose a `ts`).
         final boolean hasGap = subsample.paramCount == 3;
         final ExpressionNode call = expressionNodePool.next().of(FUNCTION, fnName, 0, subsample.position);
         call.paramCount = hasGap ? 4 : 3;
@@ -9712,8 +9741,8 @@ public class SqlOptimiser implements Mutable {
         }
         call.args.add(ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(1))); // target
         call.args.add(ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(0))); // value column
-        call.args.add(expressionNodePool.next().of(LITERAL, timestamp.token, 0, subsample.position)); // ts
-        return desugarSubsample(model, nested, timestamp, call);
+        call.args.add(expressionNodePool.next().of(LITERAL, windowTsToken, 0, subsample.position)); // ts
+        return desugarSubsample(model, nested, timestamp, windowTsToken, joinOperand, call);
     }
 
     /**
@@ -9726,6 +9755,8 @@ public class SqlOptimiser implements Mutable {
             IQueryModel model,
             IQueryModel nested,
             ExpressionNode timestamp,
+            CharSequence windowTsToken,
+            boolean joinOperand,
             ExpressionNode windowCall
     ) throws SqlException {
         // model:  SELECT <cols> FROM <nested>   (nested holds the SUBSAMPLE clause + designated timestamp)
@@ -9744,9 +9775,12 @@ public class SqlOptimiser implements Mutable {
         keepCol.setSubsampleKeepFlag(true);
         windowCall.windowExpression = keepCol;
         // OVER (ORDER BY ts): the designated timestamp gives deterministic input order. In the
-        // aggregation case (below) `timestamp.token` names the aggregation OUTPUT column (e.g. the
+        // aggregation case (below) `windowTsToken` names the aggregation OUTPUT column (e.g. the
         // sampled/grouped `ts`), which survives as an ordinary column and is what the window orders by.
-        final ExpressionNode orderByTs = expressionNodePool.next().of(LITERAL, timestamp.token, 0, timestamp.position);
+        // When the SUBSAMPLE sits directly on a multi-branch join, `windowTsToken` is the master
+        // table's alias-qualified `<alias>.<ts>` (the bare name is ambiguous across the join branches);
+        // otherwise it is the bare designated-timestamp name.
+        final ExpressionNode orderByTs = expressionNodePool.next().of(LITERAL, windowTsToken, 0, timestamp.position);
         keepCol.addOrderBy(orderByTs, IQueryModel.ORDER_DIRECTION_ASCENDING);
 
         // The SUBSAMPLE clause is now expressed by the window + filter; drop it so the cursor path is skipped.
@@ -9828,6 +9862,42 @@ public class SqlOptimiser implements Mutable {
             final QueryColumn qc = innerCols.getQuick(i);
             if (!Chars.equalsIgnoreCase(qc.getAlias(), keepAlias)) {
                 outerModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            }
+        }
+
+        // Preserve the designated timestamp on the desugared subquery when it is itself a join operand.
+        // ASOF / LT / SPLICE JOIN require the slave operand to expose a designated timestamp, and the
+        // pre-desugar projection over the base table did. The window + keep-filter layers we insert
+        // otherwise strip it (a window subquery exposes NO designated timestamp - verified: a hand-written
+        // `... ASOF JOIN (SELECT v, ts, row_number() OVER (ORDER BY ts) FROM b) b` fails with "right side
+        // of time series join has no timestamp"), so the ASOF slave would fail with "TIMESTAMP column is
+        // required but not provided", and top-down column pruning would even drop `ts` entirely when the
+        // outer query does not select it. The fix mirrors the one shape that DOES work by hand:
+        //   ... ASOF JOIN (SELECT v, ts FROM (<window subquery>) timestamp(ts)) b
+        // i.e. an outer projection with an EXPLICIT designated timestamp over the window subquery. We
+        // stamp that explicit designated timestamp on the filter (NONE) subquery boundary directly under
+        // the outer projection; moveTimestampToChooseModel later lifts it onto the outer projection, and
+        // propagateTopDownColumns then retains `ts` through the window layers. Guarded by joinOperand so
+        // standalone SUBSAMPLE queries (never consumed as a time-ordered operand) keep their existing
+        // plans byte-for-byte. Only meaningful for a single-table FROM (Shape A - SUBSAMPLE directly on a
+        // multi-branch join - is not itself a join operand). If the designated timestamp column is not
+        // projected there is nothing to expose, exactly as before.
+        if (joinOperand && !aggregation && timestamp != null && nested.getJoinModels().size() == 1) {
+            final int tsDot = Chars.indexOfLastUnquoted(timestamp.token, '.');
+            final CharSequence bareTs = tsDot == -1
+                    ? timestamp.token
+                    : timestamp.token.subSequence(tsDot + 1, timestamp.token.length());
+            for (int i = 0, n = innerCols.size(); i < n; i++) {
+                final QueryColumn qc = innerCols.getQuick(i);
+                if (Chars.equalsIgnoreCase(qc.getAlias(), keepAlias)) {
+                    continue;
+                }
+                final ExpressionNode ast = qc.getAst();
+                if (ast != null && ast.type == LITERAL && matchesColumnName(ast.token, bareTs)) {
+                    filterModel.setTimestamp(nextLiteral(qc.getAlias(), timestamp.position));
+                    filterModel.setExplicitTimestamp(true);
+                    break;
+                }
             }
         }
 
