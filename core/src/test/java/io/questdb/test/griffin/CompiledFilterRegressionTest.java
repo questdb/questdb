@@ -1196,6 +1196,86 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatingDivisionByZeroMatchesJava() throws Exception {
+        // DivDoubleFunctionFactory and DivFloatFunctionFactory fold a non-finite quotient to NaN
+        // ("Numbers.isFinite(d) ? d : Double.NaN"), so the Java filter reads a division by zero as
+        // NULL and orders it against nothing. The native div (divss/divsd in jit/impl/x86.h,
+        // vdivps/vdivpd in jit/impl/avx2.h, fdiv in jit/impl/aarch64.h) propagated a real
+        // +/-Infinity instead, which the ordering opcodes rank like an ordinary extreme - so the
+        // JIT kept rows the Java filter dropped. JIT is on by default (cairo.sql.jit.mode = "on"),
+        // making this a silent wrong result: measured 2 rows on the JIT against 1 on the Java
+        // filter for "d / e > 0.0".
+        //
+        // Equality never diverged - double_cmp_epsilon tests the exponent bits of both operands
+        // and so calls any two non-finite values equal, exactly as Numbers.equals does. Only the
+        // four ordering operators did.
+        //
+        // The table needs 20 rows, not 4, to reach the vectorized backend at BOTH widths. The AVX2
+        // loop step is 256 / (elementBytes * 8) and compiler.cpp skips the SIMD body entirely when
+        // rowCount < step: a 4-row table gives step 8 for a single-size FLOAT predicate, so
+        // "f / g" would run only the scalar tail and vdivps would never execute. Zero divisors sit
+        // at ids 1 and 2 (inside the first f32 vector) and at id 18 (in the scalar tail), so both
+        // loops carry a diverging row at both widths.
+        assertMemoryLeak(() -> {
+            execute("create table dz (id int, d double, e double, f float, g float, i int," +
+                    " l long, k timestamp) timestamp(k) partition by day");
+            execute("""
+                    insert into dz
+                    select x::int,
+                           case when x = 1 then 2.0 when x = 2 then -2.0 when x = 3 then 6.0
+                                when x = 18 then 4.0 end,
+                           case when x in (1, 2, 18) then 0.0 when x = 3 then 3.0 else 1.0 end,
+                           (case when x = 1 then 2.0 when x = 2 then -2.0 when x = 3 then 6.0
+                                 when x = 18 then 4.0 end)::float,
+                           (case when x in (1, 2, 18) then 0.0 when x = 3 then 3.0 else 1.0 end)::float,
+                           case when x in (1, 2, 18) then 0 when x = 3 then 3 else 1 end,
+                           case when x in (1, 2, 18) then 0 when x = 3 then 3 else 1 end,
+                           timestamp_sequence(0, 1_000_000)
+                    from long_sequence(20)
+                    """);
+            // Only id 3 has a finite non-zero quotient; every other row divides by zero or has a
+            // NULL numerator, and both read as NULL on the Java filter.
+            final String onlyThree = "id\n3\n";
+            final String noRows = "id\n";
+            final String allRows = "id\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n";
+
+            // DOUBLE / DOUBLE - vdivpd in the vector body, divsd in the tail and under FORCE_SCALAR.
+            assertJitScalarAndVectorMatchJava("select id from dz where d / e > 0.0", onlyThree);
+            assertJitScalarAndVectorMatchJava("select id from dz where d / e >= 0.0", onlyThree);
+            assertJitScalarAndVectorMatchJava("select id from dz where d / e < 0.0", noRows);
+            assertJitScalarAndVectorMatchJava("select id from dz where d / e <= 0.0", noRows);
+            // A constant zero divisor is the same runtime division - the parser cannot fold it
+            // away because the numerator is a column.
+            assertJitScalarAndVectorMatchJava("select id from dz where d / 0.0 > 0.0", noRows);
+            // FLOAT / FLOAT - a single-size 4-byte predicate, so this is the only shape that
+            // reaches vdivps. It needs the 20-row fixture above to execute at all.
+            assertJitScalarAndVectorMatchJava("select id from dz where f / g > 0.0", onlyThree);
+            assertJitScalarAndVectorMatchJava("select id from dz where f / g >= 0.0", onlyThree);
+            assertJitScalarAndVectorMatchJava("select id from dz where f / g < 0.0", noRows);
+            assertJitScalarAndVectorMatchJava("select id from dz where f / g <= 0.0", noRows);
+            // An INT / LONG divisor converts to floating point before the division, so a zero
+            // divisor lands on the same non-finite quotient rather than on the integer NULL.
+            // These are mixed-size predicates and so run the scalar loop on both JIT modes.
+            assertJitScalarAndVectorMatchJava("select id from dz where d / i > 0.0", onlyThree);
+            assertJitScalarAndVectorMatchJava("select id from dz where d / l > 0.0", onlyThree);
+
+            // Controls: equality already agreed and must keep agreeing. Every NULL quotient is
+            // unequal to 0.0 on both paths, so "!=" keeps the whole table.
+            assertJitScalarAndVectorMatchJava("select id from dz where d / e = 0.0", noRows);
+            assertJitScalarAndVectorMatchJava("select id from dz where d / e != 0.0", allRows);
+            assertJitScalarAndVectorMatchJava("select id from dz where f / g != 0.0", allRows);
+            // Control: a non-zero divisor divides normally and must not be folded to NULL.
+            assertJitScalarAndVectorMatchJava("select id from dz where d / 2.0 > 0.0", "id\n1\n3\n18\n");
+            assertJitScalarAndVectorMatchJava("select id from dz where f / 2.0 > 0.0", "id\n1\n3\n18\n");
+            // Control: multiplication does NOT fold a non-finite result on either path
+            // (MulDoubleFunctionFactory returns the raw product), so overflow must stay +Infinity
+            // on both and keep ordering like an extreme.
+            assertJitScalarAndVectorMatchJava("select id from dz where d * 1e308 * 1e308 > 0.0",
+                    "id\n1\n3\n18\n");
+        });
+    }
+
+    @Test
     public void testGeoHashConstant() throws Exception {
         final String query = "x " +
                 "where geo8 != ##1001 and geo16 != ##100110011001 and geo32 != ##1001100110011001 and geo64 != ##10011001100110011001100110011001";
@@ -2952,6 +3032,127 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonFiniteConstantArithmeticMatchesJava() throws Exception {
+        // FunctionParser folds every constant subtree bottom-up through
+        // DoubleConstant#newInstance, which maps +/-Infinity and NaN onto the NULL
+        // sentinel, so the Java filter compares against NULL. The serializer emitted the
+        // operations instead and let the backend compute them, so the JIT compared against
+        // a real +/-Infinity. double_cmp_epsilon (jit/impl/x86.h) reads both as NULL, but
+        // double_lt/le/gt/ge order an infinity like an ordinary number, so every ordering
+        // operator disagreed: "d <= 1e308 * 10.0" returned the NULL row alone on the Java
+        // filter and EVERY row on the JIT.
+        //
+        // The serializer now declines such a filter, so the Java filter decides it - hence
+        // expectJit is false on the diverging shapes.
+        assertMemoryLeak(() -> {
+            execute("create table nf as (select" +
+                    " cast(x as double) d," +
+                    " cast(x as float) f," +
+                    " timestamp_sequence(0, 1_000_000) k" +
+                    " from long_sequence(3)) timestamp(k)");
+            execute("insert into nf values (null, null, '1970-01-01T00:00:03.000000Z')");
+
+            // Multiplicative overflow. Absolute pin: the NULL row alone, because the Java
+            // filter's bound is NULL and only a NULL row is tolerance-equal to it.
+            assertJitMatchesJava("nf where d <= 1e308 * 10.0", false,
+                    "d\tf\tk\n" +
+                            "null\tnull\t1970-01-01T00:00:03.000000Z\n");
+            // Strict ordering against the same bound keeps nothing at all.
+            assertJitMatchesJava("nf where d < 1e308 * 10.0", false, "d\tf\tk\n");
+            assertJitMatchesJava("nf where d > -1e308 * 10.0", false, "d\tf\tk\n");
+            assertJitMatchesJava("nf where d >= -1e308 * 10.0", false,
+                    "d\tf\tk\n" +
+                            "null\tnull\t1970-01-01T00:00:03.000000Z\n");
+            // Additive overflow and a unary minus over a non-finite subtree reach the same
+            // fold through different operators.
+            assertJitMatchesJava("nf where d <= 1e308 + 1e308", false,
+                    "d\tf\tk\n" +
+                            "null\tnull\t1970-01-01T00:00:03.000000Z\n");
+            assertJitMatchesJava("nf where d >= -1e308 - 1e308", false,
+                    "d\tf\tk\n" +
+                            "null\tnull\t1970-01-01T00:00:03.000000Z\n");
+            assertJitMatchesJava("nf where d >= -(1e308 * 10.0)", false,
+                    "d\tf\tk\n" +
+                            "null\tnull\t1970-01-01T00:00:03.000000Z\n");
+            // A constant division by zero folds the same way.
+            assertJitMatchesJava("nf where 1.0 / 0.0 > d", false, "d\tf\tk\n");
+            // The fold must normalise at EVERY step, not just at the end: the parser turns
+            // 1e308 * 10.0 into NULL before the enclosing division sees it, so the whole
+            // expression is NULL to the Java filter - while raw IEEE gives a finite 0.0 and
+            // the pre-fix JIT selected rows against that instead.
+            assertJitMatchesJava("nf where d <= 1.0 / (1e308 * 10.0)", false,
+                    "d\tf\tk\n" +
+                            "null\tnull\t1970-01-01T00:00:03.000000Z\n");
+            // A non-finite fold anywhere declines the whole filter, not just its conjunct.
+            assertJitMatchesJava("nf where d <= 1e308 * 10.0 and d > -100.0", false, "d\tf\tk\n");
+
+            // Leaf shapes the type classifiers and the numeric parsers disagree about. The guard
+            // is fail-closed on subtree SHAPE, so these decline too. Underscore separators are the
+            // style CLAUDE.md mandates and arithExprType reads them through Numbers.parseInt,
+            // while Numbers.parseDouble rejects them; 'd'/'D' suffixes are accepted by
+            // FunctionParser.createConstant but unknown to floatConstantTypeCode. Both used to
+            // slip past the guard and return every row on the JIT.
+            assertJitMatchesJava("nf where d <= 1_000_000_000 * 1e300", false,
+                    "d\tf\tk\n" +
+                            "null\tnull\t1970-01-01T00:00:03.000000Z\n");
+            assertJitMatchesJava("nf where d < 1_000_000_000 * 1e300", false, "d\tf\tk\n");
+            assertJitMatchesJava("nf where d >= -1_000_000_000 * 1e300", false,
+                    "d\tf\tk\n" +
+                            "null\tnull\t1970-01-01T00:00:03.000000Z\n");
+            assertJitMatchesJava("nf where d <= 1d * 1e308 * 10.0", false,
+                    "d\tf\tk\n" +
+                            "null\tnull\t1970-01-01T00:00:03.000000Z\n");
+            assertJitMatchesJava("nf where d <= 1D * 1e308 * 10.0", false,
+                    "d\tf\tk\n" +
+                            "null\tnull\t1970-01-01T00:00:03.000000Z\n");
+
+            // Controls: a constant subtree that folds finite still compiles and still runs
+            // on the JIT, at both widths and through division.
+            assertJitMatchesJava("nf where d <= 1e10 * 10.0", true,
+                    "d\tf\tk\n" +
+                            "1.0\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "2.0\t2.0\t1970-01-01T00:00:01.000000Z\n" +
+                            "3.0\t3.0\t1970-01-01T00:00:02.000000Z\n");
+            assertJitMatchesJava("nf where d > 4.0 / 2.0", true,
+                    "d\tf\tk\n" +
+                            "3.0\t3.0\t1970-01-01T00:00:02.000000Z\n");
+            assertJitMatchesJava("nf where f <= 1e10 * 10.0", true,
+                    "d\tf\tk\n" +
+                            "1.0\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "2.0\t2.0\t1970-01-01T00:00:01.000000Z\n" +
+                            "3.0\t3.0\t1970-01-01T00:00:02.000000Z\n");
+            // Controls: the same awkward leaf shapes folding FINITE must keep their JIT. Failing
+            // closed on shape alone would have cost the JIT on ordinary filters, since the
+            // underscore separator is the mandated style - parseFoldLeaf walks createConstant's
+            // parser ladder so these fold rather than decline.
+            assertJitMatchesJava("nf where d <= 1_000_000_000 * 1e3", true,
+                    "d\tf\tk\n" +
+                            "1.0\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "2.0\t2.0\t1970-01-01T00:00:01.000000Z\n" +
+                            "3.0\t3.0\t1970-01-01T00:00:02.000000Z\n");
+            assertJitMatchesJava("nf where d <= 1d * 1e3", true,
+                    "d\tf\tk\n" +
+                            "1.0\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "2.0\t2.0\t1970-01-01T00:00:01.000000Z\n" +
+                            "3.0\t3.0\t1970-01-01T00:00:02.000000Z\n");
+            // Controls: an INTEGER constant division by zero keeps its JIT. tryFoldConstantArith0
+            // declines that fold deliberately so the IR carries the division and the native
+            // int32_div/int64_div produce the same NULL sentinel DivInt/DivLong do. Judging it by
+            // float rules would read 1 / 0 as an infinity and decline a filter that already agrees.
+            assertJitMatchesJava("nf where d > 1 / 0", true, "d\tf\tk\n");
+            assertJitMatchesJava("nf where d > 10 / (5 - 5)", true, "d\tf\tk\n");
+            assertJitMatchesJava("nf where d > 1 / 0 + 5", true, "d\tf\tk\n");
+            // Control: an integer constant fold that overflows LONG wraps on both paths and
+            // must NOT be mistaken for a non-finite float fold.
+            assertJitMatchesJava("nf where d > 9223372036854775807 * 2", true,
+                    "d\tf\tk\n" +
+                            "1.0\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "2.0\t2.0\t1970-01-01T00:00:01.000000Z\n" +
+                            "3.0\t3.0\t1970-01-01T00:00:02.000000Z\n");
+        });
+    }
+
+    @Test
     public void testNotInOperatorFloat() throws Exception {
         // Tests NOT IN operator with floats
         final String ddl = "create table x as " +
@@ -3456,6 +3657,44 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         TestUtils.assertEquals("JIT vs Java result mismatch for query: " + query, javaSink, jit);
         if (expected != null) {
             TestUtils.assertEquals("absolute result mismatch for query: " + query, expected, javaSink);
+        }
+    }
+
+    // Runs the query with JIT off, then in FORCE_SCALAR mode, then vectorized, and asserts all
+    // three agree with the expected rows. assertJitMatchesJava exercises the vectorized backend
+    // only, so a divergence living in the scalar backend (jit/impl/x86.h) rather than the
+    // four-lane one (jit/impl/avx2.h) would pass it unnoticed.
+    private void assertJitScalarAndVectorMatchJava(CharSequence query, CharSequence expected) throws SqlException {
+        final int callerJitMode = sqlExecutionContext.getJitMode();
+        try {
+            StringSink javaSink = new StringSink();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            try (RecordCursorFactory factory = select(query)) {
+                Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    CursorPrinter.println(cursor, factory.getMetadata(), javaSink);
+                }
+            }
+            TestUtils.assertEquals("absolute result mismatch for query: " + query, expected, javaSink);
+
+            final int[] jitModes = {SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED};
+            for (int i = 0; i < jitModes.length; i++) {
+                final StringSink jit = new StringSink();
+                sqlExecutionContext.setJitMode(jitModes[i]);
+                try (RecordCursorFactory factory = select(query)) {
+                    Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        CursorPrinter.println(cursor, factory.getMetadata(), jit);
+                    }
+                }
+                TestUtils.assertEquals(
+                        "JIT vs Java result mismatch [scalarMode=" + (i == 0) + "] for query: " + query,
+                        javaSink,
+                        jit
+                );
+            }
+        } finally {
+            sqlExecutionContext.setJitMode(callerJitMode);
         }
     }
 

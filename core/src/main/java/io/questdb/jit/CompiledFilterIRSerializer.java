@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
+import io.questdb.std.DoubleList;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.IntStack;
@@ -155,6 +156,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // fold; positive values are one-based indexes into constantArithFoldValues.
     private final ObjIntHashMap<ExpressionNode> constantArithFoldCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     private final LongList constantArithFoldValues = new LongList();
+    // Memoizes tryFoldConstantArithFloat() for the current predicate. 0 marks a subtree that is
+    // not a pure-constant arithmetic one; positive values are one-based indexes into
+    // constantFloatFoldValues. Without it descend() re-walks each subtree at every node it
+    // contains, which is quadratic in the length of a constant chain. See arithExprTypeCache.
+    private final ObjIntHashMap<ExpressionNode> constantFloatFoldCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    private final DoubleList constantFloatFoldValues = new DoubleList();
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
@@ -244,6 +251,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         arithExprTypeCache.clear();
         constantArithFoldCache.clear();
         constantArithFoldValues.clear();
+        constantFloatFoldCache.clear();
+        constantFloatFoldValues.clear();
         genuineArithTypeCache.clear();
         containsFloatCache.clear();
         containsNarrowIntCache.clear();
@@ -310,6 +319,46 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
             } catch (NumericException ignored) {
                 // Not a pure-constant integer arithmetic subtree; descend normally.
+            }
+        }
+
+        // Constant FLOAT/DOUBLE arithmetic subtree that is not finite. FunctionParser folds
+        // every constant subtree bottom-up through functionToConstant0, whose FLOAT/DOUBLE
+        // arms call FloatConstant#newInstance / DoubleConstant#newInstance - and both map
+        // +/-Infinity and NaN onto the NULL sentinel. So the Java filter compares against
+        // NULL. The IR carries the operations instead and the backend computes them, which
+        // leaves the JIT comparing against a real infinity. The equality opcodes agree
+        // either way (double_cmp_epsilon in jit/impl/x86.h calls any two non-finite values
+        // equal, exactly as Numbers#equals does), but double_lt/le/gt/ge order an infinity
+        // like an ordinary number while the Java filter orders NULL against nothing - so
+        // every ordering operator selects a different row set. Decline and let the Java
+        // filter evaluate the predicate.
+        //
+        // An INTEGER-typed subtree is left alone: the block above already mirrors the Java
+        // filter's getInt()/getLong() recursion exactly, including its deliberate refusal to
+        // fold a zero divisor (tryFoldConstantArith0) so that the native int32_div/int64_div
+        // produces the same NULL sentinel DivInt/DivLong do. Judging "10 / 0" by float rules
+        // would read it as an infinity and needlessly decline a filter that already agrees.
+        //
+        // Anything else is judged by the fold, and the fold is fail-CLOSED, because whether a
+        // subtree even classifies as floating point depends on three token classifiers agreeing
+        // - floatConstantTypeCode/longConstantTypeCode inside arithExprType, the numeric parsers
+        // inside the fold, and createConstant inside the parser - and they do not: parseInt
+        // takes the underscore separator CLAUDE.md mandates while parseDouble rejects it, and
+        // floatConstantTypeCode does not know the 'd' suffix createConstant accepts. A leaf no
+        // classifier recognises leaves the node UNDEFINED rather than F4/F8, so UNDEFINED has to
+        // decline too: there is no evidence the backend would land on the value the parser folds.
+        if (predicateContext.isActive() && node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
+            final int arithType = arithExprType(node);
+            if (arithType != I1_TYPE && arithType != I2_TYPE && arithType != I4_TYPE && arithType != I8_TYPE) {
+                try {
+                    if (!Numbers.isFinite(tryFoldConstantArithFloat(node))) {
+                        throw SqlException.position(node.position)
+                                .put("non-finite constant arithmetic: ").put(node.token);
+                    }
+                } catch (NumericException notConstant) {
+                    // Not a pure-constant arithmetic subtree at all; descend normally.
+                }
             }
         }
 
@@ -961,6 +1010,56 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         } catch (NumericException ignored) {
         }
         return UNDEFINED_CODE;
+    }
+
+    /**
+     * Narrows a folded intermediate to the width the Java filter folds it at and maps a
+     * non-finite result onto NaN, mirroring {@code FloatConstant#newInstance} /
+     * {@code DoubleConstant#newInstance}, which both hand back the NULL constant for
+     * anything {@link Numbers#isFinite(double)} rejects.
+     */
+    private static double normalizeConstantFold(double value, boolean isFloat) {
+        final double v = isFloat ? (float) value : value;
+        return Numbers.isFinite(v) ? v : Double.NaN;
+    }
+
+    /**
+     * Reads a constant leaf of a folded arithmetic subtree as a double, mirroring the ladder
+     * {@code FunctionParser#createConstant} walks: {@code null}/{@code nan} give the NULL
+     * constant, then {@code parseInt}, {@code parseLong}, {@code parseDouble}, {@code parseFloat}
+     * in that order. Going through the same ladder rather than {@code parseDouble} alone is what
+     * lets the fold read the shapes the type classifiers admit but a single parser does not -
+     * {@code parseInt} takes the underscore thousands separator that {@code parseDouble} rejects,
+     * and {@code parseDouble} takes the {@code 'd'} suffix. Throws {@link NumericException} for
+     * every remaining shape (quoted literals, {@code true}/{@code false}, geo hashes, type
+     * constants), which the caller turns into a declined filter.
+     */
+    private static double parseFoldLeaf(CharSequence token) throws NumericException {
+        if (SqlKeywords.isNullKeyword(token) || SqlKeywords.isNanKeyword(token)) {
+            return Double.NaN;
+        }
+        // Skip the integer rungs for a token that is lexically floating point. They could only
+        // throw, and NumericException#instance() allocates and fills in a stack trace under -ea,
+        // which the surefire argLine enables - so two doomed parses per FLOAT/DOUBLE leaf are not
+        // free on the compile path.
+        if (floatConstantTypeCode(token) == UNDEFINED_CODE) {
+            try {
+                return Numbers.parseInt(token);
+            } catch (NumericException notInt) {
+                // fall through to the next width, as createConstant does
+            }
+            try {
+                return Numbers.parseLong(token);
+            } catch (NumericException notLong) {
+                // fall through
+            }
+        }
+        try {
+            return Numbers.parseDouble(token);
+        } catch (NumericException notDouble) {
+            // fall through
+        }
+        return Numbers.parseFloat(token);
     }
 
     /**
@@ -3203,6 +3302,92 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return left / right;
         }
         throw NumericException.INSTANCE;
+    }
+
+    /**
+     * FLOAT/DOUBLE counterpart of {@link #tryFoldConstantArith}: evaluates a pure-constant
+     * floating point arithmetic subtree the way {@code FunctionParser} folds it, and throws
+     * {@link NumericException} if any descendant is non-constant, is not a numeric literal,
+     * or the subtree uses an operator other than {@code + - * /}. Callers use it only to
+     * find out whether the fold is finite, so a declined fold is always safe: it costs a
+     * pass over a subtree the caller then serializes as IR.
+     * <p>
+     * The NaN normalisation runs after EVERY operation rather than once at the end because
+     * that is what the function parser does - it folds bottom-up and runs each intermediate
+     * through {@code DoubleConstant#newInstance}. {@code 1e308 * 10.0} is therefore already
+     * NULL by the time an enclosing operator sees it, which makes
+     * {@code 1.0 / (1e308 * 10.0)} NULL as well, where raw IEEE hands back a perfectly
+     * finite {@code 0.0}. NaN is absorbing under all four operators, so a finite result
+     * proves every intermediate was finite too - exactly the case where the backend
+     * computing the subtree agrees with the Java filter folding it.
+     *
+     * @param isFloat fold at FLOAT width, mirroring the {@code FloatConstant} arm of
+     *                {@code functionToConstant0}. Rounding each double result back to float
+     *                is exact for {@code + - * /}: double carries more than twice the
+     *                significand bits a float needs, so no double rounding error survives.
+     */
+    private double tryFoldConstantArithFloat(ExpressionNode node) throws NumericException {
+        if (node == null) {
+            throw NumericException.INSTANCE;
+        }
+        final int cached = constantFloatFoldCache.get(node);
+        if (cached == 0) {
+            throw NumericException.INSTANCE;
+        }
+        if (cached != NOT_CACHED) {
+            return constantFloatFoldValues.getQuick(cached - 1);
+        }
+        try {
+            final double value = tryFoldConstantArithFloat0(node);
+            constantFloatFoldValues.add(value);
+            constantFloatFoldCache.put(node, constantFloatFoldValues.size());
+            return value;
+        } catch (NumericException e) {
+            constantFloatFoldCache.put(node, 0);
+            throw e;
+        }
+    }
+
+    private double tryFoldConstantArithFloat0(ExpressionNode node) throws NumericException {
+        // Each node narrows at its OWN width, which is what the parser does: it builds a
+        // FloatConstant for an all-FLOAT operation and a DoubleConstant as soon as one operand is
+        // DOUBLE, so (3.4e38f + 3.4e38f) * 1.0 overflows to NULL inside the float add even though
+        // the enclosing multiply is evaluated at double width.
+        final boolean isFloat = arithExprType(node) == F4_TYPE;
+        if (node.type == ExpressionNode.CONSTANT) {
+            // A leaf no parser accepts (a quoted literal, true/false, a geo hash, a type
+            // constant) folds to NULL rather than throwing: the subtree IS a constant one, so
+            // declining the filter is the honest answer - see descend().
+            double leaf;
+            try {
+                leaf = parseFoldLeaf(node.token);
+            } catch (NumericException notNumeric) {
+                leaf = Double.NaN;
+            }
+            return normalizeConstantFold(leaf, isFloat);
+        }
+        if (node.type != ExpressionNode.OPERATION) {
+            throw NumericException.INSTANCE;
+        }
+        // Unary minus: parser builds OPERATION "-" with rhs only.
+        if (Chars.equals(node.token, '-') && node.lhs == null) {
+            return normalizeConstantFold(-tryFoldConstantArithFloat(node.rhs), isFloat);
+        }
+        if (!isArithmeticOperation(node)) {
+            throw NumericException.INSTANCE;
+        }
+        final double left = tryFoldConstantArithFloat(node.lhs);
+        final double right = tryFoldConstantArithFloat(node.rhs);
+        if (Chars.equals(node.token, '+')) {
+            return normalizeConstantFold(left + right, isFloat);
+        }
+        if (Chars.equals(node.token, '-')) {
+            return normalizeConstantFold(left - right, isFloat);
+        }
+        if (Chars.equals(node.token, '*')) {
+            return normalizeConstantFold(left * right, isFloat);
+        }
+        return normalizeConstantFold(left / right, isFloat);
     }
 
     /**

@@ -647,6 +647,12 @@ public final class ParquetRowGroupFilter {
      * and declines as well.
      */
     private static double integralBound(double d, int opType) {
+        if (!isPushableFloatingBound(d)) {
+            // The tolerance widening below turns an infinite bound into a FINITE one
+            // (toleranceBound(+Inf, GE) is Math.nextDown(+Inf - 1e-10), i.e. Double.MAX_VALUE),
+            // which then reads as an ordinary out-of-range bound and prunes every row group.
+            return Double.NaN;
+        }
         return switch (opType) {
             case PushdownFilterExtractor.OP_LT, PushdownFilterExtractor.OP_GE -> Math.ceil(toleranceBound(d, opType));
             case PushdownFilterExtractor.OP_LE, PushdownFilterExtractor.OP_GT -> Math.floor(toleranceBound(d, opType));
@@ -661,10 +667,36 @@ public final class ParquetRowGroupFilter {
     // place d outside [min, max]) nor the bloom filter (which hashes the exact bits of d) can see
     // it - so only a certified bound may push as an exact equality. A NULL (NaN) bound is equal to
     // NULL rows alone, which the native side decides from the null count rather than the stats, so
-    // it certifies as exact.
+    // it certifies as exact. That reasoning covers NaN only, hence the isNaN test rather than
+    // Numbers.isNull: the latter also calls +/-Infinity NULL, and an infinite bound is pushed as a
+    // real value against the min/max stats - see isPushableFloatingBound.
     private static boolean isExactEqDouble(double d) {
-        return Numbers.isNull(d)
+        return Double.isNaN(d)
                 || (!Numbers.equals(Math.nextUp(d), d) && !Numbers.equals(Math.nextDown(d), d));
+    }
+
+    /**
+     * Whether row group pruning may push a FLOAT/DOUBLE bound at all.
+     * <p>
+     * {@link Numbers#isNull(double)} is an exponent-bits test, so it calls {@code +/-Infinity} NULL
+     * exactly as it calls NaN NULL, and {@link Numbers#equals(double, double)} therefore calls an
+     * infinite bound EQUAL to a NULL row. Every inclusive and equality form of the row filter reads
+     * {@code eq || ...} (see {@link #isRowKept} and {@code LtDoubleVVFunctionFactory#getBool}), so
+     * {@code c6 >= +Infinity} keeps every NULL row - while NULL rows never appear in a row group's
+     * min/max statistics, so no pushed bound can preserve them. Pruning runs before the row filter
+     * and nothing downstream can undo it, so an infinite bound has to decline outright.
+     * <p>
+     * A NaN bound is a genuine SQL NULL and keeps its own handling: the native side decides it from
+     * the row group's null count rather than from the stats.
+     * <p>
+     * Only a runtime constant delivers an infinity here. A constant expression such as
+     * {@code 1e308 * 10.0} folds through {@code DoubleConstant#newInstance} to NULL long before
+     * pushdown sees it, but {@code PushdownFilterExtractor} accepts any
+     * {@code isConstantOrRuntimeConstant()} function and reads it at scan time, and the PGWire
+     * DOUBLE binder passes raw IEEE bits straight through {@code Double.longBitsToDouble}.
+     */
+    private static boolean isPushableFloatingBound(double d) {
+        return !Double.isInfinite(d);
     }
 
     // Whether ANY row-level filter keeps a row holding value l, at the width and with the tolerance
@@ -735,6 +767,10 @@ public final class ParquetRowGroupFilter {
         double d = Double.NaN;
         for (int i = 0; i < valueCount; i++) {
             d = valueFunctions.getQuick(i).getDouble(null);
+            if (!isPushableFloatingBound(d)) {
+                // The caller rolls filterValues back to the offset it captured before this call.
+                return -1;
+            }
             filterValues.putDouble(d);
             if (!isExactEqDouble(d)) {
                 isExact = false;
@@ -810,6 +846,9 @@ public final class ParquetRowGroupFilter {
     // decline. Away from zero it certifies at once. Equality does not come through here - putDoubleEq
     // handles it, and it is the only op that can rewrite the whole condition.
     private static boolean tryPutDoubleFromDouble(MemoryCARWImpl filterValues, double d, int opType) {
+        if (!isPushableFloatingBound(d)) {
+            return false;
+        }
         final boolean isStepUp;  // the direction that makes the bound SAFER, not tighter
         switch (opType) {
             case PushdownFilterExtractor.OP_LT:
@@ -882,6 +921,9 @@ public final class ParquetRowGroupFilter {
     // against everything, so nothing is kept and the bound certifies at once; the native side
     // rejects a NaN bound anyway.
     private static boolean tryPutFloatFromDouble(MemoryCARWImpl filterValues, double d, int opType) {
+        if (!isPushableFloatingBound(d)) {
+            return false;
+        }
         final boolean isRoundUp;  // "<" / ">=" pivot on d - tolerance, "<=" / ">" on d + tolerance
         final boolean isStepUp;   // the direction that makes the bound SAFER, not tighter
         switch (opType) {

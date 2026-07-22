@@ -2927,13 +2927,65 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // parquet min/max stats, so pruning must decline any bound for which the filter can keep a
         // NULL row - otherwise it drops rows the filter keeps.
         //
-        // This is a forward guard, not a regression test: the certification loop already declines
-        // this bound (measured: 0 row groups skipped, against 1 for the finite control c6 >= 8.0),
-        // so it passes today. It exists because the pushdown simulation this arm was verified with
-        // covered finite bounds only.
+        // A CONSTANT bound cannot carry an infinity here - FunctionParser folds 1e308 * 10.0 through
+        // DoubleConstant#newInstance, which maps every non-finite value onto NULL, so this arm only
+        // ever sees NaN and the certification loop declines it. It stays as a forward guard for the
+        // fold. testNonFiniteBindVariableBoundPruningMatchesNative covers the bound that IS
+        // reachable as a genuine infinity.
         assertMemoryLeak(() -> {
             createNullMixedPartialParquet("DOUBLE", "6.0", "7.0", "2.0", "9.0");
             assertNativeMatchesPartialParquet("c6 >= 1e308 * 10.0", "c6\nnull\nnull\n");
+        });
+    }
+
+    @Test
+    public void testNonFiniteBindVariableBoundPruningMatchesNative() throws Exception {
+        // PushdownFilterExtractor accepts any isConstantOrRuntimeConstant() bound and reads it at
+        // scan time, and nothing between the PGWire binder (Double.longBitsToDouble of the raw
+        // wire bits) and the pruner normalises it - so a bind variable delivers a genuine
+        // +/-Infinity where a constant expression could only deliver NULL.
+        //
+        // Such a bound is tolerance-equal to NULL (Numbers.isNull is an exponent-bits test), so the
+        // filter's inclusive and equality forms keep every NULL row, while NULL rows never appear in
+        // a row group's min/max statistics. Pruning used to push it anyway: toleranceBound(+Inf, GE)
+        // is Math.nextDown(+Inf - 1e-10) = Double.MAX_VALUE, a FINITE bound that certifies and then
+        // prunes every group whose max is finite. The INT arm reached the same place through
+        // integralBound and the out-of-range rewrite, which turns into "> INT_MAX" and drops every
+        // group. Measured before the fix: the parquet table returned one NULL row where the native
+        // table returned two.
+        // SHORT and BYTE are excluded: they have no NULL sentinel, so the fixture holds no NULL row
+        // for pruning to lose.
+        assertMemoryLeak(() -> {
+            for (String columnType : new String[]{"DOUBLE", "FLOAT", "INT", "LONG"}) {
+                execute("DROP TABLE IF EXISTS tn");
+                execute("DROP TABLE IF EXISTS tp");
+                createNullMixedPartialParquet(columnType, "6", "7", "2", "9");
+                final String suffix = "DOUBLE".equals(columnType) || "FLOAT".equals(columnType) ? ".0" : "";
+                // Fixture in ts order: null, 6, 7 (parquet partition), null, 2, 9 (native partition).
+                final String allRows = "c6\nnull\n6" + suffix + "\n7" + suffix + "\nnull\n2" + suffix + "\n9" + suffix + "\n";
+                final String finiteRows = "c6\n6" + suffix + "\n7" + suffix + "\n2" + suffix + "\n9" + suffix + "\n";
+                final String nullRows = "c6\nnull\nnull\n";
+                final String noRows = "c6\n";
+                for (double bound : new double[]{Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+                    final boolean isPositive = bound == Double.POSITIVE_INFINITY;
+                    // With an infinite bound, Numbers.equals(row, bound) reduces to "the row is
+                    // NULL", so "eq || ..." keeps the NULLs and "!eq && ..." drops them, while the
+                    // raw ordering half orders the infinity as an ordinary extreme.
+                    assertBindVarBoundMatchesNative(">=", bound, isPositive ? nullRows : allRows);
+                    assertBindVarBoundMatchesNative("<=", bound, isPositive ? allRows : nullRows);
+                    assertBindVarBoundMatchesNative(">", bound, isPositive ? noRows : finiteRows);
+                    assertBindVarBoundMatchesNative("<", bound, isPositive ? finiteRows : noRows);
+                    assertBindVarBoundMatchesNative("=", bound, nullRows);
+                }
+                // Control: the decline must be narrow. A finite bind-variable bound still prunes,
+                // so a degenerate isPushableFloatingBound that rejected everything would fail here
+                // rather than pass the parity sweep above. The parquet group holds {null, 6, 7}, so
+                // ">= 8" clears it and only the native 9 matches.
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                assertBindVarBoundMatchesNative(">=", 8.0, "c6\n9" + suffix + "\n");
+                Assert.assertTrue("finite bind-variable bound must still prune for " + columnType,
+                        ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            }
         });
     }
 
@@ -5241,6 +5293,22 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         execute("INSERT INTO tn" + rows);
         execute("INSERT INTO tp" + rows);
         execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+    }
+
+    // Binds :b to bound and asserts the all-native and the partially-parquet table return the SAME
+    // rows. Pruning may only remove row groups that hold nothing the row filter keeps, so any
+    // difference between the two tables is a pruning bug.
+    private void assertBindVarBoundMatchesNative(String op, double bound, String expected) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setDouble("b", bound);
+        assertQuery("SELECT c6 FROM tn WHERE c6 " + op + " :b ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
+        bindVariableService.clear();
+        bindVariableService.setDouble("b", bound);
+        assertQuery("SELECT c6 FROM tp WHERE c6 " + op + " :b ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
     }
 
     private void assertNativeMatchesPartialParquet(String whereClause, String expected) throws Exception {
