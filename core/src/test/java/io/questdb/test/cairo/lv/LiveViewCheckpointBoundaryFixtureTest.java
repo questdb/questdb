@@ -221,53 +221,22 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
         // 10s apart and the out-of-order row lands on 30s, so changeMaxTs + W is
         // 60s - a timestamp the history already holds. Off that alignment the
         // bound could be short by one tie and no row would sit there to notice.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        final String viewSql = "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
-                "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s FROM base";
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
+        assertRangeTieAtHighBoundIsRepaired("RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW");
+    }
 
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                for (int commit = 1; commit <= HISTORY_COMMITS; commit++) {
-                    setCurrentMicros(commit * 200_000L);
-                    final String rowTs = secondsTs(commit * 10);
-                    execute("INSERT INTO base (ts, sym, x) VALUES " +
-                            "('" + rowTs + "', 'a', " + commit + "), " +
-                            "('" + rowTs + "', 'b', " + (commit + 100) + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                }
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                assertViewMatchesRecompute(viewSql);
-
-                // A second row on 30s, a timestamp the history already sealed a
-                // boundary at, so changeMaxTs is 30s and the tie lands on 60s.
-                setCurrentMicros((HISTORY_COMMITS + 1) * 200_000L);
-                execute("INSERT INTO base (ts, sym, x) VALUES " +
-                        "('" + secondsTs(30) + "', 'a', 7), " +
-                        "('" + secondsTs(30) + "', 'b', 107)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                Assert.assertEquals(
-                        "the replacement must re-emit [30s, 60s] - four rows on 30s and two on each of 40s, 50s, 60s",
-                        10,
-                        lv.getO3BoundaryReplayRows()
-                );
-                // The row on the tie is the one a short bound would strand, and
-                // the recompute is what says whether it was corrected: the sum
-                // there is 25 with the change and 18 without it.
-                assertViewMatchesRecompute(viewSql);
-            }
-
-            execute("DROP LIVE VIEW lv");
-        });
+    @Test
+    public void testRangeDependencyAdmitsTheCompleteTieUnderALaggingHighBound() throws Exception {
+        // The tie sits at the same timestamp under a lagging high bound, which is what
+        // keeps H a function of W alone. Output at t reads [t - W, t - V], so a base row
+        // at m joins the frame of output in [m + V, m + W] - the far end is m + W however
+        // large V is, and only the near end moves. The row on 60s therefore still reaches
+        // the change on 30s, through a frame spanning [30s, 50s].
+        //
+        // The lag does change which rows below the tie move: 40s reads [10s, 30s] and is
+        // corrected, while 30s itself reads [0s, 20s] and is re-emitted unchanged. The
+        // replacement is timestamp-global, so it re-emits both either way, and the
+        // recompute oracle is what separates a re-emitted row from a corrected one.
+        assertRangeTieAtHighBoundIsRepaired("RANGE BETWEEN '30' SECOND PRECEDING AND '10' SECOND PRECEDING");
     }
 
     @Test
@@ -283,6 +252,25 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
                 "PARTITION BY sym ORDER BY ts RANGE BETWEEN '" + LOCALIZATION_RANGE_WIDTH_SECONDS
                         + "' SECOND PRECEDING AND CURRENT ROW",
                 false
+        );
+        Assert.assertEquals("the rebuild must read exactly [R - W, changeMaxTs + W]", 14, cost.scannedRows);
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
+    }
+
+    @Test
+    public void testRangeDependencyBoundsALaggingHighBoundRebuild() throws Exception {
+        // The same frame, ending 10s below its own row rather than at it. Both bounds are
+        // functions of W and nothing else, so both land where the current-row case puts
+        // them and the rebuild costs the same 14 reads and 8 re-emissions.
+        //
+        // The lag is what the recompute oracle is for here. It shrinks the frame - output
+        // at t reads [t - 30s, t - 10s], a subset of [t - 30s, t] - so the bounds are looser
+        // than this shape needs, and a loose bound is invisible in the counters. What the
+        // oracle checks is the direction of the looseness: a bound that is too wide costs
+        // reads, one that is too narrow strands a row carrying its pre-change value.
+        final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
+                "PARTITION BY sym ORDER BY ts RANGE BETWEEN '" + LOCALIZATION_RANGE_WIDTH_SECONDS
+                        + "' SECOND PRECEDING AND '10' SECOND PRECEDING"
         );
         Assert.assertEquals("the rebuild must read exactly [R - W, changeMaxTs + W]", 14, cost.scannedRows);
         Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
@@ -459,6 +447,22 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
         Assert.assertEquals("the localized rebuild must win on price", 0, cost.resumedRows);
         Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
         Assert.assertEquals("the rebuild re-emits only what the WHERE admits", 4, cost.emittedRows);
+    }
+
+    @Test
+    public void testRowsDependencyBoundsALaggingHighBoundRebuild() throws Exception {
+        // The ROWS side of the same widening, over a frame ending one row below its own.
+        // The discovery counts predecessors rather than frame extent: the frame at a key's
+        // i-th row above the change spans [i - 3, i - 1] rows back from itself, so it holds
+        // the changed row while 1 <= i <= 3 and converges from the fourth on - the same H
+        // the current-row frame discovers, off the same Nmax. The floor answers the same
+        // way, so the discovery and the rebuild cost what the current-row case's do.
+        final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
+                "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING"
+        );
+        Assert.assertEquals("the localized rebuild must win on price", 0, cost.resumedRows);
+        Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
     }
 
     @Test
@@ -688,6 +692,62 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
                 tailRows, cost.resumedRows);
         Assert.assertEquals("and it reads exactly the tail it re-emits", tailRows, cost.scannedRows);
         Assert.assertEquals("the boundary rebuild must not run at all", 0, cost.emittedRows);
+    }
+
+    /**
+     * Drives the tie fixture over {@code windowFrame}: a history of one commit per 10
+     * seconds, then a second row on 30s, so {@code changeMaxTs + W} lands on 60s - a
+     * timestamp the history already holds. What it pins is that the row on the tie is
+     * inside the replacement and carries the corrected value afterwards.
+     */
+    private void assertRangeTieAtHighBoundIsRepaired(String windowFrame) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final String viewSql = "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                windowFrame + ") AS s FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 1; commit <= HISTORY_COMMITS; commit++) {
+                    setCurrentMicros(commit * 200_000L);
+                    final String rowTs = secondsTs(commit * 10);
+                    execute("INSERT INTO base (ts, sym, x) VALUES " +
+                            "('" + rowTs + "', 'a', " + commit + "), " +
+                            "('" + rowTs + "', 'b', " + (commit + 100) + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                assertViewMatchesRecompute(viewSql);
+
+                // A second row on 30s, a timestamp the history already sealed a
+                // boundary at, so changeMaxTs is 30s and the tie lands on 60s.
+                setCurrentMicros((HISTORY_COMMITS + 1) * 200_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('" + secondsTs(30) + "', 'a', 7), " +
+                        "('" + secondsTs(30) + "', 'b', 107)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(
+                        "the replacement must re-emit [30s, 60s] - four rows on 30s and two on each of 40s, 50s, 60s",
+                        10,
+                        lv.getO3BoundaryReplayRows()
+                );
+                // The row on the tie is the one a short bound would strand, and
+                // the recompute is what says whether it was corrected - the sum
+                // there differs by the 7 the change carries.
+                assertViewMatchesRecompute(viewSql);
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
     }
 
     // The live view must equal the same window recomputed directly over the base table. The

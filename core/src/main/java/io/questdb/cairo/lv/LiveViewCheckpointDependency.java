@@ -113,6 +113,10 @@ public final class LiveViewCheckpointDependency {
      * column's native units, for a bounded RANGE descriptor. The compiler has
      * already normalized any time unit the user wrote into those units, so a
      * caller can subtract this from a timestamp directly.
+     * <p>
+     * The width runs from the current row, not from where the frame ends, so a frame ending
+     * {@code V} below its own row reports the same {@code W} as the one ending at it -
+     * {@link #isFiniteRange()} states why that stays a bound.
      */
     public long getRangeFrameWidth() {
         if (!isFiniteRange()) {
@@ -128,6 +132,10 @@ public final class LiveViewCheckpointDependency {
      * {@code Nmax} rows of the <b>same partition key</b>, not {@code Nmax} rows of
      * the cursor. That is why neither bound follows from timestamp arithmetic and
      * both have to be discovered by scanning.
+     * <p>
+     * The count runs from the current row, not from where the frame ends, so a frame ending
+     * {@code M} rows below its own row reports the same {@code Nmax} as the one ending at it -
+     * {@link #isFiniteRows()} states why that stays a bound.
      */
     public long getRowsPrecedingCount() {
         if (!isFiniteRows()) {
@@ -163,30 +171,60 @@ public final class LiveViewCheckpointDependency {
     }
 
     /**
-     * Returns true when this descriptor is a {@code RANGE W PRECEDING ... CURRENT ROW}
-     * frame with a finite width over a timestamp column - the only RANGE shape whose
+     * Returns true when this descriptor is a {@code RANGE W PRECEDING} frame of finite width
+     * over a timestamp column, ending at or below the current row - the RANGE shapes whose
      * forward influence boundary {@code H} is derivable by timestamp arithmetic.
+     * <p>
+     * A frame ending {@code V} below its own row is admitted on the same width. Output at
+     * {@code t} then reads base rows in {@code [t - W, t - V]}, a subset of the
+     * {@code [t - W, t]} the same-width frame ending at the current row reads, so the
+     * look-behind alone keeps bounding the repair on both sides: a replay from
+     * {@code R - W} feeds every row the frame admits, and a base row at {@code m} joins the
+     * frame of output in {@code [m + V, m + W]} only, so nothing at or above
+     * {@code changeMaxTs + W + 1} can have moved. Both bounds are looser than a lagging
+     * frame needs, which widens the repair interval and never narrows it.
+     * <p>
+     * Only the high bound's sign is read here. The magnitude the two bounds are functions
+     * of is the look-behind, which {@link #getRangeFrameWidth()} answers. The one high bound
+     * this rejects on its magnitude is {@code Long.MIN_VALUE}, the encoding an unbounded
+     * look-behind uses - a bound that reaches it names no finite lag, and negating a literal
+     * {@code Long.MAX_VALUE PRECEDING} is what gets there.
      */
     public boolean isFiniteRange() {
         return kind == DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW
                 && frameLo != Long.MIN_VALUE
                 && frameLo <= 0
-                && frameHi == 0
+                && frameHi != Long.MIN_VALUE
+                && frameHi <= 0
                 && ColumnType.isTimestamp(timestampType);
     }
 
     /**
-     * Returns true when this descriptor is a {@code ROWS N PRECEDING ... CURRENT ROW}
-     * frame with a finite {@code N} - the only ROWS shape whose bounds a repair can
-     * discover at all. Both bounds are data-dependent: a change of {@code N} rows
+     * Returns true when this descriptor is a {@code ROWS N PRECEDING} frame with a finite
+     * {@code N}, ending at or below the current row - the ROWS shapes whose bounds a repair
+     * can discover at all. Both bounds are data-dependent: a change of {@code N} rows
      * spans however much time the key's own rows happen to span, so the planner
      * counts rows per key instead of adding a width to a timestamp.
+     * <p>
+     * A frame ending {@code M} rows below its own row is admitted on the same count,
+     * because it leaves that discovery where it stands. Let {@code c} be a key's last row at
+     * or below the change and {@code f_i} its {@code i}-th row above: the frame at
+     * {@code f_i} spans {@code [f_i - N, f_i - M]}, so it holds {@code c} exactly while
+     * {@code M <= i <= N}. The forward scan converges on the upper end of that interval,
+     * which does not move; the lower end only removes rows from the affected set. The
+     * backward walk follows the same subset argument - computing a row needs its {@code N}-th
+     * through {@code M}-th predecessors, which the {@code N} predecessors it counts contain.
+     * <p>
+     * Only the high bound's sign is read here. The magnitude both scans count against is the
+     * look-behind, which {@link #getRowsPrecedingCount()} answers, and {@code Long.MIN_VALUE}
+     * is turned away for the reason {@link #isFiniteRange()} gives.
      */
     public boolean isFiniteRows() {
         return kind == DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW
                 && frameLo != Long.MIN_VALUE
                 && frameLo <= 0
-                && frameHi == 0
+                && frameHi != Long.MIN_VALUE
+                && frameHi <= 0
                 && ColumnType.isTimestamp(timestampType);
     }
 

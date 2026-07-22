@@ -129,11 +129,13 @@ public class LiveViewValidationTest extends AbstractCairoTest {
                     + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
             execute("DROP LIVE VIEW lv");
 
-            // The RANGE shapes this phase does not plan against must keep working, as long
-            // as their frame starts somewhere and is ordered by the designated timestamp.
-            // No repair plan claims them yet, but that is a reason to leave them alone -
-            // not to stop accepting them. An unbounded start is the one exception, and
-            // testRejectUnboundedFrameStart owns it.
+            // A lagging high bound must keep working, as long as its frame starts somewhere
+            // and is ordered by the designated timestamp. It reads a subset of what the
+            // same-width frame ending at the current row reads, so the same gate admits it
+            // and the width alone still bounds its repair. An unbounded start is the one
+            // exception, and testRejectUnboundedFrameStart owns it. Whether a plan follows
+            // is then the function's own frame-local-state report, which
+            // LiveViewCheckpointFunctionCompilerTest owns.
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
                     + "SELECT ts, sym, last_value(x) OVER w AS a FROM base "
                     + "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING)");

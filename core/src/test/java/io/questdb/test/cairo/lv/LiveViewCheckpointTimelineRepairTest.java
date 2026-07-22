@@ -384,6 +384,74 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testLaggingRangeFrameSplicesOnTheLookBehindAlone() throws Exception {
+        // The same splice as testLocalizedO3ReplaySplicesTheTimelineInPlace, over a frame
+        // ending 10s below its own row. Both bounds are functions of W and nothing else, so
+        // every count below is the one that test measures on the same W: the scan reads the
+        // same 6 rows and the rebuild re-emits the same 4. The lag only removes rows from
+        // the affected set - output at 30s is re-emitted with the value it already had,
+        // because its frame [0s, 20s] never reached the change at 25s.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                            "SELECT ts, sym, sum(x) OVER (" +
+                            "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND '10' SECOND PRECEDING" +
+                            ") s FROM base"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+
+                appendAndRefresh(job, 25, 100);
+
+                Assert.assertEquals("no anchor survives below the change", 0, instance.getO3ResumeReplayRows());
+                Assert.assertEquals("the rebuild must stop at H", 6, instance.getO3ReplayScanRows());
+                Assert.assertEquals("the rebuild must re-emit [R, H) only", 4, instance.getO3BoundaryReplayRows());
+                Assert.assertEquals(
+                        "a spliced timeline keeps every logical entry it had",
+                        HISTORY_COMMITS,
+                        entryCount(instance)
+                );
+                Assert.assertEquals(generationBefore + 1, generation(instance));
+
+                final LongList after = snapshotTimeline(instance);
+                // Prefix (10s, 20s): below the correction floor, so nothing about them moved.
+                assertSameRoot(before, after, 0);
+                assertSameRoot(before, after, 1);
+                // Repaired interval (30s, 40s, 50s), converged suffix (60s) reused.
+                assertNewRoot(before, after, 2);
+                assertNewRoot(before, after, 3);
+                assertNewRoot(before, after, 4);
+                assertSameRoot(before, after, 5);
+            }
+            assertNoRefreshFaults("lv");
+
+            // The oracle: 30s reads [0s, 20s] and is unmoved, 40s reads [10s, 30s] and 50s
+            // reads [20s, 40s], so those two are the only outputs the change reaches - the
+            // frame at 60s starts at 30s, above it. The earliest row's frame is empty.
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\tnull\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t109.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t12.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t15.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t21.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t24.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t27.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t30.0\n");
+        });
+    }
+
+    @Test
     public void testCostPrefersTheSpliceOverASurvivingAnchor() throws Exception {
         // Every logical root retained, which is the shape the versioned timeline makes
         // ordinary: a sealed predecessor almost always sits below a correction, here at
@@ -1671,6 +1739,73 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
                             "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
                             "2026-01-01T00:02:00.000000Z\ta\t42.0\n");
+        });
+    }
+
+    @Test
+    public void testLaggingRowsFrameSplicesOnTheDiscoveredCount() throws Exception {
+        // The ROWS counterpart of testLaggingRangeFrameSplicesOnTheLookBehindAlone. The
+        // discovery counts predecessors, not frame extent: the frame at the i-th row above
+        // the change spans [i - 3, i - 1] rows back from itself, so it holds the changed row
+        // while 1 <= i <= 3 and the row at 60s - the fourth above 25s - has converged. That
+        // is the same H the unlagged frame discovers, and the same 4 rows are re-emitted.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                            "SELECT ts, sym, sum(x) OVER (" +
+                            "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING" +
+                            ") s FROM base"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+
+                appendAndRefresh(job, 25, 100);
+
+                Assert.assertEquals(
+                        "only the rows in [R, H) are re-emitted: 25s, 30s, 40s, 50s",
+                        4,
+                        instance.getO3BoundaryReplayRows()
+                );
+                Assert.assertEquals(
+                        "a spliced timeline keeps every logical entry it had",
+                        HISTORY_COMMITS,
+                        entryCount(instance)
+                );
+                Assert.assertEquals(generationBefore + 1, generation(instance));
+
+                final LongList after = snapshotTimeline(instance);
+                assertSameRoot(before, after, 0);
+                assertSameRoot(before, after, 1);
+                assertNewRoot(before, after, 2);
+                assertNewRoot(before, after, 3);
+                assertNewRoot(before, after, 4);
+                assertSameRoot(before, after, 5);
+            }
+            assertNoRefreshFaults("lv");
+
+            // The oracle: the row at 25s enters the frame of the next three rows and leaves
+            // the frame of the fourth, so 30s, 40s and 50s move and 60s does not. The
+            // earliest row has no predecessor, so its frame is empty.
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\tnull\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t105.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t107.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t12.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t15.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t21.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t24.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t27.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t30.0\n");
         });
     }
 

@@ -505,29 +505,22 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
     }
 
     /**
-     * The RANGE shapes outside {@code W PRECEDING} ending at the current row stay compilable,
-     * but must not present themselves as a finite RANGE dependency - a repair planner that
-     * claimed them would derive a bound the frame does not obey.
+     * The RANGE shapes outside {@code W PRECEDING} ending at or below the current row stay
+     * compilable, but must not present themselves as a finite RANGE dependency - a repair
+     * planner that claimed them would derive a bound the frame does not obey.
      * <p>
-     * The lagging high bounds among them are eligible by kind and held back only by the
-     * descriptor's own high-bound gate; {@link #testLaggingHighBoundIsAnEligibleKind} owns
-     * that distinction.
+     * What separates them from the lagging high bounds, which
+     * {@link #testLaggingHighBoundIsAFiniteDependency} owns, is the look-behind: it is what
+     * both repair bounds are functions of, so a frame that names none has neither.
      */
     @Test
     public void testRangeShapesOutsideTheSupportedFrameAreNotFiniteRange() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
 
-            // Ends before the current row: finite, and the width still bounds its influence,
-            // but the descriptor gate has not widened to say so.
-            assertNotFiniteRange("select ts, sym, last_value(x) over (partition by sym order by ts "
-                    + "range between '3' hour preceding and '1' hour preceding) a from base");
             // Unbounded look-behind: no dependency floor below the correction.
             assertNotFiniteRange("select ts, sym, first_value(x) ignore nulls over (partition by sym order by ts "
                     + "range between unbounded preceding and '2' second preceding) a from base");
-            // A frame exclusion ends the runtime frame one tick below the current row.
-            assertNotFiniteRange("select ts, sym, avg(x) over (partition by sym order by ts "
-                    + "range between 2 preceding and current row exclude current row) a from base");
         });
     }
 
@@ -539,18 +532,19 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
      * {@code (Nmax + 1)}-th row above the change. So the look-behind alone keeps bounding the
      * repair and the classifier hands out the eligible kind.
      * <p>
-     * The descriptor's own finite-frame gates still ask for a high bound at exactly the
-     * current row, so no plan follows yet - the kind is all this step widens, and asserting
-     * both together is what separates the two gates.
+     * The descriptor's own finite-frame gates read the same subset argument, so the plan
+     * follows from the kind: the width the plan carries is the look-behind, unchanged by
+     * where the frame ends.
      */
     @Test
-    public void testLaggingHighBoundIsAnEligibleKind() throws Exception {
+    public void testLaggingHighBoundIsAFiniteDependency() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
 
             // RANGE, ending an hour below its own row. frameLo carries the parser's unit
             // conversion; the high bound does not go through it yet, so frameHi is still the
-            // raw model value and nothing may read it as a tick offset.
+            // raw model value and nothing may read it as a tick offset. The plan reads the
+            // look-behind, which is normalized and unaffected by the lag.
             final Metadata range = compileMetadata(
                     "select ts, sym, avg(x) over (partition by sym order by ts "
                             + "range between '3' hour preceding and '1' hour preceding) a from base",
@@ -559,9 +553,11 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW, range.dependency.getKind());
             Assert.assertEquals(-10_800_000_000L, range.dependency.getFrameLo());
             Assert.assertEquals(-1, range.dependency.getFrameHi());
-            Assert.assertFalse(range.dependency.isFiniteRange());
-            Assert.assertNull(range.rangePlan);
-            Assert.assertFalse(range.isDependencyComplete);
+            Assert.assertTrue(range.dependency.isFiniteRange());
+            Assert.assertEquals(10_800_000_000L, range.dependency.getRangeFrameWidth());
+            Assert.assertNotNull(range.rangePlan);
+            Assert.assertEquals(10_800_000_000L, range.rangePlan.getMaxFrameWidth());
+            Assert.assertTrue(range.isDependencyComplete);
 
             // ROWS, ending two rows below its own row. Both bounds are row counts and carry
             // no unit, so the descriptor holds what the model does.
@@ -573,9 +569,24 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW, rows.dependency.getKind());
             Assert.assertEquals(-10, rows.dependency.getFrameLo());
             Assert.assertEquals(-2, rows.dependency.getFrameHi());
-            Assert.assertFalse(rows.dependency.isFiniteRows());
-            Assert.assertNull(rows.rowsPlan);
-            Assert.assertFalse(rows.isDependencyComplete);
+            Assert.assertTrue(rows.dependency.isFiniteRows());
+            Assert.assertEquals(10, rows.dependency.getRowsPrecedingCount());
+            Assert.assertNotNull(rows.rowsPlan);
+            Assert.assertEquals(10, rows.rowsPlan.getMaxPrecedingRows());
+            Assert.assertTrue(rows.isDependencyComplete);
+
+            // The plan is the look-behind's, so the same frame written without the lag
+            // reports the same bounds - the lag only removes rows from the affected set.
+            final Metadata unlagged = compileMetadata(
+                    "select ts, sym, sum(x) over (partition by sym order by ts "
+                            + "rows between 10 preceding and current row) s from base",
+                    0
+            );
+            Assert.assertEquals(0, unlagged.dependency.getFrameHi());
+            Assert.assertEquals(
+                    rows.dependency.getRowsPrecedingCount(),
+                    unlagged.dependency.getRowsPrecedingCount()
+            );
 
             // A FOLLOWING high bound is what must keep falling through: a base row then joins
             // the frame of output below itself and neither bound holds. No descriptor for one
@@ -639,9 +650,9 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
      * ending below it.
      * <p>
      * That {@code -1} is a lagging high bound with the smallest possible lag, so both
-     * spellings now reach the same eligible kind through the same test rather than the RANGE
-     * one being turned away by an exclusion check of its own. Neither is a finite descriptor
-     * yet: the two frame gates still ask for a high bound at exactly the current row.
+     * spellings reach the same eligible kind through the same test rather than the RANGE one
+     * being turned away by an exclusion check of its own, and both are finite descriptors on
+     * the look-behind the exclusion leaves untouched.
      */
     @Test
     public void testExcludeCurrentRowDescribesTheRuntimeFrameHighBound() throws Exception {
@@ -655,9 +666,10 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(-3, rows.dependency.getFrameLo());
             Assert.assertEquals(-1, rows.dependency.getFrameHi());
             Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW, rows.dependency.getKind());
-            Assert.assertFalse(rows.dependency.isFiniteRows());
-            Assert.assertNull(rows.rowsPlan);
-            Assert.assertFalse(rows.isDependencyComplete);
+            Assert.assertTrue(rows.dependency.isFiniteRows());
+            Assert.assertEquals(3, rows.dependency.getRowsPrecedingCount());
+            Assert.assertNotNull(rows.rowsPlan);
+            Assert.assertTrue(rows.isDependencyComplete);
 
             // The RANGE spelling reaches the same -1, and that -1 is already normalized -
             // one tick of the designated timestamp, not one unit of whatever the frame
@@ -669,9 +681,10 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             );
             Assert.assertEquals(-1, range.dependency.getFrameHi());
             Assert.assertEquals(DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW, range.dependency.getKind());
-            Assert.assertFalse(range.dependency.isFiniteRange());
-            Assert.assertNull(range.rangePlan);
-            Assert.assertFalse(range.isDependencyComplete);
+            Assert.assertTrue(range.dependency.isFiniteRange());
+            Assert.assertEquals(2_000_000L, range.dependency.getRangeFrameWidth());
+            Assert.assertNotNull(range.rangePlan);
+            Assert.assertTrue(range.isDependencyComplete);
 
             // EXCLUDE NO OTHERS is the same frame written without the exclusion, and it is
             // the one the model and the runtime already agreed on.
