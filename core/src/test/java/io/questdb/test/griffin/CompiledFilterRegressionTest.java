@@ -2791,32 +2791,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnaryMinusNarrowLeafVsOutOfRangeConstantMatchesJava() throws Exception {
-        // markNarrowConstCmpWidenPair only recognises a bare LITERAL / BIND_VARIABLE as a narrow-int
-        // leaf, so a unary-minus-wrapped column slipped past it, and the fallback
-        // maybeWidenCmpConstOperand was gated on isFloatActive and never ran. serializeNumber then
-        // emitted 2147483649 as a lossy F4 immediate. The scalar and vectorized backends disagreed
-        // with EACH OTHER on the OR shape, so the same query on the same data returned different
-        // rows depending on whether the host has AVX2.
-        assertMemoryLeak(() -> {
-            execute("create table n as (select" +
-                    " cast(-2147483647 as int) i," +
-                    " false b," +
-                    " timestamp_sequence(0, 1_000_000) k" +
-                    " from long_sequence(64)) timestamp(k)");
-
-            final StringBuilder rows = new StringBuilder("i\n");
-            for (int r = 0; r < 64; r++) {
-                rows.append("-2147483647\n");
-            }
-            assertJitScalarAndVectorMatchJava("select i from n where -i < 2147483649", rows);
-            assertJitScalarAndVectorMatchJava("select i from n where -i < 2147483649 or b", rows);
-            // the IN spelling already agreed; kept so the pair cannot drift apart again
-            assertJitScalarAndVectorMatchJava("select i from n where -i in (2147483649)", "i\n");
-        });
-    }
-
-    @Test
     public void testFloatColumnVsConstantWithNoExactFloat() throws Exception {
         // A FLOAT column always compares at DOUBLE width in the Java filter: there is no
         // (FLOAT, FLOAT) comparison factory, only the double ones ("<(DD)"), so both operands
@@ -3503,6 +3477,29 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 5) t" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNullable(query, ddl);
+    }
+
+    @Test
+    public void testUnaryMinusNarrowLeafVsOutOfRangeConstantMatchesJava() throws Exception {
+        // markNarrowConstCmpWidenPair only recognises a bare LITERAL / BIND_VARIABLE as a narrow-int
+        // leaf, so a unary-minus-wrapped column slipped past it, and the fallback
+        // maybeWidenCmpConstOperand was gated on isFloatActive and never ran. serializeNumber then
+        // emitted 2147483649 as a lossy F4 immediate. The scalar and vectorized backends disagreed
+        // with EACH OTHER on the OR shape, so the same query on the same data returned different
+        // rows depending on whether the host has AVX2.
+        assertMemoryLeak(() -> {
+            execute("create table n as (select" +
+                    " cast(-2147483647 as int) i," +
+                    " false b," +
+                    " timestamp_sequence(0, 1_000_000) k" +
+                    " from long_sequence(64)) timestamp(k)");
+
+            final String rows = "i\n" + "-2147483647\n".repeat(64);
+            assertJitScalarAndVectorMatchJava("select i from n where -i < 2147483649", rows);
+            assertJitScalarAndVectorMatchJava("select i from n where -i < 2147483649 or b", rows);
+            // the IN spelling already agreed; kept so the pair cannot drift apart again
+            assertJitScalarAndVectorMatchJava("select i from n where -i in (2147483649)", "i\n");
+        });
     }
 
     @Test
