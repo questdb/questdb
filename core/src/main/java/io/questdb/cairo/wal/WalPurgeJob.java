@@ -576,16 +576,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 }
             }
             // Hold the base WAL back to the durable head checkpoint's base commit,
-            // not the applied point. On restart tryRestoreFromHead replays the
+            // not the applied point. On restart the restore replays the
             // (headBaseSeqTxn, applied] base WAL to advance the accumulators restored
-            // from the head .cp up to the applied watermark; lvConsumed advances to
-            // that applied point every flush, but the head .cp only advances on the
-            // checkpoint cadence, so lvConsumed can outrun the durable head and let
-            // this range be purged out from under the next restart's replay. Capping
-            // at headBaseSeqTxn keeps the replay WAL until a later checkpoint moves
-            // the manifest past it. LONG_NULL (no head, or a cleared/corrupt head)
-            // leaves the floor at lvConsumed: those views recover by rebuilding from
-            // the applied base table, which needs no raw base WAL.
+            // from the selected root up to the applied watermark; lvConsumed advances
+            // to that applied point every flush, but the head only advances on the
+            // checkpoint cadence, so lvConsumed can outrun it and let this range be
+            // purged out from under the next restart's replay. Capping at
+            // headBaseSeqTxn keeps the replay WAL until a later seal moves the head
+            // past it. LONG_NULL (no head, or one an O3 repair cleared) leaves the
+            // floor at lvConsumed: those views recover by rebuilding from the applied
+            // base table, which needs no raw base WAL.
             final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
             if (headBaseSeqTxn > -1) {
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, headBaseSeqTxn);
@@ -594,49 +594,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             // Its floor is therefore the minimum normalized base coordinate of
             // both durable slots, published to the instance only after the
             // superblock commit point. Recovery/repair owners may lower the same
-            // floor while pinned. Keep this as a separate arm while the legacy
-            // head/ring path coexists.
+            // floor while pinned. Kept as a separate arm from the head above: the
+            // head follows the newest boundary this process sealed, while the
+            // timeline floor follows what either durable slot still needs.
             final long timelineFloor = instance.getCheckpointTimelineWalPurgeFloor();
             if (timelineFloor > -1) {
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, timelineFloor);
-            }
-
-            // The head arm above is not enough on its own, because the premise it
-            // rests on - "no head, so recovery rebuilds from the applied base
-            // table" - breaks once the retained-checkpoint ring exists. An O3
-            // retire CLEARS the head while the ring keeps the entries the late
-            // row left sealed, and those survivors' .cp files stay on disk, so
-            // restart resumes from one of them and replays raw base WAL from ITS
-            // base seqTxn - a range a floor released to lvConsumed has purged.
-            // Pin the two entries restart can resume from, and take the lower:
-            //
-            //  - the newest entry the durable _checkpoints/_ring lists, which a
-            //    restart TRUSTING the manifest (covered == reconciled applied
-            //    floor) restores from. LONG_NULL until the view's first
-            //    publication, or when the last one listed nothing.
-            //  - the newest entry the in-memory ring holds, which a restart
-            //    FALLING BACK restores from, the startup sweep keeping the
-            //    highest surviving .cp as the head.
-            //
-            // Neither substitutes for the other, and a failed publication is what
-            // prises them apart in both directions: it can leave the in-memory
-            // ring holding an entry the manifest does not list, whose base seqTxn
-            // is above the one a trusting restart needs, or leave the manifest
-            // listing a survivor the in-memory ring has since retired past. Purge
-            // cannot tell which restart is coming, so it holds both.
-            //
-            // Always the NEWEST entry, never the oldest: the ring spans the whole
-            // retention horizon, and flooring at its oldest entry would pin base
-            // WAL across all of it. The unsynchronised reads are safe - each is a
-            // floor some instant published, and min() of them is at or below
-            // either.
-            final long listedNewestBaseSeqTxn = instance.getLastPublishedRingNewestBaseSeqTxn();
-            if (listedNewestBaseSeqTxn > -1) {
-                safeToPurgeTxn = Math.min(safeToPurgeTxn, listedNewestBaseSeqTxn);
-            }
-            final long ringNewestBaseSeqTxn = instance.getRingNewestBaseSeqTxn();
-            if (ringNewestBaseSeqTxn > -1) {
-                safeToPurgeTxn = Math.min(safeToPurgeTxn, ringNewestBaseSeqTxn);
             }
         }
         return safeToPurgeTxn;

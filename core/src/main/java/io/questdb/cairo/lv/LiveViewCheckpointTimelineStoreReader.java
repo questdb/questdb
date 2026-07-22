@@ -201,6 +201,27 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         }
     }
 
+    /**
+     * Finds the newest logical boundary whose {@code maxTimestamp} is strictly
+     * below {@code correctionTimestamp} and copies it into {@code out}. The strict
+     * inequality preserves a complete timestamp tie: a boundary at exactly the
+     * correction covers only part of the rows sitting there.
+     * <p>
+     * Lookup runs under one generation pin, released before this returns. The
+     * caller re-identifies the boundary by its composite key when it restores, so
+     * a generation published in between is caught there rather than silently
+     * mixed in here.
+     *
+     * @return false when the current generation holds no boundary below the
+     * correction
+     */
+    public boolean predecessor(long correctionTimestamp, @NotNull LiveViewCheckpointTimelineEntry out) {
+        ensureOpen();
+        try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
+            return timelineReader.predecessor(pin.getTimelineRootRef(), correctionTimestamp, out);
+        }
+    }
+
     private static CairoException invalid(CharSequence reason) {
         return CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                 .put("live view checkpoint ").put(reason);

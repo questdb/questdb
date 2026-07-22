@@ -35,12 +35,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.cairo.lv.LiveViewCheckpointBlockType;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
-import io.questdb.cairo.lv.LiveViewCheckpointManifest;
-import io.questdb.cairo.lv.LiveViewCheckpointReader;
-import io.questdb.cairo.lv.LiveViewCheckpointRingManifest;
-import io.questdb.cairo.lv.LiveViewCheckpointRingManifestReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
@@ -1677,7 +1672,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 try (Path path = new Path()) {
                     path.of(engine.getConfiguration().getDbRoot())
                             .concat(token)
-                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                            .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
                     Assert.assertTrue(
                             "_checkpoints/ must exist after CREATE LIVE VIEW [path=" + path + ']',
                             ff.exists(path.$())
@@ -2230,7 +2225,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             try (Path p = new Path()) {
                 p.of(engine.getConfiguration().getDbRoot())
                         .concat(instance.getLiveViewToken())
-                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                         .slash();
                 LiveViewCheckpointWriter.appendScpFileName(p, scpKey);
                 Assert.assertFalse("no .scp must survive completion", ff.exists(p.$()));
@@ -2292,7 +2287,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             try (Path p = new Path()) {
                 p.of(engine.getConfiguration().getDbRoot())
                         .concat(instance.getLiveViewToken())
-                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                         .slash();
                 LiveViewCheckpointWriter.appendScpFileName(p, scpKey);
                 Assert.assertTrue("recreating the orphan .scp must succeed", ff.touch(p.$()));
@@ -2317,7 +2312,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             try (Path p = new Path()) {
                 p.of(engine.getConfiguration().getDbRoot())
                         .concat(reloaded.getLiveViewToken())
-                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                         .slash();
                 LiveViewCheckpointWriter.appendScpFileName(p, scpKey);
                 Assert.assertFalse("recovery must retire the orphan .scp", ff.exists(p.$()));
@@ -4814,14 +4809,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testLvRowsTotalSurvivesRestart() throws Exception {
-        // Drive a refresh that writes N rows, confirm both legacy and timeline
-        // checkpoints record N, restart, confirm the counter is restored from
-        // the selected timeline root, then write M more rows and confirm the
-        // next checkpoint records N + M.
+        // Drive a refresh that writes N rows, restart, confirm the counter is
+        // restored from the selected timeline root, then write M more rows and
+        // confirm it accumulates against the restored total.
         //
-        // Force the row-trigger cadence to 1 so each batch produces a
-        // dedicated head .cp under test; default cadence is too high for a
-        // few-row check.
+        // Force the row-trigger cadence to 1 so each batch seals its own
+        // boundary; the default cadence is too high for a few-row check.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) " +
@@ -4853,26 +4846,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 );
             }
 
-            // Read the manifest off disk and assert lvRowPosition matches.
-            try (Path cpPath = new Path()) {
-                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-                cpPath.of(engine.getConfiguration().getDbRoot())
-                        .concat(instance.getLiveViewToken())
-                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                        .slash();
-                LiveViewCheckpointWriter.appendCpFileName(cpPath, firstHeadLvSeqTxn);
-                try (LiveViewCheckpointReader reader = new LiveViewCheckpointReader(engine.getConfiguration())) {
-                    reader.of(cpPath.$());
-                    LiveViewCheckpointManifest manifest = new LiveViewCheckpointManifest();
-                    reader.readManifestInto(manifest);
-                    Assert.assertEquals(
-                            "manifest.lvRowPosition reflects the rows the head covers",
-                            firstBatch,
-                            manifest.getLvRowPosition()
-                    );
-                }
-            }
-
             // Simulated restart re-seeds the counter from the timeline root's
             // effective row position on the first post-restart refresh cycle.
             engine.getLiveViewRegistry().clear();
@@ -4889,8 +4862,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     reloaded.getLvRowsTotal()
             );
 
-            // A follow-up commit advances the counter; the next head .cp
-            // records the cumulative total.
+            // A follow-up commit advances the counter, accumulating against the
+            // restored total.
             final long secondBatch = 3;
             execute("INSERT INTO base (ts, sym, x) VALUES " +
                     "('2026-06-02T00:00:00.000000Z', 'a', 5), " +
@@ -4903,30 +4876,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainJob(job);
                 drainWalQueue();
                 secondHeadLvSeqTxn = reloaded.getHeadCheckpointLvSeqTxn();
-                Assert.assertNotEquals("a follow-up head .cp must be written", firstHeadLvSeqTxn, secondHeadLvSeqTxn);
+                Assert.assertNotEquals("a follow-up boundary must be sealed", firstHeadLvSeqTxn, secondHeadLvSeqTxn);
                 Assert.assertEquals(
                         "counter accumulates against the restored total",
                         firstBatch + secondBatch,
                         reloaded.getLvRowsTotal()
                 );
-            }
-
-            try (Path cpPath = new Path()) {
-                cpPath.of(engine.getConfiguration().getDbRoot())
-                        .concat(reloaded.getLiveViewToken())
-                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                        .slash();
-                LiveViewCheckpointWriter.appendCpFileName(cpPath, secondHeadLvSeqTxn);
-                try (LiveViewCheckpointReader reader = new LiveViewCheckpointReader(engine.getConfiguration())) {
-                    reader.of(cpPath.$());
-                    LiveViewCheckpointManifest manifest = new LiveViewCheckpointManifest();
-                    reader.readManifestInto(manifest);
-                    Assert.assertEquals(
-                            "follow-up manifest records the post-restart cumulative total",
-                            firstBatch + secondBatch,
-                            manifest.getLvRowPosition()
-                    );
-                }
             }
 
             execute("DROP LIVE VIEW lv");
@@ -5095,11 +5050,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // manifest past it.
         //
         // What pins the head: the first post-restart flush normally seals a fresh
-        // .cp (the restored-head trigger), which is exactly what
+        // boundary (the restored-head trigger), which is exactly what
         // ends this scenario - once the head covers the applied point there is no
         // gap left to replay and the floor may release the WAL. To hold the view in
-        // the pre-advance state across BOTH restarts, fail the .cp write outright:
-        // that write is derived state and non-fatal by design (see
+        // the pre-advance state across BOTH restarts, fail the seal outright: the
+        // timeline is derived state and a failed seal is non-fatal by design (see
         // maybeWriteHeadCheckpoint's catch - "a failure here does not invalidate the
         // view"), so an unwritable checkpoint directory leaves a live view running
         // indefinitely with a lagging head. That is the production shape of
@@ -5113,9 +5068,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
-                // While armed, refuse to create the checkpoint's .cp.tmp so no
-                // flush can seal a fresh head and the head stays pinned.
-                if (failCpWrite.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
+                // While armed, refuse to create the timeline's temporary segments
+                // so no flush can seal a fresh boundary and the head stays pinned.
+                if (failCpWrite.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TMP_SUFFIX)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -5183,8 +5138,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "2026-06-01T00:00:03.000000Z\ta\t15.0\n" +
                     "2026-06-01T00:00:05.000000Z\ta\t47.0\n";
 
-            // Arm the .cp write failure: from here neither restart can seal a fresh
-            // head, so the head stays pinned at base seqTxn 1 and every restart
+            // Arm the seal failure: from here neither restart can seal a fresh
+            // boundary, so the head stays pinned at base seqTxn 1 and every restart
             // replays the same gap - the state this regression is about.
             failCpWrite.set(true);
 
@@ -5204,8 +5159,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             Assert.assertNotNull(afterFirst);
             Assert.assertFalse("view must stay active after the first restart", afterFirst.isInvalid());
             // The first restart advanced applied/lvConsumed to 3 but could NOT
-            // advance the durable head (its .cp write failed), so the head still
-            // lags and a second restart must replay the same gap over again.
+            // advance the durable head (its seal failed), so the head still lags
+            // and a second restart must replay the same gap over again.
             Assert.assertEquals("first restart drained to base seqTxn 3", 3L, afterFirst.getAppliedWatermark());
             Assert.assertEquals("head must still lag after the first restart",
                     1L, afterFirst.getHeadCheckpointBaseSeqTxn());
@@ -5829,25 +5784,26 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testCrashMidHeadCheckpointWriteFallsBackToPriorHead() throws Exception {
-        // A crash mid head-.cp write (or a .cp write that simply fails) must not
-        // corrupt the view or block recovery. The row data is durable in the LV
-        // table via its own _txn; the head .cp only snapshots window-accumulator
-        // state so a restart can continue the running window without replaying
-        // from the view's lower bound. maybeWriteHeadCheckpoint swallows a write
-        // failure (the .cp is a derived artifact, written tmp+rename), leaving
-        // the prior head .cp intact and addressable. A restart re-discovers that
-        // prior head via the startup sweep, restores its accumulators, and
-        // replays base WAL forward across the cadence gap to the applied point,
-        // converging to a from-scratch recompute with no duplication.
+        // A crash mid seal (or a seal that simply fails) must not corrupt the view
+        // or block recovery. The row data is durable in the LV table via its own
+        // _txn; the checkpoint root only freezes window-accumulator state so a
+        // restart can continue the running window without replaying from the
+        // view's lower bound. maybeWriteHeadCheckpoint swallows the failure - the
+        // timeline is derived state, and its segments are written tmp+rename -
+        // leaving the previously published generation authoritative and the head
+        // parked on the boundary it already named. A restart restores from that
+        // boundary and replays base WAL forward across the cadence gap to the
+        // applied point, converging to a from-scratch recompute with no
+        // duplication.
         //
-        // CHECKPOINT_ROWS=1 makes every flush attempt a head .cp write so the
-        // injected failure fires on the second flush.
+        // CHECKPOINT_ROWS=1 makes every flush attempt a seal so the injected
+        // failure fires on the second flush.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         final AtomicBoolean failCpWrite = new AtomicBoolean(false);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
-                if (failCpWrite.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
+                if (failCpWrite.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TMP_SUFFIX)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -5863,7 +5819,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             final long priorHead;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // First flush writes a valid head .cp (the firstCp cadence).
+                // First flush seals a valid boundary (the first-checkpoint cadence).
                 execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
                 drainWalQueue();
                 drainJob(job);
@@ -5871,11 +5827,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(instance);
                 priorHead = instance.getHeadCheckpointLvSeqTxn();
-                Assert.assertNotEquals("a prior head .cp must exist", Numbers.LONG_NULL, priorHead);
+                Assert.assertNotEquals("a prior boundary must exist", Numbers.LONG_NULL, priorHead);
 
-                // Crash mid .cp write: the next flush commits + applies + persists
-                // _lv.s fine, but the head .cp write fails and is swallowed, so the
-                // head metadata stays pinned to the prior .cp.
+                // Crash mid seal: the next flush commits + applies + persists
+                // _lv.s fine, but the root append fails and is swallowed, so the
+                // head metadata stays pinned to the prior boundary.
                 setCurrentMicros(2_000_000L);
                 failCpWrite.set(true);
                 execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 2)");
@@ -5883,23 +5839,23 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainJob(job);
                 drainWalQueue();
                 failCpWrite.set(false);
-                Assert.assertEquals("head .cp must remain the prior version after a failed write",
+                Assert.assertEquals("the head must remain the prior boundary after a failed seal",
                         priorHead, instance.getHeadCheckpointLvSeqTxn());
-                // Rows are durable despite the failed .cp write.
+                // Rows are durable despite the failed seal.
                 assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
                 assertRunningSumLvMatchesRecompute();
             }
 
-            // Restart: the sweep re-discovers the prior head .cp; the first refresh
-            // restores its accumulators and replays base WAL forward across the
-            // cadence gap.
+            // Restart: the published generation still names the prior boundary; the
+            // first refresh restores its accumulators and replays base WAL forward
+            // across the cadence gap.
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(reloaded);
-                Assert.assertEquals("sweep re-stamps the prior head from its .cp filename",
+                Assert.assertEquals("startup re-stamps the head from the published generation",
                         priorHead, reloaded.getHeadCheckpointLvSeqTxn());
 
                 setCurrentMicros(4_000_000L);
@@ -6434,7 +6390,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // The head .cp survives untouched (the "valid checkpoint" half of the asymmetry):
             // it carries the window accumulators as of the flush point, incl. sum(x)=1 for 'a'.
             try (Path cpDir = new Path()) {
-                cpDir.of(configuration.getDbRoot()).concat(lvToken).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                cpDir.of(configuration.getDbRoot()).concat(lvToken).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
                 Assert.assertTrue("head .cp dir must survive the fault", ff.exists(cpDir.$()));
             }
 
@@ -6495,62 +6451,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // Truncates a live view's _lv.s below the BlockFile header so BlockFileReader.of
     // throws "block file too small" (errno 0) - a faithful torn-partial-write artifact
     // on the non-version branch.
-
-    /**
-     * Counts the {@code .cp} files in a live view's {@code _checkpoints/},
-     * ignoring {@code _ring} and any {@code .cp.tmp} orphan.
-     */
-    private int countCheckpointFiles(LiveViewInstance lv) {
-        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        int count = 0;
-        try (Path dir = new Path()) {
-            dir.of(engine.getConfiguration().getDbRoot())
-                    .concat(lv.getLiveViewToken())
-                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
-            final long findPtr = ff.findFirst(dir.$());
-            if (findPtr == 0) {
-                return 0;
-            }
-            final StringSink nameSink = new StringSink();
-            try {
-                do {
-                    final long namePtr = ff.findName(findPtr);
-                    if (namePtr == 0) {
-                        continue;
-                    }
-                    nameSink.clear();
-                    if (!Utf8s.utf8ToUtf16Z(namePtr, nameSink)) {
-                        continue;
-                    }
-                    if (Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_FILE_EXT)) {
-                        count++;
-                    }
-                } while (ff.findNext(findPtr) > 0);
-            } finally {
-                ff.findClose(findPtr);
-            }
-        }
-        return count;
-    }
-
-    /**
-     * Reads the live view's durable {@code _checkpoints/_ring} into
-     * {@code manifest}. Addresses the file through
-     * {@link LiveViewCheckpointRingManifest#ringManifestPath} so the test and
-     * the publication path cannot drift apart on the layout, and reads the
-     * fields back only after the mapping is gone - the reader owns copies.
-     */
-    private void readRingManifest(LiveViewInstance lv, LiveViewCheckpointRingManifestReader manifest) {
-        try (Path path = new Path();
-             Path liveViewDir = new Path();
-             BlockFileReader reader = new BlockFileReader(engine.getConfiguration())) {
-            liveViewDir.of(engine.getConfiguration().getDbRoot()).concat(lv.getLiveViewToken());
-            Assert.assertTrue("_ring must exist", engine.getConfiguration().getFilesFacade()
-                    .exists(LiveViewCheckpointRingManifest.ringManifestPath(path, liveViewDir).$()));
-            reader.of(LiveViewCheckpointRingManifest.ringManifestPath(path, liveViewDir).$());
-            manifest.of(reader, lv.getLiveViewToken());
-        }
-    }
 
     private void truncateLiveViewStateFile(FilesFacade ff, TableToken lvToken) {
         try (Path sPath = new Path()) {
@@ -13730,12 +13630,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testLiveViewsCatalogueColumnOrderMatchesRfc() throws Exception {
         // Columns appear in the documented order so clients binding by
-        // ordinal see a stable shape. The documented columns come first;
-        // the three head_checkpoint_* columns, the two o3_*_replay_rows
-        // columns and the five checkpoint_ring_* columns trail as debug
-        // surface, and the four baseline cost columns
+        // ordinal see a stable shape. The documented columns come first; the
+        // three head_checkpoint_* columns and the two o3_*_replay_rows columns
+        // trail as debug surface, and the three cost columns
         // (head_checkpoint_write_micros, head_checkpoint_restore_micros,
-        // checkpoint_ring_evictions, o3_replay_scan_rows) trail last.
+        // o3_replay_scan_rows) trail last.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -13749,11 +13648,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "view_lower_bound_timestamp\twriter_stall_micros\tseed_target_seqtxn\t"
                         + "head_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\t"
                         + "o3_resume_replay_rows\to3_boundary_replay_rows\t"
-                        + "checkpoint_ring_recovered_entries\tcheckpoint_ring_manifest_generation\t"
-                        + "checkpoint_ring_manifest_covered_seqtxn\tcheckpoint_ring_manifest_dirty\t"
-                        + "checkpoint_ring_recovery_fallback_count\t"
                         + "head_checkpoint_write_micros\thead_checkpoint_restore_micros\t"
-                        + "checkpoint_ring_evictions\to3_replay_scan_rows\n");
+                        + "o3_replay_scan_rows\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
@@ -15575,10 +15471,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testHeadCheckpointWrittenOnFirstCommit() throws Exception {
-        // The refresh worker writes a head .cp on the first cycle
-        // that lands rows, so subsequent restart / O3 paths have a head to
+        // The refresh worker seals a logical checkpoint boundary on the first
+        // cycle that lands rows, so subsequent restart / O3 paths have a root to
         // restore from. The cadence triggers (rows / max.duration) gate
-        // subsequent writes; this test only proves the first one fires.
+        // subsequent seals; this test only proves the first one fires.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
@@ -15598,7 +15494,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(lv);
 
                 // Cap was true (anchor SYMBOL + sum(DOUBLE) is fully migrated),
-                // so the first commit wrote a head; subsequent cycles will
+                // so the first commit sealed a boundary; subsequent cycles will
                 // honor the row / duration cadence.
                 Assert.assertTrue("snapshot capability computed and true", lv.isSnapshotCapability());
                 Assert.assertNotEquals(
@@ -15615,38 +15511,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         0L,
                         lv.getRowsSinceLastCheckpointWritten()
                 );
-
-                // A .cp file lives under <lv_dir>/_checkpoints/.
-                TableToken token = lv.getLiveViewToken();
-                FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                try (Path cpDir = new Path()) {
-                    cpDir.of(engine.getConfiguration().getDbRoot())
-                            .concat(token)
-                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
-                    Assert.assertTrue("_checkpoints/ exists", ff.exists(cpDir.$()));
-                    // Enumerate; expect exactly one .cp file (and zero .cp.tmp).
-                    final StringSink nameSink = new StringSink();
-                    boolean foundCp = false;
-                    long pFind = ff.findFirst(cpDir.$());
-                    Assert.assertNotEquals("can iterate _checkpoints/", 0L, pFind);
-                    try {
-                        do {
-                            long namePtr = ff.findName(pFind);
-                            if (namePtr == 0) {
-                                continue;
-                            }
-                            nameSink.clear();
-                            Utf8s.utf8ToUtf16Z(namePtr, nameSink);
-                            if (Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_FILE_EXT)
-                                    && !Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
-                                foundCp = true;
-                            }
-                        } while (ff.findNext(pFind) > 0);
-                    } finally {
-                        ff.findClose(pFind);
-                    }
-                    Assert.assertTrue("at least one .cp file exists", foundCp);
-                }
 
                 // The live_views() catalogue surfaces the same trio the
                 // refresh worker stamped via setHeadCheckpoint(). Asserting
@@ -16123,230 +15987,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "the reason must name the live-view workload [reason=" + reason + ']',
                     Chars.contains(reason, "LIVE_VIEW_REFRESH")
             );
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testRestoreKeyShapeMismatchReplaysFromHeadMiss() throws Exception {
-        // A FUNCTION_SNAPSHOT block whose key-shape header (the partition key
-        // column count) disagrees with the running function is structural
-        // corruption that slipped past the CRC, not a version break. The
-        // restore must treat it like any other corrupt head .cp: unlink it,
-        // clear the head metadata, and fall through to the inline head-miss
-        // rebuild - WITHOUT invalidating the view. The rebuild re-materialises
-        // the view over the applied base snapshot (an idempotent REPLACE_RANGE)
-        // and its follow-up flush writes a fresh head .cp, so the restore
-        // completes rather than leaving a headless, cold-accumulator view. This
-        // is the counterpart to testRestoreVersionMismatchInvalidatesView, which
-        // takes the other branch (invalidate, keep the .cp) on a real
-        // compatibility break.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-
-            execute("INSERT INTO base (ts, sym, x) VALUES " +
-                    "('2026-06-01T00:00:00.000000Z', 'a', 1.0), " +
-                    "('2026-06-01T01:00:00.000000Z', 'a', 2.0)");
-            drainWalQueue();
-
-            final String fnFactoryName;
-            final int fnFormatVersion;
-            final long headLvSeqTxn;
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-                drainWalQueue();
-                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(instance);
-                headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
-                Assert.assertNotEquals(Numbers.LONG_NULL, headLvSeqTxn);
-                final WindowFunction fn = instance.getAnchorWindow().getFunctions().getQuick(0);
-                final Class<?> fnClass = fn.getClass();
-                final Class<?> enclosing = fnClass.getEnclosingClass();
-                fnFactoryName = (enclosing != null ? enclosing : fnClass).getName();
-                // Stamp the function's CURRENT (valid) snapshot version so the
-                // restore clears the version gate and reaches the key-shape
-                // header check below.
-                fnFormatVersion = fn.checkpointStateFormatVersion();
-            }
-
-            // The LV has already materialised the cumulative sums to its
-            // on-disk tier before any corruption.
-            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                    "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
-                    "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
-
-            // Replace the head .cp: same lvSeqTxn, valid prelude, but a
-            // FUNCTION_SNAPSHOT payload whose partitionKeyColumnCount is bogus
-            // (the running sum() partitions by exactly one column). The restore
-            // unwinds at the key-shape check before decoding any partition
-            // state, so we need no anchor block.
-            try (Path lvDir = new Path()) {
-                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-                lvDir.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken()).slash();
-
-                try (Path cpPath = new Path()) {
-                    cpPath.of(lvDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash();
-                    LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
-                    engine.getConfiguration().getFilesFacade().removeQuiet(cpPath.$());
-                }
-
-                try (LiveViewCheckpointWriter w = new LiveViewCheckpointWriter(engine.getConfiguration())) {
-                    w.of(lvDir.$(), headLvSeqTxn);
-                    w.writeManifestBlock(new LiveViewCheckpointManifest()
-                            .setLvSeqTxn(headLvSeqTxn)
-                            .setLvRowPosition(0)
-                            .setBaseSeqTxn(0)
-                            .setMaxTimestamp(0)
-                            .setKind(LiveViewCheckpointManifest.KIND_STEADY)
-                            .addWindowName("w"));
-                    final MemoryA fnSink = w.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
-                    fnSink.putStr("w");
-                    fnSink.putStr(fnFactoryName);
-                    fnSink.putInt(fnFormatVersion); // valid version - clears the version gate
-                    fnSink.putInt(99); // bogus partitionKeyColumnCount - key-shape mismatch
-                    w.endBlock();
-                    w.commit(Numbers.LONG_NULL);
-                }
-            }
-
-            // Restart: clear the registry and rebuild from on-disk. The
-            // startup sweep re-stamps the head lvSeqTxn from the filename.
-            engine.getLiveViewRegistry().clear();
-            engine.buildViewGraphs();
-            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertNotNull(reloaded);
-            Assert.assertEquals(headLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
-            Assert.assertFalse("LV must still be valid pre-refresh", reloaded.isInvalid());
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-            }
-
-            Assert.assertTrue("the restore was attempted on the first post-restart cycle", reloaded.isCheckpointRestoreAttempted());
-            Assert.assertFalse(
-                    "a key-shape mismatch is corruption, not a version break - the LV must NOT be invalidated",
-                    reloaded.isInvalid()
-            );
-            Assert.assertTrue(
-                    "corruption routes through the inline head-miss rebuild, which completes the restore",
-                    reloaded.isCheckpointRestoreSucceeded()
-            );
-            // The head-miss rebuild re-materialised the whole view over the applied
-            // base snapshot and its follow-up flush wrote a fresh head .cp, so the
-            // head metadata is a valid (non-null) head again - not the transiently
-            // cleared LONG_NULL left mid-recovery.
-            Assert.assertNotEquals(
-                    "the head-miss rebuild wrote a fresh head .cp",
-                    Numbers.LONG_NULL,
-                    reloaded.getHeadCheckpointLvSeqTxn()
-            );
-
-            // The rebuild reproduced exactly the cumulative sums the LV held before
-            // the corruption (the intact base yields an idempotent REPLACE_RANGE).
-            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                    "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
-                    "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testRestoreCorruptHeadCheckpointReplaysFromHeadMiss() throws Exception {
-        // A head .cp whose payload byte is flipped fails the CRC check on restore.
-        // That is corruption, not a version break: the restore must unlink the .cp,
-        // clear the head metadata, and fall through to the inline head-miss rebuild
-        // WITHOUT invalidating the view. The rebuild re-materialises the view over
-        // the applied base snapshot (an idempotent REPLACE_RANGE that reproduces the
-        // rows already on disk) and its follow-up flush writes a fresh head .cp, so
-        // the restore completes. Counterpart to
-        // testRestoreKeyShapeMismatchReplaysFromHeadMiss, which reaches the same
-        // recovery via a structural key-shape mismatch rather than a CRC failure.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-
-            execute("INSERT INTO base (ts, sym, x) VALUES " +
-                    "('2026-06-01T00:00:00.000000Z', 'a', 1.0), " +
-                    "('2026-06-01T01:00:00.000000Z', 'a', 2.0)");
-            drainWalQueue();
-
-            final long headLvSeqTxn;
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-                drainWalQueue();
-                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(instance);
-                headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
-                Assert.assertNotEquals(Numbers.LONG_NULL, headLvSeqTxn);
-            }
-
-            // The LV has already materialised the cumulative sums to its on-disk
-            // tier before any corruption.
-            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                    "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
-                    "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
-
-            // Flip a byte inside the head .cp payload (past the file header) so the
-            // restore trips the CRC check.
-            try (Path lvDir = new Path()) {
-                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-                lvDir.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken()).slash();
-                try (Path cpPath = new Path()) {
-                    cpPath.of(lvDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash();
-                    LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
-                    overwriteByteInFile(
-                            engine.getConfiguration(),
-                            cpPath,
-                            LiveViewCheckpointWriter.FILE_HEADER_SIZE + 8,
-                            (byte) 0xAB
-                    );
-                }
-            }
-
-            // Restart: clear the registry and rebuild from on-disk. The startup
-            // sweep re-stamps the head lvSeqTxn from the filename.
-            engine.getLiveViewRegistry().clear();
-            engine.buildViewGraphs();
-            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertNotNull(reloaded);
-            Assert.assertEquals(headLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
-            Assert.assertFalse("LV must still be valid pre-refresh", reloaded.isInvalid());
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-            }
-
-            Assert.assertTrue("the restore was attempted on the first post-restart cycle", reloaded.isCheckpointRestoreAttempted());
-            Assert.assertFalse(
-                    "a CRC failure is corruption, not a version break - the LV must NOT be invalidated",
-                    reloaded.isInvalid()
-            );
-            Assert.assertTrue(
-                    "corruption routes through the inline head-miss rebuild, which completes the restore",
-                    reloaded.isCheckpointRestoreSucceeded()
-            );
-            // The head-miss rebuild re-materialised the whole view over the applied
-            // base snapshot and its follow-up flush wrote a fresh head .cp, so the
-            // head metadata is a valid (non-null) head again - not the transiently
-            // cleared LONG_NULL left mid-recovery.
-            Assert.assertNotEquals(
-                    "the head-miss rebuild wrote a fresh head .cp",
-                    Numbers.LONG_NULL,
-                    reloaded.getHeadCheckpointLvSeqTxn()
-            );
-
-            // The rebuild reproduced exactly the cumulative sums the LV held before
-            // the corruption (the intact base yields an idempotent REPLACE_RANGE).
-            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                    "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
-                    "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -17606,9 +17246,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // corrupting per-partition window state, so the refresh worker
         // rolls back the in-flight WAL writer, branches to o3Replay, and
         // re-feeds base data in ts order from a TableReader. The prior
-        // head .cp is retired by the replay path; a fresh head reflecting
-        // the post-replay state is written before the cycle returns so
-        // restart can short-circuit to head-hit for any subsequent O3.
+        // boundary is retired by the replay path; a fresh one reflecting
+        // the post-replay state is sealed before the cycle returns so a
+        // subsequent O3 has a near boundary to resume from.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
@@ -17628,7 +17268,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(lv);
                 final long preO3HeadLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp was written before the O3 commit",
+                        "a boundary was sealed before the O3 commit",
                         Numbers.LONG_NULL,
                         preO3HeadLvSeqTxn
                 );
@@ -17638,17 +17278,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         lv.getLatestSeenTs()
                 );
 
-                // The head .cp lives at <root>/<lv_dir>/_checkpoints/<lvSeqTxn>.cp.
-                TableToken token = lv.getLiveViewToken();
-                FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                try (Path cpPath = new Path()) {
-                    cpPath.of(engine.getConfiguration().getDbRoot())
-                            .concat(token)
-                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                            .slash();
-                    LiveViewCheckpointWriter.appendCpFileName(cpPath, preO3HeadLvSeqTxn);
-                    Assert.assertTrue("head .cp exists on disk before O3", ff.exists(cpPath.$()));
-
+                {
                     // Insert an out-of-order row: ts (00:00:05) is strictly
                     // below the watermark (00:00:20). Advance microtime past
                     // the FLUSH EVERY gate so the refresh worker actually
@@ -17681,24 +17311,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                             0L,
                             lv.getHeadCheckpointStateBytes()
                     );
-
-                    // The pre-O3 .cp is gone (retired by the replay path).
-                    // Re-derive the path because the helper mutates it in
-                    // place.
-                    cpPath.of(engine.getConfiguration().getDbRoot())
-                            .concat(token)
-                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                            .slash();
-                    LiveViewCheckpointWriter.appendCpFileName(cpPath, preO3HeadLvSeqTxn);
-                    Assert.assertFalse("pre-O3 head .cp unlinked", ff.exists(cpPath.$()));
-
-                    // The fresh post-replay .cp is on disk at the new lvSeqTxn.
-                    cpPath.of(engine.getConfiguration().getDbRoot())
-                            .concat(token)
-                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                            .slash();
-                    LiveViewCheckpointWriter.appendCpFileName(cpPath, postO3HeadLvSeqTxn);
-                    Assert.assertTrue("post-replay head .cp on disk", ff.exists(cpPath.$()));
                 }
             }
 
@@ -17856,581 +17468,15 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         });
     }
 
-    @Test
-    public void testCheckpointRetentionPruningUnlinksEvictedFiles() throws Exception {
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MAX_BYTES, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, 15_000_000L);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1); Path cpPath = new Path()) {
-                final FilesFacade filesFacade = engine.getConfiguration().getFilesFacade();
-                long previousLvSeqTxn = Numbers.LONG_NULL;
-                for (int seconds = 10; seconds <= 30; seconds += 10) {
-                    setCurrentMicros(seconds * 20_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-
-                    LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                    Assert.assertNotNull(lv);
-                    Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-                    final long currentLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
-                    Assert.assertEquals(currentLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(0));
-
-                    if (previousLvSeqTxn != Numbers.LONG_NULL) {
-                        cpPath.of(engine.getConfiguration().getDbRoot())
-                                .concat(lv.getLiveViewToken())
-                                .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                                .slash();
-                        LiveViewCheckpointWriter.appendCpFileName(cpPath, previousLvSeqTxn);
-                        Assert.assertFalse("evicted checkpoint file must be unlinked", filesFacade.exists(cpPath.$()));
-                    }
-                    cpPath.of(engine.getConfiguration().getDbRoot())
-                            .concat(lv.getLiveViewToken())
-                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                            .slash();
-                    LiveViewCheckpointWriter.appendCpFileName(cpPath, currentLvSeqTxn);
-                    Assert.assertTrue("retained checkpoint file must remain", filesFacade.exists(cpPath.$()));
-                    previousLvSeqTxn = currentLvSeqTxn;
-                }
-                // Baseline observability. Two of the three checkpoints (at 20 and 30)
-                // each evicted the entry below them - the 1-byte budget keeps a single
-                // ring entry - so the lifetime eviction counter reads 2.
-                assertQuery("SELECT checkpoint_ring_evictions FROM live_views() WHERE view_name = 'lv'")
-                        .noLeakCheck().noRandomAccess()
-                        .returns("checkpoint_ring_evictions\n2\n");
-                // Every .cp write stamps its elapsed time (0 under the frozen test
-                // clock, but never NULL once a checkpoint has been written).
-                Assert.assertTrue(
-                        "the head-checkpoint write time must be stamped",
-                        engine.getLiveViewRegistry().getViewInstance("lv").getHeadCheckpointWriteMicros() != Numbers.LONG_NULL
-                );
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
 
 
     @Test
-    public void testCheckpointRingManifestPublishedOnAddPath() throws Exception {
-        // The add path publishes the ring before it advances the head, so after
-        // every cycle the durable manifest lists exactly the in-memory ring and
-        // its covered seqTxn equals the applied watermark a restart reconciles
-        // against - the trust rule's equality.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
-
-            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                int expectedEntries = 0;
-                for (int seconds = 10; seconds <= 30; seconds += 10) {
-                    setCurrentMicros(seconds * 20_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                    expectedEntries++;
-
-                    final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                    Assert.assertNotNull(lv);
-                    Assert.assertEquals(expectedEntries, lv.getRetainedCheckpointCount());
-                    Assert.assertFalse(lv.isCheckpointRingDirty());
-
-                    readRingManifest(lv, manifest);
-                    Assert.assertEquals(expectedEntries, manifest.getEntryCount());
-                    // Two publications per cycle here: the in-order one ahead of
-                    // the commit, then this one beside the sealed .cp. The counter
-                    // starts at 0, so a real manifest always carries generation >= 1.
-                    Assert.assertEquals(2L * expectedEntries, manifest.getGeneration());
-                    Assert.assertEquals(2L * expectedEntries, lv.getLastPublishedRingGeneration());
-                    // covered == the reconciled floor a restart would compute.
-                    Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
-                    Assert.assertEquals(lv.getAppliedWatermark(), lv.getLastPublishedRingCoveredBaseSeqTxn());
-                    // The head and the newest durably listed entry must be the
-                    // same object: WalPurgeJob holds the base WAL floor at the
-                    // head, and a restart replays from the newest listed entry.
-                    Assert.assertEquals(
-                            lv.getHeadCheckpointLvSeqTxn(),
-                            manifest.getEntryLvSeqTxn(manifest.getEntryCount() - 1)
-                    );
-                    for (int i = 0; i < expectedEntries; i++) {
-                        Assert.assertEquals(lv.getRetainedCheckpointLvSeqTxn(i), manifest.getEntryLvSeqTxn(i));
-                        Assert.assertEquals(lv.getRetainedCheckpointMaxTs(i), manifest.getEntryMaxTs(i));
-                        Assert.assertEquals(lv.getRetainedCheckpointBaseSeqTxn(i), manifest.getEntryBaseSeqTxn(i));
-                        Assert.assertEquals(lv.getRetainedCheckpointLvRowsTotal(i), manifest.getEntryLvRowsTotal(i));
-                        Assert.assertEquals(lv.getRetainedCheckpointStateBytes(i), manifest.getEntryStateBytes(i));
-                    }
-                }
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testCheckpointRingPublishFailurePinsHeadCheckpoint() throws Exception {
-        // A failed publish must not let the head advance onto an entry the
-        // manifest does not list: the head carries WalPurgeJob's base WAL floor,
-        // and a restart trusting the manifest replays from its newest listed
-        // entry. The cycle itself must carry on regardless - the view keeps
-        // serving off the in-memory ring, which runs ahead of the manifest and
-        // says so through checkpointRingDirty.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        final AtomicBoolean failRingPublish = new AtomicBoolean(true);
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                if (failRingPublish.get()
-                        && Utf8s.endsWithAscii(name, LiveViewCheckpointRingManifest.RING_MANIFEST_FILE_NAME)) {
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-        };
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
-
-            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1); Path cpPath = new Path()) {
-                setCurrentMicros(200_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:10.000000Z', 10)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                // The .cp is sealed and the in-memory ring holds it, so resume
-                // anchors stay available; only the durable manifest trails.
-                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-                Assert.assertTrue(lv.isCheckpointRingDirty());
-                Assert.assertEquals(0, lv.getLastPublishedRingGeneration());
-                final long orphanLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(0);
-                cpPath.of(engine.getConfiguration().getDbRoot())
-                        .concat(lv.getLiveViewToken())
-                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                        .slash();
-                LiveViewCheckpointWriter.appendCpFileName(cpPath, orphanLvSeqTxn);
-                Assert.assertTrue("the sealed .cp survives as an orphan", ff.exists(cpPath.$()));
-                // The head stays parked on the previous entry - here there was
-                // none, so it stays cleared and the floor stays at lvConsumed.
-                Assert.assertEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
-                Assert.assertEquals(Numbers.LONG_NULL, lv.getHeadCheckpointBaseSeqTxn());
-
-                // The view keeps serving through the failure.
-                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
-                        .returns("ts\tx\trn\n2026-11-01T00:00:10.000000Z\t10\t1\n");
-
-                // A publish that succeeds re-lists the ring from memory and
-                // releases the head: the failure is self-correcting.
-                failRingPublish.set(false);
-                setCurrentMicros(400_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:20.000000Z', 20)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                Assert.assertFalse(lv.isCheckpointRingDirty());
-                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
-                // Both of this cycle's publications land - the in-order one ahead
-                // of the commit and the add one beside the .cp. Cycle 1 claimed no
-                // generation: a failed publish leaves it for the next attempt.
-                Assert.assertEquals(2, lv.getLastPublishedRingGeneration());
-                readRingManifest(lv, manifest);
-                Assert.assertEquals(2, manifest.getEntryCount());
-                // The entry stranded by the failed publish is listed again, off
-                // the in-memory ring.
-                Assert.assertEquals(orphanLvSeqTxn, manifest.getEntryLvSeqTxn(0));
-                Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
-                Assert.assertEquals(
-                        lv.getHeadCheckpointLvSeqTxn(),
-                        manifest.getEntryLvSeqTxn(manifest.getEntryCount() - 1)
-                );
-
-                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
-                        .returns("ts\tx\trn\n" +
-                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
-                                "2026-11-01T00:00:20.000000Z\t20\t2\n");
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testCheckpointRingManifestPublishedOnO3RetirementPath() throws Exception {
-        // An O3 replay retires the entries its late row unsealed and publishes
-        // the survivors durably, off the same retireThreshold that drives the
-        // in-memory drop. The cycle therefore publishes twice - once ahead of
-        // the REPLACE_RANGE commit with the survivors, once after it with the
-        // fresh head - and the poisoned entries are gone from _ring either way.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
-
-            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                for (int seconds = 10; seconds <= 30; seconds += 10) {
-                    setCurrentMicros(seconds * 20_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                }
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
-                final long survivorLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(0);
-                final long retiredLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(1);
-                final long retiredHeadLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(2);
-                final long genBeforeO3 = lv.getLastPublishedRingGeneration();
-
-                // A late row at 15 sits above the entry at 10 and below the two
-                // at 20 / 30, so it resumes from 10 and unseals the rest.
-                setCurrentMicros(800_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 15)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                // Two publications: the write-ahead retirement and the fresh
-                // head the post-replay .cp write adds.
-                Assert.assertEquals(genBeforeO3 + 2, lv.getLastPublishedRingGeneration());
-                Assert.assertFalse(lv.isCheckpointRingDirty());
-                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
-                Assert.assertEquals(survivorLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(0));
-
-                readRingManifest(lv, manifest);
-                Assert.assertEquals(2, manifest.getEntryCount());
-                Assert.assertEquals(genBeforeO3 + 2, manifest.getGeneration());
-                Assert.assertEquals(survivorLvSeqTxn, manifest.getEntryLvSeqTxn(0));
-                Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
-                Assert.assertEquals(
-                        lv.getHeadCheckpointLvSeqTxn(),
-                        manifest.getEntryLvSeqTxn(manifest.getEntryCount() - 1)
-                );
-                // The unsealed entries are gone: an anchor the late row invalidated
-                // must never be listed, or a restart could resume from it.
-                for (int i = 0; i < manifest.getEntryCount(); i++) {
-                    Assert.assertNotEquals(retiredLvSeqTxn, manifest.getEntryLvSeqTxn(i));
-                    Assert.assertNotEquals(retiredHeadLvSeqTxn, manifest.getEntryLvSeqTxn(i));
-                }
-
-                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
-                        .returns("ts\tx\trn\n" +
-                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
-                                "2026-11-01T00:00:15.000000Z\t15\t2\n" +
-                                "2026-11-01T00:00:20.000000Z\t20\t3\n" +
-                                "2026-11-01T00:00:30.000000Z\t30\t4\n");
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testCheckpointRingPublishFailureDoesNotAbandonO3Replay() throws Exception {
-        // Publication failure must never block a replay. With _ring unwritable
-        // for the whole run the view keeps serving correct output through an O3
-        // and its watermark still advances - the manifest is derived state, so
-        // it can trail without gating the cycle that produces it.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                if (Utf8s.endsWithAscii(name, LiveViewCheckpointRingManifest.RING_MANIFEST_FILE_NAME)) {
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-        };
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                for (int seconds = 10; seconds <= 30; seconds += 10) {
-                    setCurrentMicros(seconds * 20_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                }
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                Assert.assertTrue(lv.isCheckpointRingDirty());
-                Assert.assertEquals(0, lv.getLastPublishedRingGeneration());
-
-                setCurrentMicros(800_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 15)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                // The replay ran to completion: the late row landed in order and
-                // the row numbers are gapless against a from-scratch recompute.
-                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
-                        .returns("ts\tx\trn\n" +
-                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
-                                "2026-11-01T00:00:15.000000Z\t15\t2\n" +
-                                "2026-11-01T00:00:20.000000Z\t20\t3\n" +
-                                "2026-11-01T00:00:30.000000Z\t30\t4\n");
-                // The in-memory ring still retired the unsealed entries, so
-                // resume anchors stay correct while the manifest trails.
-                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
-                Assert.assertTrue(lv.isCheckpointRingDirty());
-                Assert.assertEquals(0, lv.getLastPublishedRingGeneration());
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testCheckpointRingRetirePublishFailureHoldsWalPurgeFloorOnInMemoryArmAlone() throws Exception {
-        // The floor's in-memory arm, isolated - the counterpart to
-        // testCheckpointRingAddPublishFailureAfterRetireHoldsWalPurgeFloorOnDurableArmAlone,
-        // and the only shape in which this arm is the sole thing holding the
-        // floor.
-        //
-        // Its two companions shadow it everywhere else, so prising them off
-        // takes an O3 retire whose publish AND whose post-replay .cp write both
-        // fail. The retire clears the head and the failed publish keeps it
-        // cleared (head arm out). The failed .cp write suppresses the fresh
-        // entry, so the in-memory ring is left holding the survivor alone. And
-        // the failed publish leaves the manifest still listing the pre-O3
-        // membership, whose newest entry sits at base seqTxn 3 - ABOVE the
-        // survivor at 1 - so the durable arm floors nothing that matters. Only
-        // the in-memory arm names the entry the restart actually resumes from.
-        //
-        // It costs a permanently INVALID view rather than the trusted variant's
-        // full scan: retention keeps the survivor's .cp on disk whatever the
-        // manifest says, the sweep restores from it, and its raw base WAL is
-        // gone. Nothing about that needs a trusted manifest - which is why this
-        // arm has to hold even when the manifest is stale.
-        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        final AtomicBoolean failCheckpointWrite = new AtomicBoolean();
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                if (failCheckpointWrite.get()
-                        && (Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)
-                        || Utf8s.endsWithAscii(name, LiveViewCheckpointRingManifest.RING_MANIFEST_FILE_NAME))) {
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-        };
-        assertMemoryLeak(ff, () -> {
-            final long t0 = MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z");
-            setCurrentMicros(t0);
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                for (int seconds = 10; seconds <= 30; seconds += 10) {
-                    setCurrentMicros(t0 + seconds * 100_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                }
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
-                Assert.assertEquals(3L, lv.getLastPublishedRingNewestBaseSeqTxn());
-
-                failCheckpointWrite.set(true);
-                setCurrentMicros(t0 + 4_000_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:15.000000Z', 15)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-                failCheckpointWrite.set(false);
-
-                Assert.assertEquals("the retire cleared the head",
-                        Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
-                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-                Assert.assertEquals("the survivor .cp the sweep will restore from",
-                        1L, lv.getRetainedCheckpointBaseSeqTxn(0));
-                Assert.assertEquals("the in-memory arm carries the floor alone here",
-                        1L, lv.getRingNewestBaseSeqTxn());
-                // The durable arm is stuck on the membership the retire's failed
-                // publish never narrowed, so it floors nothing below lvConsumed
-                // that the survivor needs.
-                Assert.assertTrue(lv.isCheckpointRingDirty());
-                Assert.assertEquals(3L, lv.getLastPublishedRingNewestBaseSeqTxn());
-            }
-
-            setCurrentMicros(t0 + 5_000_000L);
-            execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:40.000000Z', 40)");
-            drainWalQueue();
-            engine.releaseInactive();
-            drainPurgeJob();
-
-            assertSegmentExistence(false, "base", 1, 0);
-            assertSegmentExistence(true, "base", 1, 1);
-            assertSegmentExistence(true, "base", 1, 2);
-
-            // Restart. The stale manifest names two .cp files the retire
-            // unlinked, so it fails the referenced-file check and recovery falls
-            // back: the sweep restores the survivor as the head and replays
-            // (1, 4] raw base WAL. Pre-fix that WAL is gone and the view
-            // invalidates permanently - strictly worse than the full scan the
-            // trusted-manifest variant of this bug costs.
-            engine.getLiveViewRegistry().clear();
-            engine.buildViewGraphs();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(t0 + 6_000_000L);
-                drainJob(job);
-                drainWalQueue();
-            }
-            final LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertNotNull(recovered);
-            Assert.assertFalse("the view must survive the purge + restart", recovered.isInvalid());
-
-            // The window state, not just the rows, has to have survived: rn is a
-            // running counter, so a cold restart would restart it at 1.
-            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
-                    .returns("ts\tx\trn\n" +
-                            "2026-06-01T00:00:10.000000Z\t10\t1\n" +
-                            "2026-06-01T00:00:15.000000Z\t15\t2\n" +
-                            "2026-06-01T00:00:20.000000Z\t20\t3\n" +
-                            "2026-06-01T00:00:30.000000Z\t30\t4\n" +
-                            "2026-06-01T00:00:40.000000Z\t40\t5\n");
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testCheckpointRingClearedHeadHoldsWalPurgeFloorAtNewestListedEntry() throws Exception {
-        // An O3 retire clears the head while _ring keeps listing the survivors
-        // the late row left sealed, so the head cannot carry WalPurgeJob's base
-        // WAL floor alone any more. Once the replay commits, the manifest's
-        // covered equals the reconciled applied floor - the equality restart
-        // trusts - so recovery resumes from the newest listed survivor and
-        // replays raw base WAL from THAT entry's base seqTxn. A floor following
-        // the cleared head sits at lvConsumed and has already purged the range.
-        // Pin the floor at the newest listed entry instead.
-        //
-        // Roll a fresh base WAL segment per commit so each seqTxn lands in its
-        // own segment: WalPurgeJob purges at segment granularity.
-        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        final AtomicBoolean failCheckpointWrite = new AtomicBoolean();
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                if (failCheckpointWrite.get()
-                        && Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-        };
-        assertMemoryLeak(ff, () -> {
-            // Pin the clock well past the epoch: the WAL purge sweep's interval
-            // gate (30s) skips every sweep while the clock sits near it. Data
-            // timestamps sit above this so the START FROM NOW view keeps them.
-            final long t0 = MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z");
-            setCurrentMicros(t0);
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
-
-            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // Base seqTxn 1..3, one WAL segment and one .cp each.
-                for (int seconds = 10; seconds <= 30; seconds += 10) {
-                    setCurrentMicros(t0 + seconds * 100_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                }
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
-
-                // O3 at ts=15 unseals the ts=20 and ts=30 entries and the head
-                // with them, leaving the ts=10 entry the only survivor. Failing
-                // the post-replay .cp write holds the head cleared past the
-                // cycle, which is what makes the divergence durable rather than
-                // a window WalPurgeJob has to race into.
-                failCheckpointWrite.set(true);
-                setCurrentMicros(t0 + 4_000_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:15.000000Z', 15)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-                failCheckpointWrite.set(false);
-
-                Assert.assertEquals("the retire cleared the head",
-                        Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
-                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-                final long survivorBaseSeqTxn = lv.getRetainedCheckpointBaseSeqTxn(0);
-                Assert.assertEquals("the survivor covers the first base commit", 1L, survivorBaseSeqTxn);
-                Assert.assertEquals("applied ran past the survivor", 4L, lv.getAppliedWatermark());
-
-                // The durable manifest lists that survivor at a covered the
-                // commit then reached: the equality a restart's trust rule looks
-                // for, and the reason the survivor's base WAL is load-bearing.
-                readRingManifest(lv, manifest);
-                Assert.assertEquals(1, manifest.getEntryCount());
-                Assert.assertEquals(survivorBaseSeqTxn, manifest.getEntryBaseSeqTxn(0));
-                Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
-                // The floor the cleared head can no longer carry.
-                Assert.assertEquals(survivorBaseSeqTxn, lv.getLastPublishedRingNewestBaseSeqTxn());
-            }
-
-            // A trailing base commit rolls the base writer off the gap segments
-            // so they become deletion candidates (the active writer segment is
-            // never purged). The view never consumes it: no refresh job runs.
-            setCurrentMicros(t0 + 5_000_000L);
-            execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:40.000000Z', 40)");
-            drainWalQueue();
-            engine.releaseInactive();
-
-            drainPurgeJob();
-            // seqTxn 1 sits at the floor itself, so its segment stays purgeable
-            // either way - it is the proof the sweep actually ran, without which
-            // the retention assertions below would hold vacuously.
-            assertSegmentExistence(false, "base", 1, 0);
-            // seqTxn 2 and 3 are the (survivor, applied] range a trusting restart
-            // replays. Pre-fix the floor is lvConsumed (4) and both are deleted.
-            assertSegmentExistence(true, "base", 1, 1);
-            assertSegmentExistence(true, "base", 1, 2);
-            assertSegmentExistence(true, "base", 1, 3);
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testCheckpointTimelineWalPurgeFloorRetainsPriorSlotButNotOldestRingEntry() throws Exception {
-        // Legacy ring arms follow the newest entry, not the oldest. The versioned
-        // timeline independently keeps its two A/B generations recoverable.
-        // With generations 1..3, slots 3 and 2 therefore require base WAL from
-        // seqTxn 2 while the ring's oldest seqTxn 1 must not pin the full horizon.
-        // This locks both bounds of the combined floor.
+    public void testCheckpointTimelineWalPurgeFloorRetainsPriorSlot() throws Exception {
+        // The head arm follows the newest boundary this process sealed. The
+        // versioned timeline independently keeps its two A/B generations
+        // recoverable, so with generations 1..3 slots 3 and 2 require base WAL
+        // from seqTxn 2 while the head sits at 3. This locks both bounds of the
+        // combined floor.
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
@@ -18451,17 +17497,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(lv);
-                // Three anchors span base seqTxn 1..3. The ring arms track the
-                // newest entry, while the two timeline slots hold generations 3
-                // and 2 after the third publication.
-                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
-                Assert.assertEquals(1L, lv.getRetainedCheckpointBaseSeqTxn(0));
-                Assert.assertEquals(3L, lv.getRetainedCheckpointBaseSeqTxn(2));
+                // Three boundaries span base seqTxn 1..3. The head tracks the
+                // newest, while the two timeline slots hold generations 3 and 2
+                // after the third publication.
                 Assert.assertEquals(3L, lv.getHeadCheckpointBaseSeqTxn());
-                Assert.assertEquals("the in-memory arm sits at the ring's newest entry",
-                        3L, lv.getRingNewestBaseSeqTxn());
-                Assert.assertEquals("the durable arm sits at the manifest's newest entry",
-                        3L, lv.getLastPublishedRingNewestBaseSeqTxn());
                 Assert.assertEquals("the fallback timeline slot retains generation 2 WAL",
                         2L, lv.getCheckpointTimelineWalPurgeFloor());
             }
@@ -18525,8 +17564,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(lv);
-                // The dropped x=-1 row produced no LV row, so only two checkpoints exist.
-                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
                 headLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
             }
 
@@ -18538,7 +17575,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 timelinePath.of(engine.getConfiguration().getDbRoot())
                         .concat(lv.getLiveViewToken())
-                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
                 LiveViewCheckpointLayout.timelinePath(timelinePath, timelinePath);
                 Assert.assertTrue(
                         "the timeline must exist before the rebuild is forced",
@@ -18571,501 +17608,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         });
     }
 
-    @Test
-    public void testCheckpointRingRetirementPublishPrecedesReplayCommit() throws Exception {
-        // The retirement publication runs ahead of the commit it names, so it
-        // stands on its own: failing the post-replay .cp write suppresses the
-        // add-path publication and leaves _ring holding exactly what the
-        // write-ahead publish wrote - the survivors, at the replay's commit
-        // point, with the unsealed entries already gone.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        final AtomicBoolean failCheckpointWrite = new AtomicBoolean();
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                if (failCheckpointWrite.get()
-                        && Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-        };
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
-            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                for (int seconds = 10; seconds <= 30; seconds += 10) {
-                    setCurrentMicros(seconds * 20_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                }
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
-                final long survivorLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(0);
-                final long genBeforeO3 = lv.getLastPublishedRingGeneration();
-
-                failCheckpointWrite.set(true);
-                setCurrentMicros(800_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 15)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                // Exactly one publication landed - the write-ahead retirement.
-                // The post-replay .cp never committed, so the add path threw
-                // before it could publish the fresh entry.
-                Assert.assertEquals(genBeforeO3 + 1, lv.getLastPublishedRingGeneration());
-                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-                Assert.assertEquals(survivorLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(0));
-                // The retire cleared the head and no fresh .cp replaced it.
-                Assert.assertEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
-
-                readRingManifest(lv, manifest);
-                Assert.assertEquals(1, manifest.getEntryCount());
-                Assert.assertEquals(genBeforeO3 + 1, manifest.getGeneration());
-                Assert.assertEquals(survivorLvSeqTxn, manifest.getEntryLvSeqTxn(0));
-                // covered is the replay's commit point, which the commit then
-                // reached - the equality a restart's trust rule looks for.
-                Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
-
-                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
-                        .returns("ts\tx\trn\n" +
-                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
-                                "2026-11-01T00:00:15.000000Z\t15\t2\n" +
-                                "2026-11-01T00:00:20.000000Z\t20\t3\n" +
-                                "2026-11-01T00:00:30.000000Z\t30\t4\n");
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testCheckpointRingCoveredAdvancesOnDedupBase() throws Exception {
-        // The coupled dedup path (drainAppliedBase) advances the floor from its
-        // own forward-append branch, which the add path and the O3 retire never
-        // see. Its publication has to carry covered there on a no-checkpoint
-        // cycle just as the lead path's does.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 3_600_000_000L);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
-                    "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-
-            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(200_000L);
-                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-11-01T00:00:10.000000Z', 'a', 10.0)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-
-                for (int seconds = 20; seconds <= 40; seconds += 10) {
-                    setCurrentMicros(200_000L + seconds * 10_000L);
-                    execute("INSERT INTO base (ts, sym, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', 'a', " + seconds + ".0)");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-
-                    // Forward append, no new .cp: membership is frozen and only
-                    // covered moves, up to the floor.
-                    Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-                    Assert.assertFalse(lv.isCheckpointRingDirty());
-                    readRingManifest(lv, manifest);
-                    Assert.assertEquals(1, manifest.getEntryCount());
-                    Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
-                }
-
-                assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
-                        .returns("ts\tsym\ts\n" +
-                                "2026-11-01T00:00:10.000000Z\ta\t10.0\n" +
-                                "2026-11-01T00:00:20.000000Z\ta\t30.0\n" +
-                                "2026-11-01T00:00:30.000000Z\ta\t60.0\n" +
-                                "2026-11-01T00:00:40.000000Z\ta\t100.0\n");
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testCheckpointRingCoveredAdvancesOnFilteredOutCycle() throws Exception {
-        // A cycle whose rows the WHERE filter rejects wholesale emits nothing and
-        // commits nothing, but still walks the durable floor so base WAL retention
-        // releases. covered has to walk with it, or a mostly-filtered view strands
-        // its ring exactly as an unpublished in-order cycle does.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 3_600_000_000L);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 100");
-
-            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // One qualifying row, so a head .cp exists to be carried forward.
-                setCurrentMicros(200_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:10.000000Z', 200)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-                final long headLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
-
-                for (int seconds = 20; seconds <= 40; seconds += 10) {
-                    setCurrentMicros(200_000L + seconds * 10_000L);
-                    // Below the filter: the drain walks the seqTxn and emits no row.
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', 1)");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-
-                    Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-                    Assert.assertEquals(headLvSeqTxn, lv.getHeadCheckpointLvSeqTxn());
-                    readRingManifest(lv, manifest);
-                    Assert.assertEquals(1, manifest.getEntryCount());
-                    Assert.assertEquals(headLvSeqTxn, manifest.getEntryLvSeqTxn(0));
-                    Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
-                }
-
-                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
-                        .returns("ts\tx\trn\n" +
-                                "2026-11-01T00:00:10.000000Z\t200\t1\n");
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testCheckpointRingCoveredAdvancesWithoutCheckpointWrite() throws Exception {
-        // The cadence is set so only the first cycle seals a .cp; every cycle
-        // after it advances the floor and writes no checkpoint, so the add path -
-        // which publishes beside the .cp write - never runs again. Without an
-        // in-order publication covered would park on that first entry while the
-        // floor ran away, and a restart comparing covered against the reconciled
-        // floor would reject the ring on every steadily-ingesting view.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 3_600_000_000L);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
-
-            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(200_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:10.000000Z', 10)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                // The first commit seals a head on the firstCp path, publishing
-                // through the add path.
-                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-                final long headLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
-                Assert.assertTrue(headLvSeqTxn != Numbers.LONG_NULL);
-                long generation = lv.getLastPublishedRingGeneration();
-                long covered = lv.getLastPublishedRingCoveredBaseSeqTxn();
-
-                for (int seconds = 20; seconds <= 40; seconds += 10) {
-                    setCurrentMicros(200_000L + seconds * 10_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-
-                    // No .cp: the cadence is out of reach and the head is frozen,
-                    // so the ring's membership cannot have moved.
-                    Assert.assertEquals(headLvSeqTxn, lv.getHeadCheckpointLvSeqTxn());
-                    Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-                    Assert.assertFalse(lv.isCheckpointRingDirty());
-
-                    // But covered did move, and it landed on the floor.
-                    Assert.assertEquals(generation + 1, lv.getLastPublishedRingGeneration());
-                    Assert.assertTrue(
-                            "covered must advance on an in-order cycle",
-                            lv.getLastPublishedRingCoveredBaseSeqTxn() > covered
-                    );
-                    generation = lv.getLastPublishedRingGeneration();
-                    covered = lv.getLastPublishedRingCoveredBaseSeqTxn();
-
-                    readRingManifest(lv, manifest);
-                    Assert.assertEquals(1, manifest.getEntryCount());
-                    Assert.assertEquals(headLvSeqTxn, manifest.getEntryLvSeqTxn(0));
-                    Assert.assertEquals(generation, manifest.getGeneration());
-                    // The trust rule's equality, on a cycle that sealed nothing.
-                    Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
-                }
-
-                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
-                        .returns("ts\tx\trn\n" +
-                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
-                                "2026-11-01T00:00:20.000000Z\t20\t2\n" +
-                                "2026-11-01T00:00:30.000000Z\t30\t3\n" +
-                                "2026-11-01T00:00:40.000000Z\t40\t4\n");
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-
-    @Test
-    public void testO3ApplyAheadTruncatePublishesEmptyRingManifest() throws Exception {
-        // Section 6.5's empty publication, and the ONLY route a base TRUNCATE /
-        // DROP PARTITION / TTL reaches it by: as a passenger in the apply-ahead
-        // range of a real DATA O3 trigger, where computeApplyAheadMinTs refuses
-        // the range (:2579-2582) and drives retireLowTs to LONG_NULL. That drops
-        // the whole ring - maxTs >= LONG_NULL is universally true - so the
-        // pre-commit publication is a header-only manifest.
-        //
-        // testO3ApplyAheadTruncateFallsBackToBoundary already pins the in-memory
-        // drop. This is the durable half: nothing anywhere
-        // asserted that an empty manifest is written rather than skipped, and a
-        // "don't bother publishing an empty ring" shortcut would leave the prior
-        // manifest on disk listing anchors this cycle just unlinked - trusted at
-        // the next restart, because the commit lands and carries the floor up to
-        // the covered the STALE manifest still claims.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
-
-            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                for (int seconds = 10; seconds <= 30; seconds += 10) {
-                    setCurrentMicros(seconds * 20_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                }
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
-                readRingManifest(lv, manifest);
-                Assert.assertEquals(3, manifest.getEntryCount());
-                final long generationBeforeTruncate = manifest.getGeneration();
-
-                // The trigger at 25 qualifies for the anchor at 20, but the
-                // unexamined ahead range holds a TRUNCATE, so the resume is
-                // refused and the whole ring goes with it.
-                setCurrentMicros(800_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
-                execute("TRUNCATE TABLE base");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                Assert.assertEquals(0, lv.getRetainedCheckpointCount());
-                readRingManifest(lv, manifest);
-                Assert.assertTrue(manifest.getGeneration() > generationBeforeTruncate);
-                Assert.assertEquals("the retire must publish an EMPTY manifest, not skip the write", 0, manifest.getEntryCount());
-                Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
-                // An empty manifest lists nothing to resume from, so it releases
-                // WalPurgeJob's durable floor arm rather than pinning base WAL at
-                // the newest entry it no longer has (:4022-4026).
-                Assert.assertEquals(Numbers.LONG_NULL, lv.getLastPublishedRingNewestBaseSeqTxn());
-                // Every .cp went with the ring, so the allow-list and the disk agree.
-                Assert.assertEquals(0, countCheckpointFiles(lv));
-                Assert.assertFalse(lv.isCheckpointRingDirty());
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testCheckpointRingDropLiveViewRemovesCheckpointsDir() throws Exception {
-        // The last checkpoint-ring lifecycle item, and the one flagged as
-        // "argued to collapse but NOT proven". The argument for collapsing it
-        // was that DROP LIVE VIEW needs no _ring special-casing because
-        // _checkpoints/ rides the recursive table-directory removal, and that
-        // testDropLiveViewPurgesTableFiles already covers it. The first half is
-        // true. The second is not, and that gap is why this test exists.
-        //
-        // That test's only on-disk assertion is assertNotEquals(TABLE_EXISTS,...),
-        // and TableUtils.exists probes for _txn ALONE (:2727-2737) - a table
-        // directory holding nothing but _checkpoints/ reads TABLE_RESERVED and
-        // passes. So it pins that the partition data goes and says nothing
-        // whatever about the ring. It could not have said anything either: its
-        // view seals no .cp, so the directory it declines to enumerate is empty.
-        //
-        // The removal is type-driven rather than name-driven, which is what makes
-        // it correct and what makes it worth pinning: cleanDroppedTableDirectory
-        // (:260-301) keeps a subdirectory only when CairoKeywords.isTxnSeq or
-        // isWal matches, and both test the first byte ('t' / 'w') against
-        // _checkpoints' '_', so it falls to a recursive unlinkOrRemove. Nothing
-        // in that path names the ring, and nothing needs to - which is precisely
-        // the claim a reader cannot verify without this test.
-        //
-        // And the collapse argument named the WRONG mechanism, which the
-        // mutation run is the only way to see. It credits the recursive rmdir -
-        // i.e. WalPurgeJob's (:259), the second of the two stages. That rmdir
-        // does not carry this test at all: stubbing it to fullyDeleted=false
-        // leaves this GREEN, because the view's txn_seq/ and wal1/ shells
-        // outlive the purge loop and the directory terminates at TABLE_RESERVED
-        // - the very state named as the reason to doubt the collapse. It is
-        // stage one's unlinkOrRemove that removes _checkpoints/, and neutering
-        // that branch alone is what reddens the assertion below. So the doubt
-        // was right, the verdict is right, and the reason was wrong: the rmdir
-        // that was supposed to make this free never runs here.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
-
-            final TableToken lvToken = engine.verifyTableName("lv");
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                for (int seconds = 10; seconds <= 20; seconds += 10) {
-                    setCurrentMicros(seconds * 20_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-05-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                }
-            }
-
-            // The ring must be populated BEFORE the drop, or the assertion below
-            // holds against an empty directory and proves nothing - the trap
-            // testDropLiveViewPurgesTableFiles fell into from the other side.
-            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertNotNull(lv);
-            Assert.assertEquals(2, lv.getRetainedCheckpointCount());
-            Assert.assertEquals(2, countCheckpointFiles(lv));
-            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
-            readRingManifest(lv, manifest);
-            Assert.assertEquals(2, manifest.getEntryCount());
-
-            execute("DROP LIVE VIEW lv");
-            // Both jobs, in turn, as testDropLiveViewPurgesTableFiles drives them:
-            // ApplyWal2TableJob reclaims the table's own files and WalPurgeJob
-            // then rmdir's the shell and deregisters the token.
-            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
-                for (int i = 0; i < 8; i++) {
-                    drainWalQueue();
-                    purgeJob.drain(0);
-                }
-            }
-
-            // Asserted on the directory rather than on TableUtils.exists, because
-            // the shell surviving at TABLE_RESERVED is a tolerated outcome and a
-            // leaked _checkpoints/ is not. Under a name-driven removal the .cp
-            // window snapshots - the largest thing the view owns - would outlive
-            // the view itself, on every drop, with nothing to ever collect them.
-            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-            try (Path path = new Path()) {
-                path.of(engine.getConfiguration().getDbRoot())
-                        .concat(lvToken)
-                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
-                Assert.assertFalse(
-                        "_checkpoints/ and the _ring manifest in it must not survive DROP LIVE VIEW [path=" + path + ']',
-                        ff.exists(path.$())
-                );
-            }
-        });
-    }
-
-
-    @Test
-    public void testO3CorruptNonHeadAnchorIsEvictedAndNotRetried() throws Exception {
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1); Path cpPath = new Path()) {
-                for (int seconds = 10; seconds <= 30; seconds += 10) {
-                    setCurrentMicros(seconds * 20_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                }
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
-                final long oldestLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(0);
-                final long corruptLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(1);
-                Assert.assertNotEquals(corruptLvSeqTxn, lv.getHeadCheckpointLvSeqTxn());
-
-                cpPath.of(engine.getConfiguration().getDbRoot())
-                        .concat(lv.getLiveViewToken())
-                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                        .slash();
-                LiveViewCheckpointWriter.appendCpFileName(cpPath, corruptLvSeqTxn);
-                overwriteByteInFile(engine.getConfiguration(), cpPath, LiveViewCheckpointWriter.FILE_HEADER_SIZE + 8, (byte) 0xAB);
-
-                // A late row at 25 selects the non-head anchor at 20. The trigger
-                // retires the unsealed head, then restore evicts the corrupt anchor
-                // without advancing the watermark.
-                setCurrentMicros(800_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
-                drainWalQueue();
-                Assert.assertTrue(job.run());
-
-                Assert.assertFalse("corrupt anchor file must be unlinked", engine.getConfiguration().getFilesFacade().exists(cpPath.$()));
-                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-                Assert.assertEquals(oldestLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(0));
-                Assert.assertEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
-                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
-                        "2026-11-01T00:00:10.000000Z\t10\t1\n" +
-                        "2026-11-01T00:00:20.000000Z\t20\t2\n" +
-                        "2026-11-01T00:00:30.000000Z\t30\t3\n");
-
-                // The same trigger re-fires and resumes from the surviving anchor.
-                drainJob(job);
-                drainWalQueue();
-                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
-                        "2026-11-01T00:00:10.000000Z\t10\t1\n" +
-                        "2026-11-01T00:00:20.000000Z\t20\t2\n" +
-                        "2026-11-01T00:00:25.000000Z\t25\t3\n" +
-                        "2026-11-01T00:00:30.000000Z\t30\t4\n");
-                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
-                Assert.assertEquals(oldestLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(0));
-                Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
-                Assert.assertNotEquals(corruptLvSeqTxn, lv.getHeadCheckpointLvSeqTxn());
-
-                // A later O3 remains correct and cannot resurrect the removed anchor.
-                setCurrentMicros(1_000_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:27.000000Z', 27)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
-                        "2026-11-01T00:00:10.000000Z\t10\t1\n" +
-                        "2026-11-01T00:00:20.000000Z\t20\t2\n" +
-                        "2026-11-01T00:00:25.000000Z\t25\t3\n" +
-                        "2026-11-01T00:00:27.000000Z\t27\t4\n" +
-                        "2026-11-01T00:00:30.000000Z\t30\t5\n");
-                for (int i = 0, n = lv.getRetainedCheckpointCount(); i < n; i++) {
-                    Assert.assertNotEquals(corruptLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(i));
-                }
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
 
     @Test
     public void testO3BoundedMissUnderApplyAheadReanchorsBelowAheadMinimum() throws Exception {
@@ -19087,10 +17630,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(lv);
-                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
                 Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:30.000000Z"), lv.getHeadCheckpointMaxTs());
 
-                // Trigger 25 initially selects anchor 20 (a bounded head miss).
+                // Trigger 25 initially selects the boundary at 20.
                 // Apply then races ahead with minTs=15, forcing re-anchor at 10.
                 setCurrentMicros(800_000L);
                 execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
@@ -19115,11 +17657,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         .returns("o3_resume_replay_rows\to3_boundary_replay_rows\to3_replay_scan_rows\n4\t0\t9\n");
                 Assert.assertEquals(5L, lv.getLvRowsTotal());
                 Assert.assertEquals(5L, lv.getStateReader().getLvConsumedSeqTxn());
-                // The ahead row retires stale anchors 20 and 30; 10 and the
-                // freshly sealed head at 30 remain.
-                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
-                Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:10.000000Z"), lv.getRetainedCheckpointMaxTs(0));
-                Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:30.000000Z"), lv.getRetainedCheckpointMaxTs(1));
+                // The repair retired the timeline and sealed a fresh boundary at 30
+                // over the replayed state.
+                Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:30.000000Z"), lv.getHeadCheckpointMaxTs());
             }
             execute("DROP LIVE VIEW lv");
         });
@@ -19144,9 +17684,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(lv);
-                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
 
-                // The trigger qualifies for anchor 20, but the unexamined ahead
+                // The trigger qualifies for the boundary at 20, but the unexamined ahead
                 // range contains TRUNCATE. Only boundary replay can preserve the
                 // prefix below the trigger while applying the trigger's delete
                 // authority at and above 25. TRUNCATE itself is transparent to
@@ -19167,7 +17706,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n0\t0\n");
                 Assert.assertEquals(2L, lv.getLvRowsTotal());
                 Assert.assertEquals(5L, lv.getStateReader().getLvConsumedSeqTxn());
-                Assert.assertEquals(0, lv.getRetainedCheckpointCount());
             }
             execute("DROP LIVE VIEW lv");
         });
@@ -20337,7 +18875,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // After the O3 replay path drives an apply commit, the
         // head metadata trio (lvSeqTxn, maxTs, stateBytes) reflects the
         // post-replay state - not the pre-O3 state, and not LONG_NULL.
-        // The .cp file exists on disk at the new lvSeqTxn.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
@@ -20376,23 +18913,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         lv.getHeadCheckpointStateBytes() > 0L
                 );
 
-                TableToken token = lv.getLiveViewToken();
-                FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                try (Path cpPath = new Path()) {
-                    cpPath.of(engine.getConfiguration().getDbRoot())
-                            .concat(token)
-                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                            .slash();
-                    LiveViewCheckpointWriter.appendCpFileName(cpPath, postReplayLvSeqTxn);
-                    Assert.assertTrue("post-replay head .cp exists", ff.exists(cpPath.$()));
 
-                    cpPath.of(engine.getConfiguration().getDbRoot())
-                            .concat(token)
-                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                            .slash();
-                    LiveViewCheckpointWriter.appendCpFileName(cpPath, preO3HeadLvSeqTxn);
-                    Assert.assertFalse("pre-O3 head .cp unlinked", ff.exists(cpPath.$()));
-                }
             }
 
             execute("DROP LIVE VIEW lv");

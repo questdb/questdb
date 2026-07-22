@@ -263,12 +263,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             "AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
             "II", "JJ", "KK", "LL", "MM", "NN", "OO", "PP"
     };
-    // Durable-ring restart verdicts, harvested per restart because the counters
-    // live on the LiveViewInstance and a restart replaces it. JUnit builds a new
-    // test class instance per method, so all three start at zero per run.
-    private int ringMaxRehydratedEntries;
-    private int ringRecoveryFallbacks;
-    private int ringRehydrations;
 
     @Test
     public void testFuzzAnchored() throws Exception {
@@ -1645,25 +1639,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 types.setQuick(idx, newType);
             }
             default -> throw new IllegalStateException("op=" + op);
-        }
-    }
-
-    /**
-     * Accumulates the restart verdict off an instance that is about to be
-     * discarded (or off the last one at the end of a run). The verdict reads
-     * LONG_NULL until the post-restart refresh decides, so an instance that
-     * never restored - the one a CREATE builds, or one whose restart drew no
-     * later commit to refresh - contributes to no counter at all.
-     */
-    private void harvestCheckpointRingVerdict(LiveViewInstance instance) {
-        if (instance == null) {
-            return;
-        }
-        ringRecoveryFallbacks += (int) instance.getCheckpointRingRecoveryFallbackCount();
-        final long recovered = instance.getCheckpointRingRecoveredEntries();
-        if (recovered != Numbers.LONG_NULL && recovered > 0) {
-            ringRehydrations++;
-            ringMaxRehydratedEntries = Math.max(ringMaxRehydratedEntries, (int) recovered);
         }
     }
 
@@ -3198,7 +3173,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
                                 && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
-                            harvestCheckpointRingVerdict(inst);
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
@@ -3209,7 +3183,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             driveRefreshToQuiescence(job);
-            harvestCheckpointRingVerdict(engine.getLiveViewRegistry().getViewInstance("lv"));
 
             if (inMemReadBack) {
                 // Top up with one clean forward row above the global max ts so the

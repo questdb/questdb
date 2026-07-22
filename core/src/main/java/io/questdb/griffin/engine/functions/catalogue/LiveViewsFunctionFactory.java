@@ -74,29 +74,15 @@ import io.questdb.std.ObjList;
  * them as O3-replay observability: they split the rows an O3 re-emits by path -
  * bounded resume-from-anchor replays versus the residual O(view age) boundary
  * rebuild - so the two are disjoint. A resume count that grows while the boundary
- * count stays flat is the retained-checkpoint ring bounding O3 cost as intended;
- * a growing boundary count flags late rows that predate the whole ring.
- * Five {@code checkpoint_ring_*} columns close that surface out with the durable
- * ring's own state - what restart recovered, and what the next restart would
- * recover. {@code checkpoint_ring_recovered_entries} and
- * {@code checkpoint_ring_recovery_fallback_count} report the trust verdict
- * {@code _checkpoints/_ring} got at restart; the two {@code manifest} columns
- * report the current durable claim, so an operator can watch
- * {@code checkpoint_ring_manifest_covered_seqtxn} track {@code applied_watermark}
- * and know the next restart will trust the ring rather than wait for it to not.
- * {@code checkpoint_ring_manifest_dirty} flags an in-memory ring that has run
- * ahead of the manifest on disk.
+ * count stays flat is the checkpoint timeline bounding O3 cost as intended; a
+ * growing boundary count flags late rows the timeline holds no boundary below.
  * <p>
- * Four baseline cost columns close the set, measuring the current ring
- * architecture so a later versioned-checkpoint-timeline rollout has something to
- * compare against. {@code head_checkpoint_write_micros} and
- * {@code head_checkpoint_restore_micros} time the most recent checkpoint write
- * and the restart restore-from-head; both are NULL until the event first runs.
- * {@code checkpoint_ring_evictions} counts retained entries the retention budget
- * evicted over the LV lifetime - the size-capped retention the timeline removes.
+ * Three cost columns close the set. {@code head_checkpoint_write_micros} and
+ * {@code head_checkpoint_restore_micros} time the most recent checkpoint seal and
+ * the restart restore; both are NULL until the event first runs.
  * {@code o3_replay_scan_rows} counts base rows the O3 replay paths scanned, which
  * equals the emit counters without a WHERE filter and exceeds them with one. The
- * last three are in-memory counters that reset on restart.
+ * last one is an in-memory counter that resets on restart.
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
 
@@ -137,19 +123,13 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_SEED_TARGET_SEQTXN = 21;
         private static final int COLUMN_BASE_TABLE_NAME = 2;
         private static final int COLUMN_BELOW_LOWER_BOUND_COUNT = 13;
-        private static final int COLUMN_CHECKPOINT_RING_EVICTIONS = 34;
-        private static final int COLUMN_CHECKPOINT_RING_MANIFEST_COVERED_SEQTXN = 29;
-        private static final int COLUMN_CHECKPOINT_RING_MANIFEST_DIRTY = 30;
-        private static final int COLUMN_CHECKPOINT_RING_MANIFEST_GENERATION = 28;
-        private static final int COLUMN_CHECKPOINT_RING_RECOVERED_ENTRIES = 27;
-        private static final int COLUMN_CHECKPOINT_RING_RECOVERY_FALLBACK_COUNT = 31;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL = 6;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL_UNIT = 7;
         private static final int COLUMN_HEAD_CHECKPOINT_LV_SEQTXN = 22;
         private static final int COLUMN_HEAD_CHECKPOINT_MAX_TS = 23;
-        private static final int COLUMN_HEAD_CHECKPOINT_RESTORE_MICROS = 33;
+        private static final int COLUMN_HEAD_CHECKPOINT_RESTORE_MICROS = 28;
         private static final int COLUMN_HEAD_CHECKPOINT_STATE_BYTES = 24;
-        private static final int COLUMN_HEAD_CHECKPOINT_WRITE_MICROS = 32;
+        private static final int COLUMN_HEAD_CHECKPOINT_WRITE_MICROS = 27;
         private static final int COLUMN_INVALIDATION_REASON = 5;
         private static final int COLUMN_IN_MEMORY_INTERVAL = 8;
         private static final int COLUMN_IN_MEMORY_INTERVAL_UNIT = 9;
@@ -161,7 +141,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_LV_CONSUMED_SEQTXN = 18;
         private static final int COLUMN_O3_BOUNDARY_REPLAY_ROWS = 26;
         private static final int COLUMN_O3_REJECTED_COUNT = 12;
-        private static final int COLUMN_O3_REPLAY_SCAN_ROWS = 35;
+        private static final int COLUMN_O3_REPLAY_SCAN_ROWS = 29;
         private static final int COLUMN_O3_RESUME_REPLAY_ROWS = 25;
         private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 19;
         private static final int COLUMN_VIEW_NAME = 0;
@@ -249,18 +229,6 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                 private LiveViewInstance instance;
 
                 @Override
-                public boolean getBool(int col) {
-                    // Whether the last _checkpoints/_ring publication failed, leaving
-                    // the in-memory ring ahead of the manifest on disk. Diagnostic
-                    // only: it never gates a replay, and it self-corrects on the next
-                    // successful publication. Needs no stub guard - the field reads
-                    // false there, which is the truth (a stub never publishes) rather
-                    // than a default standing in for one, and BOOLEAN has no NULL to
-                    // report the difference with anyway.
-                    return col == COLUMN_CHECKPOINT_RING_MANIFEST_DIRTY && instance.isCheckpointRingDirty();
-                }
-
-                @Override
                 public long getLong(int col) {
                     if (instance.isStub()) {
                         // The stub has a null definition and default state; every
@@ -340,17 +308,11 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                             .toMicros(raw);
                         }
                         case COLUMN_HEAD_CHECKPOINT_STATE_BYTES -> instance.getHeadCheckpointStateBytes();
-                        // Baseline write/restore timings for the current ring
-                        // architecture. Both are LONG_NULL until the event first runs
-                        // (no .cp written yet / view never restored), which passes
-                        // through as NULL.
+                        // Seal / restore timings. Both are LONG_NULL until the event
+                        // first runs (no root sealed yet / view never restored), which
+                        // passes through as NULL.
                         case COLUMN_HEAD_CHECKPOINT_WRITE_MICROS -> instance.getHeadCheckpointWriteMicros();
                         case COLUMN_HEAD_CHECKPOINT_RESTORE_MICROS -> instance.getHeadCheckpointRestoreMicros();
-                        // Retained-ring entries evicted by the count/bytes/event-time
-                        // budget over the LV lifetime - the size-capped-retention cost
-                        // the versioned checkpoint timeline removes. In-memory counter,
-                        // resets on restart.
-                        case COLUMN_CHECKPOINT_RING_EVICTIONS -> instance.getCheckpointRingEvictions();
                         // Base rows the O3 replay paths scanned (>= the emit counters
                         // above; a WHERE filter makes scan exceed emit). In-memory
                         // counter, resets on restart.
@@ -395,45 +357,14 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_BELOW_LOWER_BOUND_COUNT -> instance.getBelowLowerBoundCount();
                         // Rows re-emitted by bounded resume-from-anchor O3 replays -
                         // "the win": each replay stays bounded to the tail above the
-                        // sealed anchor rather than recomputing the whole view.
-                        // In-memory counter, resets on restart.
+                        // logical boundary it resumed from rather than recomputing the
+                        // whole view. In-memory counter, resets on restart.
                         case COLUMN_O3_RESUME_REPLAY_ROWS -> instance.getO3ResumeReplayRows();
                         // Rows re-emitted by boundary-rebuild O3 replays - the residual
-                        // O(view age) fallback taken when the late row predates the whole
-                        // retained-checkpoint ring. In-memory counter, resets on restart.
+                        // O(view age) fallback taken when the timeline holds no boundary
+                        // below the late row. In-memory counter, resets on restart.
                         // Disjoint from o3_resume_replay_rows.
                         case COLUMN_O3_BOUNDARY_REPLAY_ROWS -> instance.getO3BoundaryReplayRows();
-                        // Entries the restart rehydrated into the retained-checkpoint
-                        // ring from a trusted _checkpoints/_ring manifest, after
-                        // pruning to the running retention budget - the anchors this
-                        // process came back with. NULL when no recovery decision was
-                        // made, i.e. the view never restored (no head checkpoint).
-                        // Zero splits two ways, and checkpoint_ring_recovery_fallback_count
-                        // is what tells them apart: a fallback recovered nothing,
-                        // while a trusted manifest that listed nothing withheld
-                        // anchors without condemning the sweep's head.
-                        case COLUMN_CHECKPOINT_RING_RECOVERED_ENTRIES -> instance.getCheckpointRingRecoveredEntries();
-                        // Generation the last successful _checkpoints/_ring publication
-                        // stamped, or the one recovery adopted from the manifest it
-                        // trusted - the counter continues across restarts rather than
-                        // restarting at 1. Zero means this process has neither
-                        // published nor adopted, so a real manifest always reads >= 1.
-                        case COLUMN_CHECKPOINT_RING_MANIFEST_GENERATION -> instance.getLastPublishedRingGeneration();
-                        // coveredBaseSeqTxn of that manifest: the base seqTxn at which
-                        // every listed entry is proven sealed. This is what the next
-                        // restart compares against the reconciled applied floor, so a
-                        // value trailing applied_watermark is the view soaking with a
-                        // manifest that would not be trusted. NULL until this process
-                        // publishes or adopts one.
-                        case COLUMN_CHECKPOINT_RING_MANIFEST_COVERED_SEQTXN ->
-                                instance.getLastPublishedRingCoveredBaseSeqTxn();
-                        // Restarts whose ring recovery declined to trust a manifest and
-                        // fell back to the highest checkpoint alone, each costing the
-                        // first in-retention O3 after it a boundary rebuild. Recovery
-                        // is single-shot per view per process, so this reads 0 or 1;
-                        // sum() it across the catalogue for a deployment-wide tally.
-                        case COLUMN_CHECKPOINT_RING_RECOVERY_FALLBACK_COUNT ->
-                                instance.getCheckpointRingRecoveryFallbackCount();
                         default -> 0;
                     };
                 }
@@ -511,15 +442,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("head_checkpoint_state_bytes", ColumnType.LONG));          // 24
             metadata.add(new TableColumnMetadata("o3_resume_replay_rows", ColumnType.LONG));                // 25
             metadata.add(new TableColumnMetadata("o3_boundary_replay_rows", ColumnType.LONG));              // 26
-            metadata.add(new TableColumnMetadata("checkpoint_ring_recovered_entries", ColumnType.LONG));    // 27
-            metadata.add(new TableColumnMetadata("checkpoint_ring_manifest_generation", ColumnType.LONG));  // 28
-            metadata.add(new TableColumnMetadata("checkpoint_ring_manifest_covered_seqtxn", ColumnType.LONG)); // 29
-            metadata.add(new TableColumnMetadata("checkpoint_ring_manifest_dirty", ColumnType.BOOLEAN));    // 30
-            metadata.add(new TableColumnMetadata("checkpoint_ring_recovery_fallback_count", ColumnType.LONG)); // 31
-            metadata.add(new TableColumnMetadata("head_checkpoint_write_micros", ColumnType.LONG));          // 32
-            metadata.add(new TableColumnMetadata("head_checkpoint_restore_micros", ColumnType.LONG));        // 33
-            metadata.add(new TableColumnMetadata("checkpoint_ring_evictions", ColumnType.LONG));             // 34
-            metadata.add(new TableColumnMetadata("o3_replay_scan_rows", ColumnType.LONG));                   // 35
+            metadata.add(new TableColumnMetadata("head_checkpoint_write_micros", ColumnType.LONG));          // 27
+            metadata.add(new TableColumnMetadata("head_checkpoint_restore_micros", ColumnType.LONG));        // 28
+            metadata.add(new TableColumnMetadata("o3_replay_scan_rows", ColumnType.LONG));                   // 29
             METADATA = metadata;
         }
     }

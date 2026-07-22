@@ -395,43 +395,6 @@ public interface CairoConfiguration {
     long getLiveViewCheckpointRepairScanMaxRows();
 
     /**
-     * Hard cap on the number of checkpoints a live view retains in its
-     * resume ring. The refresh worker resumes an out-of-order replay from
-     * the newest retained checkpoint below the late row instead of rebuilding
-     * from the view boundary, so a deeper ring tolerates later out-of-order
-     * rows at the cost of more retained {@code .cp} files. The primary
-     * retention bound; the newest entry is always kept (for restart restore).
-     * A value {@code <= 0} disables the count bound.
-     */
-    int getLiveViewCheckpointRetentionCount();
-
-    /**
-     * Per-view budget on the total serialized bytes of retained checkpoints.
-     * The refresh worker prunes the oldest retained checkpoints once their
-     * combined state exceeds this budget. The safety bound for
-     * high-cardinality / many-function views, whose per-checkpoint state
-     * ({@code n_functions * n_partitions * frame_size}) can be large. A value
-     * {@code <= 0} disables the byte budget. The newest entry is always kept.
-     */
-    long getLiveViewCheckpointRetentionMaxBytes();
-
-    /**
-     * Event-time horizon on retained-checkpoint age. A retained checkpoint
-     * whose {@code maxTimestamp} sits further than this below the newest
-     * checkpoint is pruned. A loose upper safety only, and <b>disabled by
-     * default</b> (0): the count and byte bounds are the primary retention
-     * bounds and bind first at real ingest rates (near-head checkpoint spacing
-     * already covers many times the observed base lateness). Enabling it trades
-     * away resume coverage for low-rate / coarse-cadence views, whose
-     * checkpoints are spaced far apart in event time and would collapse to a
-     * single retained entry - forcing every out-of-order replay onto the
-     * boundary rebuild. A value {@code <= 0} disables the horizon, leaving
-     * retention governed purely by count and bytes. The newest entry is always
-     * kept.
-     */
-    long getLiveViewCheckpointRetentionMicros();
-
-    /**
      * Row-count cadence trigger for head-checkpoint writes. The refresh
      * worker writes a fresh head once this many live-view rows have been
      * applied since the prior head. The natural sizing knob for high-rate

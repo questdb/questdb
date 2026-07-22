@@ -39,57 +39,50 @@ import org.junit.Test;
 
 /**
  * Baseline fixtures for the versioned checkpoint timeline: deterministic RANGE
- * and ROWS window views with enough history to collapse the retained checkpoint
- * ring and then reproduce an older out-of-order boundary replay.
+ * and ROWS window views with enough history to reach an out-of-order row older
+ * than every logical checkpoint boundary, and to price the two dispositions
+ * against each other for one that is not.
  * <p>
- * The scenario reproduces, on eligible window shapes, exactly the pathology the
- * timeline replaces:
+ * The scenario covers, on eligible window shapes, both ends of the repair:
  * <ul>
- *     <li><b>Collapse the ring.</b> With one head sealed per flush
- *     ({@code checkpoint.rows = 1}) the retained ring fills to the {@code retention.count}
- *     budget; every further in-order commit evicts the oldest anchor, so an old anchor that
- *     could have bounded a future O3 is gone even though it was valid.</li>
- *     <li><b>Reproduce the older-O3 boundary replay.</b> An out-of-order row within the
- *     surviving horizon resumes from the nearest retained anchor
- *     ({@code o3_resume_replay_rows}, the ring "win"), but a row older than the whole
- *     collapsed ring finds no anchor and falls back to the O(view age) boundary rebuild
- *     from the {@code START FROM} boundary ({@code o3_boundary_replay_rows}, the residual
- *     the timeline removes).</li>
+ *     <li><b>A change with a boundary below it.</b> The plan prices the resume
+ *     from that boundary - which reads to the end of the base table - against the
+ *     localized rebuild's {@code [L, H)}, and takes the cheaper. The counters
+ *     ({@code o3_resume_replay_rows} versus {@code o3_boundary_replay_rows}) say
+ *     which ran.</li>
+ *     <li><b>A change below every boundary.</b> No resume can qualify, so the
+ *     rebuild is the only disposition left - and the finite dependency is what
+ *     keeps it off the {@code START FROM} boundary.</li>
  * </ul>
  * These use {@code sum(x)} over a partitioned RANGE / ROWS frame - eligible
  * dependency kinds under the supported-window matrix, unlike the unanchored
- * {@code row_number() OVER ()} the older ring/boundary smoke fixtures leant on,
+ * {@code row_number() OVER ()} the older boundary smoke fixtures leant on,
  * which the finite-influence scope cut removes. {@code sum} over small LONG
  * values is bit-exact, so the from-base recompute oracle can compare with exact
  * equality rather than a float tolerance.
  * <p>
  * The class also carries the fixture's counterpart: with the dependency bounds
- * in place, the same sub-ring out-of-order row no longer costs the view's age in
- * either direction. RANGE derives its two ends by arithmetic ({@code R - W} and
- * {@code changeMaxTs + W}); ROWS discovers them by counting each key's rows
- * either side of the change, and pays a scan of its own to do so. The
- * localization group drives a longer history, measures what each rebuild
+ * in place, an out-of-order row below every boundary no longer costs the view's
+ * age in either direction. RANGE derives its two ends by arithmetic
+ * ({@code R - W} and {@code changeMaxTs + W}); ROWS discovers them by counting
+ * each key's rows either side of the change, and pays a scan of its own to do
+ * so. The localization group drives a longer history, measures what each rebuild
  * actually read and re-emitted, and then keeps ingesting in order so the runtime
  * state a converging repair restored is exercised rather than only the output it
  * wrote. Its last case is the deleting change set the ROWS bound refuses, which
  * is what the unbounded rebuild still exists for.
  */
-public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewTest {
+public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest {
 
-    // retention.count for the fixture. Pinned in-test rather than relying on the 8 default
-    // so the collapse arithmetic (evictions = commits - budget) is hermetic.
-    private static final int RETENTION_COUNT = 8;
-    // In-order commits driven before any O3. More than RETENTION_COUNT so the ring collapses:
-    // the final HISTORY_COMMITS - RETENTION_COUNT commits each evict the oldest anchor.
+    // In-order commits driven before any O3, one per 10 seconds.
     private static final int HISTORY_COMMITS = 12;
     // The localization fixture drives a much longer history, so the rows below the
     // dependency floor outnumber the rows above it several times over and the bound is
     // visible rather than incidental. One commit per 10 seconds, two rows each.
     private static final int LOCALIZATION_HISTORY_COMMITS = 40;
-    // Second-of-day of the out-of-order row: below every surviving anchor (the ring
-    // retains only the top RETENTION_COUNT commits, 330s upward), so no resume qualifies
-    // and the repair falls to the boundary rebuild - but high enough that most of the
-    // history sits below the dependency floor.
+    // Second-of-day of the out-of-order row: deep enough in history that most of it
+    // sits below the dependency floor, so the localized rebuild is priced well under
+    // the resume that would replay every row above the boundary beneath it.
     private static final int LOCALIZATION_O3_SECOND = 315;
     // Look-behind of the localization fixture's RANGE frame, in seconds.
     private static final int LOCALIZATION_RANGE_WIDTH_SECONDS = 30;
@@ -147,6 +140,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         // at every bucket, and that restart is the whole contract. The bounds are the
         // cumulative sum's, to the row: they come from the segment, not the function.
         final ReplayCost cost = runAnchoredOldO3BoundaryRebuild("row_number()");
+        Assert.assertEquals("the localized rebuild must win on price", 0, cost.resumedRows);
         Assert.assertEquals("the rebuild must read exactly the change's segment", 14, cost.scannedRows);
         Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 10, cost.emittedRows);
     }
@@ -165,6 +159,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         // of 2 rows - plus the O3 commit's own 2 at 315s, and the replacement re-emits
         // 315s..350s.
         final ReplayCost cost = runAnchoredOldO3BoundaryRebuild("sum(x)");
+        Assert.assertEquals("the localized rebuild must win on price", 0, cost.resumedRows);
         Assert.assertEquals("the rebuild must read exactly the change's segment", 14, cost.scannedRows);
         Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 10, cost.emittedRows);
         // The whole-history rebuild this replaces, for scale.
@@ -187,9 +182,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         final String oracleSql = "SELECT ts, sym, sum(x) OVER (PARTITION BY sym, " + LOCALIZATION_ANCHOR_EXPRESSION
                 + " ORDER BY ts) AS s, " + slidingWindow + " FROM base";
         final ReplayCost cost = runOldO3BoundaryRebuild(viewSql, oracleSql, false);
-        final long historyRows = 2L * LOCALIZATION_HISTORY_COMMITS + 2;
-        Assert.assertEquals("no bound is derived, so the whole history is read", historyRows, cost.scannedRows);
-        Assert.assertEquals("and re-emitted", historyRows, cost.emittedRows);
+        assertResumeBoundsAnUnlocalizableRepair(cost);
     }
 
     @Test
@@ -277,9 +270,9 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     }
 
     @Test
-    public void testRangeSumRingCollapseThenOldO3BoundaryReplay() throws Exception {
+    public void testRangeSumOldO3BelowEveryBoundaryReplays() throws Exception {
         // Bounded RANGE frame: 30s look-behind over rows spaced 10s apart -> a 4-row frame.
-        assertRingCollapsesThenOldO3ForcesBoundaryReplay(
+        assertOldO3BelowEveryBoundaryForcesBoundaryReplay(
                 "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW"
         );
     }
@@ -295,6 +288,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
                 false
         );
+        Assert.assertEquals("the localized rebuild must win on price", 0, cost.resumedRows);
         Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
         Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
     }
@@ -314,6 +308,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 + "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s "
                 + "FROM base WHERE sym = 'a'";
         final ReplayCost cost = runOldO3BoundaryRebuild(sql, sql, false);
+        Assert.assertEquals("the localized rebuild must win on price", 0, cost.resumedRows);
         Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
         Assert.assertEquals("the rebuild re-emits only what the WHERE admits", 4, cost.emittedRows);
     }
@@ -328,6 +323,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
                 false
         );
+        Assert.assertEquals("the localized rebuild must win on price", 0, cost.resumedRows);
         Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
         Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
     }
@@ -345,6 +341,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 "PARTITION BY upper(sym) ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
                 false
         );
+        Assert.assertEquals("the localized rebuild must win on price", 0, cost.resumedRows);
         Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
         Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
     }
@@ -367,6 +364,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW"
         );
+        Assert.assertEquals("the localized rebuild must win on price", 0, cost.resumedRows);
         Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
         Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
         // The whole-history rebuild this replaces, for scale.
@@ -391,9 +389,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
                 true
         );
-        final long historyRows = 2L * LOCALIZATION_HISTORY_COMMITS + 2;
-        Assert.assertEquals("no bound is discovered, so the whole history is read", historyRows, cost.scannedRows);
-        Assert.assertEquals("and re-emitted", historyRows, cost.emittedRows);
+        assertResumeBoundsAnUnlocalizableRepair(cost);
     }
 
     @Test
@@ -411,27 +407,21 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
                 false
         );
-        final long historyRows = 2L * LOCALIZATION_HISTORY_COMMITS + 2;
-        Assert.assertEquals("no bound is discovered, so the whole history is read", historyRows, cost.scannedRows);
-        Assert.assertEquals("and re-emitted", historyRows, cost.emittedRows);
+        assertResumeBoundsAnUnlocalizableRepair(cost);
     }
 
     @Test
-    public void testRowsSumRingCollapseThenOldO3BoundaryReplay() throws Exception {
+    public void testRowsSumOldO3BelowEveryBoundaryReplays() throws Exception {
         // Bounded ROWS frame: the current row and its 3 predecessors per partition.
-        assertRingCollapsesThenOldO3ForcesBoundaryReplay(
+        assertOldO3BelowEveryBoundaryForcesBoundaryReplay(
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW"
         );
     }
 
-    private void assertRingCollapsesThenOldO3ForcesBoundaryReplay(String windowFrame) throws Exception {
-        // One head per flush -> a dense ring. The count budget is the binding retention bound:
-        // the byte budget is left generous and the event-time horizon disabled so the collapse
-        // is governed purely by RETENTION_COUNT.
+    private void assertOldO3BelowEveryBoundaryForcesBoundaryReplay(String windowFrame) throws Exception {
+        // One boundary per flush -> a dense timeline, so the O3 at 55s has one just
+        // below it and the O3 at 5s has none.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, RETENTION_COUNT);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MAX_BYTES, 64L * 1024 * 1024);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, 0L);
 
         final String viewSql = "SELECT ts, sym, sum(x) OVER (" + windowFrame + ") AS s FROM base";
         assertMemoryLeak(() -> {
@@ -441,8 +431,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // HISTORY_COMMITS in-order commits, one per 10 seconds, each sealing exactly one
-                // head (checkpoint.rows = 1). Once RETENTION_COUNT heads exist the count budget
-                // evicts the oldest, so the commits past the budget each drop one anchor.
+                // logical boundary (checkpoint.rows = 1). None is ever removed.
                 for (int commit = 1; commit <= HISTORY_COMMITS; commit++) {
                     setCurrentMicros(commit * 200_000L);
                     final String rowTs = secondsTs(commit * 10);
@@ -457,24 +446,11 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(lv);
 
-                // The ring collapsed. That heads sealed at all proves the window is
-                // snapshot-capable; the count caps at the budget and the commits past it each
-                // evicted one anchor. The oldest surviving anchor is the 5th commit's head, so
-                // every anchor now sits at or above 50s - the four heads below it are gone.
+                // That boundaries sealed at all proves the window is snapshot-capable.
                 Assert.assertEquals(
-                        "one head seals per flush, so the ring fills to the retention.count budget",
-                        RETENTION_COUNT,
-                        lv.getRetainedCheckpointCount()
-                );
-                Assert.assertEquals(
-                        "the commits past the budget each evict exactly one anchor",
-                        HISTORY_COMMITS - RETENTION_COUNT,
-                        lv.getCheckpointRingEvictions()
-                );
-                Assert.assertEquals(
-                        "the oldest surviving anchor is the first commit still inside the budget",
-                        ts(secondsTs(50)),
-                        lv.getRetainedCheckpointMaxTs(0)
+                        "the newest boundary sits at the last in-order commit",
+                        ts(secondsTs(HISTORY_COMMITS * 10)),
+                        lv.getHeadCheckpointMaxTs()
                 );
 
                 // In-order forward appends never replay: both O3 counters stay at 0. The view is
@@ -484,12 +460,12 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                         .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n0\t0\n");
                 assertViewMatchesRecompute(viewSql);
 
-                // An O3 row within the retained horizon: 55s is above the oldest surviving anchor
-                // (50s) and below the head (120s), so a resume qualifies. It does not run. A
-                // resume reads to the end of the base table, which is the 16 rows above 50s,
-                // while the bounded frame's [L, H) holds 14 - so the plan prices the localized
-                // rebuild lower and takes it. The ring's claim here was that it bounds the work;
-                // both dispositions do, and what decides between them is which reads fewer rows.
+                // An O3 row with a boundary below it: 55s sits above the boundary at 50s and
+                // below the newest at 120s, so a resume qualifies. It does not run. A resume
+                // reads to the end of the base table, which is the 16 rows above 50s, while
+                // the bounded frame's [L, H) holds 14 - so the plan prices the localized
+                // rebuild lower and takes it. Both dispositions bound the work; what decides
+                // between them is which reads fewer rows.
                 setCurrentMicros((HISTORY_COMMITS + 1) * 200_000L);
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
                         "('" + secondsTs(55) + "', 'a', 55), " +
@@ -510,13 +486,12 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 );
                 assertViewMatchesRecompute(viewSql);
 
-                // An O3 row older than the whole collapsed ring: 5s is below every surviving
-                // anchor, so no anchor qualifies at all and the boundary rebuild is the only
-                // disposition left. That was the residual the versioned timeline was built to
-                // remove, and the finite dependency is what removed it - the rebuild bounds
-                // itself at [L, H) rather than reading from the START FROM boundary. A boundary
-                // rebuild is a normal O3 path, not a refresh fault, so the view still converges
-                // to the from-base recompute (asserted by assertViewMatchesRecompute).
+                // An O3 row below every boundary: 5s sits under the first one at 10s, so no
+                // resume qualifies at all and the rebuild is the only disposition left. The
+                // finite dependency is what keeps it bounded - it reads [L, H) rather than
+                // everything from the START FROM boundary. A boundary rebuild is a normal O3
+                // path, not a refresh fault, so the view still converges to the from-base
+                // recompute (asserted by assertViewMatchesRecompute).
                 final long boundaryBefore = lv.getO3BoundaryReplayRows();
                 final long resumeBefore = lv.getO3ResumeReplayRows();
                 setCurrentMicros((HISTORY_COMMITS + 2) * 200_000L);
@@ -528,11 +503,11 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 drainWalQueue();
 
                 Assert.assertTrue(
-                        "an O3 older than the whole ring must fall back to the boundary rebuild",
+                        "an O3 below every boundary must fall back to the boundary rebuild",
                         lv.getO3BoundaryReplayRows() > boundaryBefore
                 );
                 // The two paths are disjoint: the boundary rebuild leaves the resume counter
-                // untouched, so a growing boundary count isolates the ring's residual cost.
+                // untouched, so a growing boundary count isolates the residual cost.
                 Assert.assertEquals(
                         "the boundary rebuild must not also bump the resume counter",
                         resumeBefore,
@@ -543,6 +518,28 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    /**
+     * What a repair that cannot localize costs now that every logical boundary is
+     * retained. The plan prices a rebuild that reads the whole view history against a
+     * resume from the boundary immediately below the change, and the resume wins by
+     * construction: it reads the tail above that boundary, which is a strict subset.
+     * Here that is the nine commits above 310s plus the two out-of-order rows.
+     * <p>
+     * The old ring lost that boundary to its retention budget, which is what made the
+     * unbounded rebuild the only disposition left for these shapes. It is not the
+     * bounded repair the dependency contract buys - the resume still reads to the end
+     * of the base table, so it is O(distance from the change to the head) rather than
+     * O(view age) - but it is what the timeline's permanent retention leaves as the
+     * residual.
+     */
+    private static void assertResumeBoundsAnUnlocalizableRepair(ReplayCost cost) {
+        final long tailRows = 2L * (LOCALIZATION_HISTORY_COMMITS - LOCALIZATION_O3_SECOND / 10) + 2;
+        Assert.assertEquals("no bound is derived, so the resume is the cheaper disposition",
+                tailRows, cost.resumedRows);
+        Assert.assertEquals("and it reads exactly the tail it re-emits", tailRows, cost.scannedRows);
+        Assert.assertEquals("the boundary rebuild must not run at all", 0, cost.emittedRows);
     }
 
     // The live view must equal the same window recomputed directly over the base table. The
@@ -578,10 +575,10 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     }
 
     /**
-     * Drives a long in-order history, collapses the ring onto its top RETENTION_COUNT
-     * anchors, then commits one out-of-order row below every one of them so the repair
-     * has to take the boundary rebuild. Returns what that rebuild cost: base rows read
-     * and output rows re-emitted. Both counters are asserted zero before the
+     * Drives a long in-order history, then commits one out-of-order row deep enough in
+     * it that the localized rebuild prices under a resume from the boundary just below
+     * it - the resume would replay every row above that boundary to the end of the base
+     * table. Returns what that rebuild cost: base rows read and output rows re-emitted. Both counters are asserted zero before the
      * out-of-order commit, so the values that come back are that one repair's and
      * nothing else's. The view is checked against the from-base recompute either way -
      * a bounded rebuild that gets the answer wrong is worse than an unbounded one - and
@@ -604,9 +601,6 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
             boolean o3AsReplaceRange
     ) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, RETENTION_COUNT);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MAX_BYTES, 64L * 1024 * 1024);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, 0L);
 
         final ReplayCost cost = new ReplayCost();
         assertMemoryLeak(() -> {
@@ -628,13 +622,6 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
 
                 final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(lv);
-                Assert.assertEquals(RETENTION_COUNT, lv.getRetainedCheckpointCount());
-                // The oldest surviving anchor sits above the O3 row, so no resume can
-                // qualify and the boundary rebuild is the path under measurement.
-                Assert.assertTrue(
-                        "the O3 row must sit below every surviving anchor",
-                        lv.getRetainedCheckpointMaxTs(0) > ts(secondsTs(LOCALIZATION_O3_SECOND))
-                );
                 // In-order appends never replay, so the counters start clean.
                 Assert.assertEquals(0, lv.getO3ReplayScanRows());
                 Assert.assertEquals(0, lv.getO3BoundaryReplayRows());
@@ -663,11 +650,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 drainJob(job);
                 drainWalQueue();
 
-                Assert.assertEquals(
-                        "a change below the whole ring must take the boundary rebuild",
-                        0,
-                        lv.getO3ResumeReplayRows()
-                );
+                cost.resumedRows = lv.getO3ResumeReplayRows();
                 cost.scannedRows = lv.getO3ReplayScanRows();
                 cost.emittedRows = lv.getO3BoundaryReplayRows();
                 assertViewMatchesRecompute(oracleSql);
@@ -744,6 +727,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     // leave it.
     private static class ReplayCost {
         private long emittedRows;
+        private long resumedRows;
         private long scannedRows;
     }
 }

@@ -39,7 +39,6 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
-import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -92,7 +91,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     private static final int ENTRY_ROOT_SEGMENT = 2;
     private static final int ENTRY_SIZE = 6;
     // The history every case builds: one commit (and so one logical root) per 10 seconds.
-    private static final int HISTORY_COMMITS = 6;
+    private static final int HISTORY_COMMITS = 12;
 
     @After
     public void resetClock() {
@@ -118,11 +117,11 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 final LiveViewInstance instance = buildHistory(job);
                 repair(instance, ts(timestamp(30)), ts(timestamp(50)), new long[]{4, 6}, 2);
-                appendAndRefresh(job, 70, 7);
+                appendAndRefresh(job, 130, 13);
 
                 Assert.assertEquals(HISTORY_COMMITS + 1, entryCount(instance));
                 final LongList after = snapshotTimeline(instance);
-                final long[] expected = {1, 2, 4, 6, 7, 8, HISTORY_COMMITS + 1};
+                final long[] expected = {1, 2, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, HISTORY_COMMITS + 1};
                 for (int i = 0; i < expected.length; i++) {
                     Assert.assertEquals(
                             "effective position at index " + i,
@@ -147,7 +146,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // the snapshot the candidate was planned against cannot be reopened, so
         // startup discards both and the next out-of-order row is repaired from a
         // fresh plan against the untouched generation.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -185,7 +183,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
                             "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
                             "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
-                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t42.0\n");
         });
     }
 
@@ -245,7 +249,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // The ring is capped at two anchors so the change - at 25s, below both
         // survivors - finds none and takes the boundary rebuild, which is the whole
         // pathology: the ring lost the anchors while the timeline kept every root.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -315,7 +318,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
                             "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
                             "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
-                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t42.0\n");
         });
     }
 
@@ -327,7 +336,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // row above it - 11 of the 13 in the base - while the dependency interval is two
         // frame widths wide however old the correction and however long the view has
         // been running. The plan prices both and takes the splice.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 32);
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -400,7 +408,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // would warm the frame up from 85s and - the frame reaching past the runtime
         // frontier - read to the end of the base anyway. The resume is cheaper and the
         // plan takes it, with the same anchors retained and the same view as above.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 32);
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -455,7 +462,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 return super.rename(from, to);
             }
         };
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         assertMemoryLeak(ff, () -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -496,7 +502,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // staged, and continues on the next turn - and what it finally publishes is
         // what the single-turn run publishes: the same rows read, the same rows
         // emitted, the same splice and the same output.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
         assertMemoryLeak(() -> {
             createView();
@@ -573,7 +578,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
                             "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
                             "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
-                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t42.0\n");
         });
     }
 
@@ -585,7 +596,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // worker must therefore skip the view outright rather than plan a second
         // repair over it, and the owner must not depend on the view coming back around
         // to it: it drives its own parked repairs at the top of every run.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
         assertMemoryLeak(() -> {
             createView();
@@ -629,7 +639,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // them. The view keeps its pre-repair output and its timeline, the window
         // state goes back to the one that output belongs to, and the next worker
         // simply replans the same out-of-order row at a freshly pinned snapshot.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
         assertMemoryLeak(() -> {
             createView();
@@ -671,7 +680,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
                             "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
                             "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
-                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t42.0\n");
         });
     }
 
@@ -686,7 +701,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // and because nothing durable moved, the change is still unconsumed and the
         // timeline still describes exactly the output on disk, so the replan that
         // follows is the same localized repair rather than an age-unbounded rebuild.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
         assertMemoryLeak(() -> {
             createView();
@@ -739,7 +753,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
                             "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
                             "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
-                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t42.0\n");
         });
     }
 
@@ -752,7 +772,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // full-history rebuild. The unwind used to retire the whole timeline
         // unconditionally, which would have left the replan with no anchor below the
         // correction at all.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
         assertMemoryLeak(() -> {
             createView();
@@ -800,7 +819,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:00:30.000000Z\ta\t6.0\n" +
                             "2026-01-01T00:00:40.000000Z\ta\t10.0\n" +
                             "2026-01-01T00:00:50.000000Z\ta\t14.0\n" +
-                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t42.0\n");
         });
     }
 
@@ -953,7 +978,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
                                  writer.beginRepair(checkpointsDir)) {
                         captureRange(instance, capture, functions, ts(timestamp(30)), ts(timestamp(50)), new long[]{4, 6});
-                        appendAndRefresh(job, 70, 7);
+                        appendAndRefresh(job, 130, 13);
                         try {
                             publish(writer, capture, instance, ts(timestamp(50)), 2);
                             Assert.fail("expected a moved-generation rejection");
@@ -1034,7 +1059,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // replays equals the live-view table's own count. The root recovery lands on
         // here is a converged suffix root, whose position moved by the range-add
         // alone - so this is that arithmetic checked against the materialization.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -1050,7 +1074,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // The first tick restores from the spliced timeline; the row then
                 // appends incrementally against the state that restore produced.
-                appendAndRefresh(job, 70, 7);
+                appendAndRefresh(job, 130, 13);
                 Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
                 Assert.assertEquals(
                         "a root whose position the splice corrected must not send restart"
@@ -1058,7 +1082,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         0,
                         reloaded.getO3BoundaryReplayRows()
                 );
-                Assert.assertEquals(8, reloaded.getLvRowsTotal());
+                Assert.assertEquals(14, reloaded.getLvRowsTotal());
             }
 
             assertQuery("select ts, sym, s from lv order by ts")
@@ -1072,7 +1096,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
                             "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
                             "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
-                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n");
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t42.0\n" +
+                            "2026-01-01T00:02:10.000000Z\ta\t46.0\n");
         });
     }
 
@@ -1084,7 +1114,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // generation whose root positions it would read off that table, may not seal a
         // head, and may not consume the base range. It defers instead, and the deferred
         // repair simply runs again once the block lands.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -1155,7 +1184,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
                             "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
                             "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
-                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t42.0\n");
         });
     }
 
@@ -1168,7 +1203,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // nothing for the frontier above it, which the following in-order rows would
         // then accumulate onto. Here the view keeps ingesting in order after the
         // stalled repair, which is what reads that state rather than the output.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -1183,10 +1217,9 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
 
                 job.setSimulateRepairApplyFailureForTest(false);
                 driveRefreshToQuiescence(job);
-                // 70s is 10 seconds past the 60s frontier, so the RANGE 30 SECOND frame
-                // holds 50s, 60s and itself: 114 - 103 + 18 - 3 ... in the view's own
-                // arithmetic, 50s(4) + 60s(6) + 70s(7) = 17.
-                appendAndRefresh(job, 70, 7);
+                // 130s is 10 seconds past the 120s frontier, so the RANGE 30 SECOND
+                // frame holds 100s, 110s, 120s and itself: 10 + 11 + 12 + 13 = 46.
+                appendAndRefresh(job, 130, 13);
             }
 
             assertQuery("select ts, sym, s from lv order by ts")
@@ -1200,7 +1233,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
                             "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
                             "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
-                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n");
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t42.0\n" +
+                            "2026-01-01T00:02:10.000000Z\ta\t46.0\n");
         });
     }
 
@@ -1216,8 +1255,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
 
                 final LongList after = snapshotTimeline(instance);
                 // 10s untouched; 20s/30s from the first repair; 40s/50s from the second;
-                // 60s carries both range-adds (+2 then -1).
-                final long[] expected = {1, 3, 5, 9, 11, 6 + 2 - 1};
+                // 60s onward carries both range-adds (+2 then -1).
+                final long[] expected = {1, 3, 5, 9, 11, 7, 8, 9, 10, 11, 12, 13};
                 for (int i = 0; i < HISTORY_COMMITS; i++) {
                     Assert.assertEquals(
                             "effective position at index " + i,
@@ -1261,13 +1300,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     private static Path checkpointsDir(LiveViewInstance instance) {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
-                .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
     }
 
     private static Path checkpointsDir(Path dst) {
         return dst.of(configuration.getDbRoot())
                 .concat(engine.verifyTableName("lv"))
-                .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
     }
 
     private static String descriptorPath(long repairId) {
@@ -1461,7 +1500,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // the changed row exactly while i <= 3, so the row at 60s - the fourth above
         // 25s - has converged and H is its timestamp. Everything in [25s, 60s) is
         // re-emitted, the row at 60s is not, and neither are the two below the floor.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute(
@@ -1521,7 +1559,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
                             "2026-01-01T00:00:40.000000Z\ta\t109.0\n" +
                             "2026-01-01T00:00:50.000000Z\ta\t112.0\n" +
-                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t42.0\n");
         });
     }
 

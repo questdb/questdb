@@ -25,7 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoKeywords;
-import io.questdb.cairo.lv.LiveViewCheckpointWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
@@ -40,7 +40,7 @@ public class CairoKeywordsTest extends AbstractTest {
             // The live view checkpoint directory must be recognised so the partition-purge scans
             // (TableWriter.removePartitionDirsNotAttached and TableSnapshotRestore) skip it instead of
             // trying to parse it as a partition timestamp and logging a spurious ERROR.
-            assertLiveViewCheckpoints(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME, true);
+            assertLiveViewCheckpoints(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME, true);
             assertLiveViewCheckpoints("_checkpoints", true);
 
             // Near misses must not match: a shorter/longer name, a differently-suffixed name, or a

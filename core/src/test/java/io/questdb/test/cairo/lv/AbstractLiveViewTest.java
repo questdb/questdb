@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -193,7 +194,7 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         try (Path p = new Path()) {
             p.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
-                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                     .slash();
             LiveViewCheckpointWriter.appendScpFileName(p, key);
             engine.getConfiguration().getFilesFacade().removeQuiet(p.$());

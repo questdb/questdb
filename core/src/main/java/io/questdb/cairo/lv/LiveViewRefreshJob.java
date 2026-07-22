@@ -189,25 +189,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // restore path. Mutated only on the refresh-worker thread between clear()
     // and use.
     private final LiveViewCheckpointManifest checkpointManifest = new LiveViewCheckpointManifest();
-    // Per-worker reusable checkpoint reader for the 2a.7 restart-restore
-    // path. Lazily allocated on the first LV with a head .cp to restore;
-    // reused for subsequent LVs by re-opening on a different file.
+    // Per-worker reusable seed-checkpoint reader. Lazily allocated on the first
+    // LV with a .scp to resume from; reused for subsequent LVs by re-opening on a
+    // different file.
     private LiveViewCheckpointReader checkpointReader;
-    // Test-only: number of trailing FUNCTION_SNAPSHOT blocks the head- and seed-
-    // checkpoint writers omit, forging a CRC-valid-but-short checkpoint so a test can
-    // drive restoreFromHead's missing-block validation (and, when only the last of
-    // several is omitted, the partial-restore re-clear on the seed re-sweep). 0 in
-    // production.
+    // Test-only: number of trailing FUNCTION_SNAPSHOT blocks the seed-checkpoint
+    // writer omits, forging a CRC-valid-but-short checkpoint so a test can drive
+    // the missing-block validation (and, when only the last of several is omitted,
+    // the partial-restore re-clear on the seed re-sweep). 0 in production.
     @TestOnly
     private volatile int checkpointTrailingFunctionSnapshotBlocksToOmit;
-    // Per-worker reusable checkpoint writer. Lazily allocated on the first
-    // cycle that triggers a head write; reused across cycles via of() / commit().
-    // Memory pages stay mmapped between writes so a frequently-checkpointed LV
-    // does not pay reopen cost. Freed at job close.
+    // Per-worker reusable seed-checkpoint writer. Lazily allocated on the first
+    // seed turn that triggers a .scp write; reused across turns via of() /
+    // commit(). Memory pages stay mmapped between writes so a frequently
+    // checkpointed sweep does not pay reopen cost. Freed at job close.
     private LiveViewCheckpointWriter checkpointWriter;
-    // Dedicated publisher for strictly in-order versioned-timeline cadence
-    // entries. An out-of-order repair that cannot range-splice its historical
-    // roots falls back to the ring path.
+    // Publisher for versioned-timeline roots: the in-order cadence append and the
+    // out-of-order range splice. Lazily allocated on this worker's first seal.
     private LiveViewCheckpointTimelineStoreWriter checkpointTimelineStoreWriter;
     @TestOnly
     private volatile int checkpointTimelineTestFailureStage;
@@ -219,10 +217,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // thread between reset() and use.
     private final DrainResult drainResult = new DrainResult();
     private final CairoEngine engine;
-    // Scratch list of lvSeqTxns evicted from the retained-checkpoint ring by a
-    // prune or a selective O3 invalidation, drained by unlinkCheckpointFiles.
-    // Worker-owned; cleared before each use.
-    private final LongList evictedCheckpoints = new LongList();
     private final LiveViewRefreshSqlExecutionContext executionContext;
     // Stand-in boundary schedule for a rebuild that runs without a repair session -
     // the unlocalized one, which versions no logical root. Always empty and never
@@ -249,26 +243,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // its resume group that a prior turn already folded.
     private final RecordCursor.Counter repairSkipCounter = new RecordCursor.Counter();
     // Positional cursor into windowFactory.getWindowFunctions() while a single
-    // restoreFromHead walks the checkpoint's FUNCTION_SNAPSHOT blocks. The writer
-    // emits one block per snapshot-capable function in window-function order, so
-    // restore pairs the i-th block with the i-th snapshot-capable function. Reset
-    // to 0 before each block walk; advanced by restoreFunctionBlock. Per-worker;
-    // mutated only on the refresh-worker thread.
+    // seed-checkpoint restore walks the .scp's FUNCTION_SNAPSHOT blocks. The
+    // writer emits one block per snapshot-capable function in window-function
+    // order, so restore pairs the i-th block with the i-th snapshot-capable
+    // function. Reset to 0 before each block walk; advanced by
+    // restoreFunctionBlock. Per-worker; mutated only on the refresh-worker thread.
     private int restoreFunctionCursor;
-    // Reusable holder for the values restoreFromHead reads out of the head .cp.
-    // One instance per worker; mutated only on the refresh-worker thread between
-    // restoreFromHead calls. Avoids per-call allocations on the restart and O3
-    // head-hit paths.
-    private final RestoredHeadState restoredHeadState = new RestoredHeadState();
-    // Publishes _checkpoints/_ring. Lazily allocated on this worker's first
-    // publication and held for the worker's life, so a per-cycle publication
-    // costs the manifest rewrite plus one mmap/munmap and nothing else. Null
-    // until the first view on this worker publishes.
-    private LiveViewCheckpointRingManifestWriter ringManifestWriter;
-    // Ring membership snapshot handed to a _checkpoints/_ring publication, packed
-    // as LiveViewCheckpointRingManifest entry records. Worker-owned; cleared
-    // before each use.
-    private final LongList ringSnapshot = new LongList();
+    // Reusable holder for the values the seed-checkpoint restore reads out of a
+    // .scp. One instance per worker; mutated only on the refresh-worker thread
+    // between restore calls. Avoids a per-call allocation on the seed resume.
+    private final RestoredSeedState restoredSeedState = new RestoredSeedState();
     // Per-key ROWS repair-bound discovery, and the adapter the repair plan calls it
     // through. One of each per worker: the discovery owns a native counter map it
     // rebuilds per call, and the adapter carries the one repair's cursor factory and
@@ -328,6 +312,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // the other staging-related fields so the per-FLUSH-cycle code path can
     // mutate without per-call allocation.
     private final IntList tierColumnTypes = new IntList();
+    // The versioned timeline's predecessor lookup, in the shape the repair plan
+    // searches resume anchors through. One per worker, bound to the repair's view
+    // per plan; idle outside a repair, which never nests.
+    private final TimelineAnchorSource timelineAnchors = new TimelineAnchorSource();
     // Wraps the page-frame cursor during O3 replay so pre-LB rows never reach
     // window.processRow. Single instance reused across cycles; rebound via
     // of() each replay.
@@ -399,7 +387,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         checkpointReader = Misc.free(checkpointReader);
         checkpointWriter = Misc.free(checkpointWriter);
         checkpointTimelineStoreWriter = Misc.free(checkpointTimelineStoreWriter);
-        ringManifestWriter = Misc.free(ringManifestWriter);
         stagingBuffer = Misc.free(stagingBuffer);
         Misc.free(rowsBounds);
         // A repair this worker parked between turns can only be continued by this
@@ -476,7 +463,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Test-only: makes the head- and seed-checkpoint writers omit the last
      * {@code count} FUNCTION_SNAPSHOT blocks on subsequent writes, forging a
-     * CRC-valid-but-short checkpoint so a test can drive {@link #restoreFromHead}'s
+     * CRC-valid-but-short checkpoint so a test can drive
+     * {@link #restoreFromSeedCheckpoint}'s
      * missing-block validation. Omitting fewer than all blocks leaves earlier
      * functions restored, exercising the seed re-sweep's partial-restore re-clear.
      * Production never calls this.
@@ -712,8 +700,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * in-order path - leaves every replay-driven view with no timeline at all, so a
      * restart has nothing to restore from but a full rebuild from the view's
      * {@code START FROM} boundary.
+     *
+     * @return the logical state byte size attributed to the appended root, which
+     * the caller mirrors onto the head metadata
      */
-    private void appendCheckpointTimelineRoot(
+    private long appendCheckpointTimelineRoot(
             LiveViewInstance instance,
             ObjList<WindowFunction> functions,
             @Nullable LiveViewWindow anchorWindow,
@@ -729,7 +720,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .getWriterTxn();
         path.of(engine.getConfiguration().getDbRoot())
                 .concat(instance.getLiveViewToken())
-                .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
         if (engine.isReadOnlyMode()) {
             throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
         }
@@ -757,6 +748,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             roleLock.unlock();
         }
         instance.recordCheckpointTimelineWalPurgeFloor(timelineResult.getWalPurgeFloor());
+        return timelineResult.getLogicalStateBytes();
     }
 
     /**
@@ -800,7 +792,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
-                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             capture = checkpointTimelineStoreWriter.beginRepair(checkpointsDir);
             // C, not R: a root in [R, C) keeps its state - nothing it holds
             // changed - and its output is re-emitted identically, so the splice
@@ -1320,7 +1312,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * tracker momentarily lags the just-committed {@code _txn}. A cold tracker reads
      * {@code -1}, which defers (the safe direction) until apply warms it.
      * <p>
-     * Callers invoke this BEFORE any destructive replay work (head {@code .cp}
+     * Callers invoke this BEFORE any destructive replay work (checkpoint
      * retirement, window-state reset, the REPLACE_RANGE commit, discarding the
      * in-RAM lead) or before pinning the applied-base scan reader, so the throw
      * unwinds to {@link #refreshInstance} with no durable change and no
@@ -1470,15 +1462,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     cursorTimestampIndex, viewLowerBoundTimestamp, Long.MAX_VALUE, filter, fromSeqTxn, toSeqTxn,
                     walWriter, copier, populateTier, latestSeenTsSnapshot
             );
-            // Publish ahead of the commit below and of the no-row branch's bare
-            // watermark walk; both advance the floor to advanceTo. The o3Detected
-            // guard is load-bearing, not defensive: drainBaseWal rolls its draft
-            // back on detect but leaves advanceTo sitting ON the offending seqTxn,
-            // so publishing here would claim the ring is sealed at the very commit
-            // that unseals it. That cycle republishes through o3Replay's retire.
-            if (!drainResult.o3Detected) {
-                publishCheckpointRingOnAdvance(instance, drainResult.advanceTo);
-            }
             if (drainResult.appendedRows > 0) {
                 // The LV WAL block carries advanceTo as maxBaseSeqTxnInBlock. The
                 // inline apply below makes the rows durable in the LV's on-disk
@@ -1615,12 +1598,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
             }
             if (lvConsumedPersisted && appendedRows > 0) {
-                // 2a.4 head-checkpoint write hook. Ordered after the apply's
-                // _txn advance and the lvConsumedSeqTxn publish so the .cp on
-                // disk reflects state that is also durably committed in the
-                // LV's own table. A failure here does not invalidate the view
-                // (.cp is a derived artifact): the prior head remains addressable
-                // and the next eligible cycle retries.
+                // Head-checkpoint write hook. Ordered after the apply's _txn
+                // advance and the lvConsumedSeqTxn publish so the root on disk
+                // reflects state that is also durably committed in the LV's own
+                // table. A failure here does not invalidate the view (the timeline
+                // is derived state): the previously published generation stays
+                // authoritative and the next eligible cycle retries.
                 //
                 // O3 cycles never reach this branch: detect rolls back the
                 // in-WAL-order draft and hands off to o3Replay, which writes
@@ -1799,14 +1782,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
                 return;
             }
-
-            // Publish ahead of the forward append's commit. The overlap branch
-            // above has handed every unsealing cycle to o3Replay, so what remains
-            // is strictly forward and stays sealed at effectiveSeqTxn - the point
-            // the watermarks advance to below. Ordered after the overlap decision,
-            // not beside the effectiveSeqTxn read, so an overlap cycle never
-            // publishes a membership its own retire is about to shrink.
-            publishCheckpointRingOnAdvance(instance, effectiveSeqTxn);
 
             // Strictly-forward cheap append over the applied reader.
             // Inclusive lower bound: strictly above the frontier, floored at the view's
@@ -2669,13 +2644,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final LiveViewInMemoryTier tier = instance.getInMemoryTier();
         final long priorLead = instance.getLeadRowCount();
         final long flushRows = priorLead + stagingRowsToInclude;
-        // Publish ahead of both branches below - the no-row one walks the floor
-        // to advanceTo with no commit at all, the materialising one commits there
-        // - and one call covers both because they advance to the same point. The
-        // lead is in-order by construction: finishLeadRefresh hands every O3 cycle
-        // to o3Replay before a flush can see it. This is the lead path's only
-        // in-order publication; its drain half never advances the durable floor.
-        publishCheckpointRingOnAdvance(instance, advanceTo);
         if (flushRows == 0 || tier == null) {
             // Nothing to materialise (only non-data / filtered base commits walked,
             // or no tier). Advance the watermarks anyway so base WAL retention
@@ -2894,115 +2862,47 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Head invalidation on out-of-order arrival. The current cycle
-     * still feeds the offending batch through the in-WAL-order pipeline (so
-     * the live output for the affected partitions is wrong for this batch);
-     * the value of this helper is
-     * narrower: the on-disk head no longer reflects the rows the LV will
-     * eventually need to replay, so it must be retired now to keep restart
-     * recovery sound. The view falls through to head-miss replay on the
-     * next restart, which restarts the window state from
+     * Head invalidation on out-of-order arrival for a view the replay cannot
+     * repair. The current cycle still feeds the offending batch through the
+     * in-WAL-order pipeline (so the live output for the affected partitions is
+     * wrong for this batch); the value of this helper is narrower: the head no
+     * longer reflects the rows the LV will eventually need to replay, so it must
+     * be retired now to keep restart recovery sound. The view falls through to a
+     * from-base rebuild on the next restart, which restarts the window state from
      * {@code viewLowerBoundTimestamp}.
      * <p>
-     * Best-effort: a removeQuiet failure is logged but does not invalidate
-     * the view. Clearing the in-memory head metadata to {@code LONG_NULL}
-     * stops the catalogue from advertising a head that may or may not still
-     * be on disk.
+     * Clearing the in-memory head metadata to {@code LONG_NULL} stops the
+     * catalogue from advertising a boundary the durable output no longer matches.
      */
     private void invalidateHeadOnO3(LiveViewInstance instance, long seqTxn, long txnMinTs, long latestSeenTs) {
-        final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
         LOG.critical().$("live view out-of-order base commit; invalidating head checkpoint [view=")
                 .$(instance.getDefinition().getViewName())
                 .$(", baseSeqTxn=").$(seqTxn)
                 .$(", txnMinTs=").$(txnMinTs)
                 .$(", latestSeenTs=").$(latestSeenTs)
-                .$(", headLvSeqTxn=").$(headLvSeqTxn)
+                .$(", headLvSeqTxn=").$(instance.getHeadCheckpointLvSeqTxn())
                 .I$();
-        if (headLvSeqTxn != Numbers.LONG_NULL) {
-            path.of(engine.getConfiguration().getDbRoot())
-                    .concat(instance.getLiveViewToken())
-                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                    .slash();
-            LiveViewCheckpointWriter.appendCpFileName(path, headLvSeqTxn);
-            try {
-                engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
-            } catch (Throwable t) {
-                LOG.error().$("could not unlink head checkpoint on O3 [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", error=").$(t).I$();
-            }
-        }
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
     }
 
     /**
-     * Retires the retained checkpoints an out-of-order base commit at
-     * {@code triggerLowTs} has unsealed, replacing the blanket head retire the
-     * O3 replay paths used before retention. Entries with {@code maxTs <
-     * triggerLowTs} stay sealed - the late row is above them - and survive as
-     * resume anchors; entries at or above it (including the head) are dropped
-     * from the ring and their {@code .cp} files unlinked best-effort. A non-DATA
-     * / recovery trigger ({@code triggerLowTs == LONG_NULL}) drops the whole ring
-     * and always clears the head.
+     * Retires the checkpoint state an out-of-order change has unsealed: the whole
+     * versioned timeline plus the head metadata trio the catalogue and the
+     * post-replay cadence read.
      * <p>
-     * When the head is among the unsealed set its metadata is cleared so the
-     * post-replay write lands on its first-cp cadence path. The head is unlinked
-     * explicitly in addition to the ring-driven unlinks: a restart restores head
-     * metadata without repopulating the ring, so the head may not be a ring entry
-     * yet ({@code removeQuiet} is idempotent, so a double unlink is harmless). The
-     * in-memory drop is unconditional even if an unlink fails - a failed unlink
-     * must never leave a live anchor.
+     * Clearing the head puts the post-replay seal on its first-checkpoint cadence
+     * path, so an O3 repair always advances the boundary rather than leaving it
+     * parked at the stale {@code maxTs} it found.
      * <p>
-     * The retire also publishes the survivors to {@code _ring} at
-     * {@code coveredBaseSeqTxn} - the cycle's commit point - before it unlinks
-     * anything, so the in-memory drop and its durable record stay one unit off
-     * one {@code triggerLowTs}. The publication runs <em>ahead</em> of the commit
-     * it names: the retire above has just proved that no row in the trigger
-     * commit or the ahead range sits at or below any survivor's {@code maxTs},
-     * which is exactly "sealed at {@code coveredBaseSeqTxn}", and that stays true
-     * whether or not the replay below then succeeds.
-     * <p>
-     * Publishing before the unlink is what keeps a crash in between cheap: the
-     * manifest is an allow-list, so a file it does not list is garbage whether or
-     * not its unlink lands, whereas unlinking first would leave the prior
-     * manifest naming files that no longer exist and a restart would reject it
-     * whole over the referenced-file check. Failure never blocks the replay:
-     * the helper logs and returns false, and the in-memory ring the resume
-     * anchors come from is already correct.
+     * {@code retireTimeline} decides whether the timeline goes with it. A repair
+     * that publishes its own range splice passes {@code false}: the splice
+     * re-versions the roots in {@code [C, H)} and keeps the prefix and converged
+     * suffix, which is the whole point of the timeline, so retiring them here
+     * would throw away exactly what the splice is about to correct. Every other
+     * repair passes {@code true} - see {@link #retireCheckpointTimelineOnO3}.
      */
-    private void invalidateRetainedCheckpointsOnO3(LiveViewInstance instance, long triggerLowTs, long coveredBaseSeqTxn) {
-        invalidateRetainedCheckpointsOnO3(instance, triggerLowTs, coveredBaseSeqTxn, true);
-    }
-
-    /**
-     * As above, with {@code retireTimeline} deciding whether the versioned
-     * checkpoint timeline is retired wholesale alongside the ring. A repair that
-     * publishes its own range splice passes {@code false}: the splice re-versions
-     * the roots in {@code [C, H)} and keeps the prefix and converged suffix, which
-     * is the whole point of the timeline, so retiring them here would throw away
-     * exactly what the splice is about to correct. Every other repair passes
-     * {@code true} - see {@link #retireCheckpointTimelineOnO3}.
-     */
-    private void invalidateRetainedCheckpointsOnO3(
-            LiveViewInstance instance,
-            long triggerLowTs,
-            long coveredBaseSeqTxn,
-            boolean retireTimeline
-    ) {
-        evictedCheckpoints.clear();
-        instance.invalidateRetainedCheckpointsFrom(triggerLowTs, evictedCheckpoints);
-        final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
-        final long headMaxTs = instance.getHeadCheckpointMaxTs();
-        final boolean headUnsealed = headLvSeqTxn != Numbers.LONG_NULL
-                && (triggerLowTs == Numbers.LONG_NULL || headMaxTs == Numbers.LONG_NULL || headMaxTs >= triggerLowTs);
-        if (headUnsealed) {
-            evictedCheckpoints.add(headLvSeqTxn);
-        }
-        publishCheckpointRing(instance, coveredBaseSeqTxn);
-        unlinkCheckpointFiles(instance, evictedCheckpoints);
-        if (headUnsealed) {
-            instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
-        }
+    private void retireCheckpointStateOnO3(LiveViewInstance instance, boolean retireTimeline) {
+        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
         if (retireTimeline) {
             retireCheckpointTimelineOnO3(instance);
         }
@@ -3015,8 +2915,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * rewrites live-view output below roots that were sealed before it - so those
      * roots no longer describe the materialization and must not survive into the
      * next generation. Retiring is the coarse form of that guarantee, and a
-     * post-replay seal then starts a fresh history - which mirrors what the legacy
-     * ring does by dropping its unsealed entries and clearing the head.
+     * post-replay seal then starts a fresh history.
      * <p>
      * The precise form is the range splice
      * ({@link #publishCheckpointTimelineRepair}), which re-versions only the roots
@@ -3041,7 +2940,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
-                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             LiveViewCheckpointLifecycle.retireTimeline(
                     engine.getConfiguration(),
                     checkpointsDir,
@@ -3237,7 +3136,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the base table via the pinned {@code TableReader} in ts-ascending order
      * through the compiled SELECT's filter / anchor / window cursor stack, commits
      * via {@link WalWriter#commitLiveViewWithReplaceRange(long, long, long)},
-     * applies inline, and writes a fresh head .cp post-replay.
+     * applies inline, and seals a fresh boundary post-replay.
      * <p>
      * Planning and replay share one pinned reader. The executors neither open
      * nor close it: this method owns it for the whole repair, so a plan that
@@ -3295,32 +3194,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // No clean per-function reset API for the unmigrated families;
             // recompiling the factory would wipe everything but is heavy.
             // Match the Option 1 disposition for these LVs: log critical,
-            // retire the head .cp so restart cannot restore stale state,
+            // retire the head so restart cannot restore stale state,
             // accept that the live output for the O3 batch is wrong until
             // a non-O3 cycle naturally advances state.
             invalidateHeadOnO3(instance, advanceTo, lateRowTs, instance.getLatestSeenTs());
-            // Retire the rest of the ring on the same terms (LONG_NULL drops it
-            // whole) and publish the now-empty membership at the point the
-            // watermarks below advance to. invalidateHeadOnO3 retires only the
-            // head, which sufficed while nothing published the ring: this branch
-            // feeds the O3 batch through the in-WAL-order pipeline and then walks
-            // the watermarks over it, so every retained entry is unsealed - and
-            // one left in the in-memory ring would be listed by the next in-order
-            // publication at a covered equal to the floor, the one state a restart
-            // trusts.
-            //
-            // Usually a no-op: a non-capable view seals no .cp, so the ring is
-            // empty. The shape that is not is a view whose functions lost snapshot
-            // support across a restart - capability is computed on first use here,
-            // while promoteRestoredHeadIntoRing has already listed the restored
-            // head.
-            //
-            // invalidateHeadOnO3 unlinking the head .cp before this publication
-            // inverts the publish-then-unlink order, but costs nothing here: that
-            // order exists so a crash between cannot leave the prior manifest
-            // naming a missing file, which restart rejects whole, and the ring is
-            // being dropped whole anyway - the same empty membership either way.
-            invalidateRetainedCheckpointsOnO3(instance, Numbers.LONG_NULL, advanceTo);
+            // Retire the timeline on the same terms. This branch feeds the O3
+            // batch through the in-WAL-order pipeline and then walks the
+            // watermarks over it, so every root this view holds now describes
+            // output the replay never corrected. Usually a no-op: a non-capable
+            // view seals no root at all. The shape that is not is a view whose
+            // functions lost snapshot support across a restart - capability is
+            // computed on first use here, after the restore already selected a
+            // root.
+            retireCheckpointTimelineOnO3(instance);
             LOG.critical().$("live view O3 replay skipped, snapshot capability is false [view=")
                     .$(viewName)
                     .$(", advanceTo=").$(advanceTo)
@@ -3412,7 +3298,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", changeMaxTs=").$(repairPlan.getChangeMaxTs())
                     .$(", highTsExclusive=").$(repairPlan.getHighTsExclusive())
                     .$(", resumeFromAnchor=").$(repairPlan.isResumeFromAnchor())
-                    .$(", anchorLvSeqTxn=").$(repairPlan.getAnchorLvSeqTxn())
+                    .$(", anchorCheckpointId=").$(repairPlan.getAnchorCheckpointId())
                     .$(", anchorMaxTs=").$(repairPlan.getAnchorMaxTs())
                     // The two estimates the disposition above was chosen on, so a repair
                     // that took the more expensive-looking route is diagnosable. Both are
@@ -3422,9 +3308,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (repairPlan.isResumeFromAnchor()) {
                 replayFromAnchor(instance, windowFactory, repairPlan, reader);
             } else {
-                // Either no sealed anchor sits below the change (the whole ring
-                // predates it, the trigger carries no timestamp to search with, or
-                // apply raced ahead over an unclassifiable range), in which case this
+                // Either no logical boundary sits below the change (the whole
+                // timeline is above it, the trigger carries no timestamp to search
+                // with, the timeline is unreadable, or apply raced ahead over an
+                // unclassifiable range), in which case this
                 // is the O(view age) rebuild from the view boundary; or one does and
                 // the plan priced its resume above the localized rebuild, in which
                 // case this reads only [L, H).
@@ -3654,16 +3541,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long runtimeFrontierTs = instance.isSnapshotCapability()
                 ? instance.getLatestSeenTs()
                 : Numbers.LONG_NULL;
-        final long[] headPair = instance.getHeadCheckpointSeqAndMaxTs();
+        timelineAnchors.of(instance);
         scanCost.of(reader);
         repairPlan.of(
-                instance,
+                timelineAnchors,
                 lateRowTs,
                 viewLowerBoundTimestamp,
                 advanceTo,
                 pinnedSeqTxn,
-                headPair[0],
-                headPair[1],
                 applyAheadMinTs,
                 rangeFrameWidth,
                 rowsBoundSource,
@@ -3733,51 +3618,46 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Resume replay from a sealed checkpoint anchor: rolls window state back to
-     * the anchor {@code .cp}'s snapshot moment (clear per-function maps, then
-     * restore from disk), scans the base table from {@code anchorMaxTs + 1}
-     * forward (never below {@code viewLowerBoundTimestamp}), and emits a single
-     * REPLACE_RANGE commit covering that same range through positive infinity.
-     * Cheaper than the whole-history rebuild because the anchor's state already
-     * reflects everything in {@code [viewLowerBoundTimestamp, anchorMaxTs]} - the
-     * replay only re-evaluates the tail above the anchor. Not cheaper than a
-     * <i>localized</i> rebuild by construction, though: that one stops at a finite
-     * convergence boundary while this reads to the end of the base table, so the plan
-     * prices the two and this path runs only when it wins.
+     * Resume replay from a logical checkpoint boundary: rolls window state back to
+     * that root's snapshot moment (clear per-function maps, then restore the root),
+     * scans the base table from {@code anchorMaxTs + 1} forward (never below
+     * {@code viewLowerBoundTimestamp}), and emits a single REPLACE_RANGE commit
+     * covering that same range through positive infinity. Cheaper than the
+     * whole-history rebuild because the root's state already reflects everything in
+     * {@code [viewLowerBoundTimestamp, anchorMaxTs]} - the replay only re-evaluates
+     * the tail above it. Not cheaper than a <i>localized</i> rebuild by
+     * construction, though: that one stops at a finite convergence boundary while
+     * this reads to the end of the base table, so the plan prices the two and this
+     * path runs only when it wins.
      * <p>
      * Pure execution: {@link LiveViewCheckpointRepairPlan} has already chosen the
-     * anchor, the commit point and the retire floor against the pinned snapshot,
-     * and has proven the anchor sits strictly below both the change and anything
-     * apply raced past the trigger. The head is simply the newest ring entry, so a
-     * head hit resumes from the newest anchor and a bounded miss from an older one
-     * through this same body.
+     * anchor through the timeline's predecessor lookup, along with the commit point
+     * and the retire floor, all against the pinned snapshot; it has proven the
+     * anchor sits strictly below both the change and anything apply raced past the
+     * trigger.
      * <p>
      * The caller owns {@code reader} and closes it; this method only detaches it
      * for the execution context and re-attaches it on the way out.
      * <p>
-     * Before restoring, this retires every retained checkpoint the change unsealed
-     * (entries at or above the plan's retire floor, including the prior head) so no
-     * later resume ever anchors on state that predates it. For a head hit the late
-     * row sits above the head, so nothing is unsealed and the retire is a no-op;
-     * for a bounded miss it drops the poisoned entries between the anchor and the
-     * head. The anchor itself always survives - the plan picked it strictly below
-     * that floor.
+     * The restore runs before the timeline is retired, because the timeline is what
+     * holds the state being restored. Once the state is in memory the whole
+     * timeline goes: this replay rewrites durable output above the anchor, so every
+     * root at or above it describes a materialization that no longer exists, and
+     * invariant 2 admits no generation mixing corrected and stale roots. Retiring
+     * ahead of the scan also keeps a crash mid-replay cheap - a restart then finds
+     * no timeline and rebuilds from the applied base, which is what it would do
+     * with a poisoned one anyway. The post-replay seal opens a fresh history.
      * <p>
-     * Restore can still fail here (corrupt {@code .cp}, unsupported format
-     * version). Structural corruption drives {@code restoreFromHead} ->
-     * {@code handleCorruptHeadCheckpoint}, which unlinks the file and evicts the
-     * anchor's ring entry, clearing the head metadata only when the anchor IS the
-     * head - a non-head anchor leaves the newer, still-valid real head in place.
-     * A compatibility break (version mismatch) instead stashes a pending
-     * invalidation reason and neither unlinks nor evicts. Either way this method
-     * abandons the replay without advancing the watermark, so the trigger re-fires
-     * on a later cycle and recovers once a fresh head exists.
+     * A restore failure retires the timeline too and abandons the replay without
+     * advancing the watermark, so the trigger re-fires on a later cycle and takes
+     * the rebuild rather than re-selecting the root it could not read. A
+     * compatibility break (version mismatch) instead stashes a pending invalidation
+     * reason.
      * <p>
-     * On success the post-replay state is sealed as a fresh head while the anchor
-     * the replay was built on stays in the ring (the late row sat above it, so it
-     * remains a valid resume anchor rather than garbage). A replay that produces no
-     * row keeps its anchor as the head - the commit truncates the LV back to
-     * exactly what that anchor covers.
+     * A replay that produces no row seals nothing: the truncating commit leaves the
+     * LV holding exactly the rows the anchor covered, and the restore left the
+     * window state at that same moment, so the retired timeline is re-opened by the
+     * next in-order seal.
      */
     private void replayFromAnchor(
             LiveViewInstance instance,
@@ -3786,7 +3666,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             TableReader reader
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
-        final long anchorLvSeqTxn = plan.getAnchorLvSeqTxn();
+        final long anchorCheckpointId = plan.getAnchorCheckpointId();
         final long anchorMaxTs = plan.getAnchorMaxTs();
         // Replay starts strictly above anchorMaxTs because the anchor's state
         // already covers rows up to and including anchorMaxTs. The same value
@@ -3800,22 +3680,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // case the scan below materialises the ahead range too - exactly as
         // o3HeadMissReplay does.
         final long committedSeqTxn = plan.getCommitSeqTxn();
-        // Retire the checkpoints this O3 unsealed before restoring: entries at or
-        // above the plan's retire floor (the prior head on the bounded-miss path,
-        // plus any ahead-unsealed entry on an apply-ahead resume) predate the
-        // covered rows and must never anchor a later resume. The anchor survives -
-        // the plan picked it strictly below that floor - and for a head hit nothing
-        // is unsealed, so this is a no-op. Mirrors o3HeadMissReplay's retire.
-        //
-        // The retire also publishes the survivors durably at committedSeqTxn, ahead
-        // of the REPLACE_RANGE commit below: one floor drives both the in-memory
-        // drop and the manifest, so the two can never disagree about what this O3
-        // unsealed. A publication failure does not abandon the replay - covered
-        // only advances on success, so the manifest left on disk is one a restart
-        // either trusts (its covered still equals the reconciled floor, meaning
-        // this commit never landed and the survivors really are still sealed there)
-        // or ignores.
-        invalidateRetainedCheckpointsOnO3(instance, plan.getRetireLowTs(), committedSeqTxn);
         boolean readerAttached = false;
         long appendedRows = 0;
         long o3ScanRows = 0;
@@ -3862,14 +3726,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         source = anchorDispatchingCursor;
                     }
                     try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
-                        // Drop pre-O3 drift before restoring from the head:
+                        // Drop pre-O3 drift before restoring the anchor root:
                         // clear each function's partition map so accumulator
-                        // state that outran the head's snapshot moment is
+                        // state that outran the root's snapshot moment is
                         // discarded. The anchor map gets the same treatment
                         // inside LiveViewWindow.restore() (it clears before
                         // reinserting), so no explicit wipe is needed here.
-                        // Order matters: function maps clear -> restore from
-                        // .cp.
+                        // Order matters: function maps clear -> restore root.
                         final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
                         for (int i = 0, n = functions.size(); i < n; i++) {
                             Map m = functions.getQuick(i).getPartitionMap();
@@ -3877,23 +3740,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 m.clear();
                             }
                         }
-                        if (!restoreFromHead(instance, windowFactory, anchorLvSeqTxn, restoredHeadState)) {
-                            // restoreFromHead either unlinked the corrupt .cp and
-                            // evicted this anchor's ring entry (clearing the head
-                            // metadata only when the anchor IS the head), or stashed
-                            // a version-mismatch invalidate reason. The O3 replay is
-                            // abandoned here without advancing the watermark, so the
-                            // same trigger re-fires on a later refresh cycle and
-                            // recovers once a fresh head .cp exists (one cycle of
-                            // stale pre-O3 rows in between). try-with-resources
-                            // closes the cursor on return.
+                        final long anchorLvRowPosition = restoreAnchorRoot(
+                                instance,
+                                windowFactory,
+                                anchorMaxTs,
+                                anchorCheckpointId
+                        );
+                        // Retire only after the state is in memory - the timeline
+                        // is what held it. From here the replay owns correctness of
+                        // the durable output and no root describes it any more.
+                        retireCheckpointStateOnO3(instance, true);
+                        if (anchorLvRowPosition == Numbers.LONG_NULL) {
+                            // The root could not be read, or its format is one this
+                            // build cannot restore (which stashed a pending
+                            // invalidation reason). The O3 replay is abandoned here
+                            // without advancing the watermark, so the same trigger
+                            // re-fires on a later refresh cycle and rebuilds against
+                            // the now-retired timeline (one cycle of stale pre-O3
+                            // rows in between). try-with-resources closes the cursor
+                            // on return.
                             return;
                         }
-                        // Snap the lifetime row counter back to the head's
-                        // recorded value: the upcoming REPLACE_RANGE commit
+                        // Snap the lifetime row counter back to the root's
+                        // recorded position: the upcoming REPLACE_RANGE commit
                         // logically truncates rows above replayLowTs, so the
                         // counter rewinds in step with the table.
-                        instance.setLvRowsTotal(restoredHeadState.lvRowsTotal);
+                        instance.setLvRowsTotal(anchorLvRowPosition);
                         Record outRecord = windowCursor.getRecord();
                         while (windowCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
@@ -3918,16 +3790,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                     // The REPLACE_RANGE is unconditional, including when the replay
                     // produced no row at all. Zero rows means the base no longer has
-                    // anything above headMaxTs that survives the filter - a
+                    // anything above anchorMaxTs that survives the filter - a
                     // REPLACE_RANGE delete or a dedup replacement erased it - while
-                    // the pre-O3 output for that range still sits on disk (head-hit
-                    // eligibility implies latestSeenTs > headMaxTs, so the view did
+                    // the pre-O3 output for that range still sits on disk (the plan
+                    // picked the anchor strictly below the change, so the view did
                     // emit rows there). Skipping the commit would strand them as
                     // ghosts: size() over-reports, reads return stale rows, and
                     // rebuildInMemoryTier stages them back - all while the watermark
                     // advances past the commit that removed their base rows. Emitting
-                    // the truncating range with no rows clears (headMaxTs, +inf) and
-                    // leaves the LV exactly at the head's snapshot moment, which the
+                    // the truncating range with no rows clears (anchorMaxTs, +inf) and
+                    // leaves the LV exactly at the anchor's snapshot moment, which the
                     // restore above already reproduced in the window state. Mirrors
                     // the pure-delete branch in o3HeadMissReplay.
                     //
@@ -3965,20 +3837,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             persistState(instance);
         }
         if (lvConsumedPersisted && appendedRows > 0) {
-            // Seal the post-replay state as a fresh head and keep the anchor the
-            // replay was built on in the retained-checkpoint ring: the late row sat
-            // above it, so it stays sealed and serves as a valid resume anchor
-            // rather than garbage. force writes past the cadence gate - on a head-hit
-            // the anchor (prior head) is not cleared, so firstCp would be false; on a
-            // bounded-miss the invalidate above cleared the head, so firstCp is
-            // already true. Either way an O3 resume must advance the head or the next
-            // replay re-scans from the stale maxTs.
+            // Seal the post-replay state, opening a fresh history over the timeline
+            // the retire above dropped. force writes past the cadence gate, though
+            // the cleared head already puts this on the first-checkpoint path:
+            // an O3 resume must advance the boundary or the next replay re-scans
+            // from the stale maxTs.
             //
-            // The zero-row replay keeps its anchor as the head instead: the
-            // truncating commit above left the LV table holding exactly the rows the
-            // anchor covers, and the restore left the window state at the anchor's
-            // snapshot moment, so it still describes the view. There is nothing to
-            // seal (replayMaxTs is LONG_NULL).
+            // A zero-row replay seals nothing: the truncating commit above left the
+            // LV table holding exactly the rows the anchor covered, and the restore
+            // left the window state at that same moment, so the next in-order seal
+            // re-opens the history from there. There is also nothing to seal
+            // (replayMaxTs is LONG_NULL).
             maybeWriteHeadCheckpoint(instance, windowFactory, committedSeqTxn, replayMaxTs, appendedRows, true);
         }
         // The resume replay is "the win": bounded to the tail above the anchor.
@@ -3988,12 +3857,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // Baseline scan-cost signal: base rows this resume replay pulled (>= emit).
         instance.bumpO3ReplayScanRows(o3ScanRows);
         // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
-        // (0 on the common path); the anchor fields record which sealed checkpoint the
+        // (0 on the common path); the anchor fields record which logical boundary the
         // resume rolled back to, so a wide gap or a distant anchor is diagnosable.
         LOG.info().$("live view O3 resume replay completed [view=")
                 .$(viewName)
                 .$(", advanceTo=").$(committedSeqTxn)
-                .$(", anchorLvSeqTxn=").$(anchorLvSeqTxn)
+                .$(", anchorCheckpointId=").$(anchorCheckpointId)
                 .$(", anchorMaxTs=").$(anchorMaxTs)
                 .$(", applyAheadGap=").$(plan.getPinnedSeqTxn() - plan.getTriggerSeqTxn())
                 .$(", rowsEmitted=").$(appendedRows).I$();
@@ -4005,7 +3874,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * pinned snapshot: restart restore, corrupt-checkpoint restore, base-metadata
      * drift, mid-drain recovery and WAL-loss re-derive. They all pass a non-DATA
      * trigger ({@code lateRowTs == LONG_NULL}), which authorises no deletion, so
-     * the plan reduces to the pinned snapshot's {@code seqTxn} and a whole-ring
+     * the plan reduces to the pinned snapshot's {@code seqTxn} and a wholesale
      * retire. The same non-DATA trigger denies localization, so the change ceiling
      * these callers cannot supply would not be read anyway.
      * <p>
@@ -4267,40 +4136,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             windowStateDirty = true;
         }
         try {
-            // Retire the checkpoints this O3 has unsealed. A DATA trigger keeps every
-            // entry below the plan's retire floor (still sealed - no un-incorporated
-            // base row sits at or below them) and drops the rest, including the head; a
-            // non-DATA / recovery trigger (LONG_NULL floor) drops the whole ring
-            // conservatively. Clearing the head puts the post-replay write on its
-            // first-cp path. The follow-up write below seals a fresh head; until then a
-            // restart rebuilds from the boundary.
+            // Retire the checkpoint state this O3 has unsealed. Clearing the head
+            // puts the post-replay seal on its first-checkpoint path; the follow-up
+            // seal below opens a fresh history, and until then a restart rebuilds
+            // from the view boundary.
             //
-            // The plan derives that floor from the pinned snapshot so it accounts for
-            // apply-ahead: when ApplyWal2TableJob has raced past the trigger, the
-            // snapshot this rebuild materialises includes seqTxns the ring's entries
-            // predate, so a back-dated row among them at ts M un-seals every entry with
-            // maxTs >= M just as the trigger does.
-            //
-            // The retire publishes the survivors durably at effectiveSeqTxn - this
-            // rebuild's commit point - before the commit below, off the same floor that
-            // drives the in-memory drop. A non-DATA / recovery trigger empties the ring,
-            // so its publication is an empty manifest and a crash mid-rebuild leaves no
-            // anchor to select.
-            //
-            // The versioned timeline is retired on the same call unless this repair
-            // holds a splice capture, which corrects the same roots precisely instead
-            // of dropping them all.
+            // The versioned timeline goes with it unless this repair holds a splice
+            // capture, which corrects the same roots precisely instead of dropping
+            // them all.
             //
             // First turn only: a repair that yielded already retired what its change
             // unsealed, and the timeline it may still splice into is the one its
             // capture pinned.
             if (!resuming) {
-                invalidateRetainedCheckpointsOnO3(
-                        instance,
-                        plan.getRetireLowTs(),
-                        effectiveSeqTxn,
-                        timelineCapture == null
-                );
+                retireCheckpointStateOnO3(instance, timelineCapture == null);
             }
 
             engine.detachReader(reader);
@@ -4810,13 +4659,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
                 repairPublication.watermarkAdvanced();
                 if (lvConsumedPersisted && (appendedRows > 0 || repairPublication.isKeepPrimaryRuntime())) {
-                    // Post-replay head: invalidateRetainedCheckpointsOnO3 cleared the head
-                    // metadata and dropped the unsealed ring entries above, so force
-                    // writes a fresh head reflecting the post-replay state (firstCp is
-                    // already true here; force keeps the intent explicit and robust).
-                    // Restart can then short-circuit to head-hit for a subsequent O3 in
-                    // the head's hit zone instead of paying for another full head-miss
-                    // replay.
+                    // Post-replay head: retireCheckpointStateOnO3 cleared the head
+                    // metadata above, so force seals a fresh boundary reflecting the
+                    // post-replay state (firstCp is already true here; force keeps the
+                    // intent explicit and robust). A subsequent O3 above it can then
+                    // resume from it instead of paying for another full rebuild.
                     //
                     // The head's maxTs has to describe the state the checkpoint is about to
                     // serialise. That is replayMaxTs for a rebuild that ran to the end of the
@@ -4827,8 +4674,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // the state already holds. The frontier is a real timestamp whenever the
                     // plan tagged a finite H (it had to be at or above H to do so), so this
                     // seals even when the replacement emitted nothing at all - the retire above
-                    // dropped every anchor, and a view left with none rebuilds from scratch on
-                    // the next restart.
+                    // dropped every boundary, and a view left with none rebuilds from scratch
+                    // on the next restart.
                     //
                     // Pass 0 appendedRows: lvRowsTotal already includes them (sourced
                     // from the on-disk size above), so adding them again would
@@ -4836,7 +4683,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     //
                     // A published splice already IS this repair's timeline publication, and
                     // it created no new boundary - the runtime stands exactly where the
-                    // repair found it - so the seal writes the legacy .cp alone.
+                    // repair found it - so the seal only re-stamps the head metadata.
                     final long headMaxTs = repairPublication.isKeepPrimaryRuntime()
                             ? instance.getLatestSeenTs()
                             : replayMaxTs;
@@ -4880,9 +4727,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             endRepairSession(instance, session);
         }
         // The boundary rebuild is the residual O(view age) fallback (late row below
-        // the whole retained ring, or a deep / unresumable apply-ahead range). Counted
+        // every logical boundary, or a deep / unresumable apply-ahead range). Counted
         // separately from the resume path so a growing value in live_views() flags a
-        // view the ring is failing to bound. A localized rebuild is bounded by the
+        // view the timeline is failing to bound. A localized rebuild is bounded by the
         // dependency floor instead, so it is not that residual - but it is still the
         // same executor and still counted here.
         instance.bumpO3BoundaryReplayRows(appendedRows);
@@ -5078,7 +4925,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     budget, commits the batch, applies it, and writes a {@code .scp} on the
      *     checkpoint cadence.</li>
      *     <li>On cursor exhaustion the turn flips {@code seedState} to ACTIVE,
-     *     writes a steady head {@code .cp} from the now-complete state, releases the
+     *     seals a steady boundary from the now-complete state, releases the
      *     pinned snapshot, and retires the {@code .scp}; the next tick begins the
      *     deferred drain from {@code sweepSeqTxn + 1}, where the ACTIVE phase's O3
      *     detection materialises anything the base committed after the snapshot.</li>
@@ -5161,8 +5008,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final long scpKey = instance.getHeadSeedCpKey();
             boolean restored = false;
             if (scpKey != Numbers.LONG_NULL
-                    && restoreFromHead(instance, windowFactory, scpKey, true, restoredHeadState)
-                    && restoredHeadState.resumeDataOffset != Numbers.LONG_NULL) {
+                    && restoreFromSeedCheckpoint(instance, windowFactory, scpKey, restoredSeedState)
+                    && restoredSeedState.resumeDataOffset != Numbers.LONG_NULL) {
                 // A surviving .scp can be AHEAD of the on-disk LV output. A checkpoint
                 // restore no longer produces one - TableSnapshotRestore wipes the live
                 // _checkpoints/ dir and lays the snapshot's back down, so the restored
@@ -5175,15 +5022,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // disk nor re-swept - a permanent silent gap. Reject the ahead .scp and
                 // fall through to the from-0 re-sweep below, where the skip-write floor
                 // keeps the R_cp on-disk prefix and re-emits everything above it.
-                if (restoredHeadState.lvRowsTotal <= onDiskLvRows) {
-                    instance.setSeedDataOffset(restoredHeadState.resumeDataOffset);
-                    instance.setLvRowsTotal(restoredHeadState.lvRowsTotal);
-                    if (restoredHeadState.maxTimestamp != Numbers.LONG_NULL) {
-                        instance.setLatestSeenTs(restoredHeadState.maxTimestamp);
+                if (restoredSeedState.lvRowsTotal <= onDiskLvRows) {
+                    instance.setSeedDataOffset(restoredSeedState.resumeDataOffset);
+                    instance.setLvRowsTotal(restoredSeedState.lvRowsTotal);
+                    if (restoredSeedState.maxTimestamp != Numbers.LONG_NULL) {
+                        instance.setLatestSeenTs(restoredSeedState.maxTimestamp);
                     }
                     restored = true;
                 } else {
-                    // restoreFromHead already wrote the ahead window state into
+                    // restoreFromSeedCheckpoint already wrote the ahead window state into
                     // the functions; wipe it back to identity for the from-0
                     // re-sweep, and unlink the ahead .scp so a later restart's
                     // highest-key sweepSeedCheckpoints does not re-select it
@@ -5193,7 +5040,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     clearWindowState(windowFactory, anchorWindow);
                     unlinkSeedCheckpoint(instance);
                     LOG.info().$("live view discarding seed checkpoint ahead of restored on-disk output [view=")
-                            .$(viewName).$(", scpLvRows=").$(restoredHeadState.lvRowsTotal)
+                            .$(viewName).$(", scpLvRows=").$(restoredSeedState.lvRowsTotal)
                             .$(", onDiskLvRows=").$(onDiskLvRows).I$();
                 }
             }
@@ -5203,7 +5050,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // state. The on-disk prefix (if any) is a deterministic match,
                 // kept via skip-write below.
                 //
-                // Re-clear the window state unconditionally: a restoreFromHead that
+                // Re-clear the window state unconditionally: a seed restore that
                 // threw partway (e.g. a short .scp missing a trailing FUNCTION_SNAPSHOT
                 // block) has already written the anchor + some functions into the live
                 // window before failing, and getIncrementalCursor keeps accumulator
@@ -5375,28 +5222,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
 
-        // Sweep complete. Materialise the steady head .cp from the now-complete
-        // window state (maxTs = overall latestSeenTs, not this possibly-empty
-        // final turn's batchMaxTs) so the ACTIVE phase's restart-restore + O3
-        // head-hit have an anchor. lvRowsTotal is already maintained above, so
-        // pass 0 appendedRows to avoid double-counting it.
+        // Sweep complete. Seal the steady boundary from the now-complete window
+        // state (maxTs = overall latestSeenTs, not this possibly-empty final
+        // turn's batchMaxTs) so the ACTIVE phase's restart-restore and O3 resume
+        // have a root. lvRowsTotal is already maintained above, so pass 0
+        // appendedRows to avoid double-counting it.
         //
-        // The head .cp is written BEFORE the _lv.s persist below - deliberately the
-        // reverse of every steady-state site, which persists _lv.s first and writes
-        // the .cp after. Do not "fix" this to match them. Those sites advance a
-        // watermark over rows already on disk under an already-existing head, where a
-        // head lagging the watermark is the routine cadence state and replayToApplied
-        // closes the gap. This is where the FIRST head is born, and the _lv.s persist
-        // is what flips the view durably ACTIVE at sweepSeqTxn. Persisting that first
-        // would open a window where a crash leaves an ACTIVE view whose disk table
-        // holds the whole swept output but which has no head .cp at all: the restart
-        // then finds no head, and on a live primary (base WAL present) the applied-base
-        // re-derive does not trigger, so the view drains forward from cold accumulators
-        // and durably commits wrong cumulative results. Writing the head first makes
-        // every crash window degrade safely - before the _lv.s persist the view is still
-        // SEEDING on disk and simply resumes the sweep from its .scp (the orphan
-        // .cp, being above the persisted watermark, is unlinked by the startup sweep and
-        // was never load-bearing for that resume); after it, the head is already there.
+        // The seal runs BEFORE the _lv.s persist below - deliberately the reverse
+        // of every steady-state site, which persists _lv.s first and seals after.
+        // Do not "fix" this to match them. Those sites advance a watermark over
+        // rows already on disk under an already-existing boundary, where a head
+        // lagging the watermark is the routine cadence state and replayToApplied
+        // closes the gap. This is where the FIRST boundary is born, and the _lv.s
+        // persist is what flips the view durably ACTIVE at sweepSeqTxn. Persisting
+        // that first would open a window where a crash leaves an ACTIVE view whose
+        // disk table holds the whole swept output but which has no timeline at all:
+        // the restart then finds nothing to restore, and on a live primary (base WAL
+        // present) the applied-base re-derive does not trigger, so the view drains
+        // forward from cold accumulators and durably commits wrong cumulative
+        // results. Sealing first makes every crash window degrade safely - before
+        // the _lv.s persist the view is still SEEDING on disk and simply resumes the
+        // sweep from its .scp, and the orphan generation the crash left is one a
+        // later seal supersedes; after it, the boundary is already there.
         instance.setLastProcessedSeqTxn(sweepSeqTxn);
         instance.setAppliedWatermark(sweepSeqTxn);
         // Only when the seed actually emitted a row. A seed that qualified none - the normal
@@ -5406,11 +5253,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // a head from that would persist maxTs = LONG_NULL, and the O3 head-hit path floors
         // its replay at headMaxTs + 1: Long.MIN_VALUE + 1 admits every base row, so the first
         // out-of-order commit would replay the whole base into the view, including the
-        // sub-boundary rows the view exists to exclude. With no head, that commit routes to
-        // the head-miss replay instead, which floors at viewLowerBoundTimestamp; the flush
-        // cadence writes the first real head once rows land. An empty view rebuilt from cold
+        // sub-boundary rows the view exists to exclude. With no boundary, that commit routes
+        // to the rebuild instead, which floors at viewLowerBoundTimestamp; the flush cadence
+        // seals the first real boundary once rows land. An empty view rebuilt from cold
         // accumulators is correct by construction, so the "never leave an ACTIVE view without
-        // a head" argument below does not apply here - there is no output to be wrong about.
+        // a boundary" argument below does not apply here - there is no output to be wrong
+        // about.
         final long seedMaxTs = instance.getLatestSeenTs();
         if (seedMaxTs != Numbers.LONG_NULL) {
             maybeWriteHeadCheckpoint(instance, windowFactory, sweepSeqTxn, seedMaxTs, 0L, false);
@@ -5446,29 +5294,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Best-effort unlinks the {@code <lvSeqTxn>.cp} file of every lvSeqTxn in
-     * {@code lvSeqTxns} - the entries a prune or a selective O3 invalidation
-     * evicted from the retained-checkpoint ring. A missing file is a no-op
-     * ({@code removeQuiet}); the in-memory ring already dropped these entries, so
-     * an unlink failure only leaks the file until the startup sweep retires it.
-     */
-    private void unlinkCheckpointFiles(LiveViewInstance instance, LongList lvSeqTxns) {
-        final int n = lvSeqTxns.size();
-        if (n == 0) {
-            return;
-        }
-        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        for (int i = 0; i < n; i++) {
-            path.of(engine.getConfiguration().getDbRoot())
-                    .concat(instance.getLiveViewToken())
-                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                    .slash();
-            LiveViewCheckpointWriter.appendCpFileName(path, lvSeqTxns.getQuick(i));
-            ff.removeQuiet(path.$());
-        }
-    }
-
-    /**
      * Retires the rolling seed checkpoint {@code <key>.scp} (best-effort)
      * and clears {@code headSeedCpKey}. Called after the SEEDING ->
      * ACTIVE flip is durable. Leftovers from a crash in the tiny window before
@@ -5482,7 +5307,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         path.of(engine.getConfiguration().getDbRoot())
                 .concat(instance.getLiveViewToken())
-                .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                 .slash();
         LiveViewCheckpointWriter.appendScpFileName(path, scpKey);
         engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
@@ -5519,122 +5344,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             reader = engine.getReader(baseToken);
         }
         return reader;
-    }
-
-    /**
-     * Rewrites {@code <lvDir>/_checkpoints/_ring} with the instance's current
-     * retained-checkpoint ring as the set of checkpoints proven sealed at
-     * {@code coveredBaseSeqTxn} - the single durable-publication point for the
-     * ring, so that ring membership, the generation counter and the dirty flag
-     * only ever move together and only ever here.
-     * <p>
-     * {@code coveredBaseSeqTxn} is a claim about the listed entries, not about
-     * what the view has consumed: every entry incorporates every base row at or
-     * below its own {@code maxTs} from every base commit through
-     * {@code coveredBaseSeqTxn}. Both replay paths prove exactly that before
-     * they commit - each survivor of the retire sits strictly below
-     * {@code min(triggerLowTs, minAheadTs)} - which is why a publication runs
-     * <em>ahead</em> of the commit it names and needs no ordering relationship
-     * to {@code _lv.s}.
-     * <p>
-     * Never unlinks: the manifest is an allow-list, so a caller retiring or
-     * pruning {@code .cp} files orders its unlinks after the publication that
-     * drops them, and a file the manifest does not list is garbage whether or
-     * not its unlink lands.
-     * <p>
-     * Failure logs and returns {@code false}; it never blocks the cycle.
-     * {@code coveredBaseSeqTxn} advances only on success, so the on-disk
-     * manifest always holds a {@code (membership, covered)} pair that was valid
-     * when written, and a restart either finds {@code covered} equal to the
-     * reconciled applied floor (the membership really is sealed there, trust it)
-     * or does not (fall back to the highest {@code .cp}). Refusing the replay
-     * instead would buy nothing and would stall the view outright while
-     * {@code _ring} is unwritable.
-     *
-     * @return {@code true} when the manifest is durable at
-     * {@code coveredBaseSeqTxn}, {@code false} when the publication failed.
-     */
-    private boolean publishCheckpointRing(LiveViewInstance instance, long coveredBaseSeqTxn) {
-        // Read-only replicas must not publish, for the reason maybeWriteHeadCheckpoint
-        // spells out at its own copy of this assert: _ring is an allow-list over local
-        // .cp files a replica never writes, so a replica reaching a publication means a
-        // primary-only path lost its gate.
-        assert !isLeadReconstruction() : "read-only replica must not publish the live view checkpoint ring";
-        // The generation a successful publication will stamp. A failed one
-        // leaves it unclaimed for the next attempt: nothing selects on
-        // generation, so gaps would be harmless, but a monotone counter with no
-        // gaps makes a publication countable from the logs.
-        final long generation = instance.getLastPublishedRingGeneration() + 1;
-        try {
-            if (ringManifestWriter == null) {
-                ringManifestWriter = new LiveViewCheckpointRingManifestWriter(engine.getConfiguration());
-            }
-            // Snapshot the ring rather than publish off the live list: the ring
-            // is worker-private with no volatile publication, and the copy is
-            // the retention count times ENTRY_SIZE longs (8 x 5 by default).
-            ringSnapshot.clear();
-            instance.copyRetainedCheckpointsTo(ringSnapshot);
-            path.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken());
-            ringManifestWriter.publish(path, generation, coveredBaseSeqTxn, ringSnapshot);
-        } catch (Throwable t) {
-            instance.recordCheckpointRingPublicationFailure();
-            LOG.critical().$("could not publish live view checkpoint ring [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", generation=").$(generation)
-                    .$(", coveredBaseSeqTxn=").$(coveredBaseSeqTxn)
-                    .$(", entries=").$(instance.getRetainedCheckpointCount())
-                    .$(", error=").$(t).I$();
-            // The writer is reusable after a fault - publish() re-opens through
-            // BlockFileWriter.of(), which closes and re-initialises whatever the
-            // fault left behind - so it is kept rather than dropped the way the
-            // half-open .cp writer is.
-            return false;
-        }
-        // Read the floor off the snapshot that just reached disk rather than the
-        // live ring: they are the same list here, but the durable one is what
-        // restart resumes from, and a later change re-reading the ring instead
-        // would silently start pinning the floor to entries the manifest does
-        // not list. An empty manifest lists nothing to resume from, so it
-        // releases the floor (LONG_NULL) - the retires that empty the ring
-        // unlink every .cp with it, leaving restart to rebuild from the applied
-        // base, which needs no raw base WAL.
-        final int snapshotSize = ringSnapshot.size();
-        final long newestBaseSeqTxn = snapshotSize == 0
-                ? Numbers.LONG_NULL
-                : ringSnapshot.getQuick(snapshotSize - LiveViewCheckpointRingManifest.ENTRY_SIZE + LiveViewCheckpointRingManifest.ENTRY_BASE_SEQ_TXN);
-        instance.recordCheckpointRingPublication(generation, coveredBaseSeqTxn, newestBaseSeqTxn);
-        return true;
-    }
-
-    /**
-     * Publishes the ring ahead of an in-order cycle that walks the durable floor
-     * to {@code advanceTo}, unsealing nothing. Membership is unchanged by
-     * construction - an in-order cycle emits only rows above {@code latestSeenTs},
-     * which is at or above every entry's {@code maxTs} - so only
-     * {@code coveredBaseSeqTxn} moves.
-     * <p>
-     * Load-bearing rather than tidy. Otherwise the ring reaches disk only beside a
-     * {@code .cp} write and on an O3 retire, and a view sealing a checkpoint once
-     * per million rows while advancing its floor every base commit would leave
-     * {@code covered} parked on the last checkpoint - so restart, which trusts the
-     * manifest only when {@code covered} equals the reconciled applied floor,
-     * would reject the ring on every steadily-ingesting view.
-     * <p>
-     * Ordered ahead of the cycle's commit so the window a crash can land in is the
-     * commit rather than this write: once the commit lands, the floor is
-     * {@code advanceTo} and the manifest already says so. A crash the other way
-     * (published, commit lost) leaves {@code covered} above the floor, which reads
-     * as the conservative fallback, not a wrong answer - the claim holds either
-     * way, being about the listed entries rather than the cycle.
-     * <p>
-     * Mirrors the caller's advance guard rather than assuming it: publishing
-     * {@code covered} below the floor would only turn a trustable manifest into an
-     * untrustable one.
-     */
-    private void publishCheckpointRingOnAdvance(LiveViewInstance instance, long advanceTo) {
-        if (advanceTo > instance.getAppliedWatermark()) {
-            publishCheckpointRing(instance, advanceTo);
-        }
     }
 
     /**
@@ -5709,34 +5418,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Head-checkpoint write hook. Computes the per-LV snapshot
-     * capability on the first call, accumulates the cycle's row count into
-     * the cadence counter, and writes a fresh {@code <lvSeqTxn>.cp} when
-     * either trigger has fired (or this is the first commit and no head
+     * Head-checkpoint write hook. Computes the per-LV snapshot capability on the
+     * first call, accumulates the cycle's row count into the cadence counter, and
+     * seals a fresh logical checkpoint boundary into the versioned timeline when
+     * either trigger has fired (or this is the first commit and no boundary
      * exists yet).
      * <p>
      * Capability gate: AND of every compiled window function's
      * {@code supportsCheckpointState()} plus, when the LV has an anchored window,
      * codec support for the partition-key column shape. Computed once and
      * cached on the {@link LiveViewInstance}. A {@code false} cap stays false
-     * for the LV's lifetime and the hook is a permanent no-op: the LV emits
-     * no checkpoints and routes restart / O3 through the head-miss replay
-     * path in 2a.7 / 2a.8.
+     * for the LV's lifetime and the hook is a permanent no-op: the LV seals
+     * no boundary and routes restart / O3 through the from-base rebuild.
      * <p>
      * Cadence triggers (whichever fires first):
      * <ul>
      *     <li>{@code rowsSinceLastCheckpointWritten >= cairo.live.view.checkpoint.rows}.</li>
-     *     <li>Wall-clock distance from the prior head's commit time exceeds
+     *     <li>Wall-clock distance from the prior seal exceeds
      *     {@code cairo.live.view.checkpoint.max.duration.micros}.</li>
-     *     <li>No head exists yet (first cp ever for this LV) and at least
-     *     one row landed - guarantees a usable head ASAP for restart-replay
+     *     <li>No boundary exists yet (first seal ever for this LV) and at least
+     *     one row landed - guarantees a usable root ASAP for restart-replay
      *     bounding, with the duration trigger floor active from then on.</li>
      * </ul>
      * <p>
-     * A failure here does not invalidate the view (.cp is a derived artifact).
-     * The prior head, if any, remains addressable; we log critical and
-     * continue. The writer is closed defensively so the next cycle reopens
-     * cleanly.
+     * A failure here does not invalidate the view: the timeline is derived state,
+     * the previously published generation stays authoritative, and the next
+     * eligible cycle seals again.
      */
     private void maybeWriteHeadCheckpoint(
             LiveViewInstance instance,
@@ -5750,16 +5457,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * As above, with {@code appendTimelineRoot} deciding whether the seal also adds
-     * a logical boundary to the versioned checkpoint timeline.
+     * As above, with {@code appendTimelineRoot} deciding whether the seal adds a
+     * logical boundary or only re-stamps the head metadata.
      * <p>
      * Only a repair that published a timeline range splice passes
      * {@code false}. It has already published this repair's generation, and it
      * left the runtime standing exactly where it found it - the state describes
      * the same frontier the newest root already does - so appending would claim
      * a boundary that is either a duplicate of the head root or a root over
-     * state nothing new produced. The legacy {@code .cp} is still written: it
-     * is the ring's resume anchor, which the timeline does not replace yet.
+     * state nothing new produced.
      */
     private void maybeWriteHeadCheckpoint(
             LiveViewInstance instance,
@@ -5770,11 +5476,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean force,
             boolean appendTimelineRoot
     ) {
-        // A read-only replica must never seal a .cp. The primary owns the durable
-        // tier and replicates the result, and neither .cp nor _ring ever ships
-        // (WalEvents.reconstructLiveViewFiles carries _lv alone), so a replica that
-        // wrote one would be minting local resume anchors for window state it does
-        // not own. Every refresh-cycle route here is primary-only already:
+        // A read-only replica must never seal a checkpoint root. The primary owns
+        // the durable tier and replicates the result, and no checkpoint state ever
+        // ships (WalEvents.reconstructLiveViewFiles carries _lv alone), so a replica
+        // that sealed one would be minting local resume anchors for window state it
+        // does not own. Every refresh-cycle route here is primary-only already:
         // incrementalRefresh and drainAppliedBase reach it past the leadMode early
         // return, flushLead is gated on !isLeadReconstruction(), and runSeedSweep is
         // skipped outright. But three of those gates are overridable hooks
@@ -5782,14 +5488,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // replica by dynamic dispatch rather than by structure, so pin the invariant
         // here rather than re-derive it per site.
         //
-        // The one route that bypasses every gate is the single-shot restore:
-        // tryRestoreFromHead runs before refreshInstance branches on the role, and its
+        // The one route that bypasses every gate is the single-shot restart restore:
+        // it runs before refreshInstance branches on the role, and its
         // replayToApplied / o3HeadMissReplay both reach this hook. It needs a local
-        // .cp to enter (getHeadCheckpointLvSeqTxn() != LONG_NULL), which a node that
-        // has only ever been a replica never has - .cp does not replicate. A node
-        // restarted as a replica over an ex-primary's files does, and would trip this.
-        // That is a static trace, not a reproduction: no test builds that shape, and
-        // it is the assert doing its job if one ever does.
+        // timeline to enter, which a node that has only ever been a replica never
+        // has - checkpoint state does not replicate. A node restarted as a replica
+        // over an ex-primary's files does, and would trip this. That is a static
+        // trace, not a reproduction: no test builds that shape, and it is the assert
+        // doing its job if one ever does.
         assert !isLeadReconstruction() : "read-only replica must not write a live view checkpoint";
         if (!instance.isSnapshotCapabilityComputed()) {
             instance.setSnapshotCapability(computeSnapshotCapability(instance, windowFactory));
@@ -5797,11 +5503,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (!instance.isSnapshotCapability()) {
             return;
         }
-        // A head with no maxTs cannot anchor a head-hit or bound a findResumeAnchorBelow
-        // ceiling - it is refused hit-eligibility upstream (see promoteRestoredHeadIntoRing) -
-        // so sealing one only poisons the ring. Every caller reaches here with rows behind it
-        // (appendedRows / flushRows > 0), so batchMaxTs is a real timestamp today; this guard
-        // keeps a future force-caller from writing a poison head past the cadence gate below.
+        // A boundary with no maxTs has no place in a timeline keyed on
+        // (maxTimestamp, checkpointId): the resume floors at maxTs + 1, and
+        // LONG_NULL + 1 would admit every base row. Every caller reaches here with
+        // rows behind it (appendedRows / flushRows > 0), so batchMaxTs is a real
+        // timestamp today; this guard keeps a future force-caller from sealing a
+        // poison boundary past the cadence gate below.
         if (batchMaxTs == Numbers.LONG_NULL) {
             return;
         }
@@ -5818,182 +5525,78 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final boolean durationTrigger = !firstCp
                 && lastWrittenUs != Numbers.LONG_NULL
                 && (nowUs - lastWrittenUs) >= durationCadence;
-        // A head carrying no write time is one THIS process never wrote: either
-        // the startup sweep stamped it from the highest surviving .cp, or
-        // tryRestoreFromHead re-stamped it after restoring that .cp. Both leave
-        // the cadence with no baseline - the duration trigger above disables
-        // itself outright without a lastWrittenUs, and the row counter restarts
-        // from zero - so the restored head would stay the ring's ONLY entry until
-        // an O3 forces a write or a full rowsCadence accumulates. Densify above it
-        // on the first flush instead: until a second entry exists, every O3 at
-        // or below the restored head has no older anchor to resume from and
-        // rebuilds from the view's lower bound, which is O(view age) on a
-        // long-lived view.
+        // A head carrying no write time is one THIS process never sealed: startup
+        // stamped it from the selected generation, or the restart restore stamped
+        // it from the root it restored. Either leaves the cadence with no baseline
+        // - the duration trigger above disables itself outright without a
+        // lastWrittenUs, and the row counter restarts from zero - so the restored
+        // boundary would stay the newest one until an O3 forces a seal or a full
+        // rowsCadence accumulates. Densify above it on the first flush instead, so
+        // a post-restart O3 resumes from a near boundary rather than the restored
+        // one.
         //
-        // Gated on a real batchMaxTs because the write seals a ring entry: a
-        // LONG_NULL maxTs anchor undercuts every findResumeAnchorBelow ceiling and
-        // is refused hit-eligibility upstream (see promoteRestoredHeadIntoRing).
-        // The non-force callers already only reach here with rows behind them
+        // Gated on a real batchMaxTs for the reason the guard above states. The
+        // non-force callers already only reach here with rows behind them
         // (appendedRows > 0 / flushRows > 0), so this holds by construction; state
         // it locally rather than rely on four call sites keeping it.
         final boolean restoredHeadFirstFlush = !firstCp
                 && lastWrittenUs == Numbers.LONG_NULL
                 && batchMaxTs != Numbers.LONG_NULL;
-        // force fires the write past the row/duration cadence gate. The O3
-        // replay paths pass it so an O3 always seals a fresh near-head anchor:
-        // a head-hit keeps its (still sealed) prior head as a ring entry rather
-        // than clearing it, so firstCp would otherwise stay false and cadence
-        // could skip the write, stranding the head at the stale maxTs.
+        // force fires the seal past the row/duration cadence gate. The O3 replay
+        // paths pass it so an O3 always seals a fresh near-head boundary: the
+        // repair clears the head first, so firstCp is normally true anyway, but a
+        // splice that keeps its timeline does not, and cadence could then skip the
+        // seal and strand the head at the stale maxTs.
         if (!(force || firstCp || restoredHeadFirstFlush || rowTrigger || durationTrigger)) {
             return;
         }
 
         try {
-            if (checkpointWriter == null) {
-                checkpointWriter = new LiveViewCheckpointWriter(engine.getConfiguration());
-            }
-            path.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken());
-            checkpointWriter.of(path.$(), lvSeqTxn);
-
-            // The base commit this head covers. Stamped into the manifest and
-            // mirrored onto the instance below so WalPurgeJob can hold the base
-            // WAL purge floor here rather than at the applied point.
+            // The base commit this root covers. Mirrored onto the instance below
+            // so WalPurgeJob can hold the base WAL purge floor here rather than at
+            // the applied point.
             final long baseSeqTxn = instance.getLastProcessedSeqTxn();
-            checkpointManifest.clear();
-            checkpointManifest.setLvSeqTxn(lvSeqTxn);
-            checkpointManifest.setBaseSeqTxn(baseSeqTxn);
-            checkpointManifest.setMaxTimestamp(batchMaxTs);
-            checkpointManifest.setLvRowPosition(instance.getLvRowsTotal());
-            checkpointManifest.setKind(LiveViewCheckpointManifest.KIND_STEADY);
             final LiveViewWindow anchorWindow = instance.getAnchorWindow();
-            if (anchorWindow != null) {
-                checkpointManifest.addWindowName(anchorWindow.getWindowName());
-            }
-            checkpointWriter.writeManifestBlock(checkpointManifest);
-
-            if (anchorWindow != null) {
-                MemoryA anchorSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_WINDOW_ANCHOR);
-                anchorWindow.snapshot(anchorSink);
-                checkpointWriter.endBlock();
-            }
-
             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+            // 0 for a splice, which appends no root: the newest boundary is one the
+            // splice reused, and its byte figure is restamped by the next cadence
+            // seal (or by a restart, from the root it restores). The column is
+            // diagnostic, so a transient 0 there costs nothing.
+            long stateBytes = 0L;
             if (appendTimelineRoot) {
-                appendCheckpointTimelineRoot(instance, functions, anchorWindow, baseSeqTxn, batchMaxTs);
+                stateBytes = appendCheckpointTimelineRoot(instance, functions, anchorWindow, baseSeqTxn, batchMaxTs);
             }
-            final String windowName = anchorWindow != null ? anchorWindow.getWindowName() : "";
-            // Test-only: omit the last N function-snapshot blocks to forge a
-            // CRC-valid-but-short checkpoint. 0 in production, so the limit is
-            // MAX_VALUE and every snapshot-capable function is written.
-            int fnBlockWriteLimit = Integer.MAX_VALUE;
-            final int fnBlocksToOmit = checkpointTrailingFunctionSnapshotBlocksToOmit;
-            if (fnBlocksToOmit > 0) {
-                int capable = 0;
-                for (int i = 0, m = functions.size(); i < m; i++) {
-                    if (functions.getQuick(i).supportsCheckpointState()) {
-                        capable++;
-                    }
-                }
-                fnBlockWriteLimit = Math.max(0, capable - fnBlocksToOmit);
-            }
-            int fnBlocksWritten = 0;
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                final WindowFunction f = functions.getQuick(i);
-                if (!f.supportsCheckpointState() || fnBlocksWritten >= fnBlockWriteLimit) {
-                    continue;
-                }
-                final MemoryA fnSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
-                fnSink.putStr(windowName);
-                fnSink.putStr(snapshotFactoryName(f));
-                fnSink.putInt(f.checkpointStateFormatVersion());
-                // LiveViewFunctionSnapshot frames every scalar or partition state as an
-                // exact-length page; the enclosing block independently bounds the whole function.
-                LiveViewFunctionSnapshot.write(fnSink, f);
-                checkpointWriter.endBlock();
-                fnBlocksWritten++;
-            }
-
-            // Capture before commit(): commit() truncates the mmap and resets
-            // the writer for reuse.
-            final long stateBytes = checkpointWriter.getAppendOffset();
-            // Retain the prior head (LONG_NULL suppresses commit()'s unlink): it
-            // is a sealed ring entry now, not garbage. The ring below governs
-            // retirement.
-            checkpointWriter.commit(Numbers.LONG_NULL);
-
-            // Retain the freshly sealed head in the checkpoint ring. A
-            // same-timestamp run can leave a prior entry at batchMaxTs, so drop
-            // any entry the fresh head supersedes at or above its own maxTs
-            // first - the ring is held in strictly increasing maxTs order - then
-            // add and prune back within the count / bytes budget, unlinking
-            // whatever falls out (the equal-maxTs prior and the pruned oldest).
-            evictedCheckpoints.clear();
-            instance.invalidateRetainedCheckpointsFrom(batchMaxTs, evictedCheckpoints);
-            instance.addRetainedCheckpoint(lvSeqTxn, batchMaxTs, baseSeqTxn, instance.getLvRowsTotal(), stateBytes);
-            // Prune back within the budget against the fresh head's maxTs.
-            pruneRetainedCheckpointsToBudget(instance, batchMaxTs, evictedCheckpoints);
-            // Publish the ring BEFORE the head advances. Every listed entry is
-            // sealed at lvSeqTxn: the fresh one by construction, the survivors
-            // because an O3 cycle already retired whatever this commit unsealed
-            // and an in-order one unseals nothing (every maxTs is below the
-            // commit's minTs). Callers reach here only after
-            // the LV's own commit and the _lv.s persist, so lvSeqTxn is also the
-            // applied watermark a restart reconciles against: covered == floor,
-            // which is the trust rule.
-            //
-            // Publishing ahead of the head is load-bearing rather than cosmetic.
-            // WalPurgeJob min-combines getHeadCheckpointBaseSeqTxn(), so the head
-            // carries the base WAL purge floor, and restart's replayToApplied
-            // re-feeds raw base WAL from the restored entry's baseSeqTxn. Let the
-            // head advance onto an entry the durable manifest does not list and
-            // the floor releases WAL that a restart trusting the manifest still
-            // needs to replay from its older newest entry. Both the crash window
-            // (crash between the .cp commit and the publish) and a failed publish
-            // open exactly that gap, so the head waits on a successful
-            // publication - the ordering covers the crash, the gate the failure.
-            //
-            // A failed publish therefore leaves the fresh .cp an orphan with the
-            // head, the floor and the cadence counters all parked on the previous
-            // entry, so the next cycle writes another .cp and re-lists the ring
-            // from memory. The view keeps serving throughout: the in-memory ring
-            // already holds the fresh entry, so resume anchors stay available even
-            // while the manifest trails.
-            if (publishCheckpointRing(instance, lvSeqTxn)) {
-                instance.setHeadCheckpoint(lvSeqTxn, baseSeqTxn, batchMaxTs, stateBytes, nowUs);
-            }
-            // Unlink unconditionally, even when the publish failed and the stale
-            // manifest still lists these files. Holding them back would keep that
-            // manifest self-consistent, but a pinned head also pins the cadence
-            // counters setHeadCheckpoint resets, so an unwritable _ring makes
-            // every subsequent cycle seal another .cp - retaining every eviction
-            // grows the directory without bound until the next restart. Bounded
-            // disk wins: a manifest naming a missing .cp fails the referenced-file
-            // check on restart and falls back to the highest .cp, which is the
-            // outcome a run that never published one gets anyway.
-            unlinkCheckpointFiles(instance, evictedCheckpoints);
+            // Advance the head only after the generation carrying this root is
+            // durable. WalPurgeJob min-combines getHeadCheckpointBaseSeqTxn(), so
+            // the head carries the base WAL purge floor, and restart's
+            // replayToApplied re-feeds raw base WAL from the restored root's base
+            // seqTxn: a head that ran ahead of the published generation would
+            // release WAL a restart still needs.
+            instance.setHeadCheckpoint(lvSeqTxn, baseSeqTxn, batchMaxTs, stateBytes, nowUs);
             // Baseline observability: elapsed micros of this head-checkpoint write
-            // (manifest + snapshots + commit + ring publish + evicted-file unlink),
-            // measured from the cadence-gate clock read above. Surfaced via
+            // (state freeze + root append + generation publish), measured from the
+            // cadence-gate clock read above. Surfaced via
             // live_views().head_checkpoint_write_micros.
             instance.recordCheckpointWriteMicros(engine.getConfiguration().getMicrosecondClock().getTicks() - nowUs);
         } catch (Throwable t) {
+            // Derived state: the seal failed, so the head and the cadence counters
+            // stay parked on the previous root and the next eligible cycle seals
+            // again. Any temporary segment the failed append staged is reclaimed by
+            // the next lifecycle reconciliation.
             LOG.critical().$("could not write live view head checkpoint [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", lvSeqTxn=").$(lvSeqTxn)
                     .$(", error=").$(t).I$();
-            // Drop the half-open writer; the next cycle reallocates a fresh
-            // one. The on-disk .cp.tmp (if any) is swept on next startup.
-            checkpointWriter = Misc.free(checkpointWriter);
         }
     }
 
     /**
      * Restart replay-to-applied: re-feeds base WAL rows over
      * {@code (fromSeqTxn, toSeqTxn]} through the window pipeline to advance the
-     * accumulators restored from the head {@code .cp} up to the persisted applied
+     * accumulators restored from a checkpoint root up to the persisted applied
      * watermark, WITHOUT emitting (no LV WAL write, no inline apply, no in-mem
      * tier append). The on-disk LV table already holds these rows - the checkpoint
-     * cadence simply left the {@code .cp} short of the applied point - so only the
+     * cadence simply left the newest root short of the applied point - so only the
      * restored accumulators need to catch up before drain-forward rebuilds the
      * un-flushed lead lost on the crash.
      * <p>
@@ -6001,11 +5604,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * reset before each drain pass so the replay never stops mid-gap and leaves the
      * accumulators short of disk (which would make drain-forward re-emit rows disk
      * already holds). On out-of-order arrival - only reachable when a prior post-O3
-     * {@code .cp} write failed, so an unresolved O3 sits between the head and the
+     * seal failed, so an unresolved O3 sits between the head and the
      * applied point - it hands off to {@link #o3Replay}, passing the applied point
      * (not the offending seqTxn) as {@code advanceTo} so the REPLACE_RANGE rewrite
      * covers everything disk already holds; {@code o3Replay} re-stamps the
-     * watermarks and writes a fresh head {@code .cp}, and this returns
+     * watermarks and seals a fresh boundary, and this returns
      * {@link #REPLAY_TO_APPLIED_O3}. Otherwise returns the number of rows re-fed.
      */
     private long replayToApplied(
@@ -6080,58 +5683,99 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Opens the head {@code .cp} at {@code headLvSeqTxn} and rehydrates the LV's
-     * window state (anchor map + per-function maps) from the manifest + anchor
-     * block + per-function blocks. Populates {@code out} with the manifest's
-     * {@code baseSeqTxn}, {@code maxTimestamp}, and the file's byte length.
+     * Restores the logical checkpoint root the repair plan chose as its resume
+     * anchor, identified by the timeline's composite {@code (maxTimestamp,
+     * checkpointId)} key. The caller has already cleared the per-function
+     * partition maps, so this writes the root's state into an empty runtime.
      * <p>
-     * Callers (restart restore and the O3 anchor resume) decide what to do with
-     * the restored watermarks and whether to refresh the head metadata trio on
-     * the instance; this helper restricts itself to state restore + failure
-     * cleanup so both call sites share the same disk read path. The anchor need
-     * not be the head - {@code headLvSeqTxn} names whatever sealed checkpoint the
-     * caller wants restored.
-     * <p>
-     * Failure handling: any structural error (CRC fail, magic mismatch, missing
-     * function class, anchor type mismatch) is best-effort cleaned up in
-     * {@link #handleCorruptHeadCheckpoint} - it logs critical, unlinks the corrupt
-     * {@code .cp}, evicts the anchor's retained-ring entry, and clears the head
-     * metadata only when the anchor IS the head, then returns {@code false}. The
-     * LV is not invalidated; the caller falls through to the head-miss replay
-     * path.
+     * Selection and restore run under separate generation pins - the plan searched
+     * during planning, this restores at replay time - so the exact-key lookup here
+     * is what proves the boundary survived in between. Only this worker publishes
+     * for this view and it publishes nothing between the two, so a miss means the
+     * timeline is gone or unreadable rather than merely re-versioned.
+     *
+     * @return the root's effective {@code lvRowPosition}, or
+     * {@link Numbers#LONG_NULL} when the root could not be restored - a version
+     * break additionally stashes a pending invalidation reason
      */
-    private boolean restoreFromHead(
+    private long restoreAnchorRoot(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
-            long headLvSeqTxn,
-            RestoredHeadState out
+            long anchorMaxTs,
+            long anchorCheckpointId
     ) {
-        return restoreFromHead(instance, windowFactory, headLvSeqTxn, false, out);
+        try (
+                Path checkpointsDir = new Path();
+                LiveViewCheckpointTimelineStoreReader reader =
+                        new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration())
+        ) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            reader.of(checkpointsDir);
+            return reader.restore(
+                    anchorMaxTs,
+                    anchorCheckpointId,
+                    instance.getLiveViewToken().getTableId(),
+                    windowFactory.getWindowFunctions(),
+                    instance.getAnchorWindow()
+            ).effectiveLvRowPosition;
+        } catch (CairoException ce) {
+            final int errno = ce.getErrno();
+            if (errno == CairoException.LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH
+                    || errno == CairoException.LV_CHECKPOINT_FILE_VERSION_MISMATCH) {
+                // A real compatibility break, not corruption. Stash the reason on
+                // the instance so the caller drives invalidation outside the
+                // refresh latch (engine.invalidateLiveView parks on the instance
+                // monitor when a checkpoint freeze is active, and the agent's
+                // startCheckpoint cannot complete its latch handshake while the
+                // worker still holds the refresh latch).
+                instance.setPendingInvalidationReason(Chars.toString(ce.getFlyweightMessage()));
+            }
+            LOG.critical().$("could not restore live view O3 resume anchor [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", anchorMaxTs=").$ts(anchorMaxTs)
+                    .$(", anchorCheckpointId=").$(anchorCheckpointId)
+                    .$(", error=").$safe(ce.getFlyweightMessage()).I$();
+            return Numbers.LONG_NULL;
+        } catch (Throwable t) {
+            LOG.critical().$("could not restore live view O3 resume anchor [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", anchorMaxTs=").$ts(anchorMaxTs)
+                    .$(", anchorCheckpointId=").$(anchorCheckpointId)
+                    .$(", error=").$(t).I$();
+            return Numbers.LONG_NULL;
+        }
     }
 
     /**
-     * Opens a {@code .cp} (steady, {@code isSeed=false}) or {@code .scp}
-     * (seed, {@code isSeed=true}) checkpoint and rehydrates window
-     * state. The seed variant additionally surfaces the SEED_CURSOR's
-     * data offset in {@code out.resumeDataOffset}.
+     * Opens the seed checkpoint {@code <scpKey>.scp} and rehydrates the LV's
+     * mid-sweep window state (anchor map + per-function maps) from the manifest +
+     * anchor block + per-function blocks, surfacing the SEED_CURSOR's data offset
+     * in {@code out.resumeDataOffset} alongside the manifest's
+     * {@code maxTimestamp} and lifetime row position.
+     * <p>
+     * The caller decides what to do with the restored coordinates; this helper
+     * restricts itself to state restore + failure cleanup.
+     * <p>
+     * Failure handling: any structural error (CRC fail, magic mismatch, missing
+     * function class, anchor type mismatch) is best-effort cleaned up in
+     * {@link #handleCorruptSeedCheckpoint} - it logs critical, unlinks the corrupt
+     * {@code .scp} and returns {@code false}. The LV is not invalidated; the
+     * caller re-sweeps from the beginning.
      */
-    private boolean restoreFromHead(
+    private boolean restoreFromSeedCheckpoint(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
-            long headLvSeqTxn,
-            boolean isSeed,
-            RestoredHeadState out
+            long scpKey,
+            RestoredSeedState out
     ) {
         out.reset();
         path.of(engine.getConfiguration().getDbRoot())
                 .concat(instance.getLiveViewToken())
-                .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                 .slash();
-        if (isSeed) {
-            LiveViewCheckpointWriter.appendScpFileName(path, headLvSeqTxn);
-        } else {
-            LiveViewCheckpointWriter.appendCpFileName(path, headLvSeqTxn);
-        }
+        LiveViewCheckpointWriter.appendScpFileName(path, scpKey);
 
         if (checkpointReader == null) {
             checkpointReader = new LiveViewCheckpointReader(engine.getConfiguration());
@@ -6195,16 +5839,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             // Missing-block validation. The file-level CRC guards against bit-rot
             // but NOT against a CRC-valid-but-short checkpoint: a truncated tail,
-            // or a format drift that adds a snapshot-capable function this .cp's
+            // or a format drift that adds a snapshot-capable function this .scp's
             // writer never emitted, simply ends the block walk early. Without this
-            // check restoreFromHead would return success with a function (or the
-            // anchor) left in default state, and the post-restore incremental
-            // refresh would resume after the manifest txn from that wrong baseline,
-            // durably diverging. restoreFunctionBlock already throws on the extra-
-            // block direction; catch the missing-block direction here. Errno 0 =>
-            // handleCorruptHeadCheckpoint unlinks the .cp / .scp and head-miss- or
-            // seed-replays from a known-good boundary.
-            if (isSeed && out.resumeDataOffset == Numbers.LONG_NULL) {
+            // check the restore would return success with a function (or the
+            // anchor) left in default state, and the resumed sweep would carry on
+            // from that wrong baseline, durably diverging. restoreFunctionBlock
+            // already throws on the extra-block direction; catch the missing-block
+            // direction here. Errno 0 => handleCorruptSeedCheckpoint unlinks the
+            // .scp and the sweep restarts from a known-good boundary.
+            if (out.resumeDataOffset == Numbers.LONG_NULL) {
                 throw CairoException.critical(0)
                         .put("live view seed checkpoint missing its SEED_CURSOR block");
             }
@@ -6235,16 +5878,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // when a checkpoint freeze is active, and the agent's
                 // startCheckpoint cannot complete its latch handshake while
                 // the worker still holds the refresh latch).
-                LOG.critical().$("live view checkpoint version mismatch [view=")
+                LOG.critical().$("live view seed checkpoint version mismatch [view=")
                         .$(instance.getDefinition().getViewName())
-                        .$(", lvSeqTxn=").$(headLvSeqTxn)
+                        .$(", scpKey=").$(scpKey)
                         .$(", error=").$safe(ce.getFlyweightMessage()).I$();
                 instance.setPendingInvalidationReason(Chars.toString(ce.getFlyweightMessage()));
                 return false;
             }
-            return handleCorruptHeadCheckpoint(instance, headLvSeqTxn, path, ce);
+            return handleCorruptSeedCheckpoint(instance, scpKey, path, ce);
         } catch (Throwable t) {
-            return handleCorruptHeadCheckpoint(instance, headLvSeqTxn, path, t);
+            return handleCorruptSeedCheckpoint(instance, scpKey, path, t);
         } finally {
             try {
                 checkpointReader.close();
@@ -6257,298 +5900,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Best-effort cleanup after a checkpoint restore fails on structural
+     * Best-effort cleanup after a seed-checkpoint restore fails on structural
      * corruption (CRC / magic / truncation / missing function class / anchor type
      * mismatch - all errno 0, distinct from a version mismatch, which
-     * {@link #restoreFromHead} handles separately by stashing a pending
-     * invalidation reason). Unlinks the corrupt {@code .cp} (unusable regardless of
-     * which anchor it was) and drops the matching entry from the retained-checkpoint
-     * ring so a later resume never re-selects it. Clears the head metadata trio ONLY
-     * when the corrupt anchor IS the current head: a non-head anchor leaves the
-     * newer, still-valid head in place, and clearing it would desync the head
-     * metadata from the ring. Always returns {@code false} so the caller abandons
-     * the restore and falls through to a from-boundary rebuild / trigger re-fire.
+     * {@link #restoreFromSeedCheckpoint} handles separately by stashing a pending
+     * invalidation reason). Unlinks the corrupt {@code .scp} so the next sweep turn
+     * cannot re-select it. Always returns {@code false} so the caller abandons the
+     * resume and re-sweeps from the beginning.
      */
-    private boolean handleCorruptHeadCheckpoint(
+    private boolean handleCorruptSeedCheckpoint(
             LiveViewInstance instance,
-            long anchorLvSeqTxn,
+            long scpKey,
             Path path,
             Throwable t
     ) {
-        LOG.critical().$("could not restore live view from checkpoint [view=")
+        LOG.critical().$("could not restore live view from seed checkpoint [view=")
                 .$(instance.getDefinition().getViewName())
-                .$(", lvSeqTxn=").$(anchorLvSeqTxn)
+                .$(", scpKey=").$(scpKey)
                 .$(", error=").$(t).I$();
-        // Best-effort: unlink the corrupt .cp. It is unusable whether it was the
-        // head or an older ring entry.
         try {
             engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
         } catch (Throwable rmErr) {
-            LOG.error().$("could not unlink corrupt checkpoint [view=")
+            LOG.error().$("could not unlink corrupt seed checkpoint [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(rmErr).I$();
         }
-        // Capture head membership BEFORE any head-clear so the eviction cannot
-        // change the answer. removeRetainedCheckpoint is a no-op when the anchor is
-        // not a ring entry (restart / seed restore run with an empty ring), so the
-        // head-only callers behave exactly as before. Clearing the head trio for a
-        // non-head anchor would strand the real head's metadata pointing above a
-        // now-shorter ring.
-        final boolean anchorIsHead = anchorLvSeqTxn == instance.getHeadCheckpointLvSeqTxn();
-        instance.removeRetainedCheckpoint(anchorLvSeqTxn);
-        if (anchorIsHead) {
-            instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
-        }
         return false;
-    }
-
-    /**
-     * Restart-restore: opens the head {@code .cp}, rehydrates the LV's window
-     * state from the manifest + anchor block + per-function blocks, replays the
-     * base WAL forward to close the checkpoint-cadence gap between the head and
-     * the applied point, then resumes the refresh worker at the applied point so
-     * the next incremental refresh rebuilds only the un-flushed lead.
-     * <p>
-     * With <em>no</em> anchor to restore from - neither a sweep head nor one a
-     * trusted manifest names - it rebuilds from the applied base instead of
-     * returning. The caller only routes a view here headless once
-     * {@link #needsHeadlessRestartRecovery} has established that it has
-     * materialised rows, and cold accumulators would silently flush wrong
-     * cumulative aggregates over those. So this method restores or rebuilds; it
-     * never hands a caller back a view whose window state it could not account
-     * for.
-     * <p>
-     * Which {@code .cp} is the head is {@link #rehydrateCheckpointRing}'s
-     * decision, not the startup sweep's: a trusted {@code _ring} manifest
-     * repopulates the whole retained-checkpoint ring and names its newest listed
-     * entry, so a first post-restart O3 below the head can resume from an older
-     * anchor instead of rebuilding from {@code viewLowerBoundTimestamp}. Without
-     * one the sweep's highest surviving {@code .cp} stands, alone in the ring.
-     * <p>
-     * The head {@code .cp}'s {@code baseSeqTxn} can lag the persisted applied
-     * watermark, because the checkpoint cadence does not write a fresh {@code .cp}
-     * on every flush: the on-disk LV table holds every base commit up to the
-     * applied point, but the restored accumulators stop at the (older) head. The
-     * gap is closed by {@link #replayToApplied}, which re-feeds the base rows over
-     * {@code (manifestBaseSeqTxn, appliedWatermark]} through the window pipeline to
-     * advance the accumulators to the disk state without re-emitting.
-     * <p>
-     * Failure handling: a structural error opening the {@code .cp} (CRC fail,
-     * magic mismatch, missing function class, anchor type mismatch) unlinks the
-     * head .cp and clears the head metadata on the instance; the LV is not
-     * invalidated - {@code .cp} is derived state, so this method rebuilds the
-     * whole view inline via {@link #o3HeadMissReplay} over the applied base
-     * snapshot (identical to the missing-.cp recovery) rather than bare-returning
-     * into the caller's incremental drain from the applied watermark, which would
-     * recompute post-watermark rows from cold accumulators and durably flush wrong
-     * cumulative aggregates. A compatibility break (version-too-old / file-version
-     * mismatch) instead stashes a pending-invalidation reason, and a
-     * replay-to-applied error can leave the restored accumulators inconsistent
-     * with disk; both invalidate the view (operator recovers with DROP + CREATE)
-     * via the pending-invalidation hook rather than serving wrong results.
-     */
-    private void tryRestoreFromHead(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
-        // The ring is never rebuilt by scanning the surviving on-disk .cp files:
-        // a stale .cp whose retirement unlink failed is indistinguishable from a
-        // sealed one and would poison a later O3 resume. It is repopulated only
-        // from the durable _ring manifest's allow-list (rehydrateCheckpointRing
-        // below) or, absent one, from the single restored head
-        // (promoteRestoredHeadIntoRing at the tail). Both run inside this
-        // single-shot restore, and the catalogue load stashes a manifest
-        // CANDIDATE on the instance rather than ring entries, so the ring must
-        // still be empty on entry. If it is not, some path has started
-        // resurrecting on-disk entries as anchors - fail loudly in tests.
-        assert instance.getRetainedCheckpointCount() == 0
-                : "retained-checkpoint ring must be empty on restart restore, was "
-                + instance.getRetainedCheckpointCount();
-        // The persisted applied watermark (base seqTxn) is disk truth: the LV's
-        // on-disk table holds every base commit up to it, and
-        // reconcileAppliedFloorAfterRestart has already clamped it up from the LV
-        // table, so this IS the reconciled floor the manifest is judged against.
-        // Snapshot it before the restore below overwrites the in-memory
-        // watermarks with the head's (potentially older) base seqTxn.
-        final long diskAppliedSeqTxn = instance.getAppliedWatermark();
-        final long headLvSeqTxn = rehydrateCheckpointRing(instance, diskAppliedSeqTxn);
-        if (headLvSeqTxn == Numbers.LONG_NULL) {
-            // No anchor at all: the sweep found no .cp at or below the RAW _lv.s
-            // watermark, and no trusted manifest named one either. The caller has
-            // already established that this view has materialised rows, so its
-            // accumulators are NOT at identity and a bare return would drain the
-            // post-watermark base commits from cold state and durably flush wrong
-            // cumulative aggregates - the same silent corruption the corrupt-.cp
-            // branch below rebuilds to avoid, reached with no .cp to be corrupt.
-            //
-            // Reachable through a LOST (not merely trailing) _lv.s persist: the
-            // sweep gates the head on the raw watermark, which
-            // reconcileAppliedFloorAfterRestart is about to clamp up, so every
-            // legitimately sealed .cp above the lost value is declined (and, with
-            // no manifest exempting it, unlinked). Rebuild from the applied base
-            // exactly as the corrupt-.cp path does: unconditionally correct and
-            // idempotent, it re-seeds the window from identity, rewrites the tier
-            // with a single REPLACE_RANGE, advances the watermarks and seals a
-            // fresh head.
-            //
-            // This is NOT the rebuild rehydrateCheckpointRing's javadoc tells you
-            // not to re-add. That one refuses a head the sweep DID find, because a
-            // trusted manifest listed nothing; it gates on the verdict. This one
-            // gates on the value rehydrateCheckpointRing returned, so a trusted
-            // empty manifest still restores from the fallback head - there is
-            // simply no head here to refuse.
-            LOG.info().$("live view restart found no checkpoint to restore, rebuilding from the applied base [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", appliedWatermark=").$(diskAppliedSeqTxn).I$();
-            try {
-                o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, instance.getDefinition().getBaseTableToken(), diskAppliedSeqTxn, true);
-            } catch (Throwable t) {
-                LOG.critical().$("live view restart head-miss replay failed with no checkpoint [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", appliedWatermark=").$(diskAppliedSeqTxn)
-                        .$(", error=").$(t).I$();
-                instance.setPendingInvalidationReason("live view restart head-miss replay without a checkpoint failed");
-                return;
-            }
-            instance.setCheckpointRestoreSucceeded();
-            return;
-        }
-        if (!restoreFromHead(instance, windowFactory, headLvSeqTxn, restoredHeadState)) {
-            // restoreFromHead failed in one of two distinct ways:
-            //  - Compatibility break (LV_*_VERSION_* errno): it stashed a
-            //    pending-invalidation reason. Return so the caller drives
-            //    invalidation out of the refresh latch - a format we can no
-            //    longer read must not be served or rebuilt from.
-            //  - Structural corruption (CRC / magic / truncation / missing
-            //    function class, all errno 0): it unlinked the corrupt .cp and
-            //    cleared head metadata but left NO pending reason. A bare return
-            //    here falls through to the caller's incremental drain from the
-            //    applied watermark with COLD accumulators, which recomputes the
-            //    post-watermark rows from zero and commits + flushes wrong
-            //    cumulative aggregates (sum() OVER (ORDER BY ts), row_number(),
-            //    partitioned cumulatives) durably - silent, no crash, no
-            //    invalidation. A *missing* .cp recovers correctly via a full
-            //    rebuild; a *corrupt* one must not fare worse. Recover the same
-            //    way the O3 head-hit and dedup-restart paths do: rebuild the
-            //    whole view from the applied base snapshot, which re-seeds the
-            //    window from identity, rewrites the tier with a single
-            //    REPLACE_RANGE, advances the watermarks, and writes a fresh head.
-            if (instance.hasPendingInvalidationReason()) {
-                return;
-            }
-            try {
-                o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, instance.getDefinition().getBaseTableToken(), diskAppliedSeqTxn, true);
-            } catch (Throwable t) {
-                LOG.critical().$("live view restart head-miss replay failed after corrupt checkpoint [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", appliedWatermark=").$(diskAppliedSeqTxn)
-                        .$(", error=").$(t).I$();
-                instance.setPendingInvalidationReason("live view restart head-miss replay after corrupt checkpoint failed");
-                return;
-            }
-            instance.setCheckpointRestoreSucceeded();
-            return;
-        }
-        final long manifestBaseSeqTxn = restoredHeadState.manifestBaseSeqTxn;
-        // Re-seed the O3 detection watermark from the head before any replay -
-        // latestSeenTs is an in-memory volatile reset to LONG_NULL on rebuild.
-        // Without it the first post-restart commit (or the replay below) is not
-        // compared against already-materialized rows, so a late row arriving
-        // first slips past O3 detection and gets forward-appended in arrival
-        // order. The monotonic setter lets the replay advance it further.
-        if (restoredHeadState.maxTimestamp != Numbers.LONG_NULL) {
-            instance.setLatestSeenTs(restoredHeadState.maxTimestamp);
-        }
-        // Refresh the head metadata trio with the real maxTs + stateBytes we just
-        // read; the startup sweep stamped placeholders. Done before the replay so
-        // that if replayToApplied hands off to o3Replay, its head-hit / head-miss
-        // decision reads the real materialized maxTs rather than the placeholder.
-        // writtenUs stays LONG_NULL: it marks the head as one this process never
-        // wrote, which is exactly what maybeWriteHeadCheckpoint's restored-head
-        // trigger keys off to seal a fresh .cp on the first post-restart flush.
-        instance.setHeadCheckpoint(
-                headLvSeqTxn,
-                manifestBaseSeqTxn,
-                restoredHeadState.maxTimestamp,
-                restoredHeadState.stateBytes,
-                Numbers.LONG_NULL
-        );
-        // Replaces the entry-time "the ring is always empty after restart"
-        // contract. A rehydrated ring ends on the entry we just restored from,
-        // and the manifest's claim about it must match the .cp's own manifest -
-        // maybeWriteHeadCheckpoint stamps batchMaxTs into both. A mismatch means
-        // the allow-list and the checkpoints have drifted, which would let an
-        // anchor search select on a maxTs the window state does not hold.
-        assert instance.getRetainedCheckpointCount() == 0
-                || (instance.getRetainedCheckpointLvSeqTxn(instance.getRetainedCheckpointCount() - 1) == headLvSeqTxn
-                && instance.getRetainedCheckpointMaxTs(instance.getRetainedCheckpointCount() - 1) == restoredHeadState.maxTimestamp)
-                : "rehydrated checkpoint ring must end on the restored head, was lvSeqTxn="
-                + instance.getRetainedCheckpointLvSeqTxn(instance.getRetainedCheckpointCount() - 1)
-                + ", maxTs=" + instance.getRetainedCheckpointMaxTs(instance.getRetainedCheckpointCount() - 1)
-                + " against head lvSeqTxn=" + headLvSeqTxn + ", maxTs=" + restoredHeadState.maxTimestamp;
-        long resumeSeqTxn = manifestBaseSeqTxn;
-        long replayedRows = 0;
-        if (diskAppliedSeqTxn > manifestBaseSeqTxn && isDedupBase(instance)) {
-            // Dedup base: the checkpoint-to-applied gap must be closed over the
-            // applied (post-dedup) base, not raw WAL. replayToApplied re-feeds raw
-            // WAL via drainBaseWal, which would advance the restored accumulators over
-            // the pre-dedup stream and silently diverge from the post-dedup disk state
-            // (Gap A / Gap B are invisible to the raw O3 triggers). Route straight to a
-            // full head-miss rebuild from viewLowerBoundTimestamp over the applied
-            // snapshot: unconditionally correct, and idempotent with an intact base (its
-            // REPLACE_RANGE reproduces the rows disk already holds). o3HeadMissReplay
-            // advances the watermarks and writes a fresh head, so restore is complete.
-            try {
-                o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, instance.getDefinition().getBaseTableToken(), diskAppliedSeqTxn, true);
-            } catch (Throwable t) {
-                LOG.critical().$("live view dedup restart head-miss replay failed [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", manifestBaseSeqTxn=").$(manifestBaseSeqTxn)
-                        .$(", appliedWatermark=").$(diskAppliedSeqTxn)
-                        .$(", error=").$(t).I$();
-                instance.setPendingInvalidationReason("live view restart dedup replay-to-applied failed");
-                return;
-            }
-            instance.setCheckpointRestoreSucceeded();
-            return;
-        }
-        if (diskAppliedSeqTxn > manifestBaseSeqTxn) {
-            // The checkpoint cadence left the head short of the applied point.
-            // Advance the restored accumulators over the gap without re-emitting
-            // (disk already holds these rows), then resume at the applied point.
-            try {
-                replayedRows = replayToApplied(instance, windowFactory, manifestBaseSeqTxn, diskAppliedSeqTxn);
-            } catch (Throwable t) {
-                LOG.critical().$("live view replay-to-applied failed on restart [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", manifestBaseSeqTxn=").$(manifestBaseSeqTxn)
-                        .$(", appliedWatermark=").$(diskAppliedSeqTxn)
-                        .$(", error=").$(t).I$();
-                // Recovery integrity is compromised (accumulators may be a partial
-                // advance over disk). Invalidate out of the refresh latch via the
-                // pending-reason hook rather than serve wrong results.
-                instance.setPendingInvalidationReason("live view restart replay-to-applied failed");
-                return;
-            }
-            if (replayedRows == REPLAY_TO_APPLIED_O3) {
-                // replayToApplied hit an out-of-order base commit mid-gap and handed
-                // off to o3Replay, which rebuilt the on-disk tier from base in ts
-                // order over the applied range, re-stamped the watermarks, and wrote
-                // a fresh head .cp. Restore is complete.
-                instance.setCheckpointRestoreSucceeded();
-                return;
-            }
-            resumeSeqTxn = diskAppliedSeqTxn;
-        }
-        // Resume the refresh worker at the applied point; the next incremental
-        // refresh drains forward from here to rebuild the un-flushed lead. The
-        // seam_ts is anchored at the WAL commit boundary (see incrementalRefresh),
-        // so appliedWatermark mirrors lastProcessed.
-        instance.setLastProcessedSeqTxn(resumeSeqTxn);
-        instance.setAppliedWatermark(resumeSeqTxn);
-        // Re-seed the lifetime row counter from the manifest plus the rows the
-        // replay re-fed, so subsequent addRowsSinceLastCheckpointWritten calls
-        // accumulate against the disk total rather than the (older) head total.
-        instance.setLvRowsTotal(restoredHeadState.lvRowsTotal + replayedRows);
-        promoteRestoredHeadIntoRing(instance, headLvSeqTxn, manifestBaseSeqTxn);
-        instance.setCheckpointRestoreSucceeded();
     }
 
     /**
@@ -6583,7 +5960,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         ) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
-                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
             if (!engine.getConfiguration().getFilesFacade().exists(timelinePath.$())) {
                 rebuildTimelineRecoveryFromAppliedBase(
@@ -6716,409 +6093,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Whether a restart that found <b>no</b> head {@code .cp} must still route
-     * through {@link #tryRestoreFromHead} - which rebuilds - rather than fall
-     * through to the caller's incremental drain.
-     * <p>
-     * The drain resumes from the applied watermark with the accumulators at
-     * identity, so it is correct only for a view whose window state really is at
-     * identity. Over a view that has already materialised rows it recomputes the
-     * post-watermark rows from zero and durably flushes wrong cumulative
-     * aggregates ({@code row_number()}, {@code sum() OVER (ORDER BY ts)}) with no
-     * crash and no invalidation. Every ACTIVE view that has emitted a row also
-     * sealed a {@code .cp} for it, so the two normally coincide and this predicate
-     * is false; it separates them on the paths where the {@code .cp} is gone but
-     * the rows are not:
-     * <ul>
-     *     <li>a <b>lost</b> {@code _lv.s} persist - not merely a trailing one -
-     *     puts every sealed {@code .cp} above the raw watermark the startup sweep
-     *     gates the head on, and {@code reconcileAppliedFloorAfterRestart} clamps
-     *     the floor back up only after the sweep has already declined (and,
-     *     without a manifest exempting them, unlinked) the lot;</li>
-     *     <li>a run whose {@code .cp} writes all failed - derived state, non-fatal
-     *     by design.</li>
-     * </ul>
-     * The three exclusions are not defensive:
-     * <ul>
-     *     <li><b>Lead reconstruction</b> - a read-only replica must never write
-     *     disk, and {@code .cp} state does not replicate, so "no head" is its
-     *     resting shape and a rebuild would both corrupt the contract and trip
-     *     {@code o3Replay}'s replica assertion.</li>
-     *     <li><b>SEEDING</b> - the seed sweep owns the resume, from its own
-     *     {@code .scp} namespace and its own floor. Its rows are mid-sweep, not
-     *     abandoned.</li>
-     *     <li><b>Nothing materialised</b> - identity accumulators over a view that
-     *     has emitted nothing and consumed no base commit it owns are simply
-     *     correct, and this is the resting state of an idle view seeded over an
-     *     empty base. Rebuilding it every restart would cost a base scan to
-     *     recompute nothing.</li>
-     * </ul>
-     * The two materialisation probes are deliberately OR'd, and each covers what
-     * the other misses: the row count alone misses a view whose rows a TTL or DROP
-     * PARTITION has since removed while its accumulators stayed advanced, and the
-     * seqTxn comparison alone misses a view whose rows came from the seed, which
-     * completes <em>at</em> {@code subscribeFromSeqTxn - 1}. A false positive costs
-     * one rebuild the view did not need; a false negative is silent corruption.
-     */
-    private boolean needsHeadlessRestartRecovery(LiveViewInstance instance, boolean leadReconstruction) {
-        if (leadReconstruction || instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_ACTIVE) {
-            return false;
-        }
-        if (instance.getStateReader().getLastProcessedSeqTxn() >= instance.getStateReader().getSubscribeFromSeqTxn()) {
-            return true;
-        }
-        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-            return lvReader.size() > 0;
-        }
-    }
-
-    /**
-     * Decides whether the {@code _checkpoints/_ring} manifest the startup sweep
-     * stashed may be trusted, rehydrates the retained-checkpoint ring from it
-     * when it may, and names the checkpoint {@link #tryRestoreFromHead} restores
-     * window state from.
-     * <p>
-     * The trust rule is one comparison:
-     * <pre>
-     *     trust the ring  iff  ring.coveredBaseSeqTxn == reconciled applied floor
-     * </pre>
-     * At equality every listed entry is sealed at the view's true durable
-     * position, which is exactly what an anchor must be. The floor has to be the
-     * <em>reconciled</em> one - {@code _lv.s} is a stale lower bound by design,
-     * because {@code persistState} cannot persist-then-publish, and
-     * {@code reconcileAppliedFloorAfterRestart} clamps it back up from the LV
-     * table. Comparing against the raw {@code _lv.s} value instead would read the
-     * routine crash window (manifest published, {@code _lv.s} not yet) as a
-     * mismatch and discard the ring on precisely the restarts it exists for.
-     * That is why this runs on the refresh worker: the reconciled floor does not
-     * exist on the startup thread the sweep runs on.
-     * <p>
-     * Everything else falls back, conservatively and non-fatally: no manifest, an
-     * unreadable one, a version-skewed one, one naming a checkpoint that is gone,
-     * a {@code covered} that does not match, or an entry this code could not have
-     * written. Ring state is derived, so a fallback costs one boundary rebuild
-     * and never invalidates the view.
-     * <p>
-     * <b>Under trust the manifest, not the directory, defines the anchors.</b> The
-     * sweep's highest surviving {@code .cp} is the <em>fallback</em> head, and a
-     * trusted manifest that lists an entry overrides it: the newest listed entry
-     * becomes the head even when it sits above the raw watermark the sweep gated
-     * on - the manifest vouches for it, and the sweep exempted the file for
-     * exactly this - and a higher unlisted {@code .cp} is ignored rather than
-     * restored, whatever its filename says.
-     * <p>
-     * A trusted manifest that lists <em>nothing</em> takes the fallback head all
-     * the same, and deliberately: it withholds anchors, it does not condemn the
-     * directory. Restoring an unlisted head cannot resurrect stale window state,
-     * because {@link #tryRestoreFromHead} re-seeds {@code latestSeenTs} from the
-     * head's own {@code maxTs} and then replays the checkpoint-to-applied gap - a
-     * head that a consumed commit unsealed is unsealed by a commit inside that
-     * gap, by construction, so {@code replayToApplied} detects the O3 and rebuilds.
-     * The ring therefore only ever gains an entry that replay proved sealed, which
-     * is the property the allow-list protects, and refusing the head here would
-     * buy a full scan on a doubly-degraded path (a retirement whose unlink AND
-     * whose post-replay {@code .cp} write both failed) that recovers correctly
-     * without one. Do not "harden" this into a rebuild without a reproduction.
-     *
-     * @param reconciledFloor the applied watermark after
-     *                        {@code reconcileAppliedFloorAfterRestart}
-     * @return the {@code lvSeqTxn} to restore window state from: the ring's newest
-     * listed entry when the manifest is trusted and lists one, the sweep's
-     * fallback head otherwise.
-     */
-    private long rehydrateCheckpointRing(LiveViewInstance instance, long reconciledFloor) {
-        final long fallbackHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
-        final LiveViewCheckpointRingCandidate candidate = instance.getCheckpointRingCandidate();
-        // Single-shot, whatever the verdict: the sweep that produced the
-        // candidate runs once per process and this restore runs once per LV
-        // lifetime, so nothing downstream may read startup state as live.
-        instance.setCheckpointRingCandidate(null);
-        if (candidate == null || !candidate.isStructurallyValid()) {
-            // No manifest on disk, or one the sweep could not read. The absent
-            // and corrupt cases are indistinguishable here - the sweep nulls the
-            // candidate for both - and both count, being equally a fallback the
-            // first post-restart O3 pays for. The read logs which at its own site.
-            // A view whose first ever restart predates its first publication
-            // counts one too, and that is the honest reading: it recovers no ring
-            // and pays the same scan as a view whose manifest went missing.
-            instance.recordCheckpointRingRecoveryFallback();
-            return fallbackHeadLvSeqTxn;
-        }
-        final long covered = candidate.getCoveredBaseSeqTxn();
-        final int entryCount = candidate.getEntryCount();
-        if (covered != reconciledFloor || !isCheckpointRingRehydratable(instance, candidate)) {
-            LOG.info().$("live view checkpoint ring recovery fallback [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", reason=").$(covered != reconciledFloor ? "covered does not match the reconciled floor" : "entry not rehydratable")
-                    .$(", generation=").$(candidate.getGeneration())
-                    .$(", ringCovered=").$(covered)
-                    .$(", reconciledFloor=").$(reconciledFloor)
-                    .$(", entries=").$(entryCount)
-                    .$(", fallbackHeadLvSeqTxn=").$(fallbackHeadLvSeqTxn).I$();
-            instance.recordCheckpointRingRecoveryFallback();
-            discardCheckpointRingManifest(instance);
-            return fallbackHeadLvSeqTxn;
-        }
-        for (int i = 0; i < entryCount; i++) {
-            instance.addRetainedCheckpoint(
-                    candidate.getEntryLvSeqTxn(i),
-                    candidate.getEntryMaxTs(i),
-                    candidate.getEntryBaseSeqTxn(i),
-                    candidate.getEntryLvRowsTotal(i),
-                    candidate.getEntryStateBytes(i)
-            );
-        }
-        // Adopt the manifest as this process's durable ring state before anything
-        // republishes over it. The generation must continue the on-disk counter
-        // rather than restart at 1, or a run's publications reuse generations the
-        // manifest already burned and stop being countable from the logs. And
-        // lastPublishedRingNewestBaseSeqTxn is the durable arm of WalPurgeJob's
-        // base WAL floor, which only a publication otherwise stamps - rehydration
-        // is the one path that adopts a manifest this process did not publish, so
-        // leaving it LONG_NULL would make the two arms disagree for no reason.
-        instance.recordCheckpointRingPublication(
-                candidate.getGeneration(),
-                covered,
-                entryCount == 0 ? Numbers.LONG_NULL : candidate.getEntryBaseSeqTxn(entryCount - 1)
-        );
-        pruneRehydratedCheckpointRing(instance, covered);
-        final int retainedCount = instance.getRetainedCheckpointCount();
-        // The trust verdict, for live_views(). Post-prune rather than the
-        // manifest's entryCount: what an operator wants to know is how many
-        // anchors this process came back with, and a lowered retention budget
-        // drops some of what the manifest listed. Recorded on the empty path too -
-        // a trusted manifest listing nothing is not a fallback, and only the pair
-        // (entries=0, fallbacks=0) tells the two apart.
-        instance.recordCheckpointRingRecovery(retainedCount);
-        if (retainedCount == 0) {
-            // Trusted, but it offers no anchor - so the sweep's head stands, and
-            // the restore validates it the way it does without any manifest.
-            LOG.info().$("live view checkpoint ring restored empty [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", generation=").$(candidate.getGeneration())
-                    .$(", coveredBaseSeqTxn=").$(covered)
-                    .$(", fallbackHeadLvSeqTxn=").$(fallbackHeadLvSeqTxn).I$();
-            return fallbackHeadLvSeqTxn;
-        }
-        final long newestLvSeqTxn = instance.getRetainedCheckpointLvSeqTxn(retainedCount - 1);
-        // Stamp the newest listed entry as the head, replacing the placeholders
-        // the startup sweep left (subscribeFromSeqTxn as a safe purge-floor lower
-        // bound, a LONG_NULL maxTs and zero stateBytes) - the manifest knows the
-        // real values. Ahead of the restore, so that a corrupt anchor sends
-        // handleCorruptHeadCheckpoint at the .cp the head actually names and it
-        // clears the head trio rather than stranding it on the sweep's pick.
-        instance.setHeadCheckpoint(
-                newestLvSeqTxn,
-                instance.getRetainedCheckpointBaseSeqTxn(retainedCount - 1),
-                instance.getRetainedCheckpointMaxTs(retainedCount - 1),
-                instance.getRetainedCheckpointStateBytes(retainedCount - 1),
-                Numbers.LONG_NULL
-        );
-        LOG.info().$("live view checkpoint ring restored [view=")
-                .$(instance.getDefinition().getViewName())
-                .$(", generation=").$(candidate.getGeneration())
-                .$(", coveredBaseSeqTxn=").$(covered)
-                .$(", entries=").$(retainedCount)
-                .$(", oldestMaxTs=").$(instance.getRetainedCheckpointMaxTs(0))
-                .$(", headLvSeqTxn=").$(newestLvSeqTxn)
-                .$(", headMaxTs=").$(instance.getRetainedCheckpointMaxTs(retainedCount - 1)).I$();
-        return newestLvSeqTxn;
-    }
-
-    /**
-     * Whether every entry of a trusted manifest describes a checkpoint this code
-     * could have written. Rejects the manifest <b>whole</b> rather than entry by
-     * entry, the way the sweep's missing-{@code .cp} rule does: a partial ring is
-     * a claim nothing backs, and membership is what makes the survivors
-     * meaningful.
-     * <p>
-     * The codec cannot enforce this. It validates ordering and the
-     * {@code coveredBaseSeqTxn} bounds, and {@link Numbers#LONG_NULL} is
-     * {@code Long.MIN_VALUE}, so a LONG_NULL field passes every one of them by
-     * being smaller than whatever it is compared against. No such entry is
-     * reachable from either {@code addRetainedCheckpoint} call site - both stamp
-     * real values - but rehydration is what first turns manifest bytes into ring
-     * records, so the check belongs here:
-     * <ul>
-     *     <li>a LONG_NULL {@code baseSeqTxn} restamps the ring's purge-floor
-     *     mirror to LONG_NULL, which {@code WalPurgeJob} reads as "no floor" and
-     *     which would release the base WAL of a ring about to be trusted;</li>
-     *     <li>a LONG_NULL {@code maxTs} undercuts every
-     *     {@link #findResumeAnchorBelow} ceiling and would anchor a replay at
-     *     {@code LONG_NULL + 1}, admitting every base row including those below
-     *     the START FROM boundary - the same reason
-     *     {@link #promoteRestoredHeadIntoRing} refuses one;</li>
-     *     <li>a LONG_NULL {@code lvSeqTxn} names no {@code .cp} the sweep's
-     *     {@code exists()} check could have passed, so a manifest carrying one
-     *     describes a directory that cannot exist.</li>
-     * </ul>
-     */
-    private boolean isCheckpointRingRehydratable(LiveViewInstance instance, LiveViewCheckpointRingCandidate candidate) {
-        for (int i = 0, n = candidate.getEntryCount(); i < n; i++) {
-            if (candidate.getEntryLvSeqTxn(i) == Numbers.LONG_NULL
-                    || candidate.getEntryMaxTs(i) == Numbers.LONG_NULL
-                    || candidate.getEntryBaseSeqTxn(i) == Numbers.LONG_NULL) {
-                LOG.error().$("live view checkpoint ring manifest entry has a null coordinate [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", entryIndex=").$(i)
-                        .$(", lvSeqTxn=").$(candidate.getEntryLvSeqTxn(i))
-                        .$(", maxTs=").$(candidate.getEntryMaxTs(i))
-                        .$(", baseSeqTxn=").$(candidate.getEntryBaseSeqTxn(i)).I$();
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Trims a rehydrated ring back inside the running retention budget and
-     * unlinks whatever falls out.
-     * <p>
-     * The codec deliberately does not enforce the count / byte bounds - it has no
-     * configuration - and rejecting a manifest over budget would be the wrong
-     * answer anyway: an operator <em>lowering</em> a budget between restarts
-     * should cost a prune, which satisfies the bound for free, not a full scan.
-     * The event-time horizon keys off the newest entry, exactly as the add path
-     * keys it off the fresh head's {@code batchMaxTs}.
-     * <p>
-     * Republishes before unlinking, the way {@code maybeWriteHeadCheckpoint}
-     * does: the manifest on disk still lists what the prune dropped, and
-     * unlinking first would leave it naming missing files, which the next
-     * restart's {@code exists()} check rejects whole. The unlink then runs
-     * regardless of the publication's outcome - a stale manifest costs one
-     * fallback, while retaining the files leaks the disk the prune exists to
-     * bound, and they are unlisted garbage the moment the next publication lands.
-     */
-    private void pruneRehydratedCheckpointRing(LiveViewInstance instance, long coveredBaseSeqTxn) {
-        final int entryCount = instance.getRetainedCheckpointCount();
-        if (entryCount == 0) {
-            return;
-        }
-        evictedCheckpoints.clear();
-        pruneRetainedCheckpointsToBudget(instance, instance.getRetainedCheckpointMaxTs(entryCount - 1), evictedCheckpoints);
-        if (evictedCheckpoints.size() == 0) {
-            return;
-        }
-        LOG.info().$("live view pruned rehydrated checkpoint ring [view=")
-                .$(instance.getDefinition().getViewName())
-                .$(", evicted=").$(evictedCheckpoints.size())
-                .$(", retained=").$(instance.getRetainedCheckpointCount()).I$();
-        publishCheckpointRing(instance, coveredBaseSeqTxn);
-        unlinkCheckpointFiles(instance, evictedCheckpoints);
-    }
-
-    /**
-     * Prunes the retained-checkpoint ring back within the configured retention
-     * budget, measuring the event-time horizon from {@code referenceMaxTs} - the
-     * newest entry the ring is meant to keep, which is the fresh head on the add
-     * path and the manifest's last entry on the rehydrate path.
-     * <p>
-     * The single place that says which knobs bound the ring, so the two callers
-     * cannot drift onto different budgets. Count and bytes are the primary
-     * bounds. The event-time horizon is a loose upper safety, disabled by
-     * default: when enabled, an entry older than {@code retentionMicros} below
-     * {@code referenceMaxTs} is pruned. At real ingest rates count/bytes bind
-     * first - near-head checkpoint spacing covers many times the observed base
-     * lateness - and a {@code retentionMicros <= 0} (the default) disables the
-     * horizon so low-rate views keep their older, event-time-distant anchors
-     * instead of collapsing the ring to a single entry.
-     * <p>
-     * {@code pruneRetainedCheckpoints} always keeps the newest entry, and appends
-     * each evicted {@code lvSeqTxn} to {@code evictedOut} for the caller to
-     * unlink - this touches no files.
-     */
-    private void pruneRetainedCheckpointsToBudget(LiveViewInstance instance, long referenceMaxTs, LongList evictedOut) {
-        final CairoConfiguration configuration = engine.getConfiguration();
-        final long retentionMicros = configuration.getLiveViewCheckpointRetentionMicros();
-        instance.pruneRetainedCheckpoints(
-                configuration.getLiveViewCheckpointRetentionCount(),
-                configuration.getLiveViewCheckpointRetentionMaxBytes(),
-                retentionMicros > 0 ? referenceMaxTs - retentionMicros : Numbers.LONG_NULL,
-                evictedOut
-        );
-    }
-
-    /**
-     * Removes {@code _checkpoints/_ring} after the trust decision fell back.
-     * <p>
-     * Best-effort and non-fatal: a failed removal leaves a manifest whose
-     * {@code covered} still does not match the floor, so it stays untrusted, and
-     * the next publication overwrites it. Removing it matters for the {@code .cp}
-     * files the sweep exempted on its behalf: they survived as an allow-list that
-     * turned out not to be trustworthy, and with the manifest gone the next
-     * restart's sweep retires them with no allow-list at all.
-     */
-    private void discardCheckpointRingManifest(LiveViewInstance instance) {
-        path.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken());
-        // Self-base: Path.of(this) is a no-op, so this addresses _ring off the LV
-        // directory just built - through the one path builder every other site
-        // uses, so the two cannot drift.
-        LiveViewCheckpointRingManifest.ringManifestPath(path, path);
-        engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
-        // The manifest listed the entry the startup read pinned the base WAL
-        // floor at, and it lists nothing now. Release the arm so the floor
-        // follows the head this fallback actually resumes from.
-        instance.releaseCheckpointRingPurgeFloor();
-    }
-
-    /**
-     * Seeds the retained-checkpoint ring with the head {@link #tryRestoreFromHead}
-     * just restored, making it the ring's sole entry.
-     * <p>
-     * This grants the head no trust it did not already hold: the head-hit branch of
-     * {@link #o3Replay} resumes from it directly, off the head metadata, without
-     * consulting the ring at all. Listing it only lets the ring SEARCH
-     * ({@link #findResumeAnchorBelow}) find it. That search is what an apply-ahead
-     * O3 falls back on when {@link ApplyWal2TableJob} has raced the base reader past
-     * the trigger: {@link #replayFromAnchor} then needs an anchor strictly below
-     * {@code min(triggerLowTs, minAheadTs)}, and against an empty ring that lookup
-     * fails and forces an O(view age) rebuild from the view's lower bound - even
-     * when the restored head sits below the ahead floor and would have served.
-     * <p>
-     * The ring's newest entry stays the head, which WalPurgeJob's base WAL
-     * purge floor depends on: it holds the floor at
-     * {@code getHeadCheckpointBaseSeqTxn()}, so an entry the floor does not cover
-     * could not be resumed from. One entry, equal to the head, cannot violate that.
-     * <p>
-     * A LONG_NULL maxTs head must never enter the ring. findResumeAnchorBelow
-     * selects on {@code maxTs < ceilTs}, so LONG_NULL would undercut every ceiling
-     * and anchor a replay at {@code LONG_NULL + 1} - admitting every base row,
-     * including rows below the START FROM boundary this path does not re-apply. The
-     * same value is already refused hit-eligibility in {@link #o3Replay}; refuse it
-     * here for the same reason.
-     */
-    private void promoteRestoredHeadIntoRing(LiveViewInstance instance, long headLvSeqTxn, long manifestBaseSeqTxn) {
-        if (restoredHeadState.maxTimestamp == Numbers.LONG_NULL) {
-            return;
-        }
-        if (instance.getRetainedCheckpointCount() > 0) {
-            // rehydrateCheckpointRing trusted the manifest, so the ring already
-            // ends on this head (the assert in tryRestoreFromHead pins that) and
-            // carries the older anchors the manifest vouched for. Adding it again
-            // would trip addRetainedCheckpoint's strictly-increasing-maxTs
-            // contract. Promotion is the no-manifest fallback's way of reaching
-            // the same place with one entry.
-            return;
-        }
-        // The .cp this entry names is the one restoreFromHead just read, and
-        // nothing unlinks it: maybeWriteHeadCheckpoint commits the next head with
-        // LONG_NULL, which suppresses commit()'s prior-head unlink, and the ring
-        // governs retirement from here on.
-        instance.addRetainedCheckpoint(
-                headLvSeqTxn,
-                restoredHeadState.maxTimestamp,
-                manifestBaseSeqTxn,
-                restoredHeadState.lvRowsTotal,
-                restoredHeadState.stateBytes
-        );
-        LOG.info().$("live view promoted restored head into checkpoint ring [view=")
-                .$(instance.getDefinition().getViewName())
-                .$(", lvSeqTxn=").$(headLvSeqTxn)
-                .$(", baseSeqTxn=").$(manifestBaseSeqTxn)
-                .$(", maxTs=").$(restoredHeadState.maxTimestamp).I$();
-    }
-
-    /**
      * Decodes a single FUNCTION_SNAPSHOT block:
      * <pre>
      *     STR windowName
@@ -7171,8 +6145,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         if (!Chars.equals(storedFactoryName, snapshotFactoryName(match))) {
             // Window-function order drifted vs the writer (e.g. a definition
-            // change across an upgrade). Errno 0 unlinks the head .cp and
-            // head-miss-replays rather than restoring crossed state.
+            // change across an upgrade). Errno 0 unlinks the .scp and re-sweeps
+            // rather than restoring crossed state.
             throw CairoException.critical(0)
                     .put("live view function snapshot factory mismatch [position=")
                     .put(restoreFunctionCursor - 1)
@@ -7185,7 +6159,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // A version outside [checkpointStateMinSupportedVersion(), checkpointStateFormatVersion()]
         // signals a real compatibility break (operator DROP+CREATE is the
         // recovery), not structural corruption. Tag the throws so the catch site
-        // invalidates the LV rather than unlinking and replaying from head-miss.
+        // invalidates the LV rather than unlinking and re-sweeping.
         // Mirrors the file-level range check in LiveViewCheckpointReader.of().
         if (formatVersion < match.checkpointStateMinSupportedVersion()) {
             throw CairoException.critical(CairoException.LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH)
@@ -7202,7 +6176,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // layout and never dispatches on a higher version. Accepting the
             // block would silently rehydrate the accumulators from foreign
             // bytes. A downgraded binary reaches exactly this: the newer
-            // binary's CRC-valid .cp is still the head on disk.
+            // binary's CRC-valid .scp is still on disk.
             throw CairoException.critical(CairoException.LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH)
                     .put("live view function snapshot version too new, factory=")
                     .put(storedFactoryName)
@@ -8563,12 +7537,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     and the checkpoint-less restore fallback). The replay resets window
      *     state, recomputes every retained row through the recompiled factory,
      *     rewrites the on-disk tier with a single REPLACE_RANGE, advances the
-     *     watermarks, and writes a fresh head {@code .cp}. Any un-flushed lead is
+     *     watermarks, and seals a fresh boundary. Any un-flushed lead is
      *     dropped first (its rows were computed by the old factory's state) and
      *     {@code refreshedUpToSeqTxn} is pinned back to {@code lastProcessedSeqTxn}
      *     so no phantom lead survives.</li>
      *     <li>Read-only replica lead reconstruction: cannot rewrite the tier, and
-     *     has no head {@code .cp} to restore from (checkpoints do not replicate).
+     *     has no checkpoint state to restore from (it does not replicate).
      *     Mirrors {@code onLeadO3Detected}'s cold-start reset: clearing
      *     {@code latestSeenTs} routes the next {@code reconcileLeadWithDisk} tick
      *     through its unseeded cold-start branch, which arms the catch-up seam at
@@ -8901,7 +7875,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // This branch is reachable only for a node whose OWN _lv.s carries SEEDING:
                         // a primary demoted, or restarted, mid-sweep. Disk-only is the safe choice there
                         // -- the node cannot reliably detect the sweep's completion from replicated
-                        // state (neither _lv.s nor the .cp replicate, and every sweep commit carries the
+                        // state (neither _lv.s nor checkpoint state replicate, and every sweep commit carries the
                         // same seedTargetSeqTxn watermark), and clearing SEEDING early would
                         // skip the sweep resume on a later promote and leave pre-CREATE history
                         // unmaterialised. The state does NOT self-clear from the in-band watermark
@@ -9104,8 +8078,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // avoids that deadlock.
         if (invalidationReason == null) {
             // The restore path may have stashed its own invalidate reason
-            // (e.g. version-too-old function snapshot in the head .cp). Drain
-            // and run it on the same out-of-latch path.
+            // (e.g. a version-too-old function snapshot). Drain and run it on
+            // the same out-of-latch path.
             invalidationReason = instance.takePendingInvalidationReason();
         }
         if (invalidationReason != null) {
@@ -9481,18 +8455,65 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Output bundle for {@link #restoreFromHead(LiveViewInstance, WindowRecordCursorFactory, long, RestoredHeadState)}.
-     * The fields capture the values restart-restore and O3 head-hit replay
-     * both need after the disk read completes; the helper rewrites them on
-     * each successful call and the caller reads them immediately.
+     * The versioned timeline's predecessor lookup, in the shape
+     * {@link LiveViewCheckpointRepairPlan} plans a resume through. Every logical
+     * boundary the timeline holds is a candidate, so however old a correction is,
+     * the search still answers with the newest boundary below it.
+     * <p>
+     * The lookup opens the timeline store per search rather than holding a reader
+     * across the repair. A repair runs at most two searches, both during planning
+     * and both before anything is staged, so the open costs one superblock read
+     * and the root metadata pages on the search path. The generation each search
+     * pins is released before it returns, which is what lets the repair's own
+     * capture pin the generation it splices into.
+     * <p>
+     * A view with no readable timeline - never sealed, retired by an earlier
+     * repair, or corrupt - reports no anchor rather than raising, so the plan
+     * takes the rebuild it would take for a change below every boundary.
      */
-    private static final class RestoredHeadState {
+    private final class TimelineAnchorSource implements LiveViewCheckpointRepairPlan.AnchorSource {
+        private LiveViewInstance instance;
+
+        @Override
+        public boolean findAnchorBelow(long ceilTs, @NotNull LiveViewCheckpointTimelineEntry out) {
+            try (
+                    Path checkpointsDir = new Path();
+                    LiveViewCheckpointTimelineStoreReader reader =
+                            new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration())
+            ) {
+                checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                reader.of(checkpointsDir);
+                return reader.predecessor(ceilTs, out);
+            } catch (Throwable t) {
+                LOG.info().$("live view checkpoint timeline holds no resume anchor [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", ceilTs=").$ts(ceilTs)
+                        .$(", reason=").$(t).I$();
+                return false;
+            }
+        }
+
+        private void of(LiveViewInstance instance) {
+            this.instance = instance;
+        }
+    }
+
+    /**
+     * Output bundle for
+     * {@link #restoreFromSeedCheckpoint(LiveViewInstance, WindowRecordCursorFactory, long, RestoredSeedState)}.
+     * The fields capture the values the seed resume needs after the disk read
+     * completes; the helper rewrites them on each successful call and the caller
+     * reads them immediately.
+     */
+    private static final class RestoredSeedState {
         long lvRowsTotal;
         long manifestBaseSeqTxn;
         long maxTimestamp;
         // Seed sweep's data-cursor row offset read from a SEED_CURSOR
-        // block. Numbers.LONG_NULL when the restored checkpoint carries no such
-        // block (any steady .cp), signalling "not a resumable seed head".
+        // block. Numbers.LONG_NULL when the .scp carries no such block, which
+        // the restore rejects as malformed.
         long resumeDataOffset;
         long stateBytes;
 

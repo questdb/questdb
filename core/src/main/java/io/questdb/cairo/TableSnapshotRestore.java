@@ -28,7 +28,7 @@ import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
-import io.questdb.cairo.lv.LiveViewCheckpointWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -1440,13 +1440,13 @@ public class TableSnapshotRestore implements QuietCloseable {
     private void clearLiveViewCheckpointDir(Path dstPath) {
         final int dstPathLen = dstPath.size();
         try {
-            dstPath.concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash$();
+            dstPath.concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME).slash$();
             if (ff.exists(dstPath.$()) && !ff.rmdir(dstPath)) {
                 throw CairoException.critical(ff.errno())
                         .put("Recovery failed. Could not clear live view checkpoint timeline [dir=")
                         .put(dstPath).put(']');
             }
-            dstPath.trimTo(dstPathLen).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash$();
+            dstPath.trimTo(dstPathLen).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME).slash$();
             if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
                 throw CairoException.critical(ff.errno())
                         .put("Recovery failed. Could not recreate live view checkpoint directory [dir=")

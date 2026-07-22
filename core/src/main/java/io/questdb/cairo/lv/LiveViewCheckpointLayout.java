@@ -33,11 +33,9 @@ import org.jetbrains.annotations.NotNull;
 /**
  * Names, paths, and file framing for the versioned checkpoint timeline.
  * <p>
- * All names here are relative to a live view's {@code _checkpoints} directory;
- * this class deliberately does not own the {@code _checkpoints} name itself, so
- * a caller can build that directory path however it likes and pass it in. The
- * layout below is the new timeline surface that eventually replaces the
- * {@code .cp}/{@code _ring} files:
+ * Except for {@link #CHECKPOINT_DIR_NAME} itself, all names here are relative to
+ * a live view's {@code _checkpoints} directory: a caller builds that directory
+ * path however it likes and passes it in. The layout is:
  * <pre>
  *   &lt;live-view-table&gt;/_checkpoints/
  *     _timeline                 fixed A/B superblock (LiveViewCheckpointSuperblock)
@@ -52,7 +50,7 @@ import org.jetbrains.annotations.NotNull;
  * </pre>
  * Metadata segment IDs are monotonic within a history epoch and never reused,
  * even after purge; the zero-padded encoding makes lexical enumeration equal
- * numeric ordering, matching the {@code .cp} filename convention.
+ * numeric ordering.
  *
  * <h2>Metadata segment framing</h2>
  * A metadata segment ({@code m.<segmentId>}) begins with a fixed,
@@ -64,6 +62,11 @@ import org.jetbrains.annotations.NotNull;
 public final class LiveViewCheckpointLayout {
 
     /**
+     * Directory under a live view's table directory holding all of its
+     * checkpoint state.
+     */
+    public static final String CHECKPOINT_DIR_NAME = "_checkpoints";
+    /**
      * Subdirectory holding immutable checkpoint data segments.
      */
     public static final String DATA_DIR_NAME = "data";
@@ -72,8 +75,8 @@ public final class LiveViewCheckpointLayout {
      */
     public static final String DATA_SEGMENT_PREFIX = "d.";
     /**
-     * Zero-pad width for a segment or repair id in a filename, matching the
-     * {@code .cp} convention so lexical enumeration equals numeric ordering.
+     * Zero-pad width for a segment or repair id in a filename, so lexical
+     * enumeration equals numeric ordering.
      */
     public static final int ID_PAD_LEN = 16;
     /**

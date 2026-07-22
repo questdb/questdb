@@ -51,7 +51,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.idx.BitmapIndexUtils;
-import io.questdb.cairo.lv.LiveViewCheckpointWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
@@ -492,7 +492,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // Derived checkpoint timelines are primary-local and must not be
             // copied by directory enumeration into the database checkpoint.
-            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).$();
+            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME).$();
             Assert.assertFalse("_checkpoints directory must be excluded from checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
 
             // Standard WAL-backed-table files copied via the TableReader path.

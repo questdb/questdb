@@ -40,7 +40,6 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
-import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -103,7 +102,6 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     @Before
     public void setUpCheckpointCadence() {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         setCurrentMicros(0);
     }
 
@@ -195,7 +193,6 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
 
                 final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(instance);
-                Assert.assertEquals(2, instance.getRetainedCheckpointCount());
                 try (
                         LiveViewCheckpointMetaStore store = openStore(instance);
                         LiveViewCheckpointGenerationPin pin = store.pin();
@@ -295,7 +292,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testRestoreNewestAndRingPrunedOldestLogicalRoot() throws Exception {
+    public void testRestoreNewestAndOldestLogicalRoot() throws Exception {
         assertMemoryLeak(() -> {
             createView(true);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -308,8 +305,6 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                 appendAndRefresh(job, 20, 2);
                 appendAndRefresh(job, 30, 3);
                 appendAndRefresh(job, 40, 4);
-                Assert.assertEquals("the legacy ring must have pruned the requested root", 2,
-                        instance.getRetainedCheckpointCount());
                 final RuntimeSnapshot newestState = snapshotRuntime(functions, instance.getAnchorWindow());
 
                 try (
@@ -483,7 +478,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     private static Path checkpointsDir(LiveViewInstance instance) {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
-                .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
     }
 
     private void createView(boolean anchored) throws Exception {

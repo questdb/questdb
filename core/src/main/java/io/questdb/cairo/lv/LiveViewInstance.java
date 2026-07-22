@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -69,20 +68,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * The {@code WalWriter} for live-view-internal apply is acquired from the engine's
  * WAL writer pool per FLUSH cycle rather than being owned by the instance.
  */
-public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSource, QuietCloseable {
+public class LiveViewInstance implements QuietCloseable {
     private static final int HEAD_CHECKPOINT_BASE_SEQ_TXN = 3;
     private static final int HEAD_CHECKPOINT_LV_SEQ_TXN = 0;
     private static final int HEAD_CHECKPOINT_MAX_TS = 1;
     private static final int HEAD_CHECKPOINT_STATE_BYTES = 2;
-    // Field offsets within one packed record of the retained-checkpoint ring
-    // (see retainedCheckpoints). Each record spans RETAINED_CHECKPOINT_RECORD_SIZE
-    // longs; the ring stores records back-to-back in a single LongList.
-    private static final int RETAINED_CHECKPOINT_BASE_SEQ_TXN = 2;
-    private static final int RETAINED_CHECKPOINT_LV_ROWS_TOTAL = 3;
-    private static final int RETAINED_CHECKPOINT_LV_SEQ_TXN = 0;
-    private static final int RETAINED_CHECKPOINT_MAX_TS = 1;
-    private static final int RETAINED_CHECKPOINT_RECORD_SIZE = 5;
-    private static final int RETAINED_CHECKPOINT_STATE_BYTES = 4;
     private static final long[] EMPTY_HEAD_CHECKPOINT = {Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL};
     private final LiveViewDefinition definition;
     // Cancellation flag the refresh worker binds into its execution context's circuit
@@ -166,19 +156,18 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     // worker drives the slow-path swap from
     // LiveViewRefreshJob. Null when no refresh has happened yet, or when the LV
     // was just constructed at startup.
-    // Head-checkpoint metadata mirrored from the most recently committed
-    // _checkpoints/<lvSeqTxn>.cp. Populated by the flush-cycle
-    // write hook (deferred) and consumed by the live_views() catalogue and
-    // by the O3 head-hit / restart-restore decision paths.
+    // Head-checkpoint metadata mirrored from the newest logical boundary the
+    // versioned checkpoint timeline holds: the seal stamps it beside the root it
+    // appends, and the restart restore stamps it from the root it selected. The
+    // live_views() catalogue reads it off the worker thread.
     // <p>
     // The tuple is packed into one immutable long[] published via volatile
-    // store so the O3 head-hit lock-free reader always sees a consistent
+    // store so an off-worker reader always sees a consistent
     // (lvSeqTxn, maxTs, stateBytes) tuple; without the packing a reader
     // could observe a fresh lvSeqTxn paired with the prior maxTs.
-    // baseSeqTxn is the base commit the durable head covers (the manifest's
-    // baseSeqTxn): WalPurgeJob holds the base WAL purge floor at it so the
-    // (baseSeqTxn, applied] range restart recovery replays survives until a
-    // later checkpoint advances the manifest past it.
+    // baseSeqTxn is the base commit the durable head covers: WalPurgeJob holds
+    // the base WAL purge floor at it so the (baseSeqTxn, applied] range restart
+    // recovery replays survives until a later checkpoint advances past it.
     // Indexes: HEAD_CHECKPOINT_LV_SEQ_TXN / _MAX_TS / _STATE_BYTES /
     // _BASE_SEQ_TXN.
     private volatile long[] headCheckpoint = EMPTY_HEAD_CHECKPOINT;
@@ -187,25 +176,22 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     // Published to this volatile mirror only after the superblock commit point,
     // and adopted from bounded timeline validation at startup. Recovery and
     // repair owners lower the floor for their pins before exposing them. The WAL
-    // purge job min-combines it with the legacy head/ring arms until those
-    // formats are removed. LONG_NULL means no usable timeline generation
-    // currently requires WAL.
+    // purge job min-combines it with the head arm. LONG_NULL means no usable
+    // timeline generation currently requires WAL.
     private volatile long checkpointTimelineWalPurgeFloor = Numbers.LONG_NULL;
-    // Elapsed wall-clock (micros) of the most recent restart restore-from-head
-    // (tryRestoreFromHead: rehydrate the ring, restore the .cp, and
-    // replay-to-applied). Numbers.LONG_NULL until a restore runs, which is
-    // single-shot per LV lifetime, so it stays NULL for a view that never
-    // restored. Baseline restore-cost signal for the current ring architecture
-    // (the versioned checkpoint timeline replaces this restore path). Mutated
-    // only on the refresh worker under the refresh latch; volatile for the
-    // catalogue thread. Surfaced via live_views().head_checkpoint_restore_micros.
+    // Elapsed wall-clock (micros) of the most recent restart restore from the
+    // checkpoint timeline (select a root, restore its state, replay-to-applied).
+    // Numbers.LONG_NULL until a restore runs, which is single-shot per LV
+    // lifetime, so it stays NULL for a view that never restored. Mutated only on
+    // the refresh worker under the refresh latch; volatile for the catalogue
+    // thread. Surfaced via live_views().head_checkpoint_restore_micros.
     private volatile long headCheckpointRestoreMicros = Numbers.LONG_NULL;
     // Elapsed wall-clock (micros) of the most recent head-checkpoint write
-    // (maybeWriteHeadCheckpoint: manifest + snapshots + commit + ring publish +
-    // evicted-file unlink). Numbers.LONG_NULL until the first .cp is written.
-    // Baseline write-cost signal for the current ring architecture. Mutated only
-    // on the refresh worker under the refresh latch; volatile for the catalogue
-    // thread. Surfaced via live_views().head_checkpoint_write_micros.
+    // (maybeWriteHeadCheckpoint: freeze the function state, append a logical
+    // root, publish the timeline generation). Numbers.LONG_NULL until the first
+    // root is sealed. Mutated only on the refresh worker under the refresh
+    // latch; volatile for the catalogue thread. Surfaced via
+    // live_views().head_checkpoint_write_micros.
     private volatile long headCheckpointWriteMicros = Numbers.LONG_NULL;
     // Key (data-cursor row offset) of the current rolling seed checkpoint
     // _checkpoints/<key>.scp, or Numbers.LONG_NULL when none exists. Stamped by
@@ -224,81 +210,19 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     // (the default) accounts but never throws. Mutated only under the refresh latch.
     private MemoryTracker memoryTracker;
     // Restart-restore single-shot flag. The refresh worker flips it true on
-    // the first cycle after CREATE / restart, regardless of whether a head
-    // .cp was found - one attempt is the contract, no retries. Mutated only
+    // the first cycle after CREATE / restart, regardless of whether a usable
+    // timeline root was found - one attempt is the contract, no retries. Mutated only
     // under the refresh latch; volatile so the catalogue thread can read
     // the latest value without additional synchronisation.
     private volatile boolean checkpointRestoreAttempted;
-    // Set true only when a head .cp restore actually rehydrated the window state
-    // (restoreFromHead returned true). Stays false when no head existed or the
-    // restore failed and fell back to a head-miss replay. Distinguishes a real
+    // Set true only when a timeline root restore actually rehydrated the window
+    // state. Stays false when no usable root existed or the restore failed and
+    // fell back to a from-base rebuild. Distinguishes a real
     // restore from the replay fallback for observability and tests. Mutated only
     // under the refresh latch; volatile for the catalogue thread.
     private volatile boolean checkpointRestoreSucceeded;
-    // The _checkpoints/_ring manifest the startup sweep read and structurally
-    // validated, awaiting the trust decision; null when there is no manifest or
-    // it did not validate. Not a ring: trust
-    // compares its coveredBaseSeqTxn against the reconciled applied floor, which
-    // exists only on the refresh worker, so the sweep stashes the claim here and
-    // decides nothing. Written once during catalogue load and read (then cleared)
-    // by the refresh worker on the first cycle; volatile for that hand-off, and
-    // treated as immutable once stashed. The write lands after registerView, so
-    // it rests on the same guarantee setHeadCheckpoint does - buildViewGraphs
-    // runs before any refresh worker exists - and a torn read would cost nothing
-    // regardless: a null candidate is the conservative fallback.
-    private volatile LiveViewCheckpointRingCandidate checkpointRingCandidate;
-    // Set true when a _checkpoints/_ring publication fails, cleared by the next
-    // successful one. Diagnostic only: it never gates a replay (a failed
-    // publication is safe by construction - coveredBaseSeqTxn advances only on a
-    // successful publication, so the on-disk manifest always holds a
-    // (membership, covered) pair that was valid when written, and restart either
-    // finds covered equal to the reconciled applied floor and trusts it, or does
-    // not and falls back). It exists so later code does not mistake the
-    // in-memory ring for a durable one, and to surface in live_views(). Mutated
-    // only on the refresh worker under the refresh latch;
-    // volatile for the catalogue thread. See lastPublishedRingGeneration.
-    private volatile boolean checkpointRingDirty;
-    // Cumulative count of retained-checkpoint ring entries evicted by the
-    // count / max.bytes / event-time retention budget over the LV's lifetime -
-    // the baseline cost signal the versioned checkpoint timeline is designed to
-    // remove (the timeline keeps every logical checkpoint instead of size-capping
-    // the ring). Bumped only on the refresh worker under the refresh latch inside
-    // pruneRetainedCheckpoints; volatile so the catalogue thread reads a current
-    // value. In-memory only - resets to 0 on restart (an observability signal,
-    // not durable state). Surfaced via live_views().checkpoint_ring_evictions.
-    // Counts only budget-driven eviction, never correctness-driven retirement
-    // (an O3 unseal or an equal-ts supersede), which invalidateRetainedCheckpointsFrom
-    // and removeRetainedCheckpoint handle without touching this counter.
-    private volatile long checkpointRingEvictions;
-    // Number of entries restart rehydrated into the retained-checkpoint ring from
-    // a trusted _checkpoints/_ring manifest, after pruning it to the running
-    // retention budget. Numbers.LONG_NULL until the restore decides, which covers
-    // a view that never restored (no head .cp) and every view when the durable
-    // ring is disabled - the sweep does not even read a manifest then, so there is
-    // no recovery to report rather than a recovery that found nothing. Zero means
-    // the restore ran and the ring came back empty: either it fell back
-    // (checkpointRingRecoveryFallbackCount says which) or it trusted a manifest
-    // that listed nothing, which withholds anchors without condemning the sweep's
-    // head. Written once on the refresh worker under the refresh latch; volatile
-    // for the catalogue thread. See lastPublishedRingGeneration.
-    private volatile long checkpointRingRecoveredEntries = Numbers.LONG_NULL;
-    // Count of restarts whose ring recovery declined to trust a manifest and took
-    // the highest-.cp-only fallback: none on disk, unreadable, version-skewed,
-    // naming a checkpoint that is gone, a coveredBaseSeqTxn that does not match
-    // the reconciled applied floor, or an entry this code could not have written.
-    // Each one costs the first in-retention O3 after the restart a boundary
-    // rebuild, so this is the deployment-wide signal for how often the feature is
-    // not paying out - sum() it across live_views(). A view restarting before it
-    // ever published counts one, which is honest: it recovers no ring and pays
-    // the same scan. A trusted-but-empty manifest is not a fallback
-    // either - it was trusted. Recovery is single-shot per LV lifetime (see
-    // checkpointRestoreAttempted), so this reads 0 or 1 for as long as the process
-    // lives; it is a counter so that a later path recovering more than once stays
-    // countable rather than silently overwriting. Written once on the refresh
-    // worker under the refresh latch; volatile for the catalogue thread.
-    private volatile long checkpointRingRecoveryFallbackCount;
-    // Wall-clock (micros) of the most recent head-checkpoint commit. Numbers.LONG_NULL
-    // until the first cycle that writes a .cp. The refresh worker compares
+    // Wall-clock (micros) of the most recent head-checkpoint seal. Numbers.LONG_NULL
+    // until the first cycle that seals a root. The refresh worker compares
     // (nowUs - lastCheckpointWrittenUs) against
     // cairo.live.view.checkpoint.max.duration to decide whether the duration
     // trigger has fired this cycle. Mirrored as volatile because the catalogue
@@ -310,40 +234,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     // ingestion produces batched commits at FLUSH EVERY cadence rather than one
     // commit per base notification.
     private volatile long lastFlushTimeUs = Numbers.LONG_NULL;
-    // coveredBaseSeqTxn of the most recent successful _checkpoints/_ring
-    // publication - the base seqTxn at which every listed entry was proven
-    // sealed. Numbers.LONG_NULL until this process publishes. Restart trusts the
-    // on-disk ring only when its covered value equals the reconciled applied
-    // floor, so this mirrors what that comparison will see for as long as the
-    // process lives. Same write discipline as lastPublishedRingGeneration.
-    private volatile long lastPublishedRingCoveredBaseSeqTxn = Numbers.LONG_NULL;
-    // Generation stamped by the most recent successful _checkpoints/_ring
-    // publication; the next one stamps this + 1. 0 means this process has not
-    // published, so a real manifest always carries a generation >= 1. Recovery
-    // seeds it from the manifest it recovers, keeping the counter monotone
-    // across restarts. Diagnostic: nothing selects on it - the block checksum
-    // already catches the corruption a stale generation would signal - but it is
-    // the handle crash-injection tests use to name a publication. Mutated only
-    // on the refresh worker under the refresh latch; volatile because the
-    // catalogue thread reads it off-latch.
-    private volatile long lastPublishedRingGeneration;
-    // baseSeqTxn of the newest entry the most recent successful _checkpoints/_ring
-    // publication listed - the entry a restart that trusts the manifest resumes
-    // from. Numbers.LONG_NULL until this process publishes, and back to LONG_NULL
-    // whenever it publishes an empty ring (nothing listed, nothing to resume
-    // from). WalPurgeJob holds the base WAL purge floor here, which the head
-    // checkpoint alone cannot carry: an O3 retire clears the head while the ring
-    // keeps its still-sealed survivors listed, and a floor following the head
-    // would release the raw base WAL that restart's replayToApplied needs to
-    // close the (newest listed entry, applied] gap. The head and this value are
-    // the same entry in every steady state, so pinning here costs nothing there.
-    // Tracks the DURABLE listing rather than the in-memory ring: the two diverge
-    // exactly when a publication fails, and the manifest is what restart reads.
-    // Mutated only on the refresh worker under the refresh latch; volatile
-    // because WalPurgeJob reads it off that thread, and the ring itself is
-    // worker-private and non-volatile so it cannot be read directly. Same write
-    // discipline as lastPublishedRingGeneration.
-    private volatile long lastPublishedRingNewestBaseSeqTxn = Numbers.LONG_NULL;
     // The isLeadReconstruction() value the refresh worker observed on this view's
     // previous cycle, read and updated together with checkpointRestoreAttempted so it
     // is set exactly when a cycle actually reached the restore/reconcile block. A
@@ -370,8 +260,8 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     // Reset to {@link Numbers#LONG_NULL} on construction (a fresh LV has seen
     // no rows yet). On restart-restore, the value re-derives naturally from the
     // first post-restore commit; we deliberately don't persist this in
-    // {@code _lv.s} because (a) the head .cp's maxTimestamp already plays the
-    // gating role for O3 head-hit and (b) trailing this in {@code _lv.s} would
+    // {@code _lv.s} because (a) the newest root's maxTimestamp already plays the
+    // gating role for O3 detection and (b) trailing this in {@code _lv.s} would
     // add a write per commit.
     private volatile long latestSeenTs = Numbers.LONG_NULL;
     // Lead eligibility (cached, schema-derived). True when every output column is a
@@ -438,8 +328,8 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     private volatile long lowerBoundRowsScanned;
     // Cumulative count of live-view rows produced over the LV's lifetime,
     // matching the MANIFEST.lvRowPosition field on every head checkpoint.
-    // Initialised to 0 on construction. tryRestoreFromHead and the O3 head-hit
-    // replay path stamp this from the manifest after a successful restore;
+    // Initialised to 0 on construction. The restart restore and the O3 resume
+    // replay stamp this from the restored root after a successful restore;
     // every subsequent {@link #addRowsSinceLastCheckpointWritten(long)} bumps
     // both this and the cadence counter so writes and restores stay aligned.
     // Mutated under the refresh latch only.
@@ -448,8 +338,8 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     // (o3HeadMissReplay - the full recompute from viewLowerBoundTimestamp). Surfaced
     // via live_views().o3_boundary_replay_rows; the residual-fallback counterpart to
     // o3ResumeReplayRows. This path is unbounded (O(view age)), so a growing value
-    // flags late rows that predate the whole retained-checkpoint ring - the case the
-    // resume path cannot bound. Bumped only on the refresh-worker thread at replay
+    // flags late rows the timeline holds no boundary below - the case the resume
+    // path cannot bound. Bumped only on the refresh-worker thread at replay
     // completion; volatile so the catalogue query thread reads a current value.
     // In-memory only - resets to 0 on restart (an observability signal, not durable
     // state). Disjoint from o3ResumeReplayRows: a given O3 replay bumps exactly one.
@@ -474,8 +364,8 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     // live_views().o3_replay_scan_rows.
     private volatile long o3ReplayScanRows;
     // Cumulative count of live-view rows re-emitted by bounded resume-from-anchor O3
-    // replays (replayFromAnchor - both the head-hit tail re-eval and the bounded-miss
-    // resume from an older sealed checkpoint). Surfaced via
+    // replays (replayFromAnchor - the tail re-evaluation above the newest logical
+    // boundary strictly below the change). Surfaced via
     // live_views().o3_resume_replay_rows; this is "the win" - the replay stays bounded
     // to the tail above the anchor rather than recomputing the whole view. Bumped only
     // on the refresh-worker thread at replay completion; volatile so the catalogue
@@ -529,36 +419,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     // flushed point), never under-retains, but the visibility must not rely on the
     // latch a purge run never takes.
     private volatile long refreshedUpToSeqTxn = Numbers.LONG_NULL;
-    // Bounded ring of recently committed head checkpoints, retained so a
-    // cross-commit / apply-ahead O3 replay can resume from the newest sealed
-    // checkpoint whose maxTs is below the late row instead of rebuilding the
-    // whole view from the START FROM boundary. Each entry is one packed record
-    // of RETAINED_CHECKPOINT_RECORD_SIZE longs -
-    // (lvSeqTxn, maxTs, baseSeqTxn, lvRowsTotal, stateBytes) - and records are
-    // held in strictly increasing maxTs order (oldest first, newest last), which
-    // matches the order the flush cycle writes them. Worker-owned: every mutation
-    // and lookup runs on the refresh worker under the refresh latch, so no volatile
-    // publication is needed. If a later change mirrors the ring onto an off-thread
-    // surface (e.g. live_views()), it must publish an immutable snapshot the way
-    // headCheckpoint does. The pruned .cp files are unlinked by the caller, not here -
-    // this holds only the in-memory descriptors.
-    private final LongList retainedCheckpoints = new LongList();
-    // Off-thread mirror of retainedCheckpoints' newest baseSeqTxn, restamped by
-    // mirrorRingNewestBaseSeqTxn() on every mutation of that list;
-    // Numbers.LONG_NULL while the ring is empty. This is the off-thread surface
-    // the field above anticipates - a scalar, so it needs no immutable snapshot.
-    // The companion to lastPublishedRingNewestBaseSeqTxn: that one is what a
-    // restart TRUSTING the manifest resumes from, this one is what a restart
-    // FALLING BACK resumes from, the startup sweep keeping the highest surviving
-    // .cp as the head and the ring governing which .cp files survive. WalPurgeJob
-    // cannot tell which restart it is holding base WAL for, so it pins both and
-    // takes the lower. Load-bearing whenever a publication fails: the manifest
-    // then still lists a membership an O3 retire has since narrowed, so its arm
-    // sits above the survivors this one covers - the .cp files retention keeps on
-    // disk and the sweep restores from once the retire clears the head. Mutated
-    // only on the refresh worker under the refresh latch; volatile for
-    // WalPurgeJob's thread.
-    private volatile long ringNewestBaseSeqTxn = Numbers.LONG_NULL;
     // Live-view-row count applied since the most recent head-checkpoint commit.
     // The refresh worker compares this against cairo.live.view.checkpoint.rows
     // each cycle to decide whether the row-count trigger has fired. Mutated
@@ -668,28 +528,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     }
 
     /**
-     * Appends a freshly committed head checkpoint to the retained-checkpoint
-     * ring as the newest entry. Records are held in strictly increasing
-     * {@code maxTs} order, so the caller must add heads in the order they are
-     * written (each new head covers a higher {@code maxTs} than the prior one);
-     * the assert guards that contract. Does not prune - the caller invokes
-     * {@link #pruneRetainedCheckpoints(int, long, long, LongList)} afterwards so
-     * the pruned {@code .cp} files can be unlinked in one place. Runs on the
-     * refresh worker under the refresh latch. See {@link #retainedCheckpoints}.
-     */
-    public void addRetainedCheckpoint(long lvSeqTxn, long maxTs, long baseSeqTxn, long lvRowsTotal, long stateBytes) {
-        assert retainedCheckpoints.size() == 0
-                || maxTs > retainedCheckpoints.getQuick(retainedCheckpoints.size() - RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_MAX_TS)
-                : "retained checkpoints must be added in strictly increasing maxTs order";
-        retainedCheckpoints.add(lvSeqTxn);
-        retainedCheckpoints.add(maxTs);
-        retainedCheckpoints.add(baseSeqTxn);
-        retainedCheckpoints.add(lvRowsTotal);
-        retainedCheckpoints.add(stateBytes);
-        mirrorRingNewestBaseSeqTxn();
-    }
-
-    /**
      * Accumulates {@code n} into both {@link #rowsSinceLastCheckpointWritten}
      * (the cadence counter, which resets on each fresh head via
      * {@link #setHeadCheckpoint(long, long, long, long, long)}) and
@@ -700,31 +538,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     public void addRowsSinceLastCheckpointWritten(long n) {
         rowsSinceLastCheckpointWritten += n;
         lvRowsTotal += n;
-    }
-
-    /**
-     * Stamps {@link #lastPublishedRingNewestBaseSeqTxn} from the manifest the
-     * startup sweep just read, holding WalPurgeJob's base WAL floor at what a
-     * trusting restart resumes from before the refresh worker decides trust.
-     * The sweep's head normally carries that window, but it is stamped only when
-     * the sweep finds a {@code .cp}: find none while the manifest lists one and a
-     * caught-up view is selected for a restore by nothing, so the rehydrate that
-     * would stamp this arm waits for the next base commit. Purge does not wait -
-     * it drops to {@code lvConsumed} and releases the (newest listed entry,
-     * applied] range that restore's replay needs, invalidating the view.
-     * <p>
-     * The base seqTxn only, never {@link #recordCheckpointRingPublication}'s
-     * generation or covered: this is not a publication and the manifest is not
-     * trusted yet. Holding base WAL a verdict later releases costs retention;
-     * naming an anchor early would resurrect state the trust rule exists to
-     * refuse. {@link #releaseCheckpointRingPurgeFloor()} is the other verdict.
-     * <p>
-     * Called from {@code CairoEngine.buildViewGraphs()} on the startup thread -
-     * the one mutator that is not the refresh worker under the refresh latch,
-     * safe because the write happens-before any worker starts.
-     */
-    public void adoptCheckpointRingPurgeFloor(long newestBaseSeqTxn) {
-        lastPublishedRingNewestBaseSeqTxn = newestBaseSeqTxn;
     }
 
     /**
@@ -831,29 +644,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     }
 
     /**
-     * Appends the whole retained-checkpoint ring to {@code dest} as packed
-     * records - the snapshot a {@code _checkpoints/_ring} publication lists.
-     * {@code dest} keeps whatever it already held; callers clear it first.
-     * <p>
-     * The record layout the ring holds is the manifest's entry layout, so this
-     * is a straight {@link LongList} copy rather than a field-by-field
-     * transcription. The copy is what keeps the ring itself worker-private: the
-     * publication then reads a stable snapshot rather than the live list. Runs
-     * on the refresh worker under the refresh latch. See
-     * {@link #retainedCheckpoints}.
-     */
-    public void copyRetainedCheckpointsTo(LongList dest) {
-        assert RETAINED_CHECKPOINT_RECORD_SIZE == LiveViewCheckpointRingManifest.ENTRY_SIZE
-                && RETAINED_CHECKPOINT_LV_SEQ_TXN == LiveViewCheckpointRingManifest.ENTRY_LV_SEQ_TXN
-                && RETAINED_CHECKPOINT_MAX_TS == LiveViewCheckpointRingManifest.ENTRY_MAX_TS
-                && RETAINED_CHECKPOINT_BASE_SEQ_TXN == LiveViewCheckpointRingManifest.ENTRY_BASE_SEQ_TXN
-                && RETAINED_CHECKPOINT_LV_ROWS_TOTAL == LiveViewCheckpointRingManifest.ENTRY_LV_ROWS_TOTAL
-                && RETAINED_CHECKPOINT_STATE_BYTES == LiveViewCheckpointRingManifest.ENTRY_STATE_BYTES
-                : "ring record layout has diverged from the manifest entry layout";
-        dest.add(retainedCheckpoints);
-    }
-
-    /**
      * Abandons a localized out-of-order repair parked between refresh turns,
      * releasing the pinned base snapshot, rolling the uncommitted replacement
      * back, unlinking the staged data segment and retiring the repair's durable
@@ -928,16 +718,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
         return anchorFunction;
     }
 
-    @Override
-    public long getAnchorLvSeqTxn(int index) {
-        return getRetainedCheckpointLvSeqTxn(index);
-    }
-
-    @Override
-    public long getAnchorMaxTs(int index) {
-        return getRetainedCheckpointMaxTs(index);
-    }
-
     public LiveViewWindow getAnchorWindow() {
         return anchorWindow;
     }
@@ -952,36 +732,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
 
     public long getBelowLowerBoundCount() {
         return belowLowerBoundCount;
-    }
-
-    /**
-     * The structurally validated {@code _checkpoints/_ring} manifest the startup
-     * sweep stashed, or null when there is none to consider. See
-     * {@link #checkpointRingCandidate}.
-     */
-    public LiveViewCheckpointRingCandidate getCheckpointRingCandidate() {
-        return checkpointRingCandidate;
-    }
-
-    /**
-     * See {@link #checkpointRingEvictions}.
-     */
-    public long getCheckpointRingEvictions() {
-        return checkpointRingEvictions;
-    }
-
-    /**
-     * See {@link #checkpointRingRecoveredEntries}.
-     */
-    public long getCheckpointRingRecoveredEntries() {
-        return checkpointRingRecoveredEntries;
-    }
-
-    /**
-     * See {@link #checkpointRingRecoveryFallbackCount}.
-     */
-    public long getCheckpointRingRecoveryFallbackCount() {
-        return checkpointRingRecoveryFallbackCount;
     }
 
     public RecordCursorFactory getCompiledFactory() {
@@ -1014,27 +764,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
      */
     public boolean dependsOnMissingOrRetypedColumn(@NotNull RecordMetadata baseMetadata) {
         return findFirstMissingOrRetypedColumn(baseMetadata) != null;
-    }
-
-    /**
-     * Returns the ring index of the newest retained checkpoint whose {@code maxTs}
-     * is strictly below {@code ceilTs}, or {@code -1} when the ring holds no such
-     * entry - every retained anchor sits at or above the ceiling, so the change
-     * predates the whole ring and the caller must rebuild from the view boundary.
-     * <p>
-     * The ring is held in strictly increasing {@code maxTs} order (oldest at index
-     * 0), so the scan walks from the newest entry down and returns the first one
-     * under the ceiling - the closest sealed anchor below the change, which yields
-     * the shortest resume replay.
-     */
-    @Override
-    public int findAnchorBelow(long ceilTs) {
-        for (int i = getRetainedCheckpointCount() - 1; i >= 0; i--) {
-            if (getRetainedCheckpointMaxTs(i) < ceilTs) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     /**
@@ -1175,27 +904,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
 
     public long getLastProcessedSeqTxn() {
         return stateReader.getLastProcessedSeqTxn();
-    }
-
-    /**
-     * See {@link #lastPublishedRingCoveredBaseSeqTxn}.
-     */
-    public long getLastPublishedRingCoveredBaseSeqTxn() {
-        return lastPublishedRingCoveredBaseSeqTxn;
-    }
-
-    /**
-     * See {@link #lastPublishedRingGeneration}.
-     */
-    public long getLastPublishedRingGeneration() {
-        return lastPublishedRingGeneration;
-    }
-
-    /**
-     * See {@link #lastPublishedRingNewestBaseSeqTxn}.
-     */
-    public long getLastPublishedRingNewestBaseSeqTxn() {
-        return lastPublishedRingNewestBaseSeqTxn;
     }
 
     public long getLastRefreshTimeUs() {
@@ -1366,75 +1074,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
         return refreshFaultCount;
     }
 
-    /**
-     * @return the base seqTxn covered by the retained checkpoint at ring
-     * position {@code index} (0 = oldest). See {@link #retainedCheckpoints}.
-     */
-    public long getRetainedCheckpointBaseSeqTxn(int index) {
-        return retainedCheckpoints.getQuick(index * RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_BASE_SEQ_TXN);
-    }
-
-    /**
-     * @return the number of checkpoints currently retained in the ring. Position
-     * 0 is the oldest, {@code count - 1} the newest (the head). See
-     * {@link #retainedCheckpoints}.
-     */
-    public int getRetainedCheckpointCount() {
-        return retainedCheckpoints.size() / RETAINED_CHECKPOINT_RECORD_SIZE;
-    }
-
-    /**
-     * @return the cumulative LV row count ({@code MANIFEST.lvRowPosition}) of the
-     * retained checkpoint at ring position {@code index}. See {@link #retainedCheckpoints}.
-     */
-    public long getRetainedCheckpointLvRowsTotal(int index) {
-        return retainedCheckpoints.getQuick(index * RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_LV_ROWS_TOTAL);
-    }
-
-    /**
-     * @return the lvSeqTxn (the {@code <lvSeqTxn>.cp} file key) of the retained
-     * checkpoint at ring position {@code index}. See {@link #retainedCheckpoints}.
-     */
-    public long getRetainedCheckpointLvSeqTxn(int index) {
-        return retainedCheckpoints.getQuick(index * RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_LV_SEQ_TXN);
-    }
-
-    /**
-     * @return the maximum base-row timestamp sealed into the retained checkpoint
-     * at ring position {@code index}. Records are ordered by this value. See
-     * {@link #retainedCheckpoints}.
-     */
-    public long getRetainedCheckpointMaxTs(int index) {
-        return retainedCheckpoints.getQuick(index * RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_MAX_TS);
-    }
-
-    /**
-     * @return the serialized state size (bytes) of the retained checkpoint at ring
-     * position {@code index}, used by the byte-budget prune. See {@link #retainedCheckpoints}.
-     */
-    public long getRetainedCheckpointStateBytes(int index) {
-        return retainedCheckpoints.getQuick(index * RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_STATE_BYTES);
-    }
-
-    /**
-     * @return the sum of every retained checkpoint's serialized state size, the
-     * quantity the byte-budget prune caps. See {@link #retainedCheckpoints}.
-     */
-    public long getRetainedCheckpointsTotalStateBytes() {
-        long total = 0;
-        for (int i = RETAINED_CHECKPOINT_STATE_BYTES, n = retainedCheckpoints.size(); i < n; i += RETAINED_CHECKPOINT_RECORD_SIZE) {
-            total += retainedCheckpoints.getQuick(i);
-        }
-        return total;
-    }
-
-    /**
-     * See {@link #ringNewestBaseSeqTxn}.
-     */
-    public long getRingNewestBaseSeqTxn() {
-        return ringNewestBaseSeqTxn;
-    }
-
     public long getRowsSinceLastCheckpointWritten() {
         return rowsSinceLastCheckpointWritten;
     }
@@ -1504,33 +1143,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
         return hasWarnedBelowLowerBoundDrop;
     }
 
-    /**
-     * Drops every retained checkpoint whose {@code maxTs} is at or above
-     * {@code minMaxTsInclusive} - the entries an out-of-order base commit at
-     * that timestamp has unsealed (they should have incorporated the late row
-     * but do not). Entries are held in ascending {@code maxTs} order, so the
-     * invalidated set is the trailing suffix; this removes it from the top,
-     * leaving the still-sealed prefix ({@code maxTs < minMaxTsInclusive}) intact.
-     * Pass {@link Numbers#LONG_NULL} (== {@code Long.MIN_VALUE}) to drop the
-     * whole ring, matching a non-DATA / recovery trigger that authorises no
-     * anchor to survive. The lvSeqTxn of each dropped entry is appended to
-     * {@code evictedLvSeqTxnsOut} (when non-null) so the caller can unlink the
-     * matching {@code <lvSeqTxn>.cp}; the in-memory drop is unconditional even
-     * if that unlink later fails. Runs on the refresh worker under the refresh
-     * latch. See {@link #retainedCheckpoints}.
-     */
-    public void invalidateRetainedCheckpointsFrom(long minMaxTsInclusive, @Nullable LongList evictedLvSeqTxnsOut) {
-        int count = getRetainedCheckpointCount();
-        while (count > 0 && getRetainedCheckpointMaxTs(count - 1) >= minMaxTsInclusive) {
-            if (evictedLvSeqTxnsOut != null) {
-                evictedLvSeqTxnsOut.add(getRetainedCheckpointLvSeqTxn(count - 1));
-            }
-            retainedCheckpoints.removeIndexBlock((count - 1) * RETAINED_CHECKPOINT_RECORD_SIZE, RETAINED_CHECKPOINT_RECORD_SIZE);
-            count--;
-        }
-        mirrorRingNewestBaseSeqTxn();
-    }
-
     public boolean isDropped() {
         return dropped;
     }
@@ -1561,17 +1173,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
      */
     public boolean isCheckpointRestoreSucceeded() {
         return checkpointRestoreSucceeded;
-    }
-
-    /**
-     * @return {@code true} when the last {@code _checkpoints/_ring} publication
-     * failed, so the in-memory ring is ahead of the durable manifest. Purely a
-     * diagnostic - the next publication clears it, and a restart in the
-     * meantime falls back rather than trusting stale membership. See
-     * {@link #checkpointRingDirty}.
-     */
-    public boolean isCheckpointRingDirty() {
-        return checkpointRingDirty;
     }
 
     public boolean isInvalid() {
@@ -1741,50 +1342,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     }
 
     /**
-     * Trims the retained-checkpoint ring down to the given bounds, evicting the
-     * oldest entries first and always keeping at least one (the newest, needed for
-     * restart restore). An entry is dropped while any bound is exceeded:
-     * <ul>
-     *     <li>{@code maxCount} - the hard cap on retained entries; ignored when
-     *         {@code <= 0}. The primary bound.</li>
-     *     <li>{@code maxTotalBytes} - the per-view budget on total serialized state
-     *         bytes; ignored when {@code <= 0}. The safety bound for high-cardinality
-     *         / many-function views whose checkpoints are large.</li>
-     *     <li>{@code minRetainedMaxTs} - an event-time floor: entries whose
-     *         {@code maxTs} is below it are older than the retention horizon; pass
-     *         {@link Numbers#LONG_NULL} to disable. A loose upper safety only.</li>
-     * </ul>
-     * The lvSeqTxn of each evicted entry is appended to {@code evictedLvSeqTxnsOut}
-     * (when non-null) so the caller can unlink the matching {@code <lvSeqTxn>.cp}
-     * file - this method touches only the in-memory ring. Runs on the refresh
-     * worker under the refresh latch. See {@link #retainedCheckpoints}.
-     */
-    public void pruneRetainedCheckpoints(int maxCount, long maxTotalBytes, long minRetainedMaxTs, @Nullable LongList evictedLvSeqTxnsOut) {
-        long totalBytes = getRetainedCheckpointsTotalStateBytes();
-        while (getRetainedCheckpointCount() > 1) {
-            final boolean overCount = maxCount > 0 && getRetainedCheckpointCount() > maxCount;
-            final boolean overBytes = maxTotalBytes > 0 && totalBytes > maxTotalBytes;
-            final boolean overHorizon = minRetainedMaxTs != Numbers.LONG_NULL && getRetainedCheckpointMaxTs(0) < minRetainedMaxTs;
-            if (!overCount && !overBytes && !overHorizon) {
-                break;
-            }
-            if (evictedLvSeqTxnsOut != null) {
-                evictedLvSeqTxnsOut.add(getRetainedCheckpointLvSeqTxn(0));
-            }
-            totalBytes -= getRetainedCheckpointStateBytes(0);
-            retainedCheckpoints.removeIndexBlock(0, RETAINED_CHECKPOINT_RECORD_SIZE);
-            // Baseline observability: count every budget-driven eviction over the
-            // LV's lifetime. Surfaced via live_views().checkpoint_ring_evictions.
-            checkpointRingEvictions++;
-        }
-        // The loop only ever drops the oldest and stops at one entry, so the
-        // newest cannot move here. Mirror anyway: every ring mutator calling
-        // this is a rule that stays correct under later edits, where "only the
-        // mutators that can move the tail" is one refactor away from being wrong.
-        mirrorRingNewestBaseSeqTxn();
-    }
-
-    /**
      * Stamps the elapsed micros of the restart restore-from-head that just ran.
      * Single-shot per LV lifetime, called by the refresh worker after
      * {@code tryRestoreFromHead} returns (regardless of outcome). See
@@ -1813,66 +1370,9 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     }
 
     /**
-     * Records a successful {@code _checkpoints/_ring} publication that stamped
-     * {@code generation}, listed every entry as sealed at
-     * {@code coveredBaseSeqTxn} and ended on an entry covering base commit
-     * {@code newestBaseSeqTxn} ({@code LONG_NULL} when it listed nothing), and
-     * clears the dirty flag. The values only ever advance together, so the
-     * caller must invoke this after the manifest is durable, never before -
-     * {@code newestBaseSeqTxn} carries WalPurgeJob's base WAL floor, and a floor
-     * moved ahead of the manifest could release WAL the durable ring still
-     * resumes from. Runs on the refresh worker under the refresh latch. See
-     * {@link #lastPublishedRingGeneration}.
-     * <p>
-     * Restart recovery calls this too, for the manifest it rehydrates rather than
-     * one it wrote: adopting a durable {@code (generation, covered, newest)} the
-     * previous process published is the same claim, and the same three values
-     * have to move together for it.
-     */
-    public void recordCheckpointRingPublication(long generation, long coveredBaseSeqTxn, long newestBaseSeqTxn) {
-        lastPublishedRingGeneration = generation;
-        lastPublishedRingCoveredBaseSeqTxn = coveredBaseSeqTxn;
-        lastPublishedRingNewestBaseSeqTxn = newestBaseSeqTxn;
-        checkpointRingDirty = false;
-    }
-
-    /**
-     * Records a failed {@code _checkpoints/_ring} publication. Leaves the last
-     * published generation and covered seqTxn where they are - they describe
-     * what is durable, and nothing became durable - so the next publication
-     * stamps the same generation the failed one would have. See
-     * {@link #checkpointRingDirty}.
-     */
-    public void recordCheckpointRingPublicationFailure() {
-        checkpointRingDirty = true;
-    }
-
-    /**
-     * Records a restart that trusted a {@code _checkpoints/_ring} manifest and
-     * rehydrated {@code recoveredEntries} of its entries into the ring - the count
-     * after the prune to the running retention budget, not the manifest's own
-     * {@code entryCount}, because the pruned entries are not anchors this process
-     * has. Zero is a real outcome: a trusted manifest may list nothing.
-     * Runs on the refresh worker under the refresh latch. See
-     * {@link #checkpointRingRecoveredEntries}.
-     */
-    public void recordCheckpointRingRecovery(long recoveredEntries) {
-        checkpointRingRecoveredEntries = recoveredEntries;
-    }
-
-    /**
-     * Records a restart whose ring recovery took the highest-{@code .cp}-only
-     * fallback instead of trusting a manifest, leaving the ring empty.
-     */
-    public void recordCheckpointRingRecoveryFallback() {
-        checkpointRingRecoveredEntries = 0;
-        checkpointRingRecoveryFallbackCount++;
-    }
-
-    /**
      * Stamps the elapsed micros of the head-checkpoint write that just completed.
      * Called by the refresh worker at the tail of {@code maybeWriteHeadCheckpoint}
-     * after the {@code .cp} commit, ring publish, and evicted-file unlink. See
+     * after the timeline generation is published. See
      * {@link #headCheckpointWriteMicros}.
      */
     public void recordCheckpointWriteMicros(long durationUs) {
@@ -1937,42 +1437,6 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
     }
 
     /**
-     * Releases the floor {@link #adoptCheckpointRingPurgeFloor(long)} took, for
-     * the caller that has just removed {@code _checkpoints/_ring}: a gone
-     * manifest lists nothing, so an arm still naming its newest entry would pin
-     * base WAL against a claim no longer on disk. The fallback that removed it
-     * resumes from the sweep's head, whose own arm covers that. Runs on the
-     * refresh worker under the refresh latch.
-     */
-    public void releaseCheckpointRingPurgeFloor() {
-        lastPublishedRingNewestBaseSeqTxn = Numbers.LONG_NULL;
-    }
-
-    /**
-     * Removes the single retained checkpoint whose {@code lvSeqTxn} matches,
-     * wherever it sits in the ring, and reports whether one was found. Unlike
-     * {@link #invalidateRetainedCheckpointsFrom(long, LongList)} (which drops the
-     * whole {@code maxTs >= threshold} suffix), this targets exactly one entry,
-     * so a resume anchor found unusable mid-ring (a corrupt {@code .cp}) can be
-     * evicted without disturbing the newer, still-sealed entries above it. The
-     * caller unlinks the matching {@code <lvSeqTxn>.cp}; this method touches only
-     * the in-memory ring. A no-op returning {@code false} when the entry is
-     * absent - restart / seed restore run with an empty ring, and the head is not
-     * always a ring entry. Runs on the refresh worker under the refresh latch.
-     * See {@link #retainedCheckpoints}.
-     */
-    public boolean removeRetainedCheckpoint(long lvSeqTxn) {
-        for (int i = 0, n = getRetainedCheckpointCount(); i < n; i++) {
-            if (getRetainedCheckpointLvSeqTxn(i) == lvSeqTxn) {
-                retainedCheckpoints.removeIndexBlock(i * RETAINED_CHECKPOINT_RECORD_SIZE, RETAINED_CHECKPOINT_RECORD_SIZE);
-                mirrorRingNewestBaseSeqTxn();
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * Clears the single-shot restart-restore flag so the refresh worker re-runs the
      * first-cycle recovery. Used only on an in-process promote whose applied floor lags
      * the LV table (a swallowed replica {@code _lv.s} persist): the recovery reconciles
@@ -2033,20 +1497,11 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
 
     /**
      * Single-shot setter for {@link #isCheckpointRestoreSucceeded()}. The
-     * refresh worker calls this only when {@code restoreFromHead} returned
-     * true (the window state was rehydrated from the head .cp).
+     * refresh worker calls this only when the window state was rehydrated from
+     * a checkpoint timeline root.
      */
     public void setCheckpointRestoreSucceeded() {
         this.checkpointRestoreSucceeded = true;
-    }
-
-    /**
-     * Stashes the manifest the startup sweep validated, or clears it with null
-     * once the refresh worker has consumed it. See
-     * {@link #checkpointRingCandidate}.
-     */
-    public void setCheckpointRingCandidate(@Nullable LiveViewCheckpointRingCandidate candidate) {
-        this.checkpointRingCandidate = candidate;
     }
 
     public void setCompiledFactory(RecordCursorFactory factory) {
@@ -2061,12 +1516,12 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
      * head metadata into the {@code live_views()} catalogue, resets the
      * cadence counter ({@link #rowsSinceLastCheckpointWritten} back to zero),
      * and stamps {@link #lastCheckpointWrittenUs}. Called by the flush-cycle
-     * write hook after the {@code <lvSeqTxn>.cp.tmp} -> {@code <lvSeqTxn>.cp}
-     * rename succeeds.
+     * write hook after the timeline generation carrying the new root is
+     * published.
      * <p>
      * Passing {@code Numbers.LONG_NULL} for {@code lvSeqTxn} clears the head
-     * (e.g. when the {@code .cp} is unlinked by a recovery sweep); cadence
-     * counters reset too so the next eligible cycle writes a fresh head
+     * (e.g. when an out-of-order change retires the timeline); cadence
+     * counters reset too so the next eligible cycle seals a fresh root
      * immediately rather than waiting for the row-count trigger to re-fire.
      */
     public void setHeadCheckpoint(long lvSeqTxn, long baseSeqTxn, long maxTs, long stateBytes, long writtenUs) {
@@ -2488,17 +1943,4 @@ public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSour
         anchorFunction = Misc.free(anchorFunction);
     }
 
-    /**
-     * Republishes {@link #ringNewestBaseSeqTxn} from the ring's tail. Every
-     * mutator of {@link #retainedCheckpoints} calls this, which is what lets
-     * WalPurgeJob read the newest entry's base commit without touching the
-     * worker-private list. An empty ring leaves nothing on disk to resume from,
-     * so it releases the mirror to {@code LONG_NULL} and the floor with it.
-     */
-    private void mirrorRingNewestBaseSeqTxn() {
-        final int size = retainedCheckpoints.size();
-        ringNewestBaseSeqTxn = size == 0
-                ? Numbers.LONG_NULL
-                : retainedCheckpoints.getQuick(size - RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_BASE_SEQ_TXN);
-    }
 }

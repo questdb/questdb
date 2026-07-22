@@ -661,9 +661,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.live.view.checkpoint.repair.replay.max.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.scan.max.keys\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.scan.max.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.live.view.checkpoint.retention.count\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT\t8\tdefault\tfalse\tfalse\n" +
-                                    "cairo.live.view.checkpoint.retention.max.bytes\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MAX_BYTES\t67108864\tdefault\tfalse\tfalse\n" +
-                                    "cairo.live.view.checkpoint.retention.micros\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.enabled\tQDB_CAIRO_LIVE_VIEW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.flush.retry.max\tQDB_CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX\t5\tdefault\tfalse\tfalse\n" +

@@ -192,7 +192,10 @@ public final class LiveViewCheckpointRepairPlan {
      * and replays only the tail above it.
      */
     public static final int DISPOSITION_RESUME_FROM_ANCHOR = 2;
-    private long anchorLvSeqTxn;
+    private long anchorCheckpointId;
+    // Scratch the anchor searches read into. Worker-owned, overwritten by every
+    // lookup; only the two identity fields around it survive a plan.
+    private final LiveViewCheckpointTimelineEntry anchorEntry = new LiveViewCheckpointTimelineEntry();
     private long anchorMaxTs;
     private long applyAheadMinTs;
     private long changeMaxTs;
@@ -231,7 +234,7 @@ public final class LiveViewCheckpointRepairPlan {
      * bounds it derived against the snapshot it pinned.
      */
     public void copyFrom(@NotNull LiveViewCheckpointRepairPlan other) {
-        this.anchorLvSeqTxn = other.anchorLvSeqTxn;
+        this.anchorCheckpointId = other.anchorCheckpointId;
         this.anchorMaxTs = other.anchorMaxTs;
         this.applyAheadMinTs = other.applyAheadMinTs;
         this.changeMaxTs = other.changeMaxTs;
@@ -250,11 +253,13 @@ public final class LiveViewCheckpointRepairPlan {
     }
 
     /**
-     * @return the {@code lvSeqTxn} key of the checkpoint the resume restores from.
-     * Meaningful only for {@link #DISPOSITION_RESUME_FROM_ANCHOR}.
+     * @return the {@code checkpointId} of the logical timeline boundary the resume
+     * restores from. Together with {@link #getAnchorMaxTs()} it forms the
+     * timeline's composite key. Meaningful only for
+     * {@link #DISPOSITION_RESUME_FROM_ANCHOR}.
      */
-    public long getAnchorLvSeqTxn() {
-        return anchorLvSeqTxn;
+    public long getAnchorCheckpointId() {
+        return anchorCheckpointId;
     }
 
     /**
@@ -457,11 +462,12 @@ public final class LiveViewCheckpointRepairPlan {
      * Anchor selection runs in two steps, mirroring the two ways a resume can be
      * defeated:
      * <ol>
-     *     <li>The newest sealed anchor is the head, so a head strictly below the
-     *     late row anchors the resume directly (a "head hit"). A head at or above
-     *     the late row cannot - its state already incorporates rows the change
-     *     invalidates - so the search falls back to the older retained anchors
-     *     below the raw trigger timestamp.</li>
+     *     <li>The anchor must sit strictly below the late row: a boundary at or
+     *     above it already incorporates rows the change invalidates. The search
+     *     runs on the raw trigger timestamp - the {@code START FROM} clamp governs
+     *     deletion authority, not which state a resume may trust - and returns the
+     *     newest qualifying boundary, which on the common path is the newest
+     *     boundary the timeline holds.</li>
      *     <li>When apply raced ahead, the anchor must additionally sit below every
      *     timestamp those un-examined transactions hold: the resume only re-reads
      *     base above the anchor, so a back-dated row below it would be dropped and
@@ -481,8 +487,9 @@ public final class LiveViewCheckpointRepairPlan {
      * takes a tie and every repair the comparison cannot reach: a rebuild that did not
      * localize reads the whole view history and can never be the cheaper of the two.
      *
-     * @param anchors                  sealed checkpoints the resume may roll back
-     *                                 to, newest last
+     * @param anchors                  the versioned timeline's predecessor lookup
+     *                                 over the logical boundaries a resume may roll
+     *                                 back to
      * @param lateRowTs                lowest timestamp the triggering DATA commit
      *                                 touched, or {@link Numbers#LONG_NULL} for a
      *                                 non-DATA / recovery trigger
@@ -492,10 +499,6 @@ public final class LiveViewCheckpointRepairPlan {
      * @param pinnedSeqTxn             {@code seqTxn} of the pinned base reader
      *                                 ({@code E}); never below
      *                                 {@code triggerSeqTxn}
-     * @param headLvSeqTxn             head checkpoint key, or
-     *                                 {@link Numbers#LONG_NULL} when there is no head
-     * @param headMaxTs                head checkpoint maximum timestamp, or
-     *                                 {@link Numbers#LONG_NULL}
      * @param applyAheadMinTs          minimum in-view timestamp of the apply-ahead
      *                                 range, or {@link Numbers#LONG_NULL} when that
      *                                 range is unclassifiable; ignored unless
@@ -557,8 +560,6 @@ public final class LiveViewCheckpointRepairPlan {
             long viewLowerBoundTimestamp,
             long triggerSeqTxn,
             long pinnedSeqTxn,
-            long headLvSeqTxn,
-            long headMaxTs,
             long applyAheadMinTs,
             long rangeFrameWidth,
             @Nullable RowsBoundSource rowsBoundSource,
@@ -596,7 +597,7 @@ public final class LiveViewCheckpointRepairPlan {
         // sealed against everything this repair incorporates. Without apply-ahead
         // it is C. With it, an unclassifiable range (a structural or non-DATA
         // commit, or no DATA commit at all) leaves LONG_NULL, which retires the
-        // whole ring and denies every anchor.
+        // whole timeline and denies every anchor.
         if (classified) {
             retireLowTs = this.applyAheadMinTs == Numbers.LONG_NULL
                     ? Numbers.LONG_NULL
@@ -605,40 +606,23 @@ public final class LiveViewCheckpointRepairPlan {
             retireLowTs = correctionTs;
         }
 
-        // A head with no maxTs cannot anchor anything: the resume floors at
-        // maxTs + 1, and LONG_NULL + 1 would admit every base row, including rows
-        // below the view's boundary. The strict comparison against the late row is
-        // load-bearing too - the head covers rows up to AND INCLUDING its maxTs
-        // while the resume starts above it, so a late row at exactly headMaxTs
-        // would be neither covered nor re-read.
-        final boolean headHit = headLvSeqTxn != Numbers.LONG_NULL
-                && headMaxTs != Numbers.LONG_NULL
-                && lateRowTs != Numbers.LONG_NULL
-                && headMaxTs < lateRowTs;
-        boolean hasAnchor = headHit;
-        anchorLvSeqTxn = headLvSeqTxn;
-        anchorMaxTs = headMaxTs;
-        if (!headHit && lateRowTs != Numbers.LONG_NULL) {
-            // Bounded miss: the head sits at or above the late row, but an older
-            // sealed anchor may still be strictly below it. Search on the raw
-            // trigger timestamp - the boundary clamp governs deletion authority,
-            // not which state a resume may trust.
-            final int index = anchors.findAnchorBelow(lateRowTs);
-            if (index >= 0) {
-                hasAnchor = true;
-                anchorLvSeqTxn = anchors.getAnchorLvSeqTxn(index);
-                anchorMaxTs = anchors.getAnchorMaxTs(index);
-            }
-        }
+        // Search the timeline for the newest boundary strictly below the late row.
+        // The strict comparison is load-bearing: a boundary covers rows up to AND
+        // INCLUDING its maxTimestamp while the resume starts above it, so an anchor
+        // at exactly the late row's timestamp would leave that row neither covered
+        // nor re-read. A non-DATA / recovery trigger carries no timestamp to search
+        // with and anchors nothing.
+        anchorCheckpointId = Numbers.LONG_NULL;
+        anchorMaxTs = Numbers.LONG_NULL;
+        boolean hasAnchor = lateRowTs != Numbers.LONG_NULL && anchors.findAnchorBelow(lateRowTs, anchorEntry);
         if (hasAnchor && applyAhead) {
             // Re-anchor below the ahead range's floor, which is at or below C, so
             // this can only move the anchor down or reject it outright.
-            final int index = retireLowTs == Numbers.LONG_NULL ? -1 : anchors.findAnchorBelow(retireLowTs);
-            hasAnchor = index >= 0;
-            if (hasAnchor) {
-                anchorLvSeqTxn = anchors.getAnchorLvSeqTxn(index);
-                anchorMaxTs = anchors.getAnchorMaxTs(index);
-            }
+            hasAnchor = retireLowTs != Numbers.LONG_NULL && anchors.findAnchorBelow(retireLowTs, anchorEntry);
+        }
+        if (hasAnchor) {
+            anchorCheckpointId = anchorEntry.checkpointId;
+            anchorMaxTs = anchorEntry.maxTimestamp;
         }
         // The anchor's state already covers rows up to and including its maxTs, so a
         // resume starts strictly above it. Floored at the view's boundary so it applies
@@ -691,7 +675,7 @@ public final class LiveViewCheckpointRepairPlan {
             highTsExclusive = Numbers.LONG_NULL;
         } else {
             disposition = DISPOSITION_BOUNDARY_REBUILD;
-            anchorLvSeqTxn = Numbers.LONG_NULL;
+            anchorCheckpointId = Numbers.LONG_NULL;
             anchorMaxTs = Numbers.LONG_NULL;
         }
     }
@@ -959,27 +943,24 @@ public final class LiveViewCheckpointRepairPlan {
     }
 
     /**
-     * The sealed checkpoints a resume may roll back to, ordered by ascending
-     * {@code maxTs} with the newest (the head) last.
+     * The logical checkpoint boundaries a resume may roll back to.
      * <p>
-     * {@link LiveViewInstance} implements this over the retained-checkpoint
-     * ring. The versioned timeline replaces that ring with a logarithmic
-     * predecessor lookup over permanently retained roots; it substitutes behind
-     * these three methods.
+     * {@link LiveViewRefreshJob} implements this over the versioned checkpoint
+     * timeline's logarithmic predecessor lookup. The timeline retains every
+     * boundary it ever created, so however old a correction is, the search still
+     * answers with the newest one below it.
      */
     public interface AnchorSource {
         /**
-         * @return the index of the newest anchor whose {@code maxTs} is strictly
-         * below {@code ceilTs}, or {@code -1} when every anchor sits at or above
-         * it. The strict inequality preserves a complete timestamp tie: an anchor
-         * at exactly {@code ceilTs} covers only part of the rows at that
-         * timestamp.
+         * Finds the newest logical checkpoint boundary whose {@code maxTimestamp}
+         * is strictly below {@code ceilTs} and copies it into {@code out}. The
+         * strict inequality preserves a complete timestamp tie: a boundary at
+         * exactly {@code ceilTs} covers only part of the rows at that timestamp.
+         *
+         * @return false when the timeline holds no such boundary, or holds no
+         * readable generation at all
          */
-        int findAnchorBelow(long ceilTs);
-
-        long getAnchorLvSeqTxn(int index);
-
-        long getAnchorMaxTs(int index);
+        boolean findAnchorBelow(long ceilTs, @NotNull LiveViewCheckpointTimelineEntry out);
     }
 
     /**

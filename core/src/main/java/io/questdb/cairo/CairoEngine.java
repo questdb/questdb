@@ -32,8 +32,8 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
-import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewLifecycleState;
@@ -999,7 +999,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             if (!isReadOnlyMode()) {
                                 liveViewDirPath.of(configuration.getDbRoot())
                                         .concat(tableToken)
-                                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
                                 try {
                                     final LiveViewCheckpointLifecycle.ReconcileResult reconciliation =
                                             LiveViewCheckpointLifecycle.reconcile(
@@ -1040,9 +1040,8 @@ public class CairoEngine implements Closeable, WriterSource {
                                             .I$();
                                 }
                             }
-                            // ACTIVE-view recovery never enumerates .cp files or
-                            // reads _ring. Those unreleased formats are ignored;
-                            // a missing/unusable timeline rebuilds derived state.
+                            // ACTIVE-view recovery reads nothing but the timeline:
+                            // a missing or unusable one rebuilds derived state.
                             // Seed checkpoints live in a disjoint .scp
                             // namespace. For a view loaded mid-sweep, retain the
                             // highest .scp and stamp its key so the first
@@ -1582,7 +1581,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 // directory and _checkpoints/ are already present - re-enters this
                 // path idempotently rather than failing with EEXIST.
                 path.of(configuration.getDbRoot()).concat(liveViewToken)
-                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash();
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME).slash();
                 if (configuration.getFilesFacade().mkdirs(path, configuration.getMkDirMode()) != 0) {
                     throw CairoException.critical(configuration.getFilesFacade().errno())
                             .put("could not create live view checkpoints directory [path=")
@@ -1855,7 +1854,7 @@ public class CairoEngine implements Closeable, WriterSource {
             try (Path checkpointsDir = new Path()) {
                 checkpointsDir.of(configuration.getDbRoot())
                         .concat(token)
-                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
                 if (!LiveViewCheckpointLifecycle.retireTimeline(
                         configuration,
                         checkpointsDir,

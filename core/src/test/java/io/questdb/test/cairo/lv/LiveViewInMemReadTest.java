@@ -30,7 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.lv.LiveViewCheckpointWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -4133,54 +4133,51 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
     @Test
     public void testRestartWithCorruptHeadCheckpointRebuildsFromBase() throws Exception {
-        // C2 regression: a STRUCTURALLY corrupt head .cp on restart (bit rot /
-        // truncation / a renamed window-function class - all errno 0) makes
-        // restoreFromHead trip the CRC check, unlink the .cp, and clear the head
-        // metadata WITHOUT stashing an invalidation reason. Before the fix
-        // tryRestoreFromHead bare-returned, so the caller fell through to the
-        // incremental drain from the applied watermark with COLD window
-        // accumulators: row_number() (and every cumulative window function)
-        // recomputed the post-watermark rows from zero and durably flushed the
-        // wrong values (disk rn 1..3 + a cold-restart lead rn 1..2 instead of
-        // 4..5). The restart must instead rebuild the whole view from the applied
-        // base snapshot, exactly as a MISSING .cp already does, and must NOT
-        // invalidate the view (the corruption is recoverable).
+        // C2 regression: a STRUCTURALLY corrupt checkpoint timeline on restart
+        // (bit rot / truncation / a renamed window-function class) leaves the
+        // restore with no generation it may trust. The danger is what happens
+        // next: falling through to the incremental drain from the applied
+        // watermark with COLD window accumulators makes row_number() (and every
+        // cumulative window function) recompute the post-watermark rows from zero
+        // and durably flush the wrong values (disk rn 1..3 + a cold-restart lead
+        // rn 1..2 instead of 4..5). The restart must instead rebuild the whole
+        // view from the applied base snapshot, exactly as an ABSENT timeline
+        // already does, and must NOT invalidate the view (the corruption is
+        // recoverable).
         assertMemoryLeak(() -> {
             buildFlushedPlusLead(); // rn 1..3 flushed on disk, rn 4..5 un-flushed lead in RAM
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
-            // The first flush always writes a head .cp; corrupt it in place.
-            final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
-            Assert.assertTrue("the first flush must have written a head .cp", headLvSeqTxn != Numbers.LONG_NULL);
-            corruptHeadCheckpoint(instance.getLiveViewToken(), headLvSeqTxn);
+            // The first flush always seals a boundary; corrupt the superblock that
+            // publishes it, so neither A/B slot validates.
+            Assert.assertTrue("the first flush must have sealed a boundary",
+                    instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL);
+            corruptCheckpointTimeline(instance.getLiveViewToken());
 
             // Simulated restart: the RAM lead (rn 4..5) is lost; disk holds rn 1..3;
-            // the head .cp is present but corrupt (the startup sweep stamps it by
-            // filename without validating its content).
+            // the timeline is present but unreadable.
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
             LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(restored);
-            Assert.assertEquals("the corrupt head .cp must be stamped on the restored instance",
-                    headLvSeqTxn, restored.getHeadCheckpointLvSeqTxn());
 
-            // First refresh cycle: restoreFromHead trips the CRC check, unlinks the
-            // corrupt .cp, and (with the fix) rebuilds the whole view from the applied
-            // base via o3HeadMissReplay instead of draining forward from cold state.
+            // First refresh cycle: the restore finds no valid generation and (with
+            // the fix) rebuilds the whole view from the applied base via
+            // o3HeadMissReplay instead of draining forward from cold state.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
             drainWalQueue();
 
             // The corruption is recoverable, so the view stays valid ...
-            Assert.assertFalse("a recoverable corrupt .cp must not invalidate the view", restored.isInvalid());
+            Assert.assertFalse("a recoverable corrupt timeline must not invalidate the view", restored.isInvalid());
             // ... and equals a from-scratch recompute: row_number continues 1..5, not a
             // cold-restart 1..3 (disk) + 1..2 (lead).
             assertLvMatchesOracle("SELECT * FROM lv",
                     "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
-            // The rebuild retired the corrupt .cp and wrote a fresh post-rebuild head.
-            Assert.assertTrue("a fresh head .cp must be written after the rebuild",
+            // The rebuild opened a fresh history over the unreadable one.
+            Assert.assertTrue("a fresh boundary must be sealed after the rebuild",
                     restored.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL);
 
             // o3HeadMissReplay flushed the full view to disk, so assertQuery's
@@ -5072,33 +5069,35 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         Assert.assertEquals("Mode B vs disk-only mismatch for: " + sql, diskOnly.toString(), modeB.toString());
     }
 
-    // Flips a byte inside the head .cp's manifest payload (past the fixed file header)
-    // so the checkpoint reader's CRC check fails on the next restart. This is the
-    // errno-0 STRUCTURAL corruption class (bit rot / truncation / a renamed
-    // window-function class) - distinct from a version-mismatch compatibility break,
-    // which restoreFromHead reports separately and which invalidates the view. Mirrors
-    // LiveViewCheckpointTest#overwriteByteInFile, which leaves a structurally intact
-    // file with a stale CRC trailer (not a truncation).
-    private static void corruptHeadCheckpoint(TableToken liveViewToken, long headLvSeqTxn) {
+    // Overwrites the checkpoint timeline's whole superblock so neither A/B slot
+    // passes its own checksum and the restore finds no generation it may trust.
+    // This is the recoverable STRUCTURAL corruption class (bit rot / truncation / a
+    // renamed window-function class) - distinct from a version-mismatch
+    // compatibility break, which the restore reports separately and which
+    // invalidates the view.
+    private static void corruptCheckpointTimeline(TableToken liveViewToken) {
         final CairoConfiguration cfg = configuration;
-        try (Path cpPath = new Path()) {
-            cpPath.of(cfg.getDbRoot())
+        try (Path checkpointsDir = new Path(); Path timelinePath = new Path()) {
+            checkpointsDir.of(cfg.getDbRoot())
                     .concat(liveViewToken)
-                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                    .slash();
-            LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
-            Assert.assertTrue("head .cp must exist on disk: " + cpPath, cfg.getFilesFacade().exists(cpPath.$()));
-            final long offset = LiveViewCheckpointWriter.FILE_HEADER_SIZE + 8;
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+            Assert.assertTrue("the timeline superblock must exist on disk: " + timelinePath,
+                    cfg.getFilesFacade().exists(timelinePath.$()));
+            final long length = cfg.getFilesFacade().length(timelinePath.$());
+            Assert.assertTrue(length > 0);
             try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                 mem.of(
                         cfg.getFilesFacade(),
-                        cpPath.$(),
+                        timelinePath.$(),
                         cfg.getFilesFacade().getPageSize(),
-                        offset + Byte.BYTES,
+                        length,
                         MemoryTag.MMAP_DEFAULT,
                         CairoConfiguration.O_NONE
                 );
-                mem.putByte(offset, (byte) 0xAB);
+                for (long i = 0; i < length; i++) {
+                    mem.putByte(i, (byte) 0xAB);
+                }
                 mem.sync(false);
             }
         }

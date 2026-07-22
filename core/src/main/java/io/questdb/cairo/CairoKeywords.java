@@ -48,7 +48,7 @@ public class CairoKeywords {
 
     public static boolean isLiveViewCheckpoints(long lpsz) {
         // "_checkpoints" - the live view checkpoint directory
-        // (LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+        // (LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
         if (length(lpsz) != 12) {
             return false;
         }

@@ -31,7 +31,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
-import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
@@ -322,7 +321,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
     @Test
     public void testCheckpointsDirDoesNotLogInvalidPartition() throws Exception {
-        // Regression: the live view's _checkpoints directory (LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+        // Regression: the live view's _checkpoints directory (LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
         // lives inside the view's table folder. Both partition-purge scans used to try to parse it as a
         // partition timestamp, fail, and log a spurious "invalid partition directory inside table folder"
         // ERROR. The directory was always left intact, so the only observable symptom is the log line.
@@ -1144,7 +1143,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     private void assertCheckpointStateCleared(TableToken token) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path()) {
-            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).$();
+            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME).$();
             Assert.assertTrue("restore must leave an empty checkpoint container at " + path, ff.exists(path.$()));
             final int checkpointsDirLen = path.size();
             path.concat(LiveViewCheckpointLayout.TIMELINE_FILE_NAME).$();
@@ -1161,7 +1160,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
             path.of(configuration.getCheckpointRoot())
                     .concat(configuration.getDbDirectory())
                     .concat(token)
-                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                     .$();
             Assert.assertFalse("checkpoint snapshot must exclude derived live-view state at " + path, configuration.getFilesFacade().exists(path.$()));
         }
@@ -1171,7 +1170,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot())
                     .concat(token)
-                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                     .concat(LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
                     .$();
             Assert.assertTrue("expected durable live-view timeline at " + path, configuration.getFilesFacade().exists(path.$()));
@@ -1181,7 +1180,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     private void assertCheckpointsDirExists(String viewName) {
         final TableToken token = engine.verifyTableName(viewName);
         try (Path path = new Path()) {
-            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).$();
+            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME).$();
             Assert.assertTrue(
                     "expected _checkpoints dir at " + path,
                     configuration.getFilesFacade().exists(path.$())

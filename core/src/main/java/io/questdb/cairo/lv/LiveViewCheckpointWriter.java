@@ -84,7 +84,6 @@ public class LiveViewCheckpointWriter implements Closeable {
      * checkpoint file. Created at CREATE LIVE VIEW; never deleted while the
      * live view exists.
      */
-    public static final String CHECKPOINT_DIR_NAME = "_checkpoints";
 
     public static final int FILE_FORMAT_VERSION = 2;
     public static final int FILE_HEADER_BLOCK_COUNT_OFFSET = 8;
@@ -268,7 +267,7 @@ public class LiveViewCheckpointWriter implements Closeable {
 
         // Rename tmp -> .cp / .scp.
         finalPath.of(liveViewDirCopy)
-                .concat(CHECKPOINT_DIR_NAME)
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                 .slash();
         if (isSeed) {
             appendScpFileName(finalPath, activeLvSeqTxn);
@@ -298,7 +297,7 @@ public class LiveViewCheckpointWriter implements Closeable {
         // files; recovery picks the highest lvSeqTxn and retires older ones.
         if (priorLvSeqTxn != Numbers.LONG_NULL && priorLvSeqTxn != activeLvSeqTxn) {
             priorPath.of(liveViewDirCopy)
-                    .concat(CHECKPOINT_DIR_NAME)
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                     .slash();
             if (isSeed) {
                 appendScpFileName(priorPath, priorLvSeqTxn);
@@ -375,7 +374,7 @@ public class LiveViewCheckpointWriter implements Closeable {
         this.isSeed = isSeed;
         liveViewDirCopy.of(liveViewDir);
 
-        tmpPath.of(liveViewDir).concat(CHECKPOINT_DIR_NAME).slash();
+        tmpPath.of(liveViewDir).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME).slash();
         if (isSeed) {
             appendScpTmpFileName(tmpPath, lvSeqTxn);
         } else {
