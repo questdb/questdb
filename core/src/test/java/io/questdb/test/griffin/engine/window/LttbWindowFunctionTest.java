@@ -24,11 +24,66 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class LttbWindowFunctionTest extends AbstractCairoTest {
+
+    @Test
+    public void testBindVariableTarget() throws Exception {
+        // lttb(ts, value, target) accepts a runtime-constant (bind-variable) target, read PER-EXECUTION:
+        // the SAME compiled factory produces keep-all vs downsampled keep-sets as $1 is re-bound between
+        // executions, and a runtime out-of-range target throws at cursor-open (not compile).
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        // $1 = 8 over 6 rows: count(6) <= target(8) -> keep all (selectAll short-circuit).
+        cases.add(BindVarTuple.ok(
+                "target 8 (keep all)",
+                """
+                        ts\tv\tkeep
+                        1970-01-01T00:00:00.000001Z\t10.0\ttrue
+                        1970-01-01T00:00:00.000002Z\t20.0\ttrue
+                        1970-01-01T00:00:00.000003Z\t30.0\ttrue
+                        1970-01-01T00:00:00.000004Z\t40.0\ttrue
+                        1970-01-01T00:00:00.000005Z\t50.0\ttrue
+                        1970-01-01T00:00:00.000006Z\t60.0\ttrue
+                        """,
+                bindVariableService -> bindVariableService.setLong(0, 8)
+        ));
+        // Re-bind $1 = 2 on the same compiled factory: count(6) > 2 -> LTTB with no interior buckets
+        // keeps only first (row 1) and last (row 6). A different result from the keep-all case above
+        // proves the target is read at execution, not frozen at compile.
+        cases.add(BindVarTuple.ok(
+                "target 2 (re-bind, first+last only)",
+                """
+                        ts\tv\tkeep
+                        1970-01-01T00:00:00.000001Z\t10.0\ttrue
+                        1970-01-01T00:00:00.000002Z\t20.0\tfalse
+                        1970-01-01T00:00:00.000003Z\t30.0\tfalse
+                        1970-01-01T00:00:00.000004Z\t40.0\tfalse
+                        1970-01-01T00:00:00.000005Z\t50.0\tfalse
+                        1970-01-01T00:00:00.000006Z\t60.0\ttrue
+                        """,
+                bindVariableService -> bindVariableService.setLong(0, 2)
+        ));
+        // Re-bind $1 = 1: out-of-range detected at cursor-open (range validation moved from
+        // newInstance to per-execution init), same message/position as a constant would produce.
+        cases.add(BindVarTuple.fails(
+                "target 1 (runtime out of range)",
+                26,
+                "target points must be at least 2",
+                bindVariableService -> bindVariableService.setLong(0, 1)
+        ));
+
+        assertQuery("select ts, v, lttb(ts, v, $1) over (order by ts) keep from t")
+                .ddl("create table t (ts timestamp, v double) timestamp(ts)",
+                        "insert into t select x::timestamp, x*10 from long_sequence(6)")
+                .timestamp("ts")
+                .expectSize()
+                .assertBinds(cases);
+    }
 
     @Test
     public void testKeepsAllWhenFewRows() throws Exception {
@@ -275,17 +330,15 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRejectsNonConstantTarget() throws Exception {
-        // Unlike m4 (uppercase 'L', deliberately not constant-enforced so a non-constant target
-        // reaches newInstance for the friendlier "target must be a constant" message), lttb's target
-        // is constant-enforced by the signature itself ("lttb(NDl)"), so FunctionParser disqualifies
-        // this overload before newInstance ever runs and reports its own generic diagnostic instead -
-        // the manual isConstant() guard in LttbFunctionFactory.newInstance0 is unreachable for this
-        // exact case but kept as defensive insurance (see the SIGNATURE field comment).
+        // lttb's target is uppercase 'L' in the signature ("lttb(NDL)", widened from the former
+        // constant-only 'l' so a bind-variable target can reach newInstance), so - exactly like m4 -
+        // a non-constant column target reaches newInstance0 and gets the friendly accept-check message
+        // rather than FunctionParser's generic "no matching function" diagnostic.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
             assertQuery("select ts, lttb(ts, v, v::long) over (order by ts) from t")
                     .noLeakCheck()
-                    .fails(11, "there is no matching function `lttb` with the argument types: (TIMESTAMP, DOUBLE, LONG)");
+                    .fails(24, "target must be a constant or bind variable");
         });
     }
 

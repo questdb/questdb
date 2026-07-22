@@ -24,10 +24,72 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Test;
 
 public class CadenceWindowFunctionTest extends AbstractCairoTest {
+
+    @Test
+    public void testBindVariableStride() throws Exception {
+        // cadence(stride) accepts a runtime-constant (bind-variable) stride, read PER-EXECUTION:
+        // the SAME compiled factory produces stride-3 vs stride-1 keep-sets as $1 is re-bound
+        // between executions, and a runtime out-of-range stride throws at cursor-open (not compile).
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        // $1 = 3: byte-identical to the constant cadence(3) case (testStrideNoSeed).
+        cases.add(BindVarTuple.ok(
+                "stride 3",
+                """
+                        ts\tv\tkeep
+                        1970-01-01T00:00:00.000001Z\t1.0\ttrue
+                        1970-01-01T00:00:00.000002Z\t2.0\tfalse
+                        1970-01-01T00:00:00.000003Z\t3.0\tfalse
+                        1970-01-01T00:00:00.000004Z\t4.0\ttrue
+                        1970-01-01T00:00:00.000005Z\t5.0\tfalse
+                        1970-01-01T00:00:00.000006Z\t6.0\tfalse
+                        1970-01-01T00:00:00.000007Z\t7.0\ttrue
+                        1970-01-01T00:00:00.000008Z\t8.0\tfalse
+                        1970-01-01T00:00:00.000009Z\t9.0\tfalse
+                        1970-01-01T00:00:00.000010Z\t10.0\ttrue
+                        """,
+                bindVariableService -> bindVariableService.setLong(0, 3)
+        ));
+        // Re-bind $1 = 1 on the same compiled factory: keepAll -> every row kept. A different result
+        // from the stride-3 case above proves the stride is read at execution, not frozen at compile.
+        cases.add(BindVarTuple.ok(
+                "stride 1 (re-bind, keep all)",
+                """
+                        ts\tv\tkeep
+                        1970-01-01T00:00:00.000001Z\t1.0\ttrue
+                        1970-01-01T00:00:00.000002Z\t2.0\ttrue
+                        1970-01-01T00:00:00.000003Z\t3.0\ttrue
+                        1970-01-01T00:00:00.000004Z\t4.0\ttrue
+                        1970-01-01T00:00:00.000005Z\t5.0\ttrue
+                        1970-01-01T00:00:00.000006Z\t6.0\ttrue
+                        1970-01-01T00:00:00.000007Z\t7.0\ttrue
+                        1970-01-01T00:00:00.000008Z\t8.0\ttrue
+                        1970-01-01T00:00:00.000009Z\t9.0\ttrue
+                        1970-01-01T00:00:00.000010Z\t10.0\ttrue
+                        """,
+                bindVariableService -> bindVariableService.setLong(0, 1)
+        ));
+        // Re-bind $1 = 0: out-of-range detected at cursor-open (range validation moved from
+        // newInstance to per-execution init), same message/position as a constant would produce.
+        cases.add(BindVarTuple.fails(
+                "stride 0 (runtime out of range)",
+                22,
+                "stride must be a positive constant",
+                bindVariableService -> bindVariableService.setLong(0, 0)
+        ));
+
+        assertQuery("select ts, v, cadence($1) over (order by ts) keep from t")
+                .ddl("create table t (ts timestamp, v double) timestamp(ts)",
+                        "insert into t select x::timestamp, x from long_sequence(10)")
+                .timestamp("ts")
+                .expectSize()
+                .assertBinds(cases);
+    }
 
     @Test
     public void testStrideNoSeed() throws Exception {

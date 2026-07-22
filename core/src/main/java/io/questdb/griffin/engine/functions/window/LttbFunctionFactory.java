@@ -57,14 +57,13 @@ import io.questdb.std.datetime.microtime.Micros;
 public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
 
     public static final String NAME = "lttb";
-    // Lowercase 'l': unlike m4's target argument (uppercase 'L', deliberately not constant-enforced by
-    // the signature so a non-constant target reaches newInstance for a friendlier message), lttb's
-    // target is declared constant-enforced here per the spec for this function; a non-constant target
-    // is therefore rejected by FunctionParser's own overload matching (MATCH_NO_MATCH) before
-    // newInstance ever runs. The defensive isConstant() check below is kept anyway (dead code for a
-    // direct non-constant argument, but cheap insurance and matches the m4 validation shape) in case a
-    // future signature change or an edge case in overload resolution ever lets one through.
-    private static final String SIGNATURE = NAME + "(NDl)";
+    // Uppercase 'L' (like m4's target): a lowercase constant-only 'l' would make FunctionParser's
+    // overload matching reject a bind-variable (runtime-constant) target as MATCH_NO_MATCH before
+    // newInstance runs, so bind variables could never reach the accept check below. With 'L', both a
+    // non-constant column (rejected with the friendly message in newInstance0) and a bind-variable
+    // target reach newInstance, where the accept check keeps constants/bind-variables and rejects the
+    // rest.
+    private static final String SIGNATURE = NAME + "(NDL)";
 
     @Override
     public String getSignature() {
@@ -120,15 +119,12 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
                     .put(ColumnType.nameOf(valueArg.getType()));
         }
 
-        if (!targetArg.isConstant()) {
-            throw SqlException.$(argPositions.getQuick(2), "target must be a constant");
-        }
-        long target = targetArg.getLong(null);
-        if (target == Numbers.LONG_NULL || target < 2) {
-            throw SqlException.$(argPositions.getQuick(2), "target points must be at least 2");
-        }
-        if (target > Integer.MAX_VALUE) {
-            throw SqlException.$(argPositions.getQuick(2), "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+        // target is read PER-EXECUTION (see BucketSelectWindowFunction.init) rather than frozen here,
+        // so a bind-variable target that is unset at compile - and may be re-bound between executions -
+        // resolves against its current value. A plain constant reads to the same value at open, so
+        // constant behavior is unchanged.
+        if (!targetArg.isConstant() && !targetArg.isRuntimeConstant()) {
+            throw SqlException.$(argPositions.getQuick(2), "target must be a constant or bind variable");
         }
 
         long gapThresholdMicros = 0;
@@ -136,7 +132,7 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
             gapThresholdMicros = parseGapThreshold(args.getQuick(3), argPositions.getQuick(3));
         }
 
-        return new LttbBucketSelectWindowFunction(tsArg, valueArg, target, new LttbAlgorithm(gapThresholdMicros), NAME);
+        return new LttbBucketSelectWindowFunction(tsArg, valueArg, targetArg, argPositions.getQuick(2), new LttbAlgorithm(gapThresholdMicros), NAME);
     }
 
     // Reproduces SqlCodeGenerator.generateSubsample's gap-threshold parse (~line 7157): same
@@ -183,8 +179,8 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
     static class LttbBucketSelectWindowFunction extends M4FunctionFactory.BucketSelectWindowFunction {
         private final LttbAlgorithm lttbAlgorithm;
 
-        LttbBucketSelectWindowFunction(Function tsArg, Function valueArg, long target, LttbAlgorithm algorithm, String name) {
-            super(tsArg, valueArg, target, algorithm, name);
+        LttbBucketSelectWindowFunction(Function tsArg, Function valueArg, Function targetArg, int targetPosition, LttbAlgorithm algorithm, String name) {
+            super(tsArg, valueArg, targetArg, targetPosition, algorithm, name);
             this.lttbAlgorithm = algorithm;
         }
 

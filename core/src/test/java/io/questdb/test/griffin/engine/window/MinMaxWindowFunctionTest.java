@@ -24,11 +24,67 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class MinMaxWindowFunctionTest extends AbstractCairoTest {
+
+    @Test
+    public void testBindVariableTarget() throws Exception {
+        // minmax(ts, value, target) accepts a runtime-constant (bind-variable) target, read
+        // PER-EXECUTION (shares BucketSelectWindowFunction.init with m4/lttb): the SAME compiled
+        // factory produces keep-all vs bucketed keep-sets as $1 is re-bound between executions, and a
+        // runtime out-of-range target throws at cursor-open (not compile).
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        // $1 = 8 over 6 rows: count(6) <= target(8) -> keep all (selectAll short-circuit).
+        cases.add(BindVarTuple.ok(
+                "target 8 (keep all)",
+                """
+                        ts\tv\tkeep
+                        1970-01-01T00:00:00.000001Z\t10.0\ttrue
+                        1970-01-01T00:00:00.000002Z\t20.0\ttrue
+                        1970-01-01T00:00:00.000003Z\t30.0\ttrue
+                        1970-01-01T00:00:00.000004Z\t40.0\ttrue
+                        1970-01-01T00:00:00.000005Z\t50.0\ttrue
+                        1970-01-01T00:00:00.000006Z\t60.0\ttrue
+                        """,
+                bindVariableService -> bindVariableService.setLong(0, 8)
+        ));
+        // Re-bind $1 = 2 on the same compiled factory: count(6) > 2 -> bucketing (numBuckets = 2/2 = 1),
+        // a single bucket over 6 monotonic rows keeps {min,max} = rows 1 and 6. A different result from
+        // the keep-all case above proves the target is read at execution, not frozen at compile.
+        cases.add(BindVarTuple.ok(
+                "target 2 (re-bind, min+max only)",
+                """
+                        ts\tv\tkeep
+                        1970-01-01T00:00:00.000001Z\t10.0\ttrue
+                        1970-01-01T00:00:00.000002Z\t20.0\tfalse
+                        1970-01-01T00:00:00.000003Z\t30.0\tfalse
+                        1970-01-01T00:00:00.000004Z\t40.0\tfalse
+                        1970-01-01T00:00:00.000005Z\t50.0\tfalse
+                        1970-01-01T00:00:00.000006Z\t60.0\ttrue
+                        """,
+                bindVariableService -> bindVariableService.setLong(0, 2)
+        ));
+        // Re-bind $1 = 1: out-of-range detected at cursor-open (range validation moved from
+        // newInstance to per-execution init), same message/position as a constant would produce.
+        cases.add(BindVarTuple.fails(
+                "target 1 (runtime out of range)",
+                28,
+                "target points must be at least 2",
+                bindVariableService -> bindVariableService.setLong(0, 1)
+        ));
+
+        assertQuery("select ts, v, minmax(ts, v, $1) over (order by ts) keep from t")
+                .ddl("create table t (ts timestamp, v double) timestamp(ts)",
+                        "insert into t select x::timestamp, x*10 from long_sequence(6)")
+                .timestamp("ts")
+                .expectSize()
+                .assertBinds(cases);
+    }
 
     @Test
     public void testKeepsAllWhenFewRows() throws Exception {

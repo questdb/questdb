@@ -24,10 +24,62 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Test;
 
 public class UniformWindowFunctionTest extends AbstractCairoTest {
+
+    @Test
+    public void testBindVariableTarget() throws Exception {
+        // uniform(target) accepts a runtime-constant (bind-variable) target, read PER-EXECUTION:
+        // the SAME compiled factory produces target-3 vs keep-all sets as $1 is re-bound between
+        // executions, and a runtime out-of-range target throws at cursor-open (not compile).
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        // $1 = 3 over 5 rows: byte-identical to the constant uniform(3) case (testEvenlySpacedSelection).
+        cases.add(BindVarTuple.ok(
+                "target 3",
+                """
+                        ts\tv\tkeep
+                        1970-01-01T00:00:00.000001Z\t1.0\ttrue
+                        1970-01-01T00:00:00.000002Z\t2.0\tfalse
+                        1970-01-01T00:00:00.000003Z\t3.0\ttrue
+                        1970-01-01T00:00:00.000004Z\t4.0\tfalse
+                        1970-01-01T00:00:00.000005Z\t5.0\ttrue
+                        """,
+                bindVariableService -> bindVariableService.setLong(0, 3)
+        ));
+        // Re-bind $1 = 5 on the same compiled factory: target >= rows -> keep all. A different result
+        // from the target-3 case above proves the target is read at execution, not frozen at compile.
+        cases.add(BindVarTuple.ok(
+                "target 5 (re-bind, keep all)",
+                """
+                        ts\tv\tkeep
+                        1970-01-01T00:00:00.000001Z\t1.0\ttrue
+                        1970-01-01T00:00:00.000002Z\t2.0\ttrue
+                        1970-01-01T00:00:00.000003Z\t3.0\ttrue
+                        1970-01-01T00:00:00.000004Z\t4.0\ttrue
+                        1970-01-01T00:00:00.000005Z\t5.0\ttrue
+                        """,
+                bindVariableService -> bindVariableService.setLong(0, 5)
+        ));
+        // Re-bind $1 = 0: out-of-range detected at cursor-open (range validation moved from
+        // newInstance to per-execution init), same message/position as a constant would produce.
+        cases.add(BindVarTuple.fails(
+                "target 0 (runtime out of range)",
+                22,
+                "target must be a positive constant",
+                bindVariableService -> bindVariableService.setLong(0, 0)
+        ));
+
+        assertQuery("select ts, v, uniform($1) over (order by ts) keep from t")
+                .ddl("create table t (ts timestamp, v double) timestamp(ts)",
+                        "insert into t select x::timestamp, x from long_sequence(5)")
+                .timestamp("ts")
+                .expectSize()
+                .assertBinds(cases);
+    }
 
     @Test
     public void testKeepsAllWhenTargetGteRows() throws Exception {

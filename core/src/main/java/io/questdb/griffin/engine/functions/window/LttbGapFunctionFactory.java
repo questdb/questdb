@@ -40,7 +40,9 @@ import io.questdb.std.ObjList;
  */
 public class LttbGapFunctionFactory extends AbstractWindowFunctionFactory {
 
-    private static final String SIGNATURE = LttbFunctionFactory.NAME + "(NDls)";
+    // Uppercase 'L' for target (see LttbFunctionFactory): lets a bind-variable target reach
+    // newInstance rather than being rejected by overload matching. The gap 's' stays constant-only.
+    private static final String SIGNATURE = LttbFunctionFactory.NAME + "(NDLs)";
 
     @Override
     public String getSignature() {

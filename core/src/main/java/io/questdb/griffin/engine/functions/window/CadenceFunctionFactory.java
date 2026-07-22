@@ -117,14 +117,15 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             throw SqlException.$(position, "cadence() does not support PARTITION BY");
         }
 
+        // stride is read PER-EXECUTION (see CadenceFunction.init) rather than frozen here, so a
+        // bind-variable stride that is unset at compile - and may be re-bound between executions -
+        // resolves against its current value. A plain constant reads to the same value at open, so
+        // constant behavior is unchanged.
         Function strideArg = args.getQuick(0);
-        if (!strideArg.isConstant()) {
-            throw SqlException.$(argPositions.getQuick(0), "stride must be a constant");
+        if (!strideArg.isConstant() && !strideArg.isRuntimeConstant()) {
+            throw SqlException.$(argPositions.getQuick(0), "stride must be a constant or bind variable");
         }
-        long stride = strideArg.getLong(null);
-        if (stride == Numbers.LONG_NULL || stride < 1) {
-            throw SqlException.$(argPositions.getQuick(0), "stride must be a positive constant");
-        }
+        int stridePosition = argPositions.getQuick(0);
 
         Function seedFunc = null;
         int seedMode = SEED_MODE_NONE;
@@ -144,7 +145,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             }
         }
 
-        return new CadenceFunction(stride, seedFunc, seedMode, seedPosition);
+        return new CadenceFunction(strideArg, stridePosition, seedFunc, seedMode, seedPosition);
     }
 
     // cadence(stride[, seed]) over (order by xxx) - no partition by, no framing.
@@ -156,8 +157,12 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         // Non-null only in SEED_MODE_DETERMINISTIC; may be a bind variable / runtime constant, so its
         // value is re-read every execution (in preparePass2, after init() refreshes it for this run).
         private final Function seedFunc;
-        private final long stride;
+        // May be a bind variable / runtime constant, so its value is resolved every execution in
+        // init() (before pass1/preparePass2 need it) rather than frozen at newInstance.
+        private final Function strideFunc;
+        private final int stridePosition;
         private long count;          // running row counter during pass1; becomes totalRows
+        private long stride;         // resolved in init() from strideFunc for the current execution
         // Captured in init() (called once per execution by the cached window cursor); used only in
         // SEED_MODE_RANDOM so the offset re-randomizes on every execution rather than being fixed at
         // parse/newInstance time.
@@ -173,9 +178,10 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         private long pass2Ordinal;   // running row counter during pass2 (same traversal order as pass1)
         private long selIdx;         // monotonic cursor into `selected` during pass2
 
-        CadenceFunction(long stride, Function seedFunc, int seedMode, int seedPosition) {
+        CadenceFunction(Function strideFunc, int stridePosition, Function seedFunc, int seedMode, int seedPosition) {
             super(null);
-            this.stride = stride;
+            this.strideFunc = strideFunc;
+            this.stridePosition = stridePosition;
             this.seedFunc = seedFunc;
             this.seedMode = seedMode;
             this.seedPosition = seedPosition;
@@ -184,6 +190,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void close() {
             super.close();
+            Misc.free(strideFunc);
             Misc.free(seedFunc);
             selected.close();
         }
@@ -235,6 +242,15 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
+            // Resolve stride for THIS execution. Mirrors SubsampleRecordCursorFactory.getCursor's
+            // targetFunc.init()+getStride(): a bind-variable stride is re-read (and range-checked)
+            // every run, so re-binding between executions takes effect; a constant reads the same value.
+            strideFunc.init(symbolTableSource, executionContext);
+            long s = strideFunc.getLong(null);
+            if (s == Numbers.LONG_NULL || s < 1) {
+                throw SqlException.$(stridePosition, "stride must be a positive constant");
+            }
+            stride = s;
             if (seedFunc != null) {
                 seedFunc.init(symbolTableSource, executionContext);
             }
@@ -334,7 +350,14 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(NAME);
-            sink.val('(').val(stride);
+            // Render the constant value (byte-identical to the pre-bind-var plan); for a bind-variable
+            // stride `stride` is not resolved until init(), so render the argument's own plan instead.
+            sink.val('(');
+            if (strideFunc.isConstant()) {
+                sink.val(strideFunc.getLong(null));
+            } else {
+                sink.val(strideFunc);
+            }
             if (seedMode == SEED_MODE_RANDOM) {
                 sink.val(", null");
             } else if (seedMode == SEED_MODE_DETERMINISTIC) {

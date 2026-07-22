@@ -118,18 +118,15 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                     .put(ColumnType.nameOf(valueArg.getType()));
         }
 
-        if (!targetArg.isConstant()) {
-            throw SqlException.$(argPositions.getQuick(2), "target must be a constant");
-        }
-        long target = targetArg.getLong(null);
-        if (target == Numbers.LONG_NULL || target < 2) {
-            throw SqlException.$(argPositions.getQuick(2), "target points must be at least 2");
-        }
-        if (target > Integer.MAX_VALUE) {
-            throw SqlException.$(argPositions.getQuick(2), "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+        // target is read PER-EXECUTION (see BucketSelectWindowFunction.init) rather than frozen here,
+        // so a bind-variable target that is unset at compile - and may be re-bound between executions -
+        // resolves against its current value. A plain constant reads to the same value at open, so
+        // constant behavior is unchanged.
+        if (!targetArg.isConstant() && !targetArg.isRuntimeConstant()) {
+            throw SqlException.$(argPositions.getQuick(2), "target must be a constant or bind variable");
         }
 
-        return new BucketSelectWindowFunction(tsArg, valueArg, target, M4Algorithm.INSTANCE, NAME);
+        return new BucketSelectWindowFunction(tsArg, valueArg, targetArg, argPositions.getQuick(2), M4Algorithm.INSTANCE, NAME);
     }
 
     // m4(ts, value, target) over (order by xxx) - no partition by, no framing.
@@ -153,7 +150,10 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         // the lttb gap scratch is the discipline mirrored here.
         private final DirectLongList nullBits = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
         private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-        private final long target;
+        // May be a bind variable / runtime constant, so its value is resolved every execution in
+        // init() (before pass1/preparePass2 need it) rather than frozen at newInstance.
+        private final Function targetArg;
+        private final int targetPosition;
         private final Function tsArg;
         private final Function valueArg;
         private long buffer;
@@ -179,17 +179,19 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         private long pass2Row;       // running ALL-row counter during pass2 (index into nullBits, same order as pass1)
         private long rowCount;       // running ALL-row counter during pass1 (null + non-null); number of bits in nullBits
         private long selIdx;         // monotonic cursor into `selected` during pass2
+        private long target;         // resolved in init() from targetArg for the current execution
         // Resolved once at construction (valueArg's type never changes across rows), used by
         // readValue() to replicate SubsampleRecordCursorFactory.getValueAsDouble()'s per-type
         // null -> NaN mapping.
         private final short valueTag;
 
-        BucketSelectWindowFunction(Function tsArg, Function valueArg, long target, SubsampleAlgorithm algorithm, String name) {
+        BucketSelectWindowFunction(Function tsArg, Function valueArg, Function targetArg, int targetPosition, SubsampleAlgorithm algorithm, String name) {
             super(null);
             this.tsArg = tsArg;
             this.valueArg = valueArg;
             this.valueTag = ColumnType.tagOf(valueArg.getType());
-            this.target = target;
+            this.targetArg = targetArg;
+            this.targetPosition = targetPosition;
             this.algorithm = algorithm;
             this.name = name;
         }
@@ -199,6 +201,7 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             super.close();
             Misc.free(tsArg);
             Misc.free(valueArg);
+            Misc.free(targetArg);
             selected.close();
             nullBits.close();
             freeBuffer();
@@ -276,6 +279,18 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             super.init(symbolTableSource, executionContext);
             tsArg.init(symbolTableSource, executionContext);
             valueArg.init(symbolTableSource, executionContext);
+            // Resolve target for THIS execution. Mirrors SubsampleRecordCursorFactory.getCursor's
+            // targetFunc.init()+getTargetPoints(): a bind-variable target is re-read (and range-checked)
+            // every run, so re-binding between executions takes effect; a constant reads the same value.
+            targetArg.init(symbolTableSource, executionContext);
+            long t = targetArg.getLong(null);
+            if (t == Numbers.LONG_NULL || t < 2) {
+                throw SqlException.$(targetPosition, "target points must be at least 2");
+            }
+            if (t > Integer.MAX_VALUE) {
+                throw SqlException.$(targetPosition, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+            }
+            target = t;
             this.circuitBreaker = executionContext.getCircuitBreaker();
         }
 
@@ -394,7 +409,15 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(name);
-            sink.val('(').val(tsArg).val(',').val(valueArg).val(',').val(target).val(')');
+            // Render the constant value (byte-identical to the pre-bind-var plan); for a bind-variable
+            // target `target` is not resolved until init(), so render the argument's own plan instead.
+            sink.val('(').val(tsArg).val(',').val(valueArg).val(',');
+            if (targetArg.isConstant()) {
+                sink.val(targetArg.getLong(null));
+            } else {
+                sink.val(targetArg);
+            }
+            sink.val(')');
             if (orderBy != null) {
                 sink.val(" over (");
                 sink.val("order by ");

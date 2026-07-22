@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.MinMaxAlgorithm;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 /**
@@ -95,17 +94,14 @@ public class MinMaxFunctionFactory extends AbstractWindowFunctionFactory {
                     .put(ColumnType.nameOf(valueArg.getType()));
         }
 
-        if (!targetArg.isConstant()) {
-            throw SqlException.$(argPositions.getQuick(2), "target must be a constant");
-        }
-        long target = targetArg.getLong(null);
-        if (target == Numbers.LONG_NULL || target < 2) {
-            throw SqlException.$(argPositions.getQuick(2), "target points must be at least 2");
-        }
-        if (target > Integer.MAX_VALUE) {
-            throw SqlException.$(argPositions.getQuick(2), "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+        // target is read PER-EXECUTION (see BucketSelectWindowFunction.init) rather than frozen here,
+        // so a bind-variable target that is unset at compile - and may be re-bound between executions -
+        // resolves against its current value. A plain constant reads to the same value at open, so
+        // constant behavior is unchanged.
+        if (!targetArg.isConstant() && !targetArg.isRuntimeConstant()) {
+            throw SqlException.$(argPositions.getQuick(2), "target must be a constant or bind variable");
         }
 
-        return new M4FunctionFactory.BucketSelectWindowFunction(tsArg, valueArg, target, MinMaxAlgorithm.INSTANCE, NAME);
+        return new M4FunctionFactory.BucketSelectWindowFunction(tsArg, valueArg, targetArg, argPositions.getQuick(2), MinMaxAlgorithm.INSTANCE, NAME);
     }
 }

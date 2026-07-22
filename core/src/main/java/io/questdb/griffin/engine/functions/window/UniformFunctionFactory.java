@@ -31,6 +31,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
@@ -42,6 +43,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -89,27 +91,31 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
             throw SqlException.$(position, "uniform() does not support PARTITION BY");
         }
 
+        // target is read PER-EXECUTION (see UniformFunction.init) rather than frozen here, so a
+        // bind-variable target that is unset at compile - and may be re-bound between executions -
+        // resolves against its current value. A plain constant reads to the same value at open, so
+        // constant behavior is unchanged.
         Function targetArg = args.getQuick(0);
-        if (!targetArg.isConstant()) {
-            throw SqlException.$(argPositions.getQuick(0), "target must be a constant");
-        }
-        long target = targetArg.getLong(null);
-        if (target == Numbers.LONG_NULL || target < 1) {
-            throw SqlException.$(argPositions.getQuick(0), "target must be a positive constant");
+        if (!targetArg.isConstant() && !targetArg.isRuntimeConstant()) {
+            throw SqlException.$(argPositions.getQuick(0), "target must be a constant or bind variable");
         }
 
-        return new UniformFunction(target);
+        return new UniformFunction(targetArg, argPositions.getQuick(0));
     }
 
     // uniform(n) over (order by xxx) - no partition by, no framing.
     static class UniformFunction extends BaseWindowFunction implements Reopenable {
 
         private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-        private final long target;
+        // May be a bind variable / runtime constant, so its value is resolved every execution in
+        // init() (before pass1/preparePass2 need it) rather than frozen at newInstance.
+        private final Function targetArg;
+        private final int targetPosition;
         private long count;          // running row counter during pass1; becomes totalRows
         private boolean keepAll;
         private boolean lastKeep;    // last keep-flag computed in pass2; see getBool() below
         private ObjList<ExpressionNode> orderBy;
+        private long target;         // resolved in init() from targetArg for the current execution
         // pass1 (count) and pass2 (pass2Ordinal/selIdx) are two separate traversals of the same
         // partition. CachedWindowRecordCursorFactory must replay the SAME WindowSortBuffer order
         // for both passes, or these counters (and the ordinals stashed in `selected`) desync and
@@ -118,15 +124,31 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         private long pass2Ordinal;   // running row counter during pass2 (same traversal order as pass1)
         private long selIdx;         // monotonic cursor into `selected` during pass2
 
-        UniformFunction(long target) {
+        UniformFunction(Function targetArg, int targetPosition) {
             super(null);
-            this.target = target;
+            this.targetArg = targetArg;
+            this.targetPosition = targetPosition;
         }
 
         @Override
         public void close() {
             super.close();
+            Misc.free(targetArg);
             selected.close();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            // Resolve target for THIS execution. Mirrors SubsampleRecordCursorFactory.getCursor's
+            // targetFunc.init()+getTargetPoints(): a bind-variable target is re-read (and range-checked)
+            // every run, so re-binding between executions takes effect; a constant reads the same value.
+            targetArg.init(symbolTableSource, executionContext);
+            long t = targetArg.getLong(null);
+            if (t == Numbers.LONG_NULL || t < 1) {
+                throw SqlException.$(targetPosition, "target must be a positive constant");
+            }
+            target = t;
         }
 
         @Override
@@ -262,7 +284,15 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(NAME);
-            sink.val('(').val(target).val(')');
+            // Render the constant value (byte-identical to the pre-bind-var plan); for a bind-variable
+            // target `target` is not resolved until init(), so render the argument's own plan instead.
+            sink.val('(');
+            if (targetArg.isConstant()) {
+                sink.val(targetArg.getLong(null));
+            } else {
+                sink.val(targetArg);
+            }
+            sink.val(')');
             if (orderBy != null) {
                 sink.val(" over (");
                 sink.val("order by ");
