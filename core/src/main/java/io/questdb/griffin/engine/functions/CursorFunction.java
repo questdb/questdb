@@ -201,9 +201,11 @@ public class CursorFunction implements Function {
         return factory;
     }
 
-    // The Function default (!isNonDeterministic()) would claim stability for any wrapped
-    // sub-query, because CursorFunction does not override isNonDeterministic(). Delegate to
-    // the factory instead, whose fail-safe default assumes instability unless proven.
+    @Override
+    public boolean isNonDeterministic() {
+        return factory.isNonDeterministic();
+    }
+
     @Override
     public boolean isStableWithinExecution() {
         return factory.isStableWithinExecution();

@@ -118,6 +118,8 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assume;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static io.questdb.cairo.ColumnType.OVERLOAD_NONE;
 import static org.junit.Assert.*;
 
@@ -1523,6 +1525,61 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
         assertFail(7, "wrong number of arguments for function `sysdate`; expected: 0, provided: 1", "a or   sysdate(a)", metadata);
+    }
+
+    @Test
+    public void testNonDeterministicFunctionIsClosedWhenRejected() throws Exception {
+        final AtomicInteger closeCount = new AtomicInteger();
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "test_non_deterministic()";
+            }
+
+            @Override
+            public Function newInstance(
+                    int position,
+                    ObjList<Function> args,
+                    IntList argPositions,
+                    CairoConfiguration configuration,
+                    SqlExecutionContext sqlExecutionContext
+            ) {
+                return new BooleanFunction() {
+                    @Override
+                    public void close() {
+                        closeCount.incrementAndGet();
+                    }
+
+                    @Override
+                    public boolean getBool(Record rec) {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isNonDeterministic() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        final boolean isAllowed = sqlExecutionContext.allowNonDeterministicFunctions();
+        sqlExecutionContext.setAllowNonDeterministicFunction(false);
+        try {
+            try {
+                parseFunction("test_non_deterministic()", new GenericRecordMetadata(), createFunctionParser());
+                fail("expected non-deterministic function rejection");
+            } catch (SqlException e) {
+                assertEquals(0, e.getPosition());
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "non-deterministic function cannot be used in materialized view: test_non_deterministic"
+                );
+            }
+            assertEquals(1, closeCount.get());
+        } finally {
+            sqlExecutionContext.setAllowNonDeterministicFunction(isAllowed);
+        }
     }
 
     @Test

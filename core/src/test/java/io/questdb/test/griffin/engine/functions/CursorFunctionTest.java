@@ -24,7 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class CursorFunctionTest {
@@ -208,5 +211,21 @@ public class CursorFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetVarcharB() {
         function.getVarcharB(null);
+    }
+
+    @Test
+    public void testIsNonDeterministic() {
+        try (
+                CursorFunction deterministicFunction = new CursorFunction(new EmptyTableRecordCursorFactory(new GenericRecordMetadata()) {
+                    @Override
+                    public boolean isNonDeterministic() {
+                        return false;
+                    }
+                });
+                CursorFunction nonDeterministicFunction = new CursorFunction(new EmptyTableRecordCursorFactory(new GenericRecordMetadata()))
+        ) {
+            Assert.assertFalse(deterministicFunction.isNonDeterministic());
+            Assert.assertTrue(nonDeterministicFunction.isNonDeterministic());
+        }
     }
 }

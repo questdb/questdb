@@ -648,8 +648,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             Misc.freeObjList(args);
             throw SqlException.position(position).put("bad function factory (NULL), check log");
         } else if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
-            Misc.freeObjList(args);
-            throw SqlException.nonDeterministicColumn(node.position, node.token);
+            final SqlException exception = SqlException.nonDeterministicColumn(node.position, node.token);
+            if (args != null) {
+                args.clear(); // newInstance() transferred argument ownership to function
+            }
+            try {
+                function.close();
+            } catch (Throwable cleanupFailure) {
+                exception.addSuppressed(cleanupFailure);
+            }
+            throw exception;
         }
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
@@ -782,7 +790,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // Make sure to override timestamp required flag from base query.
         sqlExecutionContext.pushTimestampRequiredFlag(false);
         try {
-            return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+            final CursorFunction function = new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+            if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
+                final SqlException exception = SqlException.nonDeterministicColumn(node.position, "sub-query");
+                try {
+                    function.close();
+                } catch (Throwable cleanupFailure) {
+                    exception.addSuppressed(cleanupFailure);
+                }
+                throw exception;
+            }
+            return function;
         } finally {
             sqlExecutionContext.popTimestampRequiredFlag();
         }
