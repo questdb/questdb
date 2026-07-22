@@ -890,9 +890,17 @@ public class TxReader implements Closeable, Mutable {
                         );
                     }
                 }
-                int offset = txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASKED_SIZE_OFFSET;
-                long mask = attachedPartitions.getQuick(offset) & PARTITION_FLAGS_MASK;
-                attachedPartitions.setQuick(offset, mask | (transientRowCount & PARTITION_SIZE_MASK)); // preserve mask
+                final int lastPartitionRawIndex = txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION;
+                final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount) + Integer.BYTES;
+                // WAL appends can update the active partition's offset-3 word without changing
+                // partitionTableVersion, so refresh it alongside the transient row count.
+                attachedPartitions.setQuick(
+                        lastPartitionRawIndex + PARTITION_VERSION_OFFSET,
+                        getLong(partitionTableOffset + (lastPartitionRawIndex + PARTITION_VERSION_OFFSET) * Long.BYTES)
+                );
+                final int sizeOffset = lastPartitionRawIndex + PARTITION_MASKED_SIZE_OFFSET;
+                final long mask = attachedPartitions.getQuick(sizeOffset) & PARTITION_FLAGS_MASK;
+                attachedPartitions.setQuick(sizeOffset, mask | (transientRowCount & PARTITION_SIZE_MASK)); // preserve mask
                 attachedPartitions.setPos(txAttachedPartitionsSize);
             } else {
                 attachedPartitionsSize = 0;

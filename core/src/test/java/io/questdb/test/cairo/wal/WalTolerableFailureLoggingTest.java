@@ -82,13 +82,15 @@ public class WalTolerableFailureLoggingTest extends AbstractCairoTest {
 
                 Assert.assertEquals("the tolerated command still advances the apply watermark",
                         seqTxn, writer.getSeqTxn());
-                assertEventually(() ->
-                    capture.assertLoggedRE("tolerated WAL command failure \\[table=.*wal_log.*"
-                            + "seqTxn=" + seqTxn
-                            + ", command=ALTER TABLE"
-                            + ", error=injected tolerable alter failure"
-                            + ", errno=" + CairoException.PARTITION_MANIPULATION_RECOVERABLE
-                            + "\\]"), 2);
+                assertEventually(
+                        () -> capture.assertLoggedRE("tolerated WAL command failure \\[table=.*wal_log.*"
+                                + "seqTxn=" + seqTxn
+                                + ", command=ALTER TABLE"
+                                + ", error=injected tolerable alter failure"
+                                + ", errno=" + CairoException.PARTITION_MANIPULATION_RECOVERABLE
+                                + "\\]"),
+                        2
+                );
             }
         });
     }

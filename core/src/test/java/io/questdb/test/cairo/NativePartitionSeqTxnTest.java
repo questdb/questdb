@@ -1052,6 +1052,31 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalAppendStampIsVisibleToOpenReader() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1)");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("t")) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals(1L, tx.getSeqTxn());
+                Assert.assertEquals(1L, tx.getNativePartitionSeqTxn(0));
+
+                execute("INSERT INTO t VALUES ('2024-01-01T01:00:00', 2)");
+                drainWalQueue();
+
+                Assert.assertTrue("open reader must observe the second WAL apply", reader.reload());
+                Assert.assertEquals("the serial drain fully commits its only WAL transaction",
+                        0L, tx.getLagRowCount());
+                Assert.assertEquals(2L, tx.getSeqTxn());
+                Assert.assertEquals("active-partition stamp must reload with the committed seqTxn",
+                        tx.getSeqTxn(), tx.getNativePartitionSeqTxn(0));
+            }
+        });
+    }
+
+    @Test
     public void testWalBlockStampsFirstPartitionWithBlockFinalSeqTxn() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 2);
         assertMemoryLeak(() -> {
