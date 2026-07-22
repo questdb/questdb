@@ -200,58 +200,6 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testRestoreRejectsShortCheckpointMissingFunctionBlock() throws Exception {
-        // A CRC-valid-but-SHORT head checkpoint - a truncated tail, or a format drift
-        // that adds a snapshot-capable function this .cp never emitted - leaves a window
-        // function un-restored. The file-level CRC does not catch it (the block walk just
-        // ends early). restoreFromHead must reject such a checkpoint as structural
-        // corruption and head-miss-replay from a known-good boundary; otherwise it would
-        // resume incremental refresh from an EMPTY accumulator baseline, and the running
-        // sum would restart from 0 instead of continuing batch 1's total - a durable
-        // divergence. The writer hook forges the short .cp by omitting the function block.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
-                "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running FROM base";
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
-
-            // Batch 1: refresh + flush so a head .cp is written - but forge it SHORT
-            // (no FUNCTION_SNAPSHOT block) via the writer hook.
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                job.setCheckpointTrailingFunctionSnapshotBlocksToOmit(1);
-                execute("INSERT INTO base (ts, sym, x) VALUES " +
-                        "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
-                        "('2026-01-01T00:00:02.000000Z', 'a', 2.0)");
-                driveRefreshToQuiescence(job);
-                assertViewMatchesRecompute(viewSql);
-            }
-            drainWalQueue();
-
-            // Restart onto the on-disk directory: drop the in-memory instance and reload.
-            engine.getLiveViewRegistry().clear();
-            engine.buildViewGraphs();
-
-            // Batch 2 after the restart. The restore runs on the first refresh; it must
-            // reject the short head .cp and rebuild, so the running sum continues from
-            // batch 1's total (a: 1+2+4 = 7) rather than restarting from 0 (a: 4).
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-01T00:00:03.000000Z', 'a', 4.0)");
-                driveRefreshToQuiescence(job);
-            }
-            drainWalQueue();
-
-            assertViewMatchesRecompute(viewSql);
-            assertQuery("SELECT ts, sym, x, running FROM lv ORDER BY ts")
-                    .noLeakCheck().timestamp("ts").expectSize()
-                    .returns("ts\tsym\tx\trunning\n" +
-                            "2026-01-01T00:00:01.000000Z\ta\t1.0\t1.0\n" +
-                            "2026-01-01T00:00:02.000000Z\ta\t2.0\t3.0\n" +
-                            "2026-01-01T00:00:03.000000Z\ta\t4.0\t7.0\n");
-        });
-    }
-
-    @Test
     public void testSnapshotExcludesTimelineAndRestoreRebuildsDerivedState() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
@@ -374,20 +322,18 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
     @Test
     public void testCheckpointMidSeedReSweepsAfterRestore() throws Exception {
-        // A checkpoint taken mid-SEED, then a restore, must not trust a rolling .scp that got
-        // AHEAD of the checkpoint. After CHECKPOINT CREATE returns, the (unfrozen) sweep keeps
-        // advancing: its LV table and its rolling <off>.scp both move past the checkpoint. Restore
-        // rolls the LV's _txn / partitions / _lv.s back to the checkpoint (R_cp rows on disk) but never
-        // restores _checkpoints/, so the live-ahead .scp (lvRowsTotal = R_bcp > R_cp) survives and
-        // sweepSeedCheckpoints re-selects it as the resume source. Resuming from it would jump the
-        // data cursor past the base rows that produced R_cp..R_bcp while lvRowsTotal starts at R_bcp - a
-        // permanent silent gap over [R_cp, R_bcp). The resume must instead reject the ahead .scp and
-        // re-sweep from 0, converging to the recompute over the restored base. CHECKPOINT_ROWS=1 forces
-        // a .scp every swept row so the ahead window is hit deterministically after a single turn.
+        // A checkpoint taken mid-SEED, then a restore, must not leave the sweep resuming from a
+        // timeline that got AHEAD of the checkpoint. After CHECKPOINT CREATE returns, the (unfrozen)
+        // sweep keeps advancing: its LV table and its seed boundaries both move past the checkpoint.
+        // Restore rolls the LV's _txn / partitions / _lv.s back to the checkpoint (R_cp rows on
+        // disk); a surviving generation whose newest root sits at R_bcp > R_cp would jump the data
+        // cursor past the base rows that produced R_cp..R_bcp while lvRowsTotal starts at R_bcp - a
+        // permanent silent gap over [R_cp, R_bcp).
         //
-        // Pre-fix the resume trusts the ahead .scp and the view converges to fewer than 6 rows with the
-        // window state gapped; the recompute oracle and the row-count assertion both fail. Post-fix it
-        // converges to the full 6 rows.
+        // Restore closes that by clearing the derived timeline outright, so the resumed sweep finds
+        // no resume point and re-runs from offset 0 behind its skip-write floor, converging to the
+        // recompute over the restored base. CHECKPOINT_ROWS=1 seals a boundary every swept row so
+        // the ahead window is reached deterministically after a single turn.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
                 "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
@@ -403,10 +349,11 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
             drainWalQueue();
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
 
-            final long bcpKeyAtCheckpoint;
+            final long seedOffsetAtCheckpoint;
+            final TableToken lvToken = engine.verifyTableName("lv");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // One seed turn: exactly one row lands on disk (R_cp = 1) and a rolling .scp is
-                // written. The view stays SEEDING.
+                // One seed turn: exactly one row lands on disk (R_cp = 1) and a seed boundary is
+                // sealed. The view stays SEEDING.
                 job.run();
                 drainWalQueue();
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -416,15 +363,15 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                         LiveViewState.SEED_STATE_SEEDING,
                         instance.getStateReader().getSeedState()
                 );
-                bcpKeyAtCheckpoint = instance.getHeadSeedCpKey();
-                Assert.assertNotEquals("a .scp must have been written before the checkpoint",
-                        Numbers.LONG_NULL, bcpKeyAtCheckpoint);
+                seedOffsetAtCheckpoint = instance.getSeedCheckpointDataOffset();
+                Assert.assertNotEquals("a seed boundary must have been sealed before the checkpoint",
+                        Numbers.LONG_NULL, seedOffsetAtCheckpoint);
 
                 execute("CHECKPOINT CREATE");
 
                 // The view is unfrozen now: advance the sweep past the checkpoint so the LV table and
-                // the rolling .scp both move ahead (R_bcp > R_cp), while staying SEEDING (not every
-                // base row is swept yet, so completion does not retire the .scp).
+                // the seed boundaries both move ahead (R_bcp > R_cp), while staying SEEDING (not
+                // every base row is swept yet, so completion does not retire the timeline).
                 for (int i = 0; i < 3; i++) {
                     job.run();
                     drainWalQueue();
@@ -432,20 +379,21 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(instance);
                 Assert.assertEquals(
-                        "the sweep must still be SEEDING (the ahead .scp must not be retired by completion)",
+                        "the sweep must still be SEEDING (the ahead timeline must not be retired by completion)",
                         LiveViewState.SEED_STATE_SEEDING,
                         instance.getStateReader().getSeedState()
                 );
                 Assert.assertTrue(
-                        "the rolling .scp must have advanced past the checkpoint",
-                        instance.getHeadSeedCpKey() > bcpKeyAtCheckpoint
+                        "the seed cursor must have advanced past the checkpoint",
+                        instance.getSeedCheckpointDataOffset() > seedOffsetAtCheckpoint
                 );
             }
 
             restoreFromCheckpoint();
             drainWalQueue();
+            assertCheckpointStateCleared(lvToken);
 
-            // Resume the sweep: the ahead .scp is rejected, the sweep re-runs from offset 0, and the
+            // Resume the sweep: with no timeline to resume from, it re-runs from offset 0 and the
             // view converges to the full recompute over the restored base.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");

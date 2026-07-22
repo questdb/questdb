@@ -34,6 +34,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -138,6 +139,45 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
             return restorePinned(pin, maxTimestamp, checkpointId, expectedDefinitionTxn, functions, anchorWindow);
+        }
+    }
+
+    /**
+     * Restores the newest logical root the current generation holds, with no
+     * durable-materialization compatibility check.
+     * <p>
+     * This is the seed sweep's resume: mid-sweep the live view is still SEEDING
+     * on disk, so there is no reconciled frontier to select against - the sweep
+     * resumes from wherever the newest root left the cursor, and the caller
+     * cross-checks that root's row position against the live-view table itself.
+     * The restored {@link Result#seedCursorOffset} is
+     * {@link Numbers#LONG_NULL} when a steady seal or a repair published this
+     * generation, which tells the caller the newest root is not a resume point.
+     */
+    public Result restoreLatest(
+            long expectedDefinitionTxn,
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow
+    ) {
+        ensureOpen();
+        try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
+            final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
+            if (superblock.definitionTxn != expectedDefinitionTxn) {
+                throw invalid("definition identity mismatch [stored=").put(superblock.definitionTxn)
+                        .put(", expected=").put(expectedDefinitionTxn).put(']');
+            }
+            final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
+            if (!timelineReader.last(pin.getTimelineRootRef(), entry)) {
+                throw invalid("holds no logical root");
+            }
+            return restorePinned(
+                    pin,
+                    entry.maxTimestamp,
+                    entry.checkpointId,
+                    expectedDefinitionTxn,
+                    functions,
+                    anchorWindow
+            );
         }
     }
 
@@ -359,7 +399,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 entry.maxTimestamp,
                 entry.checkpointId,
                 effectiveLvRowPosition,
-                entry.logicalStateBytes
+                entry.logicalStateBytes,
+                metaStore.getSuperblock().seedCursorOffset
         );
     }
 
@@ -561,6 +602,12 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         public final long logicalStateBytes;
         public final long maxTimestamp;
         public final long normalizedBaseSeqTxn;
+        /**
+         * The seed sweep's base-cursor row offset this generation was published
+         * at, or {@link Numbers#LONG_NULL} when a steady seal or a repair
+         * published it. See {@link LiveViewCheckpointSuperblock#seedCursorOffset}.
+         */
+        public final long seedCursorOffset;
 
         private Result(
                 long generation,
@@ -570,7 +617,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 long maxTimestamp,
                 long checkpointId,
                 long effectiveLvRowPosition,
-                long logicalStateBytes
+                long logicalStateBytes,
+                long seedCursorOffset
         ) {
             this.generation = generation;
             this.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
@@ -580,6 +628,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             this.checkpointId = checkpointId;
             this.effectiveLvRowPosition = effectiveLvRowPosition;
             this.logicalStateBytes = logicalStateBytes;
+            this.seedCursorOffset = seedCursorOffset;
         }
     }
 }

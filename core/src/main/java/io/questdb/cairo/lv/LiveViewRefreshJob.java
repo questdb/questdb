@@ -46,7 +46,6 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.RepairPublicationStage;
 import io.questdb.cairo.map.Map;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -96,6 +95,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -185,25 +185,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // feed the compiled copier when materialising the un-flushed lead into the LV
     // WAL. Reused across rows; rebound via of() before each copy.
     private final LiveViewBufferRecord bufferRecord = new LiveViewBufferRecord();
-    // Reusable manifest bean for the head-checkpoint write hook and the
-    // restore path. Mutated only on the refresh-worker thread between clear()
-    // and use.
-    private final LiveViewCheckpointManifest checkpointManifest = new LiveViewCheckpointManifest();
-    // Per-worker reusable seed-checkpoint reader. Lazily allocated on the first
-    // LV with a .scp to resume from; reused for subsequent LVs by re-opening on a
-    // different file.
-    private LiveViewCheckpointReader checkpointReader;
-    // Test-only: number of trailing FUNCTION_SNAPSHOT blocks the seed-checkpoint
-    // writer omits, forging a CRC-valid-but-short checkpoint so a test can drive
-    // the missing-block validation (and, when only the last of several is omitted,
-    // the partial-restore re-clear on the seed re-sweep). 0 in production.
-    @TestOnly
-    private volatile int checkpointTrailingFunctionSnapshotBlocksToOmit;
-    // Per-worker reusable seed-checkpoint writer. Lazily allocated on the first
-    // seed turn that triggers a .scp write; reused across turns via of() /
-    // commit(). Memory pages stay mmapped between writes so a frequently
-    // checkpointed sweep does not pay reopen cost. Freed at job close.
-    private LiveViewCheckpointWriter checkpointWriter;
     // Publisher for versioned-timeline roots: the in-order cadence append and the
     // out-of-order range splice. Lazily allocated on this worker's first seal.
     private LiveViewCheckpointTimelineStoreWriter checkpointTimelineStoreWriter;
@@ -242,16 +223,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Reusable counter for the skip a resumed localized repair takes over the rows of
     // its resume group that a prior turn already folded.
     private final RecordCursor.Counter repairSkipCounter = new RecordCursor.Counter();
-    // Positional cursor into windowFactory.getWindowFunctions() while a single
-    // seed-checkpoint restore walks the .scp's FUNCTION_SNAPSHOT blocks. The
-    // writer emits one block per snapshot-capable function in window-function
-    // order, so restore pairs the i-th block with the i-th snapshot-capable
-    // function. Reset to 0 before each block walk; advanced by
-    // restoreFunctionBlock. Per-worker; mutated only on the refresh-worker thread.
-    private int restoreFunctionCursor;
-    // Reusable holder for the values the seed-checkpoint restore reads out of a
-    // .scp. One instance per worker; mutated only on the refresh-worker thread
-    // between restore calls. Avoids a per-call allocation on the seed resume.
+    // Reusable holder for the values the seed resume reads out of the timeline's
+    // newest root. One instance per worker; mutated only on the refresh-worker
+    // thread between restore calls. Avoids a per-call allocation on the resume.
     private final RestoredSeedState restoredSeedState = new RestoredSeedState();
     // Per-key ROWS repair-bound discovery, and the adapter the repair plan calls it
     // through. One of each per worker: the discovery owns a native counter map it
@@ -384,8 +358,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(addressCache);
         Misc.free(memoryPool);
         Misc.free(applyJob);
-        checkpointReader = Misc.free(checkpointReader);
-        checkpointWriter = Misc.free(checkpointWriter);
         checkpointTimelineStoreWriter = Misc.free(checkpointTimelineStoreWriter);
         stagingBuffer = Misc.free(stagingBuffer);
         Misc.free(rowsBounds);
@@ -458,20 +430,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (checkpointTimelineStoreWriter != null) {
             checkpointTimelineStoreWriter.setTestFailureStage(stage);
         }
-    }
-
-    /**
-     * Test-only: makes the head- and seed-checkpoint writers omit the last
-     * {@code count} FUNCTION_SNAPSHOT blocks on subsequent writes, forging a
-     * CRC-valid-but-short checkpoint so a test can drive
-     * {@link #restoreFromSeedCheckpoint}'s
-     * missing-block validation. Omitting fewer than all blocks leaves earlier
-     * functions restored, exercising the seed re-sweep's partial-restore re-clear.
-     * Production never calls this.
-     */
-    @TestOnly
-    public void setCheckpointTrailingFunctionSnapshotBlocksToOmit(int count) {
-        this.checkpointTrailingFunctionSnapshotBlocksToOmit = count;
     }
 
     /**
@@ -694,12 +652,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * in progress, advancing the generation watermarks and the timeline WAL floor.
      * <p>
      * Runs for a forced seal too. A forced seal follows an O3 replay, which already
-     * retired the timeline through {@link #retireCheckpointTimelineOnO3}, so the
+     * retired the timeline through {@link #retireCheckpointTimeline}, so the
      * append opens a fresh history whose single root describes the post-replay
      * state. Skipping it - as this did while the timeline was write-only on the
      * in-order path - leaves every replay-driven view with no timeline at all, so a
      * restart has nothing to restore from but a full rebuild from the view's
      * {@code START FROM} boundary.
+     * <p>
+     * {@code seedCursorOffset} carries the seed sweep's base-cursor row offset
+     * when a mid-sweep cadence event drives the append, so a restart can resume
+     * the sweep from the root this publishes; a steady seal passes
+     * {@link Numbers#LONG_NULL}.
      *
      * @return the logical state byte size attributed to the appended root, which
      * the caller mirrors onto the head metadata
@@ -709,7 +672,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             ObjList<WindowFunction> functions,
             @Nullable LiveViewWindow anchorWindow,
             long baseSeqTxn,
-            long batchMaxTs
+            long batchMaxTs,
+            long seedCursorOffset
     ) {
         if (checkpointTimelineStoreWriter == null) {
             checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(engine.getConfiguration());
@@ -742,7 +706,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     0,
                     true,
                     batchMaxTs,
-                    instance.getLvRowsTotal()
+                    instance.getLvRowsTotal(),
+                    seedCursorOffset
             );
         } finally {
             roleLock.unlock();
@@ -1518,7 +1483,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // advanceTo + 1. testRefreshPersistFailureKeepsInMemoryAdvanced
             // pins this invariant. The remaining restart-edge-case where
             // _lv.s is stale on the next process boot is covered by the
-            // forward-scan recovery in LiveViewRecovery.
+            // forward-scan recovery of the consumed floor from the live-view WAL.
             instance.setLastProcessedSeqTxn(advanceTo);
             // This path applies every cycle, so appliedWatermark tracks
             // lastProcessed and the in-mem tier stays a subset of disk (no
@@ -2899,23 +2864,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * re-versions the roots in {@code [C, H)} and keeps the prefix and converged
      * suffix, which is the whole point of the timeline, so retiring them here
      * would throw away exactly what the splice is about to correct. Every other
-     * repair passes {@code true} - see {@link #retireCheckpointTimelineOnO3}.
+     * repair passes {@code true} - see {@link #retireCheckpointTimeline}.
      */
     private void retireCheckpointStateOnO3(LiveViewInstance instance, boolean retireTimeline) {
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
         if (retireTimeline) {
-            retireCheckpointTimelineOnO3(instance);
+            retireCheckpointTimeline(instance);
         }
     }
 
     /**
-     * Retires the whole checkpoint timeline when an out-of-order change invalidates
-     * the retained checkpoints. Invariant 2 requires every current root in a
-     * generation to be correct for one pinned base snapshot, and an O3 replay
-     * rewrites live-view output below roots that were sealed before it - so those
-     * roots no longer describe the materialization and must not survive into the
-     * next generation. Retiring is the coarse form of that guarantee, and a
-     * post-replay seal then starts a fresh history.
+     * Retires the whole checkpoint timeline: its superblock, metadata segments,
+     * data segments, and repair descriptors.
+     * <p>
+     * The out-of-order replay paths are the main callers. Invariant 2 requires
+     * every current root in a generation to be correct for one pinned base
+     * snapshot, and an O3 replay rewrites live-view output below roots that were
+     * sealed before it - so those roots no longer describe the materialization
+     * and must not survive into the next generation. Retiring is the coarse form
+     * of that guarantee, and a post-replay seal then starts a fresh history. The
+     * seed sweep calls it too, through
+     * {@link #retireSeedCheckpointTimeline(LiveViewInstance)}.
      * <p>
      * The precise form is the range splice
      * ({@link #publishCheckpointTimelineRepair}), which re-versions only the roots
@@ -2933,7 +2902,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * output, and a timeline left behind is re-reconciled (and re-retired) on the
      * next seal or restart rather than blocking the refresh.
      */
-    private void retireCheckpointTimelineOnO3(LiveViewInstance instance) {
+    private void retireCheckpointTimeline(LiveViewInstance instance) {
         if (engine.isReadOnlyMode()) {
             return;
         }
@@ -2948,7 +2917,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     true
             );
         } catch (Throwable t) {
-            LOG.error().$("could not retire live view checkpoint timeline after O3 [view=")
+            LOG.error().$("could not retire live view checkpoint timeline [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
         }
@@ -3206,7 +3175,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // functions lost snapshot support across a restart - capability is
             // computed on first use here, after the restore already selected a
             // root.
-            retireCheckpointTimelineOnO3(instance);
+            retireCheckpointTimeline(instance);
             LOG.critical().$("live view O3 replay skipped, snapshot capability is false [view=")
                     .$(viewName)
                     .$(", advanceTo=").$(advanceTo)
@@ -4521,7 +4490,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // corrected them, so the retire this repair displaced on its first
                     // turn has to happen after all: a timeline nothing corrects must not
                     // outlive the output it describes.
-                    retireCheckpointTimelineOnO3(instance);
+                    retireCheckpointTimeline(instance);
                 }
                 // Otherwise the candidate is discarded having changed nothing durable -
                 // a cancelled turn is the ordinary case - and the generation the capture
@@ -4717,7 +4686,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Either the splice could not publish, or it was never allowed to try
                 // because the replacement has not applied. The output the timeline's
                 // roots describe has moved either way, so it must not survive them.
-                retireCheckpointTimelineOnO3(instance);
+                retireCheckpointTimeline(instance);
             }
             Misc.free(timelineCapture);
             // The candidate is either published - its segments reachable from the new
@@ -4910,11 +4879,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * qualifies nothing and completes in its first turn.
      * <ul>
      *     <li>The first turn of a process resumes window state + the data-cursor
-     *     offset from the surviving {@code .scp} (restart mid-sweep), or starts
-     *     from offset 0 with empty state (fresh CREATE, or no usable {@code
-     *     .scp}). Later turns continue from the in-memory window state + offset
-     *     ({@code getIncrementalCursor} preserves accumulated state across
-     *     turns), so no per-turn restore is needed.</li>
+     *     offset from the checkpoint timeline's newest root (restart mid-sweep),
+     *     or starts from offset 0 with empty state (fresh CREATE, or no usable
+     *     timeline). Later turns continue from the in-memory window state +
+     *     offset ({@code getIncrementalCursor} preserves accumulated state
+     *     across turns), so no per-turn restore is needed.</li>
      *     <li>The first turn pins ONE MVCC base snapshot (an
      *     {@link LiveViewInstance#getSeedBaseReader() instance-held reader}) at
      *     {@code sweepSeqTxn >= seedTargetSeqTxn} and every turn reads that same
@@ -4922,18 +4891,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     positional {@code skipRows()} resume unsound under concurrent out-of-order
      *     base commits (they reorder physical rows below the swept prefix). Each turn
      *     {@code skipRows()} past already-swept rows, feeds up to a row/duration
-     *     budget, commits the batch, applies it, and writes a {@code .scp} on the
+     *     budget, commits the batch, applies it, and seals a boundary on the
      *     checkpoint cadence.</li>
-     *     <li>On cursor exhaustion the turn flips {@code seedState} to ACTIVE,
-     *     seals a steady boundary from the now-complete state, releases the
-     *     pinned snapshot, and retires the {@code .scp}; the next tick begins the
-     *     deferred drain from {@code sweepSeqTxn + 1}, where the ACTIVE phase's O3
-     *     detection materialises anything the base committed after the snapshot.</li>
+     *     <li>On cursor exhaustion the turn retires the sweep's own boundaries,
+     *     seals one steady boundary from the now-complete state, flips
+     *     {@code seedState} to ACTIVE and releases the pinned snapshot; the next
+     *     tick begins the deferred drain from {@code sweepSeqTxn + 1}, where the
+     *     ACTIVE phase's O3 detection materialises anything the base committed
+     *     after the snapshot.</li>
      * </ul>
      * Crash idempotency: the on-disk output is a deterministic prefix of the
-     * eventual result, so a re-feed past the last {@code .scp} recomputes rows
-     * already on disk to advance state but skips their WAL append
-     * ({@code skipWriteUntil}). A crash before any {@code .scp} re-sweeps from
+     * eventual result, so a re-feed past the last sealed boundary recomputes
+     * rows already on disk to advance state but skips their WAL append
+     * ({@code skipWriteUntil}). A crash before any boundary re-sweeps from
      * offset 0 and skip-writes the entire stale prefix. The resume applies any
      * committed-but-unapplied block first, so that prefix - and the floor read
      * off it - covers every block the sweep has already committed.
@@ -5005,63 +4975,65 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             // Always start from a clean slate; restore (if any) repopulates on top.
             clearWindowState(windowFactory, anchorWindow);
-            final long scpKey = instance.getHeadSeedCpKey();
             boolean restored = false;
-            if (scpKey != Numbers.LONG_NULL
-                    && restoreFromSeedCheckpoint(instance, windowFactory, scpKey, restoredSeedState)
-                    && restoredSeedState.resumeDataOffset != Numbers.LONG_NULL) {
-                // A surviving .scp can be AHEAD of the on-disk LV output. A checkpoint
-                // restore no longer produces one - TableSnapshotRestore wipes the live
-                // _checkpoints/ dir and lays the snapshot's back down, so the restored
-                // .scp matches the rolled-back _txn/partitions/_lv.s - but a backup that
-                // omits the dir, or a crash between the .scp write and the LV commit,
-                // still can: the live-ahead .scp (lvRowsTotal = R_bcp) outlives the disk
-                // it describes (onDiskLvRows = R_cp < R_bcp). Resuming from it would jump
-                // the data cursor past the base rows that produced R_cp..R_bcp while
-                // lvRowsTotal starts at R_bcp, so those LV output rows would be neither on
-                // disk nor re-swept - a permanent silent gap. Reject the ahead .scp and
-                // fall through to the from-0 re-sweep below, where the skip-write floor
-                // keeps the R_cp on-disk prefix and re-emits everything above it.
+            if (restoreSeedFromTimeline(instance, windowFactory, restoredSeedState)) {
+                // A surviving seed root can be AHEAD of the on-disk LV output. A
+                // checkpoint restore no longer produces one - TableSnapshotRestore wipes
+                // the live _checkpoints/ dir and lays the snapshot's back down, so the
+                // restored timeline matches the rolled-back _txn/partitions/_lv.s - but a
+                // backup that omits the dir, or a crash between the seal and the LV
+                // commit, still can: the live-ahead root (lvRowsTotal = R_bcp) outlives
+                // the disk it describes (onDiskLvRows = R_cp < R_bcp). Resuming from it
+                // would jump the data cursor past the base rows that produced
+                // R_cp..R_bcp while lvRowsTotal starts at R_bcp, so those LV output rows
+                // would be neither on disk nor re-swept - a permanent silent gap. Reject
+                // the ahead root and fall through to the from-0 re-sweep below, where the
+                // skip-write floor keeps the R_cp on-disk prefix and re-emits everything
+                // above it.
                 if (restoredSeedState.lvRowsTotal <= onDiskLvRows) {
                     instance.setSeedDataOffset(restoredSeedState.resumeDataOffset);
                     instance.setLvRowsTotal(restoredSeedState.lvRowsTotal);
                     if (restoredSeedState.maxTimestamp != Numbers.LONG_NULL) {
                         instance.setLatestSeenTs(restoredSeedState.maxTimestamp);
                     }
+                    instance.recordSeedCheckpointWritten(
+                            restoredSeedState.resumeDataOffset,
+                            restoredSeedState.maxTimestamp,
+                            Numbers.LONG_NULL
+                    );
                     restored = true;
                 } else {
-                    // restoreFromSeedCheckpoint already wrote the ahead window state into
-                    // the functions; wipe it back to identity for the from-0
-                    // re-sweep, and unlink the ahead .scp so a later restart's
-                    // highest-key sweepSeedCheckpoints does not re-select it
-                    // (its data-offset key is larger than the re-sweep's fresh
-                    // .scp keys). unlinkSeedCheckpoint also clears the
-                    // in-memory head key.
+                    // restoreSeedFromTimeline already wrote the ahead window state into
+                    // the functions; wipe it back to identity for the from-0 re-sweep.
+                    // The retire below takes the ahead root with it, so the re-sweep's
+                    // own boundaries do not have to climb past its maxTimestamp.
                     clearWindowState(windowFactory, anchorWindow);
-                    unlinkSeedCheckpoint(instance);
                     LOG.info().$("live view discarding seed checkpoint ahead of restored on-disk output [view=")
-                            .$(viewName).$(", scpLvRows=").$(restoredSeedState.lvRowsTotal)
+                            .$(viewName).$(", checkpointLvRows=").$(restoredSeedState.lvRowsTotal)
                             .$(", onDiskLvRows=").$(onDiskLvRows).I$();
                 }
             }
             if (!restored) {
-                // Fresh CREATE, no .scp, corrupt .scp, or a .scp rejected as
-                // ahead of the restored disk: re-sweep from offset 0 with empty
-                // state. The on-disk prefix (if any) is a deterministic match,
-                // kept via skip-write below.
+                // Fresh CREATE, no timeline, an unreadable one, one holding no seed
+                // resume point, or one rejected as ahead of the restored disk: re-sweep
+                // from offset 0 with empty state. The on-disk prefix (if any) is a
+                // deterministic match, kept via skip-write below.
                 //
-                // Re-clear the window state unconditionally: a seed restore that
-                // threw partway (e.g. a short .scp missing a trailing FUNCTION_SNAPSHOT
-                // block) has already written the anchor + some functions into the live
-                // window before failing, and getIncrementalCursor keeps accumulator
-                // state across the re-sweep, so feeding that half-restored state into a
-                // from-0 sweep would double-count. The ahead-rejection branch above
-                // already re-clears; this covers the throw path. Cheap and idempotent
-                // for the fresh / no-.scp cases (nothing was restored).
+                // Re-clear the window state unconditionally: a seed restore that threw
+                // partway has already written the anchor + some functions into the live
+                // window before failing, and getIncrementalCursor keeps accumulator state
+                // across the re-sweep, so feeding that half-restored state into a from-0
+                // sweep would double-count. The ahead-rejection branch above already
+                // re-clears; this covers the throw path. Cheap and idempotent for the
+                // fresh / no-timeline cases (nothing was restored).
                 clearWindowState(windowFactory, anchorWindow);
+                // Retire whatever the timeline holds. Every root in it describes a
+                // sweep prefix this re-sweep is about to recompute from scratch, and
+                // the append refuses a boundary at or below the current head, so
+                // leaving them would silently starve the re-sweep of resume points.
+                retireSeedCheckpointTimeline(instance);
                 instance.setSeedDataOffset(0);
                 instance.setLvRowsTotal(0);
-                instance.setHeadSeedCpKey(Numbers.LONG_NULL);
             }
             // On-disk output is append-only (>= the restored row count), so the
             // skip-write floor is simply the on-disk row count: rows re-fed
@@ -5241,11 +5213,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // present) the applied-base re-derive does not trigger, so the view drains
         // forward from cold accumulators and durably commits wrong cumulative
         // results. Sealing first makes every crash window degrade safely - before
-        // the _lv.s persist the view is still SEEDING on disk and simply resumes the
-        // sweep from its .scp, and the orphan generation the crash left is one a
-        // later seal supersedes; after it, the boundary is already there.
+        // the _lv.s persist the view is still SEEDING on disk and simply re-sweeps
+        // from offset zero over the deterministic prefix already on disk; after it,
+        // the boundary is already there.
         instance.setLastProcessedSeqTxn(sweepSeqTxn);
         instance.setAppliedWatermark(sweepSeqTxn);
+        // Retire the sweep's own boundaries first. They resume a cursor, not a
+        // forward replay, so none of them may outlive the sweep as an O3 anchor;
+        // the seal below replaces the lot with one boundary over the finished
+        // state. A crash in between leaves a SEEDING view with no timeline, which
+        // re-sweeps from offset zero - the same disposition a crash before the
+        // first cadence event already had.
+        retireSeedCheckpointTimeline(instance);
         // Only when the seed actually emitted a row. A seed that qualified none - the normal
         // outcome for START FROM NOW over a base of past data, and for any boundary in the
         // future - has nothing to anchor a head on: latestSeenTs is only stamped per emitted
@@ -5270,8 +5249,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // so no concurrent turn is reading from it.
         instance.freeSeedBaseReader();
         try {
-            // Persists seedState=ACTIVE + watermarks durably before the .scp
-            // is retired, so a crash between the two recovers as ACTIVE.
+            // Persists seedState=ACTIVE + watermarks durably, over a timeline that
+            // already holds the finished boundary alone.
             engine.advanceLiveViewConsumedSeqTxn(
                     instance.getLiveViewToken(),
                     sweepSeqTxn,
@@ -5285,7 +5264,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", error=").$safe(e.getFlyweightMessage()).I$();
             persistState(instance);
         }
-        unlinkSeedCheckpoint(instance);
         LOG.info().$("live view seed sweep completed [view=")
                 .$(viewName)
                 .$(", seedTargetSeqTxn=").$(seedTargetSeqTxn)
@@ -5294,24 +5272,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Retires the rolling seed checkpoint {@code <key>.scp} (best-effort)
-     * and clears {@code headSeedCpKey}. Called after the SEEDING ->
-     * ACTIVE flip is durable. Leftovers from a crash in the tiny window before
-     * this runs are swept at the next startup by {@code sweepSeedCheckpoints}
-     * (the view is no longer SEEDING then).
+     * Retires the boundaries a seed sweep sealed and clears the in-memory seed
+     * cadence markers. Called when the sweep completes, and whenever a resume is
+     * abandoned for a re-sweep from offset zero.
+     * <p>
+     * A sweep turn ends wherever its row/duration budget runs out, which can cut
+     * a timestamp tie in half: the root it seals then holds state for only part
+     * of the rows at its {@code maxTimestamp}. That is sound for the sweep's own
+     * positional resume, which continues from the cursor offset rather than from
+     * the boundary timestamp, but it is not a boundary an O3 repair may anchor a
+     * forward replay at. The sweep's roots therefore do not outlive it: the
+     * completion path retires them and seals one steady boundary over the
+     * finished state, and the ACTIVE view starts from that alone.
      */
-    private void unlinkSeedCheckpoint(LiveViewInstance instance) {
-        final long scpKey = instance.getHeadSeedCpKey();
-        if (scpKey == Numbers.LONG_NULL) {
-            return;
-        }
-        path.of(engine.getConfiguration().getDbRoot())
-                .concat(instance.getLiveViewToken())
-                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
-                .slash();
-        LiveViewCheckpointWriter.appendScpFileName(path, scpKey);
-        engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
-        instance.setHeadSeedCpKey(Numbers.LONG_NULL);
+    private void retireSeedCheckpointTimeline(LiveViewInstance instance) {
+        retireCheckpointTimeline(instance);
+        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        instance.clearSeedCheckpoint();
     }
 
     /**
@@ -5564,7 +5541,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // diagnostic, so a transient 0 there costs nothing.
             long stateBytes = 0L;
             if (appendTimelineRoot) {
-                stateBytes = appendCheckpointTimelineRoot(instance, functions, anchorWindow, baseSeqTxn, batchMaxTs);
+                stateBytes = appendCheckpointTimelineRoot(
+                        instance,
+                        functions,
+                        anchorWindow,
+                        baseSeqTxn,
+                        batchMaxTs,
+                        Numbers.LONG_NULL
+                );
             }
             // Advance the head only after the generation carrying this root is
             // durable. WalPurgeJob min-combines getHeadCheckpointBaseSeqTxn(), so
@@ -5749,123 +5733,69 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Opens the seed checkpoint {@code <scpKey>.scp} and rehydrates the LV's
-     * mid-sweep window state (anchor map + per-function maps) from the manifest +
-     * anchor block + per-function blocks, surfacing the SEED_CURSOR's data offset
-     * in {@code out.resumeDataOffset} alongside the manifest's
-     * {@code maxTimestamp} and lifetime row position.
+     * Restores the newest logical root the timeline holds and rehydrates the
+     * LV's mid-sweep window state (anchor map + per-function maps) from it,
+     * surfacing the generation's seed cursor in {@code out.resumeDataOffset}
+     * alongside the root's {@code maxTimestamp} and lifetime row position.
+     * <p>
+     * A view with no valid generation - a fresh CREATE, or one whose timeline an
+     * earlier turn retired - is an ordinary miss, not a failure: it returns
+     * {@code false} without touching the runtime, and the caller sweeps from
+     * offset zero. So is a generation whose seed cursor is
+     * {@link Numbers#LONG_NULL}, which a steady seal or a repair published rather
+     * than a mid-sweep cadence event, and whose newest root therefore names no
+     * cursor position to resume from.
      * <p>
      * The caller decides what to do with the restored coordinates; this helper
      * restricts itself to state restore + failure cleanup.
      * <p>
-     * Failure handling: any structural error (CRC fail, magic mismatch, missing
-     * function class, anchor type mismatch) is best-effort cleaned up in
-     * {@link #handleCorruptSeedCheckpoint} - it logs critical, unlinks the corrupt
-     * {@code .scp} and returns {@code false}. The LV is not invalidated; the
-     * caller re-sweeps from the beginning.
+     * Failure handling: any structural error (page checksum, missing function,
+     * anchor shape mismatch) is best-effort cleaned up in
+     * {@link #handleCorruptSeedTimeline} - it logs critical, retires the
+     * unreadable timeline and returns {@code false}. The LV is not invalidated;
+     * the caller re-sweeps from the beginning.
      */
-    private boolean restoreFromSeedCheckpoint(
+    private boolean restoreSeedFromTimeline(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
-            long scpKey,
             RestoredSeedState out
     ) {
         out.reset();
-        path.of(engine.getConfiguration().getDbRoot())
-                .concat(instance.getLiveViewToken())
-                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
-                .slash();
-        LiveViewCheckpointWriter.appendScpFileName(path, scpKey);
-
-        if (checkpointReader == null) {
-            checkpointReader = new LiveViewCheckpointReader(engine.getConfiguration());
-        }
-
-        try {
-            checkpointReader.of(path.$());
-            checkpointReader.readManifestInto(checkpointManifest);
-            out.manifestBaseSeqTxn = checkpointManifest.getBaseSeqTxn();
-            out.maxTimestamp = checkpointManifest.getMaxTimestamp();
-            out.lvRowsTotal = checkpointManifest.getLvRowPosition();
-            out.stateBytes = engine.getConfiguration().getFilesFacade().length(path.$());
-
-            final LiveViewWindow anchorWindow = instance.getAnchorWindow();
-            final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+        try (
+                Path checkpointsDir = new Path();
+                LiveViewCheckpointTimelineStoreReader reader =
+                        new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration())
+        ) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            if (!hasValidCheckpointGeneration(checkpointsDir)) {
+                // The common case on the sweep's very first turn. Separated from the
+                // open below so it reads as a miss rather than as the corruption the
+                // reader raises when it is asked to restore from nothing.
+                return false;
+            }
+            reader.of(checkpointsDir);
             // Open the (lazy) window cursor before writing restored state into it:
             // allocates the per-partition maps and marks the cursor open so the
             // first post-restore incremental refresh preserves the restored state
             // rather than re-bootstrapping (which would clobber it).
             windowFactory.openForLiveViewRestore(executionContext);
-            final LiveViewCheckpointReader.BlockCursor cursor = checkpointReader.getCursor();
-            // Restart the positional pairing for this checkpoint's function blocks.
-            restoreFunctionCursor = 0;
-            // The MANIFEST is the first block; skip it - readManifestInto
-            // already consumed it conceptually but resets the cursor.
-            // Walk forward and dispatch by type.
-            cursor.hasNext();
-            cursor.next();
-            boolean anchorRestored = false;
-            while (cursor.hasNext()) {
-                final LiveViewCheckpointReader.ReadableBlock block = cursor.next();
-                switch (block.type()) {
-                    case LiveViewCheckpointBlockType.BLOCK_SEED_CURSOR:
-                        // Two LONGs: data-cursor row offset, then lvRowsTotal.
-                        // lvRowsTotal is redundant with the manifest's
-                        // lvRowPosition (already in out.lvRowsTotal); we read
-                        // only the offset here.
-                        out.resumeDataOffset = block.getLong(0L);
-                        break;
-                    case LiveViewCheckpointBlockType.BLOCK_WINDOW_ANCHOR:
-                        if (anchorWindow == null) {
-                            throw CairoException.critical(0)
-                                    .put("checkpoint anchor block but LV has no anchored window");
-                        }
-                        anchorWindow.restore(block.memory(), block.payloadStart(), block.size());
-                        anchorRestored = true;
-                        break;
-                    case LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT:
-                        restoreFunctionBlock(block, functions);
-                        break;
-                    case LiveViewCheckpointBlockType.BLOCK_MANIFEST:
-                        // Re-encountering manifest mid-file is malformed.
-                        throw CairoException.critical(0)
-                                .put("duplicate MANIFEST block in live view checkpoint");
-                    default:
-                        // Unknown block type: per the file-format contract
-                        // (block types are content-defined, new types do not
-                        // require a file-version bump), readers skip silently.
-                        break;
-                }
+            final LiveViewCheckpointTimelineStoreReader.Result restored = reader.restoreLatest(
+                    instance.getLiveViewToken().getTableId(),
+                    windowFactory.getWindowFunctions(),
+                    instance.getAnchorWindow()
+            );
+            if (restored.seedCursorOffset == Numbers.LONG_NULL) {
+                LOG.info().$("live view timeline holds no seed resume point [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", generation=").$(restored.generation).I$();
+                return false;
             }
-            // Missing-block validation. The file-level CRC guards against bit-rot
-            // but NOT against a CRC-valid-but-short checkpoint: a truncated tail,
-            // or a format drift that adds a snapshot-capable function this .scp's
-            // writer never emitted, simply ends the block walk early. Without this
-            // check the restore would return success with a function (or the
-            // anchor) left in default state, and the resumed sweep would carry on
-            // from that wrong baseline, durably diverging. restoreFunctionBlock
-            // already throws on the extra-block direction; catch the missing-block
-            // direction here. Errno 0 => handleCorruptSeedCheckpoint unlinks the
-            // .scp and the sweep restarts from a known-good boundary.
-            if (out.resumeDataOffset == Numbers.LONG_NULL) {
-                throw CairoException.critical(0)
-                        .put("live view seed checkpoint missing its SEED_CURSOR block");
-            }
-            if (anchorWindow != null && !anchorRestored) {
-                throw CairoException.critical(0)
-                        .put("live view checkpoint missing its WINDOW_ANCHOR block");
-            }
-            for (int i = restoreFunctionCursor, n = functions.size(); i < n; i++) {
-                final WindowFunction unmatched = functions.getQuick(i);
-                if (unmatched.supportsCheckpointState()) {
-                    throw CairoException.critical(0)
-                            .put("fewer live view function snapshot blocks than snapshot-capable functions [firstMissingPosition=")
-                            .put(i)
-                            .put(", factory=")
-                            .put(snapshotFactoryName(unmatched))
-                            .put(']');
-                }
-            }
+            out.resumeDataOffset = restored.seedCursorOffset;
+            out.maxTimestamp = restored.maxTimestamp;
+            out.lvRowsTotal = restored.effectiveLvRowPosition;
+            out.stateBytes = restored.logicalStateBytes;
             return true;
         } catch (CairoException ce) {
             final int errno = ce.getErrno();
@@ -5880,52 +5810,49 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // the worker still holds the refresh latch).
                 LOG.critical().$("live view seed checkpoint version mismatch [view=")
                         .$(instance.getDefinition().getViewName())
-                        .$(", scpKey=").$(scpKey)
                         .$(", error=").$safe(ce.getFlyweightMessage()).I$();
                 instance.setPendingInvalidationReason(Chars.toString(ce.getFlyweightMessage()));
                 return false;
             }
-            return handleCorruptSeedCheckpoint(instance, scpKey, path, ce);
+            return handleCorruptSeedTimeline(instance, ce);
         } catch (Throwable t) {
-            return handleCorruptSeedCheckpoint(instance, scpKey, path, t);
-        } finally {
-            try {
-                checkpointReader.close();
-            } catch (Throwable closeErr) {
-                LOG.error().$("could not close live view checkpoint reader [view=")
-                        .$(instance.getLiveViewToken())
-                        .$(", error=").$(closeErr).I$();
-            }
+            return handleCorruptSeedTimeline(instance, t);
         }
     }
 
     /**
-     * Best-effort cleanup after a seed-checkpoint restore fails on structural
-     * corruption (CRC / magic / truncation / missing function class / anchor type
-     * mismatch - all errno 0, distinct from a version mismatch, which
-     * {@link #restoreFromSeedCheckpoint} handles separately by stashing a pending
-     * invalidation reason). Unlinks the corrupt {@code .scp} so the next sweep turn
-     * cannot re-select it. Always returns {@code false} so the caller abandons the
-     * resume and re-sweeps from the beginning.
+     * Best-effort cleanup after a seed resume fails on structural corruption
+     * (page checksum, truncation, missing function root, anchor shape mismatch -
+     * all distinct from a version mismatch, which
+     * {@link #restoreSeedFromTimeline} handles separately by stashing a pending
+     * invalidation reason). Retires the unreadable timeline so the next sweep
+     * turn cannot re-select it, and so the from-zero re-sweep starts against an
+     * empty one. Always returns {@code false} so the caller abandons the resume.
      */
-    private boolean handleCorruptSeedCheckpoint(
-            LiveViewInstance instance,
-            long scpKey,
-            Path path,
-            Throwable t
-    ) {
+    private boolean handleCorruptSeedTimeline(LiveViewInstance instance, Throwable t) {
         LOG.critical().$("could not restore live view from seed checkpoint [view=")
                 .$(instance.getDefinition().getViewName())
-                .$(", scpKey=").$(scpKey)
                 .$(", error=").$(t).I$();
-        try {
-            engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
-        } catch (Throwable rmErr) {
-            LOG.error().$("could not unlink corrupt seed checkpoint [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", error=").$(rmErr).I$();
-        }
+        retireSeedCheckpointTimeline(instance);
         return false;
+    }
+
+    /**
+     * Reports whether {@code checkpointsDir} publishes a generation a reader can
+     * open, without creating the superblock file for a view that has never sealed
+     * one.
+     */
+    private boolean hasValidCheckpointGeneration(@Transient Path checkpointsDir) {
+        try (Path timelinePath = new Path()) {
+            LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+            if (!engine.getConfiguration().getFilesFacade().exists(timelinePath.$())) {
+                return false;
+            }
+        }
+        try (LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(engine.getConfiguration())) {
+            metaStore.of(checkpointsDir);
+            return metaStore.isValid();
+        }
     }
 
     /**
@@ -6092,117 +6019,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    /**
-     * Decodes a single FUNCTION_SNAPSHOT block:
-     * <pre>
-     *     STR windowName
-     *     STR factoryName     (matches snapshotFactoryName(f) - factory class,
-     *                          not the function impl, so impl renames survive)
-     *     INT formatVersion
-     *     ...key-shape header + per-partition state (consumed by
-     *        {@link LiveViewFunctionSnapshot#restore})
-     * </pre>
-     * Then decodes the trailing payload directly from the mapped checkpoint and
-     * pairs the block with a running window function positionally: the
-     * writer emits one block per snapshot-capable function in
-     * {@code getWindowFunctions()} order, so the i-th block restores into the
-     * i-th snapshot-capable function. Matching by factory name alone is
-     * ambiguous - a view can hold several functions from one factory (e.g.
-     * {@code min(x)} and {@code max(x)} share {@code MaxDoubleWindowFunctionFactory},
-     * as do bounded and unbounded RANGE frames of the same function), so a
-     * name-only first-match would route every block to the first such function
-     * and either overflow on a layout mismatch or silently restore crossed
-     * state. The stored factory name is still validated against the paired
-     * function to catch a window-function-order drift.
-     */
-    private void restoreFunctionBlock(LiveViewCheckpointReader.ReadableBlock block, ObjList<WindowFunction> functions) {
-        long offset = 0;
-        // windowName: STR. We only need to skip past it - the manifest
-        // already captured window names, and the writer stamps the anchor
-        // window name (shared across all blocks), so it is not a per-function
-        // discriminator; positional pairing below resolves the function.
-        offset += strByteSize(block, offset);
-        final CharSequence storedFactoryName = block.getStr(offset);
-        final long factoryNameByteSize = strByteSize(block, offset);
-        offset += factoryNameByteSize;
-        final int formatVersion = block.getInt(offset);
-        offset += Integer.BYTES;
-
-        // Advance to the next snapshot-capable function, mirroring the writer's
-        // !supportsCheckpointState() skip so the positional pairing stays aligned.
-        WindowFunction match = null;
-        while (restoreFunctionCursor < functions.size()) {
-            final WindowFunction candidate = functions.getQuick(restoreFunctionCursor++);
-            if (candidate.supportsCheckpointState()) {
-                match = candidate;
-                break;
-            }
-        }
-        if (match == null) {
-            throw CairoException.critical(0)
-                    .put("more live view function snapshot blocks than snapshot-capable functions, factory=")
-                    .put(storedFactoryName);
-        }
-        if (!Chars.equals(storedFactoryName, snapshotFactoryName(match))) {
-            // Window-function order drifted vs the writer (e.g. a definition
-            // change across an upgrade). Errno 0 unlinks the .scp and re-sweeps
-            // rather than restoring crossed state.
-            throw CairoException.critical(0)
-                    .put("live view function snapshot factory mismatch [position=")
-                    .put(restoreFunctionCursor - 1)
-                    .put(", expected=")
-                    .put(snapshotFactoryName(match))
-                    .put(", got=")
-                    .put(storedFactoryName)
-                    .put(']');
-        }
-        // A version outside [checkpointStateMinSupportedVersion(), checkpointStateFormatVersion()]
-        // signals a real compatibility break (operator DROP+CREATE is the
-        // recovery), not structural corruption. Tag the throws so the catch site
-        // invalidates the LV rather than unlinking and re-sweeping.
-        // Mirrors the file-level range check in LiveViewCheckpointReader.of().
-        if (formatVersion < match.checkpointStateMinSupportedVersion()) {
-            throw CairoException.critical(CairoException.LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH)
-                    .put("live view function snapshot version too old, factory=")
-                    .put(storedFactoryName)
-                    .put(", read=")
-                    .put(formatVersion)
-                    .put(", minSupported=")
-                    .put(match.checkpointStateMinSupportedVersion());
-        }
-        if (formatVersion > match.checkpointStateFormatVersion()) {
-            // A newer writer laid this state out to a shape this build has no
-            // decoder for - restoreCheckpointState() reads the current fixed
-            // layout and never dispatches on a higher version. Accepting the
-            // block would silently rehydrate the accumulators from foreign
-            // bytes. A downgraded binary reaches exactly this: the newer
-            // binary's CRC-valid .scp is still on disk.
-            throw CairoException.critical(CairoException.LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH)
-                    .put("live view function snapshot version too new, factory=")
-                    .put(storedFactoryName)
-                    .put(", read=")
-                    .put(formatVersion)
-                    .put(", maxSupported=")
-                    .put(match.checkpointStateFormatVersion());
-        }
-
-        final long payloadStart = offset;
-        final long payloadLength = block.size() - payloadStart;
-        LiveViewFunctionSnapshot.restore(block.memory(), block.payloadStart() + payloadStart, payloadLength, match, formatVersion);
-    }
-
-
-    private static long strByteSize(LiveViewCheckpointReader.ReadableBlock block, long offset) {
-        // STR encoding: INT length prefix + length * CHAR (2 bytes each). A null
-        // STR encodes length -1 with no char bytes; windowName/factoryName are
-        // never null today, but mis-sizing a null as prefix-minus-2 would
-        // misalign every field after it, so guard.
-        final int len = block.getInt(offset);
-        if (len < 0) {
-            return Integer.BYTES;
-        }
-        return Integer.BYTES + (long) len * Character.BYTES;
-    }
 
     /**
      * Computes the AND of (a) anchor-map key codec support and (b) every
@@ -6750,10 +6566,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private Throwable rebuildWindowStateAfterMidDrainFailure(LiveViewInstance instance) {
         if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
             // Mid-seed: re-arm the sweep resume, which rebuilds from the surviving
-            // .scp (or re-sweeps from 0 behind the skip-write floor). Idempotent.
+            // timeline (or re-sweeps from 0 behind the skip-write floor). Idempotent.
             // Deliberately KEEP the pinned base snapshot (do not freeSeedBaseReader):
             // the fault is transient (map/staging OOM, bad read), the snapshot is intact,
-            // and resuming the .scp data offset against the SAME snapshot stays sound. A
+            // and resuming the sealed data offset against the SAME snapshot stays sound. A
             // fresh snapshot would reintroduce the positional-resume hazard this fix closes.
             instance.resetSeedResumeAttempted();
             LOG.info().$("live view mid-seed refresh failure, sweep will resume [view=")
@@ -7004,26 +6820,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Seed-checkpoint write hook. Writes a {@code <dataOffset>.scp}
-     * capturing the sweep's resume position (a SEED_CURSOR block holding
-     * the data-cursor row offset + lvRowsTotal) plus the same WINDOW_ANCHOR /
-     * FUNCTION_SNAPSHOT state blocks the steady head writes, then unlinks the
-     * prior {@code .scp} and stamps {@code headSeedCpKey} on the instance.
+     * Seed-checkpoint write hook. Appends one logical boundary to the versioned
+     * timeline over the sweep's current window state, and stamps the sweep's
+     * base-cursor row offset into the generation the append publishes, so a
+     * restart mid-sweep restores that root and continues the cursor from where
+     * it stopped.
      * <p>
      * Cadence-gated by the same {@code cairo.live.view.checkpoint.rows} /
      * {@code .max.duration} triggers as the steady head, plus a
      * first-checkpoint trigger so a restart early in the sweep resumes rather
      * than re-sweeping. The intervening per-turn yields rely on in-memory
-     * window state; the {@code .scp} only has to be recent enough that a
+     * window state; the sealed root only has to be recent enough that a
      * restart's skip-write re-feed (bounded by the cadence) is cheap.
+     * <p>
+     * The boundary must sit strictly above the previous one, which a turn
+     * ending on a timestamp the previous turn already reached does not: the
+     * timeline is keyed on {@code (maxTimestamp, checkpointId)} and the append
+     * refuses an overlap. Such a turn writes nothing and the next one carries
+     * the sweep past it.
      * <p>
      * No-op when the LV is not snapshot-capable: such a view cannot persist
      * window state, so a crash mid-sweep re-sweeps from the beginning (the
      * wipe path in {@link #runSeedSweep}).
      * <p>
-     * A failure here does not invalidate the view ({@code .scp} is derived
-     * state). The prior {@code .scp}, if any, stays addressable; we log
-     * critical, drop the half-open writer, and continue.
+     * A failure here does not invalidate the view - the timeline is derived
+     * state. The previously published generation stays authoritative, so the
+     * sweep keeps its older resume point; we log critical and continue.
      */
     private void maybeWriteSeedCheckpoint(
             LiveViewInstance instance,
@@ -7038,93 +6860,50 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (!instance.isSnapshotCapability()) {
             return;
         }
+        // A boundary with no maxTs has no place in a timeline keyed on
+        // (maxTimestamp, checkpointId). A yielding turn always has rows behind
+        // it, so batchMaxTs is a real timestamp here; the guard keeps a future
+        // caller from sealing a poison boundary.
+        if (batchMaxTs == Numbers.LONG_NULL) {
+            return;
+        }
+        final long sealedMaxTs = instance.getSeedCheckpointMaxTs();
+        if (sealedMaxTs != Numbers.LONG_NULL && batchMaxTs <= sealedMaxTs) {
+            return;
+        }
 
-        // Cadence keys off the data-offset delta since the prior .scp (its key
-        // is the data offset at that write). firstScp forces a write so a crash
-        // early in the sweep resumes rather than re-sweeping from scratch.
+        // Cadence keys off the data-offset delta since the prior seed root.
+        // firstSeedRoot forces a write so a crash early in the sweep resumes
+        // rather than re-sweeping from scratch.
         final long rowsCadence = engine.getConfiguration().getLiveViewCheckpointRows();
         final long durationCadence = engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
         final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         final long lastWrittenUs = instance.getLastCheckpointWrittenUs();
-        final long priorKey = instance.getHeadSeedCpKey();
-        final boolean firstScp = priorKey == Numbers.LONG_NULL;
-        final boolean rowTrigger = !firstScp && (dataOffset - priorKey) >= rowsCadence;
-        final boolean durationTrigger = !firstScp
+        final long priorOffset = instance.getSeedCheckpointDataOffset();
+        final boolean firstSeedRoot = priorOffset == Numbers.LONG_NULL;
+        final boolean rowTrigger = !firstSeedRoot && (dataOffset - priorOffset) >= rowsCadence;
+        final boolean durationTrigger = !firstSeedRoot
                 && lastWrittenUs != Numbers.LONG_NULL
                 && (nowUs - lastWrittenUs) >= durationCadence;
-        if (!(firstScp || rowTrigger || durationTrigger)) {
+        if (!(firstSeedRoot || rowTrigger || durationTrigger)) {
             return;
         }
 
         try {
-            if (checkpointWriter == null) {
-                checkpointWriter = new LiveViewCheckpointWriter(engine.getConfiguration());
-            }
-            path.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken());
-            checkpointWriter.of(path.$(), dataOffset, true);
-
-            checkpointManifest.clear();
-            checkpointManifest.setLvSeqTxn(dataOffset);
-            checkpointManifest.setBaseSeqTxn(sweepSeqTxn);
-            checkpointManifest.setMaxTimestamp(batchMaxTs);
-            checkpointManifest.setLvRowPosition(instance.getLvRowsTotal());
-            checkpointManifest.setKind(LiveViewCheckpointManifest.KIND_SEED);
-            final LiveViewWindow anchorWindow = instance.getAnchorWindow();
-            if (anchorWindow != null) {
-                checkpointManifest.addWindowName(anchorWindow.getWindowName());
-            }
-            checkpointWriter.writeManifestBlock(checkpointManifest);
-
-            final MemoryA cursorSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_SEED_CURSOR);
-            cursorSink.putLong(dataOffset);
-            cursorSink.putLong(instance.getLvRowsTotal());
-            checkpointWriter.endBlock();
-
-            if (anchorWindow != null) {
-                MemoryA anchorSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_WINDOW_ANCHOR);
-                anchorWindow.snapshot(anchorSink);
-                checkpointWriter.endBlock();
-            }
-
-            final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
-            final String windowName = anchorWindow != null ? anchorWindow.getWindowName() : "";
-            // Test-only: omit the last N function-snapshot blocks to forge a
-            // CRC-valid-but-short .scp. 0 in production, so the limit is MAX_VALUE and
-            // every snapshot-capable function is written.
-            int fnBlockWriteLimit = Integer.MAX_VALUE;
-            final int fnBlocksToOmit = checkpointTrailingFunctionSnapshotBlocksToOmit;
-            if (fnBlocksToOmit > 0) {
-                int capable = 0;
-                for (int i = 0, m = functions.size(); i < m; i++) {
-                    if (functions.getQuick(i).supportsCheckpointState()) {
-                        capable++;
-                    }
-                }
-                fnBlockWriteLimit = Math.max(0, capable - fnBlocksToOmit);
-            }
-            int fnBlocksWritten = 0;
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                final WindowFunction f = functions.getQuick(i);
-                if (!f.supportsCheckpointState() || fnBlocksWritten >= fnBlockWriteLimit) {
-                    continue;
-                }
-                final MemoryA fnSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
-                fnSink.putStr(windowName);
-                fnSink.putStr(snapshotFactoryName(f));
-                fnSink.putInt(f.checkpointStateFormatVersion());
-                LiveViewFunctionSnapshot.write(fnSink, f);
-                checkpointWriter.endBlock();
-                fnBlocksWritten++;
-            }
-
-            checkpointWriter.commit(firstScp ? Numbers.LONG_NULL : priorKey);
-            instance.recordSeedCheckpointWritten(dataOffset, nowUs);
+            appendCheckpointTimelineRoot(
+                    instance,
+                    windowFactory.getWindowFunctions(),
+                    instance.getAnchorWindow(),
+                    sweepSeqTxn,
+                    batchMaxTs,
+                    dataOffset
+            );
+            instance.recordSeedCheckpointWritten(dataOffset, batchMaxTs, nowUs);
         } catch (Throwable t) {
             LOG.critical().$("could not write live view seed checkpoint [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", dataOffset=").$(dataOffset)
                     .$(", error=").$(t).I$();
-            checkpointWriter = Misc.free(checkpointWriter);
         }
     }
 
@@ -7480,8 +7259,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the LV table reflects every committed block, then clamp
      * {@code lastProcessedSeqTxn} / {@code appliedWatermark} / {@code lvConsumedSeqTxn}
      * up to the last applied block's in-band {@code maxBaseSeqTxn}. ACTIVE views only:
-     * a SEEDING view resumes through its own {@code .scp} sweep, which owns its
-     * distinct floor. Idempotent on a healthy restart - {@code applyWalDirect} finds
+     * a SEEDING view resumes through its own sweep, which owns its distinct
+     * floor. Idempotent on a healthy restart - {@code applyWalDirect} finds
      * nothing pending and the clamp is a no-op because {@code _lv.s} already matches
      * disk. When the WAL-e cannot be read the recovery no-ops, leaving the prior
      * (worst-case duplicating, never lossy) behaviour.
@@ -7528,9 +7307,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * window state that was lost with the old factory's function instances:
      * <ul>
      *     <li>SEEDING: re-arms the sweep's single-shot resume setup; the next
-     *     turn restores window state and the data offset from the surviving
-     *     {@code .scp} against the recompiled factory (same SQL, so the snapshot
-     *     blocks stay shape-compatible), or re-sweeps from offset 0 behind the
+     *     turn restores window state and the data offset from the timeline's
+     *     newest root against the recompiled factory (same SQL, so the stored
+     *     state stays shape-compatible), or re-sweeps from offset 0 behind the
      *     skip-write floor. Both are idempotent on the already-written prefix.</li>
      *     <li>ACTIVE on the primary: full head-miss replay over the applied base -
      *     unconditionally correct and idempotent (mirrors the dedup restart path
@@ -7574,7 +7353,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The recompiled factory expects the base's NEW metadata; the pinned base
             // snapshot is at the OLD metadata version. Drop it so the next sweep turn
             // re-pins a fresh snapshot consistent with the recompiled factory. A
-            // metadata-only change preserves physical row order, so the .scp data
+            // metadata-only change preserves physical row order, so the sealed data
             // offset still resumes correctly against the re-pinned snapshot.
             instance.freeSeedBaseReader();
             instance.resetSeedResumeAttempted();
@@ -8283,19 +8062,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    /**
-     * Returns the stable identifier for a window function's enclosing
-     * factory. Window function impls live as static inner classes of their
-     * factory (e.g. {@code AvgDoubleWindowFunctionFactory$AvgOverPartition...}),
-     * so the enclosing class name survives an impl rename while the
-     * function class name does not. Top-level WindowFunction impls (none
-     * today) fall back to their own class name.
-     */
-    private static String snapshotFactoryName(WindowFunction f) {
-        Class<?> enclosing = f.getClass().getEnclosingClass();
-        return (enclosing != null ? enclosing : f.getClass()).getName();
-    }
-
     private static WindowRecordCursorFactory unwrapWindowFactory(RecordCursorFactory factory) {
         RecordCursorFactory f = factory;
         while (f != null) {
@@ -8502,24 +8268,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Output bundle for
-     * {@link #restoreFromSeedCheckpoint(LiveViewInstance, WindowRecordCursorFactory, long, RestoredSeedState)}.
+     * {@link #restoreSeedFromTimeline(LiveViewInstance, WindowRecordCursorFactory, RestoredSeedState)}.
      * The fields capture the values the seed resume needs after the disk read
      * completes; the helper rewrites them on each successful call and the caller
      * reads them immediately.
      */
     private static final class RestoredSeedState {
         long lvRowsTotal;
-        long manifestBaseSeqTxn;
         long maxTimestamp;
-        // Seed sweep's data-cursor row offset read from a SEED_CURSOR
-        // block. Numbers.LONG_NULL when the .scp carries no such block, which
-        // the restore rejects as malformed.
+        // Seed sweep's data-cursor row offset, read from the seed cursor the
+        // restored generation carries.
         long resumeDataOffset;
         long stateBytes;
 
         void reset() {
             lvRowsTotal = 0L;
-            manifestBaseSeqTxn = Numbers.LONG_NULL;
             maxTimestamp = Numbers.LONG_NULL;
             resumeDataOffset = Numbers.LONG_NULL;
             stateBytes = 0L;

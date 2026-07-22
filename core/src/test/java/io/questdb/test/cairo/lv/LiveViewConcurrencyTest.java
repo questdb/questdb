@@ -244,7 +244,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     public void testConcurrentDropDuringSeed() throws Exception {
         // DROP LIVE VIEW races a refresh driver that is still driving the SEED
         // sweep while writers ingest the suffix. This tears down the seed state
-        // (sweep cursor, rolling .scp checkpoints, in-mem tier) mid-sweep, a path
+        // (sweep cursor, sealed seed boundaries, in-mem tier) mid-sweep, a path
         // the non-seed DROP-during-refresh test never reaches. Whatever the
         // interleaving, the drop must leave the registry empty and the base table
         // intact, with no leak or crash.
@@ -1762,7 +1762,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // sweep while writers ingest the suffix. The earliest rows are pre-committed so
     // the sweep has real history to chew through when the drop lands mid-sweep. The
     // contract is a clean teardown of the seed state (sweep cursor, rolling
-    // .scp checkpoints, in-mem tier): registry empty, base intact, no leak.
+    // sealed seed boundaries, in-mem tier): registry empty, base intact, no leak.
     private void runDropDuringSeed(Rnd rnd, int numWriters, int rowCount) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 

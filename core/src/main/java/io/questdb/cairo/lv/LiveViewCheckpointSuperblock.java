@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.Zip;
 import io.questdb.std.str.Path;
@@ -77,7 +78,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * Byte offset of the trailing CRC32 within a slot. The checksum covers
      * {@link #SLOT_CRC_COVERAGE} bytes from the slot base.
      */
-    public static final int SLOT_CRC_OFFSET = 148;
+    public static final int SLOT_CRC_OFFSET = 156;
     /**
      * Bytes of a slot the CRC32 covers: everything from the magic through the
      * last root reference, excluding the CRC field itself.
@@ -101,11 +102,18 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public static final int SLOT_NEXT_SEGMENT_ID_OFFSET = 64;
     public static final int SLOT_NORMALIZED_BASE_SEQTXN_OFFSET = 40;
     public static final int SLOT_ROW_POSITION_DELTA_ROOT_REF_OFFSET = 108;
+    /**
+     * Byte offset of the seed sweep's resume cursor. It holds the base-cursor row
+     * offset the sweep had consumed when this generation's newest root was sealed,
+     * or {@link Numbers#LONG_NULL} for a generation a steady seal or a repair
+     * published. See {@link #seedCursorOffset}.
+     */
+    public static final int SLOT_SEED_CURSOR_OFFSET_OFFSET = 148;
     public static final int SLOT_SEGMENT_DIRECTORY_ROOT_REF_OFFSET = 128;
     /**
      * Fixed size of one slot. The file is exactly {@link #FILE_SIZE} = two slots.
      */
-    public static final int SLOT_SIZE = 152;
+    public static final int SLOT_SIZE = 160;
     public static final int SLOT_TIMELINE_ROOT_REF_OFFSET = 88;
     /**
      * Total size of the {@code _timeline} file: two slots back to back.
@@ -123,6 +131,14 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public long nextSegmentId;
     public long normalizedBaseSeqTxn;
     public final LiveViewCheckpointPageRef rowPositionDeltaRootRef = new LiveViewCheckpointPageRef();
+    /**
+     * The seed sweep's resume cursor for this generation: the row offset the
+     * sweep's base cursor had consumed when the generation's newest root was
+     * sealed. {@link Numbers#LONG_NULL} when a steady cadence seal or a repair
+     * published the generation, which is what tells a restart that the newest
+     * root is not a mid-sweep resume point.
+     */
+    public long seedCursorOffset = Numbers.LONG_NULL;
     public final LiveViewCheckpointPageRef segmentDirectoryRootRef = new LiveViewCheckpointPageRef();
     public final LiveViewCheckpointPageRef timelineRootRef = new LiveViewCheckpointPageRef();
     private final int commitMode;
@@ -273,6 +289,11 @@ public class LiveViewCheckpointSuperblock implements Closeable {
                     .put(", storedLv=").put(coveredLvSeqTxnCeiling)
                     .put(", nextLv=").put(coveredLvSeqTxn).put(']');
         }
+        if (seedCursorOffset < 0 && seedCursorOffset != Numbers.LONG_NULL) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint seed cursor offset must be non-negative, was ")
+                    .put(seedCursorOffset);
+        }
 
         final int target = selectedSlot == 0 ? 1 : 0;
         storeSlot((long) target * SLOT_SIZE);
@@ -331,6 +352,13 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         if (formatVersion != SLOT_FORMAT_VERSION) {
             return false;
         }
+        // The seed cursor is either a real row offset or the "not a mid-sweep
+        // generation" sentinel. Any other negative value would make a resume
+        // skip backwards through the base cursor.
+        final long seedCursorOffset = mem.getLong(base + SLOT_SEED_CURSOR_OFFSET_OFFSET);
+        if (seedCursorOffset < 0 && seedCursorOffset != Numbers.LONG_NULL) {
+            return false;
+        }
         // These are authoritative publication coordinates. Reject impossible
         // values during bounded slot validation rather than allowing a
         // valid-CRC corrupt slot to release WAL by looking like "no floor".
@@ -349,6 +377,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         nextSegmentId = mem.getLong(base + SLOT_NEXT_SEGMENT_ID_OFFSET);
         metadataBytes = mem.getLong(base + SLOT_METADATA_BYTES_OFFSET);
         dataBytes = mem.getLong(base + SLOT_DATA_BYTES_OFFSET);
+        seedCursorOffset = mem.getLong(base + SLOT_SEED_CURSOR_OFFSET_OFFSET);
         timelineRootRef.readFrom(mem, base + SLOT_TIMELINE_ROOT_REF_OFFSET);
         rowPositionDeltaRootRef.readFrom(mem, base + SLOT_ROW_POSITION_DELTA_ROOT_REF_OFFSET);
         segmentDirectoryRootRef.readFrom(mem, base + SLOT_SEGMENT_DIRECTORY_ROOT_REF_OFFSET);
@@ -364,6 +393,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         nextSegmentId = 0;
         metadataBytes = 0;
         dataBytes = 0;
+        seedCursorOffset = Numbers.LONG_NULL;
         timelineRootRef.clear();
         rowPositionDeltaRootRef.clear();
         segmentDirectoryRootRef.clear();
@@ -417,6 +447,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         mem.putLong(base + SLOT_NEXT_SEGMENT_ID_OFFSET, nextSegmentId);
         mem.putLong(base + SLOT_METADATA_BYTES_OFFSET, metadataBytes);
         mem.putLong(base + SLOT_DATA_BYTES_OFFSET, dataBytes);
+        mem.putLong(base + SLOT_SEED_CURSOR_OFFSET_OFFSET, seedCursorOffset);
         timelineRootRef.writeTo(mem, base + SLOT_TIMELINE_ROOT_REF_OFFSET);
         rowPositionDeltaRootRef.writeTo(mem, base + SLOT_ROW_POSITION_DELTA_ROOT_REF_OFFSET);
         segmentDirectoryRootRef.writeTo(mem, base + SLOT_SEGMENT_DIRECTORY_ROOT_REF_OFFSET);

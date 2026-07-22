@@ -24,15 +24,18 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Zip;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -109,6 +112,50 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
                 Assert.assertEquals(LiveViewCheckpointSuperblock.NO_SLOT, sb.getSelectedSlot());
                 Assert.assertEquals(0, sb.generation);
                 Assert.assertTrue(sb.timelineRootRef.isNull());
+            }
+        });
+    }
+
+    @Test
+    public void testCorruptSeedCursorOffsetInvalidatesSlot() throws Exception {
+        // The seed cursor is a row offset a restart skips the base cursor forward by, so a
+        // valid-CRC slot carrying a negative one that is not the sentinel must not be selected -
+        // it would resume the sweep at an arbitrary position. The A/B fallback covers it.
+        assertMemoryLeak(() -> {
+            publish(1); // slot 0
+            publish(2); // slot 1 (newest)
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                final long base = LiveViewCheckpointSuperblock.SLOT_SIZE;
+                mem.putLong(base + LiveViewCheckpointSuperblock.SLOT_SEED_CURSOR_OFFSET_OFFSET, -7);
+                fixSlotCrc(mem, 1);
+            }
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                Assert.assertEquals(0, sb.getSelectedSlot());
+                assertFields(sb, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testPublishRejectsNegativeSeedCursorOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                setFields(sb, 1);
+                sb.seedCursorOffset = -1;
+                try {
+                    sb.publish();
+                    Assert.fail("expected a negative seed cursor offset to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "seed cursor offset must be non-negative");
+                }
+                Assert.assertFalse("a rejected publication must leave no valid slot", sb.isValid());
             }
         });
     }
@@ -335,6 +382,9 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
         Assert.assertEquals(gen * 10 + 6, sb.nextSegmentId);
         Assert.assertEquals(gen * 10 + 7, sb.metadataBytes);
         Assert.assertEquals(gen * 10 + 8, sb.dataBytes);
+        // Alternating so both a real mid-sweep cursor and the "steady seal" sentinel
+        // round-trip through every publication test in this class.
+        Assert.assertEquals(seedCursorOffset(gen), sb.seedCursorOffset);
         Assert.assertEquals(gen, sb.timelineRootRef.getSegmentId());
         Assert.assertEquals(gen * 100, sb.timelineRootRef.getOffset());
         Assert.assertEquals((int) (gen * 4), sb.timelineRootRef.getLength());
@@ -371,9 +421,14 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
         sb.nextSegmentId = gen * 10 + 6;
         sb.metadataBytes = gen * 10 + 7;
         sb.dataBytes = gen * 10 + 8;
+        sb.seedCursorOffset = seedCursorOffset(gen);
         sb.timelineRootRef.of(gen, gen * 100, (int) (gen * 4));
         sb.rowPositionDeltaRootRef.of(gen + 1, gen * 200, (int) (gen * 5));
         sb.segmentDirectoryRootRef.clear();
+    }
+
+    private static long seedCursorOffset(long gen) {
+        return (gen & 1) == 0 ? gen * 10 + 9 : Numbers.LONG_NULL;
     }
 
     private static Path timelinePath(Path path) {

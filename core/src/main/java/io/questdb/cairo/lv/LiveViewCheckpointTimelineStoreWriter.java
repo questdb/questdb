@@ -90,6 +90,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         this.keyBuffer = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
     }
 
+    /**
+     * Appends one logical boundary strictly above the current head and publishes
+     * the generation that carries it.
+     *
+     * @param seedCursorOffset the seed sweep's base-cursor row offset when a
+     *                         mid-sweep cadence event drives this append, so a
+     *                         restart can resume the sweep from the root this
+     *                         publishes; {@link Numbers#LONG_NULL} for a steady
+     *                         cadence seal, which is what tells a restart the
+     *                         newest root is not a resume point
+     */
     public Result append(
             @Transient @NotNull Path checkpointsDir,
             @NotNull ObjList<WindowFunction> functions,
@@ -101,7 +112,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             long historyEpoch,
             boolean primaryOwner,
             long maxTimestamp,
-            long effectiveLvRowPosition
+            long effectiveLvRowPosition,
+            long seedCursorOffset
     ) {
         if (!primaryOwner) {
             throw CairoException.critical(0).put("replica must not publish a live view checkpoint timeline");
@@ -138,6 +150,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         historyEpoch,
                         maxTimestamp,
                         effectiveLvRowPosition,
+                        seedCursorOffset,
                         orphanUpperBound
                 );
             } catch (HistoryEpochChangedException e) {
@@ -414,6 +427,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             superblock.nextSegmentId = nextSegmentId;
             superblock.metadataBytes = checkedAdd(superblock.metadataBytes, metadataBytesAdded);
             superblock.dataBytes = checkedAdd(superblock.dataBytes, dataSegmentBytes);
+            // A repair only ever runs on an ACTIVE view, so the generation it
+            // publishes is never a mid-sweep resume point. Clear the cursor
+            // explicitly rather than letting the selected slot's value ride
+            // along.
+            superblock.seedCursorOffset = Numbers.LONG_NULL;
             copy(newTimelineRoot, superblock.timelineRootRef);
             copy(newDeltaRoot, superblock.rowPositionDeltaRootRef);
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
@@ -447,6 +465,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             long historyEpoch,
             long maxTimestamp,
             long effectiveLvRowPosition,
+            long seedCursorOffset,
             long orphanUpperBound
     ) {
         if (definitionTxn < 0
@@ -455,7 +474,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 || normalizedBaseSeqTxn < 0
                 || coveredLvSeqTxn < 0
                 || effectiveLvRowPosition < 0
-                || createdLvSeqTxn > coveredLvSeqTxn) {
+                || createdLvSeqTxn > coveredLvSeqTxn
+                || (seedCursorOffset < 0 && seedCursorOffset != Numbers.LONG_NULL)) {
             throw CairoException.critical(0).put("invalid live view normal checkpoint coordinates");
         }
         ensureDirectories(checkpointsDir);
@@ -595,6 +615,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             superblock.nextSegmentId = nextSegmentId;
             superblock.metadataBytes = checkedAdd(metaStore.isValid() ? superblock.metadataBytes : 0, metadataBytesAdded);
             superblock.dataBytes = checkedAdd(metaStore.isValid() ? superblock.dataBytes : 0, dataSegmentBytes);
+            superblock.seedCursorOffset = seedCursorOffset;
             copy(newTimelineRoot, superblock.timelineRootRef);
             copy(oldDeltaRoot, superblock.rowPositionDeltaRootRef);
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);

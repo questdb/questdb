@@ -25,12 +25,15 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.After;
@@ -49,10 +52,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * BEGINNING, whose boundary is {@code LONG_NULL}. That hides the thing most likely to break a
  * resume, because BEGINNING makes two different coordinate spaces coincide:
  * <ul>
- *     <li>the sweep's {@code dataOffset} (and so the {@code .scp} filename key, which IS that
- *     offset) counts rows of the <b>bounded</b> cursor - the one {@code getCursorFromTimestamp}
- *     opens AT {@code viewLowerBoundTimestamp}, having culled the partitions below it and
- *     binary-searched into the first one;</li>
+ *     <li>the sweep's {@code dataOffset} (and so the seed cursor the timeline's newest generation
+ *     carries, which IS that offset) counts rows of the <b>bounded</b> cursor - the one
+ *     {@code getCursorFromTimestamp} opens AT {@code viewLowerBoundTimestamp}, having culled the
+ *     partitions below it and binary-searched into the first one;</li>
  *     <li>the skip-write floor counts <b>LV output</b> rows already on disk.</li>
  * </ul>
  * Under BEGINNING both equal "base rows swept", so a resume that skipped {@code dataOffset} rows of
@@ -287,14 +290,16 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
     @Test
     public void testRestartBeforeSeedCompletionFlipsActiveWithoutDuplicating() throws Exception {
         // The narrowest crash window in the sweep: every admitted row has been fed, committed and
-        // applied, and a .scp records it - but the cursor's exhaustion has not been observed yet, so
+        // applied, and a seed boundary records it - but the cursor's exhaustion has not been
+        // observed yet, so
         // the SEEDING -> ACTIVE flip has not run and the view is still SEEDING on disk.
         //
         // The resumed turn must skip all four rows, find the cursor empty, append nothing, and flip
         // ACTIVE. Two things can go wrong and neither shows up in a row count: a resume that re-fed
-        // the rows would duplicate them, and a resume that dropped the .scp's maxTimestamp would
-        // flip ACTIVE with latestSeenTs still LONG_NULL, which leaves the view with no head .cp at
-        // all - so the next O3 commit routes to the head-MISS replay instead of the head-hit one.
+        // the rows would duplicate them, and a resume that dropped the restored root's maxTimestamp
+        // would flip ACTIVE with latestSeenTs still LONG_NULL, which leaves the view with no head
+        // boundary at all - so the next O3 commit routes to the head-MISS replay instead of the
+        // head-hit one.
         // The head assertion below is what pins that.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per turn
         assertMemoryLeak(() -> {
@@ -355,11 +360,11 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
 
     @Test
     public void testRestartMidSeedResumesFromCheckpointUnderFiniteBoundary() throws Exception {
-        // A restart mid-sweep resumes from the surviving .scp. The .scp's key IS the sweep's data
-        // offset, and that offset counts rows of the cursor opened AT the boundary - so after two
-        // admitted rows it must be 2, not 6 (the two admitted rows plus the four the boundary
-        // culled). Asserting the key is what pins the coordinate space; asserting the rows is what
-        // pins that the resume then skipped into the right place.
+        // A restart mid-sweep resumes from the surviving timeline. The generation's seed cursor IS
+        // the sweep's data offset, and that offset counts rows of the cursor opened AT the boundary
+        // - so after two admitted rows it must be 2, not 6 (the two admitted rows plus the four the
+        // boundary culled). Asserting the cursor is what pins the coordinate space; asserting the
+        // rows is what pins that the resume then skipped into the right place.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per turn
         assertMemoryLeak(() -> {
             createCutBaseAndView();
@@ -367,9 +372,9 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 LiveViewInstance instance = driveSeedTurnsToOffset(job, 2);
                 Assert.assertEquals(
-                        "the .scp key is the bounded cursor's row offset, not the base's",
+                        "the seed cursor is the bounded cursor's row offset, not the base's",
                         2,
-                        instance.getHeadSeedCpKey()
+                        instance.getSeedCheckpointDataOffset()
                 );
 
                 restart();
@@ -377,9 +382,9 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
                 LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(reloaded);
                 Assert.assertEquals(
-                        "recovery must stamp the surviving .scp key so the sweep resumes from it",
+                        "the durable generation must carry the seed cursor the sweep resumes from",
                         2,
-                        reloaded.getHeadSeedCpKey()
+                        durableSeedCursorOffset(reloaded)
                 );
 
                 // One turn: the resume restores offset 2 and feeds exactly one more row. A from-zero
@@ -387,7 +392,7 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
                 job.run();
                 drainWalQueue();
                 Assert.assertEquals(
-                        "the turn after the restart must resume from the .scp offset, not from zero",
+                        "the turn after the restart must resume from the durable seed cursor, not from zero",
                         3,
                         reloaded.getSeedDataOffset()
                 );
@@ -403,8 +408,8 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
 
     @Test
     public void testRestartMidSeedWithoutCheckpointReSweepsUnderFiniteBoundary() throws Exception {
-        // No .scp survives (a crash before the first cadence write, or a view whose window functions
-        // cannot snapshot). The resumed sweep re-runs from offset 0 of the bounded cursor and leans
+        // No timeline survives (a crash before the first cadence write, or a view whose window
+        // functions cannot snapshot). The resumed sweep re-runs from offset 0 and leans
         // on the skip-write floor: rows whose output position sits below the on-disk row count are
         // re-fed to rebuild the accumulators but NOT re-appended.
         //
@@ -418,25 +423,25 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 LiveViewInstance instance = driveSeedTurnsToOffset(job, 2);
                 Assert.assertEquals(
-                        "two admitted rows must be durable before the .scp is dropped",
+                        "two admitted rows must be durable before the timeline is dropped",
                         2,
                         instance.getLvRowsTotal()
                 );
                 Assert.assertNotEquals(
-                        "a .scp must exist before it can be dropped",
+                        "a seed boundary must exist before it can be dropped",
                         Numbers.LONG_NULL,
-                        instance.getHeadSeedCpKey()
+                        instance.getSeedCheckpointDataOffset()
                 );
-                unlinkSeedCheckpointFile(instance);
+                retireSeedCheckpointTimeline(instance);
 
                 restart();
 
                 LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(reloaded);
                 Assert.assertEquals(
-                        "no .scp survives, so no resume key is stamped",
+                        "no timeline survives, so there is no durable seed cursor to resume from",
                         Numbers.LONG_NULL,
-                        reloaded.getHeadSeedCpKey()
+                        durableSeedCursorOffset(reloaded)
                 );
 
                 driveSeedToCompletion(job, "lv");
@@ -510,9 +515,26 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Reads the seed cursor the view's durable timeline generation carries, or
+     * {@link Numbers#LONG_NULL} when it has no valid generation. This is the coordinate a restart
+     * resumes the sweep from, so a test can pin it without driving a turn.
+     */
+    private long durableSeedCursorOffset(LiveViewInstance instance) {
+        try (
+                Path checkpointsDir = new Path();
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(engine.getConfiguration())
+        ) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            metaStore.of(checkpointsDir);
+            return metaStore.isValid() ? metaStore.getSuperblock().seedCursorOffset : Numbers.LONG_NULL;
+        }
+    }
+
+    /**
      * Simulated restart: drop the in-memory registry and rebuild it from the on-disk {@code _lv} /
-     * {@code _lv.s}, which is the path startup takes - including the {@code .scp} sweep that stamps
-     * a mid-sweep view's resume key.
+     * {@code _lv.s}, which is the path startup takes.
      */
     private void restart() {
         engine.getLiveViewRegistry().clear();

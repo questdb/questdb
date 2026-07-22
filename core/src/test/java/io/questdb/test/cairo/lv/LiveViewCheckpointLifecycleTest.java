@@ -38,6 +38,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -202,7 +203,7 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
                          new LiveViewCheckpointTimelineStoreWriter(configuration);
                  Path dir = checkpointsDir()) {
                 try {
-                    writer.append(dir, new ObjList<>(), null, 7, 0, 0, 0, 0, false, 1, 0);
+                    writer.append(dir, new ObjList<>(), null, 7, 0, 0, 0, 0, false, 1, 0, Numbers.LONG_NULL);
                     Assert.fail("expected replica publication rejection");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "replica must not publish");

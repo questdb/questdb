@@ -193,13 +193,6 @@ public class LiveViewInstance implements QuietCloseable {
     // latch; volatile for the catalogue thread. Surfaced via
     // live_views().head_checkpoint_write_micros.
     private volatile long headCheckpointWriteMicros = Numbers.LONG_NULL;
-    // Key (data-cursor row offset) of the current rolling seed checkpoint
-    // _checkpoints/<key>.scp, or Numbers.LONG_NULL when none exists. Stamped by
-    // the startup recovery sweep for a view loaded in SEEDING state, updated
-    // each seed turn after a fresh .scp is written, and cleared when the
-    // sweep completes. Volatile so the catalogue thread can read it; mutated
-    // under the refresh latch.
-    private volatile long headSeedCpKey = Numbers.LONG_NULL;
     private volatile LiveViewInMemoryTier inMemoryTier;
     private volatile boolean isClosed;
     // Per-view tracker for the persistent per-partition state: the anchor map (owned by
@@ -437,17 +430,32 @@ public class LiveViewInstance implements QuietCloseable {
     // sweep is in flight. Accessed under the refresh latch (and the latch-guarded
     // free hooks / shutdown).
     private TableReader seedBaseReader;
+    // Base data-cursor row offset the newest seed boundary was sealed at, or
+    // Numbers.LONG_NULL when the sweep has sealed none. Drives the seed
+    // checkpoint cadence (the delta since this offset) and, after a restart,
+    // starts out at the offset the restored root's generation carries.
+    // Volatile so the catalogue thread can read it; mutated under the refresh
+    // latch.
+    private volatile long seedCheckpointDataOffset = Numbers.LONG_NULL;
+    // Designated timestamp of the newest seed boundary, or Numbers.LONG_NULL
+    // when the sweep has sealed none. The timeline is keyed on
+    // (maxTimestamp, checkpointId) and refuses a boundary at or below its head,
+    // so a turn whose batch does not carry the sweep past this timestamp seals
+    // nothing. Volatile alongside the offset it pairs with; mutated under the
+    // refresh latch.
+    private volatile long seedCheckpointMaxTs = Numbers.LONG_NULL;
     // In-memory count of base data-cursor rows the seed sweep has consumed
     // so far - the skipRows() resume position for the next turn. Persists in
     // memory across in-process turns (window state persists with it), and is
-    // re-seeded from the surviving .scp on the first turn after a restart.
-    // Numbers.LONG_NULL until the first seed turn initialises it; 0 means
-    // "swept nothing yet". Mutated under the refresh latch only.
+    // re-seeded from the timeline's newest root on the first turn after a
+    // restart. Numbers.LONG_NULL until the first seed turn initialises it; 0
+    // means "swept nothing yet". Mutated under the refresh latch only.
     private long seedDataOffset = Numbers.LONG_NULL;
     // Single-shot flag: the first seed turn of the process restores window
-    // state + data offset from the surviving .scp (if any), then later turns
-    // continue from the in-memory state. Mirrors checkpointRestoreAttempted for
-    // the seed path. Mutated under the refresh latch only.
+    // state + data offset from the timeline's newest root (if it holds one),
+    // then later turns continue from the in-memory state. Mirrors
+    // checkpointRestoreAttempted for the seed path. Mutated under the refresh
+    // latch only.
     private boolean seedResumeAttempted;
     // Skip-write floor for the seed sweep: the LV table's on-disk row count
     // captured on the first turn of the process. Output rows whose position is
@@ -882,10 +890,6 @@ public class LiveViewInstance implements QuietCloseable {
         return headCheckpointWriteMicros;
     }
 
-    public long getHeadSeedCpKey() {
-        return headSeedCpKey;
-    }
-
     public LiveViewInMemoryTier getInMemoryTier() {
         return inMemoryTier;
     }
@@ -1082,6 +1086,24 @@ public class LiveViewInstance implements QuietCloseable {
         return seedBaseReader;
     }
 
+    /**
+     * @return the base data-cursor row offset of the newest seed boundary, or
+     * {@link Numbers#LONG_NULL} when the sweep has sealed none. See
+     * {@link #seedCheckpointDataOffset}.
+     */
+    public long getSeedCheckpointDataOffset() {
+        return seedCheckpointDataOffset;
+    }
+
+    /**
+     * @return the designated timestamp of the newest seed boundary, or
+     * {@link Numbers#LONG_NULL} when the sweep has sealed none. See
+     * {@link #seedCheckpointMaxTs}.
+     */
+    public long getSeedCheckpointMaxTs() {
+        return seedCheckpointMaxTs;
+    }
+
     public long getSeedDataOffset() {
         return seedDataOffset;
     }
@@ -1209,9 +1231,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * @return {@code true} once the refresh worker has attempted to resume the
-     * seed sweep from the surviving {@code .scp} on the first turn of this
-     * process (whether a checkpoint was found or not). Single-shot per process;
-     * later turns continue from the in-memory window state + data offset.
+     * seed sweep from the timeline's newest root on the first turn of this
+     * process (whether a resume point was found or not). Single-shot per
+     * process; later turns continue from the in-memory window state + data
+     * offset.
      */
     public boolean isSeedResumeAttempted() {
         return seedResumeAttempted;
@@ -1357,6 +1380,18 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Forgets the newest seed boundary, putting the seed cadence back on its
+     * first-checkpoint trigger. Called when the sweep retires the boundaries it
+     * sealed - on completion, and when a resume is abandoned for a re-sweep from
+     * offset zero.
+     */
+    public void clearSeedCheckpoint() {
+        this.seedCheckpointDataOffset = Numbers.LONG_NULL;
+        this.seedCheckpointMaxTs = Numbers.LONG_NULL;
+        this.lastCheckpointWrittenUs = Numbers.LONG_NULL;
+    }
+
+    /**
      * Publishes the WAL floor derived from a successfully committed timeline
      * generation, or adopts the same durable value during startup. Callers must
      * never pass a candidate computed before the superblock commit point.
@@ -1425,14 +1460,19 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Records a written rolling seed checkpoint: stamps the {@code .scp}
-     * key and the checkpoint write time. The seed cadence keys off the
-     * {@code .scp} data offset delta (not {@link #rowsSinceLastCheckpointWritten},
-     * which the steady head owns), so this does not touch the steady head
-     * metadata or the steady cadence counter.
+     * Records a sealed seed boundary: stamps the sweep's base data-cursor row
+     * offset, the boundary timestamp, and the write time. The seed cadence keys
+     * off the offset delta (not {@link #rowsSinceLastCheckpointWritten}, which
+     * the steady head owns), so this does not touch the steady head metadata or
+     * the steady cadence counter.
+     * <p>
+     * A resume passes {@link Numbers#LONG_NULL} for {@code writtenUs}: the
+     * restored boundary was sealed by an earlier process, so the duration
+     * trigger has no baseline until this one seals its own.
      */
-    public void recordSeedCheckpointWritten(long key, long writtenUs) {
-        this.headSeedCpKey = key;
+    public void recordSeedCheckpointWritten(long dataOffset, long maxTs, long writtenUs) {
+        this.seedCheckpointDataOffset = dataOffset;
+        this.seedCheckpointMaxTs = maxTs;
         this.lastCheckpointWrittenUs = writtenUs;
     }
 
@@ -1451,8 +1491,8 @@ public class LiveViewInstance implements QuietCloseable {
      * Re-arms the seed sweep's single-shot resume setup (see
      * {@link #isSeedResumeAttempted()}). Called by the refresh worker after
      * {@link #prepareForBaseSchemaRecompile()} on a SEEDING view so the next
-     * sweep turn restores window state and the data offset from the surviving
-     * {@code .scp} against the recompiled factory, or re-sweeps from offset 0
+     * sweep turn restores window state and the data offset from the timeline's
+     * newest root against the recompiled factory, or re-sweeps from offset 0
      * behind the skip-write floor. Mutated under the refresh latch only.
      */
     public void resetSeedResumeAttempted() {
@@ -1532,10 +1572,6 @@ public class LiveViewInstance implements QuietCloseable {
         this.headCheckpoint = new long[]{lvSeqTxn, maxTs, stateBytes, baseSeqTxn};
         this.rowsSinceLastCheckpointWritten = 0;
         this.lastCheckpointWrittenUs = writtenUs;
-    }
-
-    public void setHeadSeedCpKey(long key) {
-        this.headSeedCpKey = key;
     }
 
     /**
@@ -1693,7 +1729,7 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * Single-shot setter for {@link #isSeedResumeAttempted()}. The refresh
      * worker calls this on the first seed turn of the process, regardless
-     * of whether a {@code .scp} was found to resume from.
+     * of whether a resume point was found.
      */
     public void setSeedResumeAttempted() {
         this.seedResumeAttempted = true;

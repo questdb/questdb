@@ -341,6 +341,50 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testSteadySealPublishesNoSeedResumePoint() throws Exception {
+        // The seed cursor a generation carries is what tells a restart mid-sweep where to put the
+        // base cursor back. A steady cadence seal is not a mid-sweep event, so it must publish the
+        // sentinel instead - otherwise a view whose sweep finished, and whose _lv.s crash-landed
+        // still reading SEEDING, would resume the cursor from a coordinate the steady seal never
+        // measured.
+        assertMemoryLeak(() -> {
+            createView(true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1);
+                appendAndRefresh(job, 20, 2);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+
+                try (
+                        Path checkpointsDir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreReader reader =
+                                new LiveViewCheckpointTimelineStoreReader(configuration)
+                ) {
+                    reader.of(checkpointsDir);
+                    final LiveViewCheckpointTimelineStoreReader.Result newest = reader.restoreLatest(
+                            instance.getLiveViewToken().getTableId(),
+                            functions,
+                            instance.getAnchorWindow()
+                    );
+                    Assert.assertEquals(
+                            "restoreLatest must land on the newest boundary",
+                            ts(timestamp(20)),
+                            newest.maxTimestamp
+                    );
+                    Assert.assertEquals(2, newest.effectiveLvRowPosition);
+                    Assert.assertEquals(
+                            "a steady seal must not advertise a seed resume point",
+                            Numbers.LONG_NULL,
+                            newest.seedCursorOffset
+                    );
+                }
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
     public void testAnchorRootsRestoreTheAnchorValuesTheirOwnBoundaryHeld() throws Exception {
         assertMemoryLeak(() -> {
             createView(true);

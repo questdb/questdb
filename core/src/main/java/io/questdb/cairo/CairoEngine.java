@@ -37,7 +37,6 @@ import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewLifecycleState;
-import io.questdb.cairo.lv.LiveViewRecovery;
 import io.questdb.cairo.lv.LiveViewRegistry;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.lv.LiveViewStateReader;
@@ -744,7 +743,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
         try (
                 Path path = new Path();
-                Path sweepPath = new Path();
                 Path liveViewDirPath = new Path();
                 BlockFileReader reader = new BlockFileReader(configuration);
                 WalEventReader walEventReader = new WalEventReader(configuration);
@@ -753,9 +751,6 @@ public class CairoEngine implements Closeable, WriterSource {
             path.of(configuration.getDbRoot());
             final int pathLen = path.size();
             final MatViewStateReader matViewStateReader = new MatViewStateReader();
-            // Reusable scratch for the per-LV checkpoint sweep (see the LV
-            // branch below). Allocated once per buildViewGraphs() call.
-            final StringSink sweepNameSink = new StringSink();
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 if (tableToken.isView() && TableUtils.isViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
@@ -1039,26 +1034,6 @@ public class CairoEngine implements Closeable, WriterSource {
                                             .$(", msg=").$safe(e.getMessage())
                                             .I$();
                                 }
-                            }
-                            // ACTIVE-view recovery reads nothing but the timeline:
-                            // a missing or unusable one rebuilds derived state.
-                            // Seed checkpoints live in a disjoint .scp
-                            // namespace. For a view loaded mid-sweep, retain the
-                            // highest .scp and stamp its key so the first
-                            // seed turn resumes from it; otherwise retire
-                            // any .scp leftovers from a pre-completion crash.
-                            liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
-                            final boolean isSeeding = stateReader.getSeedState()
-                                    == LiveViewState.SEED_STATE_SEEDING;
-                            final long headSeedKey = LiveViewRecovery.sweepSeedCheckpoints(
-                                    configuration.getFilesFacade(),
-                                    sweepPath,
-                                    liveViewDirPath,
-                                    isSeeding,
-                                    sweepNameSink
-                            );
-                            if (headSeedKey != Numbers.LONG_NULL) {
-                                instance.setHeadSeedCpKey(headSeedKey);
                             }
                         }
                     } catch (CairoException ce) {

@@ -65,10 +65,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // compatibility break (not a structural corruption); the caller invalidates
     // the LV instead of falling into a rebuild.
     public static final int LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH = SEQUENCER_METADATA_OPEN_FAILED - 1;
-    // A live-view seed checkpoint (.scp) open found a file-level formatVersion
-    // outside the reader's supported range. Like
-    // LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH, this signals a real compatibility
-    // break; the caller invalidates the LV rather than unlinking and re-sweeping.
+    // A live-view checkpoint open found a file-level formatVersion outside the
+    // reader's supported range. Like LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH, this
+    // signals a real compatibility break; the caller invalidates the LV rather
+    // than retiring the timeline and rebuilding.
     public static final int LV_CHECKPOINT_FILE_VERSION_MISMATCH = LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH - 1;
     // The on-disk _lv / _lv.s carry a format version newer than this build
     // supports. The catalogue load path catches this and surfaces the view as

@@ -702,11 +702,10 @@ public class LiveViewWindow implements QuietCloseable {
 
     /**
      * Serialises the anchor map's live entries (tombstoned entries are
-     * skipped) into {@code sink} as a WINDOW_ANCHOR block payload. The
-     * framework calls this from
-     * {@link LiveViewCheckpointWriter#beginBlock(int)} /
-     * {@code endBlock} bracketed by the refresh worker, so {@code sink} is
-     * positioned right after the 8-byte block header.
+     * skipped) into {@code sink}. {@link LiveViewCheckpointScratchOverlay} calls
+     * this to take the published anchor state aside before a localized repair
+     * replays over it, and {@link #restore(MemoryR, long, long)} reads the same
+     * payload back.
      * <p>
      * Payload shape:
      * <pre>

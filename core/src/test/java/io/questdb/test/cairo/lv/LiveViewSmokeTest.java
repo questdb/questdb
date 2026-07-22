@@ -36,7 +36,7 @@ import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
-import io.questdb.cairo.lv.LiveViewCheckpointWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewWindow;
@@ -2119,73 +2119,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testSeedResumeRejectsShortCheckpointMissingFunctionBlock() throws Exception {
-        // M1 (seed path): a CRC-valid-but-short .scp that is missing its LAST
-        // FUNCTION_SNAPSHOT block (a truncated writer, or a format drift that adds a
-        // snapshot-capable function) still restores the EARLIER function(s) before it
-        // reaches the missing block and throws. The from-0 re-sweep must re-clear that
-        // half-restored accumulator - otherwise the restored running sum is carried
-        // into the re-sweep and double-counts the below-floor rows. The writer hook
-        // forges the short .scp by omitting one of the two function blocks.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO base (ts, sym, x) VALUES " +
-                    "('2026-04-01T00:00:00.000000Z', 'a', 1), " +
-                    "('2026-04-01T00:00:01.000000Z', 'b', 4), " +
-                    "('2026-04-01T00:00:05.000000Z', 'a', 2), " +
-                    "('2026-04-02T00:00:00.000000Z', 'a', 3), " +
-                    "('2026-04-02T00:00:02.000000Z', 'b', 5)");
-            drainWalQueue();
-            // Two snapshot-capable row_number counters. rn_all accumulates globally, so
-            // if the .scp restores it (function block present) but omits rn_sym's block,
-            // the un-cleared re-sweep carries rn_all's partial counter and double-counts.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
-                    "SELECT ts, sym, x, " +
-                    "count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn_all, " +
-                    "row_number() OVER w AS rn_sym " +
-                    "FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // Partial sweep writes a short .scp: one function block, not the other.
-                job.setCheckpointTrailingFunctionSnapshotBlocksToOmit(1);
-                job.run();
-                drainWalQueue();
-                Assert.assertEquals(
-                        "partial sweep must still be SEEDING",
-                        LiveViewState.SEED_STATE_SEEDING,
-                        engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getSeedState()
-                );
-
-                engine.getLiveViewRegistry().clear();
-                engine.buildViewGraphs();
-                // Let the resume write valid checkpoints again; the short .scp on disk
-                // is what the resume must reject and re-sweep past with clean state.
-                job.setCheckpointTrailingFunctionSnapshotBlocksToOmit(0);
-                driveSeedToCompletion(job, "lv");
-            }
-
-            Assert.assertEquals(
-                    LiveViewState.SEED_STATE_ACTIVE,
-                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getSeedState()
-            );
-            assertQuery("SELECT ts, sym, x, rn_all, rn_sym FROM lv ORDER BY ts")
-                    .noLeakCheck().timestamp("ts").expectSize()
-                    .returns("ts\tsym\tx\trn_all\trn_sym\n" +
-                            "2026-04-01T00:00:00.000000Z\ta\t1\t1\t1\n" +
-                            "2026-04-01T00:00:01.000000Z\tb\t4\t2\t1\n" +
-                            "2026-04-01T00:00:05.000000Z\ta\t2\t3\t2\n" +
-                            "2026-04-02T00:00:00.000000Z\ta\t3\t4\t1\n" +
-                            "2026-04-02T00:00:02.000000Z\tb\t5\t5\t1\n");
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testSeedCompletionRetiresCheckpointFiles() throws Exception {
-        // On completion the rolling .scp is unlinked and a steady head .cp is
-        // materialised, so the ACTIVE phase has a restart/O3 anchor.
+    public void testSeedCompletionRetiresSeedBoundaries() throws Exception {
+        // On completion the sweep's own boundaries are retired and one steady boundary is sealed
+        // over the finished state, so the ACTIVE phase has a restart/O3 anchor and no anchor that
+        // resumes a cursor rather than a replay.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2195,13 +2132,20 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
-            // Capture the rolling .scp key from a partial sweep before finishing.
-            final long scpKey;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 job.run();
                 drainWalQueue();
-                scpKey = engine.getLiveViewRegistry().getViewInstance("lv").getHeadSeedCpKey();
-                Assert.assertNotEquals("a .scp must have been written mid-sweep", Numbers.LONG_NULL, scpKey);
+                LiveViewInstance seeding = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotEquals(
+                        "a seed boundary must have been sealed mid-sweep",
+                        Numbers.LONG_NULL,
+                        seeding.getSeedCheckpointDataOffset()
+                );
+                Assert.assertNotEquals(
+                        "the mid-sweep generation must carry the sweep's cursor",
+                        Numbers.LONG_NULL,
+                        durableSeedCursorOffset(seeding)
+                );
                 driveSeedToCompletion(job, "lv");
             }
 
@@ -2211,41 +2155,35 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     instance.getStateReader().getSeedState()
             );
             Assert.assertEquals(
-                    "completion must clear the in-memory .scp key",
+                    "completion must clear the in-memory seed cursor",
                     Numbers.LONG_NULL,
-                    instance.getHeadSeedCpKey()
+                    instance.getSeedCheckpointDataOffset()
             );
             Assert.assertNotEquals(
-                    "completion must leave a steady head .cp",
+                    "completion must leave a steady head boundary",
                     Numbers.LONG_NULL,
                     instance.getHeadCheckpointLvSeqTxn()
             );
-            // The mid-sweep .scp file must be gone after completion.
-            FilesFacade ff = engine.getConfiguration().getFilesFacade();
-            try (Path p = new Path()) {
-                p.of(engine.getConfiguration().getDbRoot())
-                        .concat(instance.getLiveViewToken())
-                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
-                        .slash();
-                LiveViewCheckpointWriter.appendScpFileName(p, scpKey);
-                Assert.assertFalse("no .scp must survive completion", ff.exists(p.$()));
-            }
+            Assert.assertEquals(
+                    "the surviving generation must be a steady seal, not a sweep resume point",
+                    Numbers.LONG_NULL,
+                    durableSeedCursorOffset(instance)
+            );
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
             execute("DROP LIVE VIEW lv");
         });
     }
 
     @Test
-    public void testSeedCrashBetweenActiveFlipAndCheckpointRetireRecoversActive() throws Exception {
-        // Crash-window atomicity at the SEEDING -> ACTIVE boundary. The
-        // completion path (LiveViewRefreshJob.runSeedSweep) persists
-        // seedState=ACTIVE durably via advanceLiveViewConsumedSeqTxn BEFORE
-        // it unlinks the rolling .scp, so a crash in that tiny window leaves an
-        // orphan .scp on disk next to an already-ACTIVE _lv.s. On restart the
-        // loader must read the durable ACTIVE state, retire the orphan .scp
-        // (sweepSeedCheckpoints with isSeeding=false), and NOT stamp it
-        // as a resume source - the sweep is done, so there must be no re-sweep,
-        // no lost or duplicated rows, and the incremental drain takes over.
+    public void testSeedCrashBetweenBoundaryRetireAndSealReSweeps() throws Exception {
+        // Crash-window atomicity at the SEEDING -> ACTIVE boundary. The completion path
+        // (LiveViewRefreshJob.runSeedSweep) retires the sweep's own boundaries, seals one steady
+        // boundary over the finished state, and only then persists seedState=ACTIVE. A crash
+        // between the retire and the seal leaves a still-SEEDING _lv.s next to an empty timeline.
+        //
+        // On restart the sweep must find no resume point, re-run from offset 0 behind its
+        // skip-write floor, and complete without losing or duplicating a row. Retiring the timeline
+        // by hand after a partial sweep puts the view in exactly that state.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2258,76 +2196,45 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
-            // Capture a rolling .scp key from a partial sweep, then finish cleanly.
-            final long scpKey;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 job.run();
                 drainWalQueue();
-                scpKey = engine.getLiveViewRegistry().getViewInstance("lv").getHeadSeedCpKey();
-                Assert.assertNotEquals("a .scp must have been written mid-sweep", Numbers.LONG_NULL, scpKey);
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(
+                        LiveViewState.SEED_STATE_SEEDING,
+                        instance.getStateReader().getSeedState()
+                );
+                Assert.assertNotEquals(
+                        "a seed boundary must exist before it can be lost to the crash",
+                        Numbers.LONG_NULL,
+                        durableSeedCursorOffset(instance)
+                );
+                retireSeedCheckpointTimeline(instance);
+
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(
+                        "the crash leaves the view SEEDING, so it must re-sweep rather than drain",
+                        LiveViewState.SEED_STATE_SEEDING,
+                        reloaded.getStateReader().getSeedState()
+                );
+                Assert.assertEquals(
+                        "no timeline survives, so there is no durable seed cursor to resume from",
+                        Numbers.LONG_NULL,
+                        durableSeedCursorOffset(reloaded)
+                );
+
                 driveSeedToCompletion(job, "lv");
-            }
-
-            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertEquals(
-                    LiveViewState.SEED_STATE_ACTIVE,
-                    instance.getStateReader().getSeedState()
-            );
-            Assert.assertEquals(
-                    "completion clears the in-memory .scp key",
-                    Numbers.LONG_NULL,
-                    instance.getHeadSeedCpKey()
-            );
-
-            // Simulate the crash residue: the post-completion .scp unlink never
-            // ran, so a .scp lingers in _checkpoints/ even though _lv.s already
-            // reads ACTIVE. Recovery retires .scp leftovers by name, so an empty
-            // touch reaches the same sweep branch a real leftover would.
-            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-            try (Path p = new Path()) {
-                p.of(engine.getConfiguration().getDbRoot())
-                        .concat(instance.getLiveViewToken())
-                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
-                        .slash();
-                LiveViewCheckpointWriter.appendScpFileName(p, scpKey);
-                Assert.assertTrue("recreating the orphan .scp must succeed", ff.touch(p.$()));
-                Assert.assertTrue("orphan .scp must exist before restart", ff.exists(p.$()));
-            }
-
-            // Restart: the loader reads ACTIVE from _lv.s and sweeps the orphan.
-            engine.getLiveViewRegistry().clear();
-            engine.buildViewGraphs();
-
-            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertEquals(
-                    "the durable ACTIVE flip must survive the crash",
-                    LiveViewState.SEED_STATE_ACTIVE,
-                    reloaded.getStateReader().getSeedState()
-            );
-            Assert.assertEquals(
-                    "an ACTIVE view must not stamp the orphan .scp as a resume source",
-                    Numbers.LONG_NULL,
-                    reloaded.getHeadSeedCpKey()
-            );
-            try (Path p = new Path()) {
-                p.of(engine.getConfiguration().getDbRoot())
-                        .concat(reloaded.getLiveViewToken())
-                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
-                        .slash();
-                LiveViewCheckpointWriter.appendScpFileName(p, scpKey);
-                Assert.assertFalse("recovery must retire the orphan .scp", ff.exists(p.$()));
-            }
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // A refresh tick would re-sweep here if recovery had wrongly
-                // treated the ACTIVE view as seeding; the row count must
-                // stay at the four seeded rows (no re-emission).
-                drainJob(job);
-                drainWalQueue();
+                Assert.assertEquals(
+                        LiveViewState.SEED_STATE_ACTIVE,
+                        reloaded.getStateReader().getSeedState()
+                );
                 assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
 
-                // The view is genuinely ACTIVE: a follow-on insert drains
-                // incrementally and continues the row_number sequence.
+                // The view is genuinely ACTIVE: a follow-on insert drains incrementally and
+                // continues the counter sequence.
                 execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:01:00.000000Z', 50)");
                 drainWalQueue();
                 drainJob(job);
@@ -2693,8 +2600,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testSeedRestartResumesFromCheckpoint() throws Exception {
-        // A restart mid-sweep finds the surviving .scp, stamps its key, resumes
-        // from the recorded data offset, and produces the full, gap-free output.
+        // A restart mid-sweep finds the surviving timeline, restores its newest root, resumes from
+        // the seed cursor that generation carries, and produces the full, gap-free output.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 10);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2712,20 +2619,21 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         LiveViewState.SEED_STATE_SEEDING,
                         instance.getStateReader().getSeedState()
                 );
+                final long seedCursor = durableSeedCursorOffset(instance);
                 Assert.assertNotEquals(
-                        "a .scp must exist before restart",
+                        "a seed boundary must exist before restart",
                         Numbers.LONG_NULL,
-                        instance.getHeadSeedCpKey()
+                        seedCursor
                 );
 
                 engine.getLiveViewRegistry().clear();
                 engine.buildViewGraphs();
 
                 LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotEquals(
-                        "recovery must stamp the surviving .scp key so the sweep resumes",
-                        Numbers.LONG_NULL,
-                        reloaded.getHeadSeedCpKey()
+                Assert.assertEquals(
+                        "the surviving generation must still carry the cursor the sweep resumes from",
+                        seedCursor,
+                        durableSeedCursorOffset(reloaded)
                 );
 
                 driveSeedToCompletion(job, "lv");
@@ -2742,7 +2650,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testSeedRestartWithoutCheckpointReSweeps() throws Exception {
-        // If no .scp survives (crash before the first cadence write, or a
+        // If no timeline survives (crash before the first cadence write, or a
         // non-snapshot-capable view), recovery re-sweeps from offset 0 and
         // skip-writes the on-disk prefix - the result is still complete and
         // gap-free with no duplicates.
@@ -2763,17 +2671,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         LiveViewState.SEED_STATE_SEEDING,
                         instance.getStateReader().getSeedState()
                 );
-                // Drop the .scp so recovery has no resume source.
-                unlinkSeedCheckpointFile(instance);
+                // Drop the timeline so recovery has no resume source.
+                retireSeedCheckpointTimeline(instance);
 
                 engine.getLiveViewRegistry().clear();
                 engine.buildViewGraphs();
 
                 LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertEquals(
-                        "no .scp survives, so no resume key is stamped",
+                        "no timeline survives, so there is no durable seed cursor to resume from",
                         Numbers.LONG_NULL,
-                        reloaded.getHeadSeedCpKey()
+                        durableSeedCursorOffset(reloaded)
                 );
 
                 driveSeedToCompletion(job, "lv");
@@ -6451,6 +6359,24 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // Truncates a live view's _lv.s below the BlockFile header so BlockFileReader.of
     // throws "block file too small" (errno 0) - a faithful torn-partial-write artifact
     // on the non-version branch.
+
+    /**
+     * Reads the seed cursor the view's durable timeline generation carries, or
+     * {@link Numbers#LONG_NULL} when it has no valid generation or the generation was published by
+     * a steady seal. This is the coordinate a restart resumes the sweep from.
+     */
+    private long durableSeedCursorOffset(LiveViewInstance instance) {
+        try (
+                Path checkpointsDir = new Path();
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(engine.getConfiguration())
+        ) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            metaStore.of(checkpointsDir);
+            return metaStore.isValid() ? metaStore.getSuperblock().seedCursorOffset : Numbers.LONG_NULL;
+        }
+    }
 
     private void truncateLiveViewStateFile(FilesFacade ff, TableToken lvToken) {
         try (Path sPath = new Path()) {
