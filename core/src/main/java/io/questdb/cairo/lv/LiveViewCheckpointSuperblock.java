@@ -35,6 +35,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.Zip;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
@@ -96,6 +97,14 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * rejected before the checksum runs.
      */
     public static final long SLOT_MAGIC = 0x4C56_544D_4C4E_0001L;
+    /**
+     * The magic without its version nibble. A slot matching this under
+     * {@link #SLOT_MAGIC_FAMILY_MASK} was written as a timeline superblock by
+     * some build; whether this build can read it is then decided by the version
+     * nibble and {@link #SLOT_FORMAT_VERSION_OFFSET}.
+     */
+    public static final long SLOT_MAGIC_FAMILY = 0x4C56_544D_4C4E_0000L;
+    public static final long SLOT_MAGIC_FAMILY_MASK = 0xFFFF_FFFF_FFFF_0000L;
     public static final int SLOT_MAGIC_OFFSET = 0;
     public static final int SLOT_METADATA_BYTES_OFFSET = 72;
     public static final int SLOT_NEXT_CHECKPOINT_ID_OFFSET = 56;
@@ -157,6 +166,48 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         this.ff = configuration.getFilesFacade();
         this.commitMode = configuration.getCommitMode();
         this.mem = Vm.getCMARWInstance();
+    }
+
+    /**
+     * Classifies {@code _timeline} as written by a build whose slot layout this
+     * one cannot read. The probe reads two fields at offsets that stay put
+     * across layout versions - the magic and the format version - so each build
+     * can recognize the other's file without agreeing on anything else.
+     * <p>
+     * It deliberately validates no checksum. {@link #storeSlot} writes the magic
+     * and the version ahead of the CRC, so a slot torn by a crash still carries
+     * this build's pair and reads as native; ordinary A/B selection then rejects
+     * it on the checksum and falls back. A slot outside the magic family -
+     * zeroed, unwritten, short, or unrelated - is not classified either way.
+     * Bit rot inside the version field reads as foreign, which costs a rebuild
+     * of derived state and nothing else.
+     *
+     * @return true when either slot carries the timeline magic family with a
+     * magic or format version this build does not write
+     */
+    public static boolean isForeignFormat(@NotNull FilesFacade ff, @NotNull LPSZ timelinePath) {
+        final long fd = ff.openRO(timelinePath);
+        if (fd < 0) {
+            return false;
+        }
+        try {
+            for (int slot = 0; slot < 2; slot++) {
+                final long base = (long) slot * SLOT_SIZE;
+                // A short or failed read returns -1, whose masked form cannot
+                // match the family, so a truncated file is left unclassified.
+                final long magic = ff.readNonNegativeLong(fd, base + SLOT_MAGIC_OFFSET);
+                if ((magic & SLOT_MAGIC_FAMILY_MASK) != SLOT_MAGIC_FAMILY) {
+                    continue;
+                }
+                if (magic != SLOT_MAGIC
+                        || ff.readNonNegativeInt(fd, base + SLOT_FORMAT_VERSION_OFFSET) != SLOT_FORMAT_VERSION) {
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            ff.close(fd);
+        }
     }
 
     @Override

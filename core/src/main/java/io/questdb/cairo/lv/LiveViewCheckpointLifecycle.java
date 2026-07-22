@@ -50,6 +50,14 @@ import org.jetbrains.annotations.Nullable;
  * Zero-reference deletion delegates to {@link LiveViewCheckpointDataStore},
  * retaining its old-slot, reader-pin, candidate-ownership, and retry guards.</p>
  *
+ * <p>Ahead of all of that, reconciliation classifies the directory as a whole.
+ * A {@code _timeline} carrying a foreign layout version, or a top-level entry
+ * outside the current layout, means a build with a different on-disk format
+ * owned this directory. Since live views are unreleased, such a directory is
+ * removed rather than migrated or partially recovered: the primary rebuilds the
+ * timeline from the base table on its next refresh, and no reconciliation rule
+ * ever meets a mix of two formats.</p>
+ *
  * <p>Callers serialize reconciliation, epoch replacement, and retirement with
  * timeline publication, repair descriptor writes, and pin acquisition. The
  * live-view integration does so with the refresh latch (and fences DROP before
@@ -68,6 +76,11 @@ public final class LiveViewCheckpointLifecycle {
      * Reconciles one primary-owned timeline before recovery or a retrying
      * publication. A replica must pass {@code false}; that path is a strict
      * no-op and does not even create/open {@code _timeline}.
+     * <p>
+     * A directory written under a foreign layout short-circuits every other
+     * rule: it is removed whole and the result reports
+     * {@link ReconcileResult#isFormatReset()}, leaving the caller with the same
+     * disposition a live view that never checkpointed has.
      */
     public static ReconcileResult reconcile(
             @NotNull CairoConfiguration configuration,
@@ -84,6 +97,13 @@ public final class LiveViewCheckpointLifecycle {
                     .put("invalid live view checkpoint history identity")
                     .put(" [definitionTxn=").put(expectedDefinitionTxn)
                     .put(", historyEpoch=").put(expectedHistoryEpoch).put(']');
+        }
+
+        // A directory this build cannot read as a whole goes before anything
+        // reads part of it, including the repair sweep below.
+        if (isForeignFormat(configuration, checkpointsDir)) {
+            resetForeignFormat(configuration, checkpointsDir);
+            return ReconcileResult.FORMAT_RESET;
         }
 
         // A descriptor left behind is a repair that crashed mid-candidate. Its
@@ -141,6 +161,7 @@ public final class LiveViewCheckpointLifecycle {
             }
             return new ReconcileResult(
                     true,
+                    false,
                     -1,
                     Numbers.LONG_NULL,
                     0,
@@ -300,6 +321,66 @@ public final class LiveViewCheckpointLifecycle {
         }
     }
 
+    /**
+     * Reports whether {@code checkpointsDir} holds a top-level entry outside the
+     * current layout. Everything this build writes there is one of four names -
+     * the {@code _timeline} superblock and the {@code meta}, {@code data} and
+     * {@code repair} directories - so anything else came from a build that
+     * arranged checkpoint state differently. Earlier development builds left the
+     * {@code _ring} manifest and per-checkpoint {@code .cp} / {@code .scp} files
+     * at this level, which is what the check most often finds.
+     */
+    private static boolean hasUnknownEntry(@NotNull FilesFacade ff, @NotNull Path checkpointsDir) {
+        if (!ff.exists(checkpointsDir.$())) {
+            return false;
+        }
+        final long findPtr = ff.findFirst(checkpointsDir.$());
+        if (findPtr == 0) {
+            return false;
+        }
+        final StringSink name = new StringSink();
+        try {
+            do {
+                final long namePtr = ff.findName(findPtr);
+                if (namePtr == 0) {
+                    continue;
+                }
+                name.clear();
+                if (!Utf8s.utf8ToUtf16Z(namePtr, name)
+                        || Chars.equals(name, ".")
+                        || Chars.equals(name, "..")
+                        || Chars.equals(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                        || Chars.equals(name, LiveViewCheckpointLayout.META_DIR_NAME)
+                        || Chars.equals(name, LiveViewCheckpointLayout.DATA_DIR_NAME)
+                        || Chars.equals(name, LiveViewCheckpointLayout.REPAIR_DIR_NAME)) {
+                    continue;
+                }
+                LOG.info().$("live view checkpoint directory holds an entry outside the current layout [path=")
+                        .$(checkpointsDir).$(", name=").$safe(name).I$();
+                return true;
+            } while (ff.findNext(findPtr) > 0);
+        } finally {
+            ff.findClose(findPtr);
+        }
+        return false;
+    }
+
+    private static boolean isForeignFormat(
+            @NotNull CairoConfiguration configuration,
+            @NotNull Path checkpointsDir
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            LiveViewCheckpointLayout.timelinePath(path, checkpointsDir);
+            if (ff.exists(path.$()) && LiveViewCheckpointSuperblock.isForeignFormat(ff, path.$())) {
+                LOG.info().$("live view checkpoint timeline carries a foreign layout version [path=")
+                        .$(checkpointsDir).I$();
+                return true;
+            }
+        }
+        return hasUnknownEntry(ff, checkpointsDir);
+    }
+
     private static void purgeFinalOrphansInDir(
             @NotNull FilesFacade ff,
             @NotNull Path dir,
@@ -383,6 +464,30 @@ public final class LiveViewCheckpointLifecycle {
         return false;
     }
 
+    /**
+     * Removes the whole checkpoint directory so the primary rebuilds it from the
+     * base table. Checkpoint state is derived, so discarding it costs one
+     * rebuild; reading half of it under one layout and half under another is
+     * what the reset exists to prevent, which is why a partial removal fails the
+     * reconciliation instead of proceeding. The next reconciliation sees the
+     * survivors, classifies the directory as foreign again, and retries.
+     */
+    private static void resetForeignFormat(
+            @NotNull CairoConfiguration configuration,
+            @NotNull Path checkpointsDir
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            if (!removeTree(ff, path.of(checkpointsDir))) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not reset live view checkpoint directory [path=")
+                        .put(checkpointsDir).put(']');
+            }
+        }
+        LOG.info().$("reset live view checkpoint directory, rebuilding from the base table [path=")
+                .$(checkpointsDir).I$();
+    }
+
     private static ReconcileResult result(
             boolean epochReplaced,
             long walPurgeFloor,
@@ -394,6 +499,7 @@ public final class LiveViewCheckpointLifecycle {
     ) {
         return new ReconcileResult(
                 epochReplaced,
+                false,
                 walPurgeFloor,
                 normalizedBaseSeqTxn,
                 cleanup.removed,
@@ -417,14 +523,17 @@ public final class LiveViewCheckpointLifecycle {
     }
 
     public static final class ReconcileResult {
+        private static final ReconcileResult FORMAT_RESET =
+                new ReconcileResult(false, true, -1, Numbers.LONG_NULL, 0, 0, 0, 0, 0, 0, 0);
         private static final ReconcileResult NOT_OWNER =
-                new ReconcileResult(false, -1, Numbers.LONG_NULL, 0, 0, 0, 0, 0, 0, 0);
+                new ReconcileResult(false, false, -1, Numbers.LONG_NULL, 0, 0, 0, 0, 0, 0, 0);
         private final int discardedRepairCount;
         private final boolean epochReplaced;
         private final int failedOrphanCount;
         private final int failedPurgeCount;
         private final int failedRepairCount;
         private final long finalOrphanUpperBound;
+        private final boolean formatReset;
         private final long normalizedBaseSeqTxn;
         private final int purgedSegmentCount;
         private final int removedOrphanCount;
@@ -432,6 +541,7 @@ public final class LiveViewCheckpointLifecycle {
 
         private ReconcileResult(
                 boolean epochReplaced,
+                boolean formatReset,
                 long walPurgeFloor,
                 long normalizedBaseSeqTxn,
                 int removedOrphanCount,
@@ -443,6 +553,7 @@ public final class LiveViewCheckpointLifecycle {
                 int failedRepairCount
         ) {
             this.epochReplaced = epochReplaced;
+            this.formatReset = formatReset;
             this.walPurgeFloor = walPurgeFloor;
             this.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
             this.removedOrphanCount = removedOrphanCount;
@@ -506,6 +617,15 @@ public final class LiveViewCheckpointLifecycle {
 
         public boolean isEpochReplaced() {
             return epochReplaced;
+        }
+
+        /**
+         * @return true when this reconciliation removed a checkpoint directory
+         * written under a layout this build cannot read, leaving the primary to
+         * rebuild the timeline from the base table
+         */
+        public boolean isFormatReset() {
+            return formatReset;
         }
     }
 

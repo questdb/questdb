@@ -6018,6 +6018,76 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRestartResetsForeignCheckpointFormatAndRebuilds() throws Exception {
+        // A checkpoint directory an earlier development build owned - here the
+        // retained-ring manifest sitting beside the current layout - cannot be
+        // recovered field by field. Startup removes it whole and the refresh
+        // worker rebuilds derived state from the applied base, which must leave
+        // the window accumulators where a from-scratch recompute puts them.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final TableToken lvToken = engine.getLiveViewRegistry().getViewInstance("lv").getLiveViewToken();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES " +
+                        "('2026-04-01T00:00:00.000000Z', 'a', 1), " +
+                        "('2026-04-01T00:00:01.000000Z', 'b', 2)");
+                drainWalQueue();
+                setCurrentMicros(2_000_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+            Assert.assertTrue("the seal must publish a generation for the reset to discard",
+                    hasDurableTimelineGeneration(lvToken));
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                Assert.assertTrue(ff.touch(ringManifestPath(path, lvToken).$()));
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (Path path = new Path()) {
+                Assert.assertFalse("the foreign artefact goes with the directory",
+                        ff.exists(ringManifestPath(path, lvToken).$()));
+            }
+            Assert.assertFalse("so does every root it sat beside", hasDurableTimelineGeneration(lvToken));
+
+            final LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("a reset costs derived state, not the view", recovered);
+            Assert.assertFalse(recovered.isStub());
+            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, recovered.getLifecycleState());
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+
+            // The base advances and the view refreshes forward over the rebuilt
+            // state. The new 'a' row must read s=4 (1+3); an accumulator lost with
+            // the checkpoints would restart the running sum at 3.
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 3)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(4_000_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+            assertQuery("SELECT ts, sym, x, s FROM lv ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tsym\tx\ts\n" +
+                            "2026-04-01T00:00:00.000000Z\ta\t1\t1.0\n" +
+                            "2026-04-01T00:00:01.000000Z\tb\t2\t2.0\n" +
+                            "2026-04-01T00:00:02.000000Z\ta\t3\t4.0\n");
+            Assert.assertTrue("the seal after the reset publishes a fresh generation",
+                    hasDurableTimelineGeneration(lvToken));
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRestartRoundTripsLvConsumedSeqTxn() throws Exception {
         // Refresh writes + applies inline, so a successful refresh
         // cycle leaves no unapplied LV WAL block in steady state. This pins the
@@ -6347,6 +6417,39 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             metaStore.of(checkpointsDir);
             return metaStore.isValid() ? metaStore.getSuperblock().seedCursorOffset : Numbers.LONG_NULL;
         }
+    }
+
+    /**
+     * @return true when the view's checkpoint directory holds a superblock slot
+     * that passes bounded validation, i.e. a generation a restart could adopt
+     */
+    private boolean hasDurableTimelineGeneration(TableToken lvToken) {
+        try (Path checkpointsDir = new Path(); Path timelinePath = new Path()) {
+            checkpointsDir.of(configuration.getDbRoot())
+                    .concat(lvToken)
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+            // Opening the store would recreate _timeline, so a reset directory is
+            // recognized by the absent file rather than by an invalid slot.
+            if (!configuration.getFilesFacade().exists(timelinePath.$())) {
+                return false;
+            }
+            try (LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(engine.getConfiguration())) {
+                metaStore.of(checkpointsDir);
+                return metaStore.isValid();
+            }
+        }
+    }
+
+    /**
+     * Points {@code path} at the retained-ring manifest an earlier development
+     * build wrote at the top level of {@code _checkpoints}.
+     */
+    private Path ringManifestPath(Path path, TableToken lvToken) {
+        return path.of(configuration.getDbRoot())
+                .concat(lvToken)
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                .concat("_ring");
     }
 
     private void truncateLiveViewStateFile(FilesFacade ff, TableToken lvToken) {

@@ -1004,6 +1004,17 @@ public class CairoEngine implements Closeable, WriterSource {
                                                     0,
                                                     true
                                             );
+                                    if (reconciliation.isFormatReset()) {
+                                        // A development build with a different
+                                        // on-disk layout owned this directory.
+                                        // Reconciliation removed it; the refresh
+                                        // worker rebuilds derived state from the
+                                        // applied base, as it would for a view
+                                        // that never checkpointed.
+                                        LOG.info().$("live view checkpoint directory was written by another format, rebuilding [view=")
+                                                .$(tableToken)
+                                                .I$();
+                                    }
                                     if (reconciliation.getWalPurgeFloor() >= 0) {
                                         instance.recordCheckpointTimelineWalPurgeFloor(
                                                 reconciliation.getWalPurgeFloor()

@@ -37,9 +37,13 @@ import io.questdb.cairo.lv.LiveViewCheckpointRepairState;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Zip;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -67,6 +71,104 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             Assert.assertFalse(timelineExists());
             Assert.assertFalse(metaDirExists());
             Assert.assertFalse(dataDirExists());
+        });
+    }
+
+    @Test
+    public void testForeignFormatResetFailureFailsReconciliationAndRetries() throws Exception {
+        final boolean[] failRmdir = {false};
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean rmdir(Path name, boolean haltOnError) {
+                if (failRmdir[0]) {
+                    failRmdir[0] = false;
+                    return false;
+                }
+                return super.rmdir(name, haltOnError);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            touchTopLevel("_ring");
+
+            // A directory that is half one format and half another is exactly what
+            // the reset exists to prevent, so a removal that does not complete
+            // fails the reconciliation rather than letting it continue.
+            failRmdir[0] = true;
+            try (Path dir = checkpointsDir()) {
+                LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+                Assert.fail("expected the failed reset to fail reconciliation");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not reset live view checkpoint directory");
+            }
+            Assert.assertTrue(checkpointsDirExists());
+
+            // The next reconciliation meets the survivors, classifies the
+            // directory as foreign again, and finishes the reset.
+            final LiveViewCheckpointLifecycle.ReconcileResult retry;
+            try (Path dir = checkpointsDir()) {
+                retry = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+            }
+            Assert.assertTrue(retry.isFormatReset());
+            Assert.assertFalse(checkpointsDirExists());
+        });
+    }
+
+    @Test
+    public void testForeignTimelineVersionResetsCheckpointDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            touchFinal(false, 4);
+            Assert.assertTrue(timelineExists());
+
+            // A slot whose checksum agrees with its body but whose layout version
+            // this build does not write: a real generation another build owns, not
+            // a torn write. Recovering the readable half of the directory would be
+            // the mixed-format recovery the reset rules out.
+            bumpTimelineFormatVersion(0);
+
+            final LiveViewCheckpointLifecycle.ReconcileResult result;
+            try (Path dir = checkpointsDir()) {
+                result = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+            }
+            Assert.assertTrue(result.isFormatReset());
+            Assert.assertFalse(result.isEpochReplaced());
+            Assert.assertEquals(-1, result.getWalPurgeFloor());
+            Assert.assertEquals(Numbers.LONG_NULL, result.getNormalizedBaseSeqTxn());
+            Assert.assertFalse("segments the foreign generation named go with it", segmentExists(false, 4, false));
+            Assert.assertFalse("the whole derived directory goes, not just _timeline", checkpointsDirExists());
+        });
+    }
+
+    @Test
+    public void testLegacyFormatArtefactsResetCheckpointDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            // The retained-ring manifest and a per-checkpoint state file, both at
+            // the top level of a directory an earlier development build owned.
+            touchTopLevel("_ring");
+            touchTopLevel("0000000000000004.cp");
+
+            final LiveViewCheckpointLifecycle.ReconcileResult result;
+            try (Path dir = checkpointsDir()) {
+                result = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+            }
+            Assert.assertTrue(result.isFormatReset());
+            Assert.assertFalse(checkpointsDirExists());
+
+            // A rebuilt directory holds only current-layout names, so the next
+            // reconciliation takes the ordinary path.
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            final LiveViewCheckpointLifecycle.ReconcileResult rebuilt;
+            try (Path dir = checkpointsDir()) {
+                rebuilt = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+            }
+            Assert.assertFalse(rebuilt.isFormatReset());
+            Assert.assertEquals(1, rebuilt.getWalPurgeFloor());
         });
     }
 
@@ -247,8 +349,59 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTornSlotIsNotAForeignFormat() throws Exception {
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 10); // slot 0
+            publish(2, 2, 7, 0, 20); // slot 1
+
+            // A publication writes the magic and the layout version ahead of the
+            // checksum, so a slot torn by a crash still identifies itself as this
+            // build's. It is a fallback case, not a format case.
+            corruptSlotGeneration(1);
+
+            final LiveViewCheckpointLifecycle.ReconcileResult result;
+            try (Path dir = checkpointsDir()) {
+                result = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+            }
+            Assert.assertFalse(result.isFormatReset());
+            Assert.assertTrue(timelineExists());
+            Assert.assertEquals(1, result.getWalPurgeFloor());
+            Assert.assertEquals(1, result.getNormalizedBaseSeqTxn());
+        });
+    }
+
     private static Path checkpointsDir() {
         return new Path().of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
+    }
+
+    private void bumpTimelineFormatVersion(int slot) {
+        withTimelineMemory(mem -> {
+            final long base = (long) slot * LiveViewCheckpointSuperblock.SLOT_SIZE;
+            mem.putInt(
+                    base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,
+                    LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1
+            );
+            mem.putInt(
+                    base + LiveViewCheckpointSuperblock.SLOT_CRC_OFFSET,
+                    Zip.crc32(0, mem.addressOf(base), LiveViewCheckpointSuperblock.SLOT_CRC_COVERAGE)
+            );
+        });
+    }
+
+    private boolean checkpointsDirExists() {
+        try (Path dir = checkpointsDir()) {
+            return configuration.getFilesFacade().exists(dir.$());
+        }
+    }
+
+    private void corruptSlotGeneration(int slot) {
+        withTimelineMemory(mem -> {
+            final long offset = (long) slot * LiveViewCheckpointSuperblock.SLOT_SIZE
+                    + LiveViewCheckpointSuperblock.SLOT_GENERATION_OFFSET;
+            mem.putLong(offset, mem.getLong(offset) ^ 0x5A5A_5A5AL);
+        });
     }
 
     private boolean dataDirExists() {
@@ -366,11 +519,34 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
         touchSegment(metadata, segmentId, true);
     }
 
+    private void touchTopLevel(CharSequence name) {
+        try (Path dir = checkpointsDir(); Path path = new Path()) {
+            path.of(dir).concat(name);
+            Assert.assertTrue(configuration.getFilesFacade().touch(path.$()));
+        }
+    }
+
     private boolean timelineExists() {
         try (Path dir = checkpointsDir(); Path path = new Path()) {
             return configuration.getFilesFacade().exists(
                     LiveViewCheckpointLayout.timelinePath(path, dir).$()
             );
         }
+    }
+
+    private void withTimelineMemory(TimelineMutation mutation) {
+        try (Path dir = checkpointsDir(); Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+            mem.smallFile(
+                    configuration.getFilesFacade(),
+                    LiveViewCheckpointLayout.timelinePath(path, dir).$(),
+                    MemoryTag.MMAP_DEFAULT
+            );
+            mutation.apply(mem);
+        }
+    }
+
+    @FunctionalInterface
+    private interface TimelineMutation {
+        void apply(MemoryCMARW mem);
     }
 }

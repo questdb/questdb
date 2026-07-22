@@ -255,6 +255,90 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForeignFormatProbeAcceptsNativeAndTornSlots() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                Assert.assertFalse(
+                        "a _timeline no build has written yet is not classified",
+                        LiveViewCheckpointSuperblock.isForeignFormat(ff, timelinePath(path).$())
+                );
+            }
+
+            publish(1); // slot 0
+            publish(2); // slot 1
+            try (Path path = new Path()) {
+                Assert.assertFalse(LiveViewCheckpointSuperblock.isForeignFormat(ff, timelinePath(path).$()));
+            }
+
+            // A slot torn mid-publication carries this build's magic and version -
+            // both written ahead of the CRC - so the probe leaves it to ordinary
+            // A/B fallback rather than condemning the whole directory.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(ff, timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                corruptGenerationNoCrcFix(mem, 1);
+            }
+            try (Path path = new Path()) {
+                Assert.assertFalse(LiveViewCheckpointSuperblock.isForeignFormat(ff, timelinePath(path).$()));
+            }
+
+            // A zeroed slot pair is outside the magic family altogether.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(ff, timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                mem.zero();
+            }
+            try (Path path = new Path()) {
+                Assert.assertFalse(LiveViewCheckpointSuperblock.isForeignFormat(ff, timelinePath(path).$()));
+            }
+        });
+    }
+
+    @Test
+    public void testForeignFormatProbeDetectsMagicVersionSkew() throws Exception {
+        assertMemoryLeak(() -> {
+            publish(1); // slot 0
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                // Same family, later version nibble: another build's superblock.
+                mem.putLong(LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET, LiveViewCheckpointSuperblock.SLOT_MAGIC + 1);
+                fixSlotCrc(mem, 0);
+            }
+            try (Path path = new Path()) {
+                Assert.assertTrue(LiveViewCheckpointSuperblock.isForeignFormat(
+                        configuration.getFilesFacade(),
+                        timelinePath(path).$()
+                ));
+            }
+        });
+    }
+
+    @Test
+    public void testForeignFormatProbeDetectsSlotFormatVersionSkew() throws Exception {
+        assertMemoryLeak(() -> {
+            publish(1); // slot 0
+            publish(2); // slot 1
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                final long base = LiveViewCheckpointSuperblock.SLOT_SIZE;
+                mem.putInt(
+                        base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,
+                        LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1
+                );
+                fixSlotCrc(mem, 1);
+            }
+            try (Path path = new Path()) {
+                Assert.assertTrue(
+                        "one foreign slot condemns the file, even beside a readable one",
+                        LiveViewCheckpointSuperblock.isForeignFormat(
+                                configuration.getFilesFacade(),
+                                timelinePath(path).$()
+                        )
+                );
+            }
+        });
+    }
+
+    @Test
     public void testFormatVersionSkewSlotIgnored() throws Exception {
         assertMemoryLeak(() -> {
             publish(1); // slot 0
@@ -264,6 +348,9 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
                 // A newer format version with an otherwise valid checksum: the
                 // slot is a real, but unreadable, future generation - ignore it
                 // and use the readable older slot rather than misparsing it.
+                // A primary never gets this far, because lifecycle reconciliation
+                // classifies the directory as foreign and resets it first; this is
+                // the disposition for a reader that does not reconcile.
                 final long base = LiveViewCheckpointSuperblock.SLOT_SIZE;
                 mem.putInt(base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1);
                 fixSlotCrc(mem, 1);
