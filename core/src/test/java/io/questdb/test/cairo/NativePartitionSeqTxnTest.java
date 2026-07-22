@@ -1058,10 +1058,18 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1)");
             drainWalQueue();
 
+            try (TableWriter writer = getWriter("t")) {
+                writer.getTxWriter().setPartitionParquetGenerated(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+
             try (TableReader reader = getReader("t")) {
                 final TxReader tx = reader.getTxFile();
                 Assert.assertEquals(1L, tx.getSeqTxn());
                 Assert.assertEquals(1L, tx.getNativePartitionSeqTxn(0));
+                Assert.assertTrue("precondition: open reader sees the generated bit",
+                        tx.isPartitionParquetGenerated(0));
 
                 execute("INSERT INTO t VALUES ('2024-01-01T01:00:00', 2)");
                 drainWalQueue();
@@ -1072,6 +1080,8 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, tx.getSeqTxn());
                 Assert.assertEquals("active-partition stamp must reload with the committed seqTxn",
                         tx.getSeqTxn(), tx.getNativePartitionSeqTxn(0));
+                Assert.assertFalse("active-partition stamp must reload the cleared generated bit",
+                        tx.isPartitionParquetGenerated(0));
             }
         });
     }
