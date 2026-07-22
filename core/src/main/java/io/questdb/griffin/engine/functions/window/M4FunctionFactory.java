@@ -230,6 +230,13 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public boolean isRowSelecting() {
+            // Sole-window-function keep flag: after preparePass2, getSelectedRows() enumerates the
+            // exact kept absolute rows, so the filter can be fused into the cursor.
+            return true;
+        }
+
+        @Override
         public boolean pass2NeedsBaseRecord() {
             // pass2 drives entirely off pass1's cached (ts,value) buffer, `selected`, and the
             // per-row null bitset; it never reads the base Record. Lets the cached executor skip
@@ -240,6 +247,28 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getType() {
             return ColumnType.BOOLEAN;
+        }
+
+        @Override
+        public void getSelectedRows(DirectLongList dest) {
+            // Map `selected` (ascending non-null BUFFER ordinals chosen by preparePass2) back to
+            // ascending ABSOLUTE base-row indices using pass1's null bitset. The o-th non-null row
+            // in absolute traversal order corresponds to buffer ordinal o; a single forward walk
+            // over the null bitset advances both cursors monotonically, so this is byte-identical to
+            // the rows pass2 would have flagged keep=true.
+            dest.clear();
+            long selIdx = 0;
+            long nonNullOrdinal = 0;
+            final long selSize = selected.size();
+            for (long absRow = 0; absRow < rowCount && selIdx < selSize; absRow++) {
+                if (!nullFlag(absRow)) {
+                    if (selected.get(selIdx) == nonNullOrdinal) {
+                        dest.add(absRow);
+                        selIdx++;
+                    }
+                    nonNullOrdinal++;
+                }
+            }
         }
 
         @Override

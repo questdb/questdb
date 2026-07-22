@@ -60,6 +60,11 @@ public abstract class BaseWindowFunction implements WindowFunction {
     }
 
     @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
     public abstract String getName();
 
     @Override

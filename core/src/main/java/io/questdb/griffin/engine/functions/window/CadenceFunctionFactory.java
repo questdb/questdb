@@ -212,6 +212,27 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void getSelectedRows(DirectLongList dest) {
+            // Position-only: `selected` already holds ascending ABSOLUTE row ordinals (no null rows
+            // are dropped), and keepAll (stride==1) means every row 0..count-1 is kept.
+            dest.clear();
+            if (keepAll) {
+                for (long i = 0; i < count; i++) {
+                    dest.add(i);
+                }
+            } else {
+                for (long i = 0, n = selected.size(); i < n; i++) {
+                    dest.add(selected.get(i));
+                }
+            }
+        }
+
+        @Override
+        public boolean isRowSelecting() {
+            return true;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             if (seedFunc != null) {

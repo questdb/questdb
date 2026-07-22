@@ -4288,7 +4288,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return model.getWhereClause() == null ? factory : generateFilter0(factory, model, executionContext);
+        final ExpressionNode where = model.getWhereClause();
+        if (where == null) {
+            return factory;
+        }
+        // Keep-flag filter fusion: when the desugared SUBSAMPLE shape produces exactly
+        //   WHERE <keepBool>  over a CachedWindowLight whose sole window function is a row-selecting
+        // keep flag and <keepBool> is exactly that function's BOOLEAN output column, run a fused
+        // cursor that emits only the kept rows - no per-row boolean materialization, no Filter pass.
+        if (tryFuseKeepFlagFilter(factory, where, model)) {
+            return factory;
+        }
+        return generateFilter0(factory, model, executionContext);
+    }
+
+    // Conservative pattern match for the single-keep-flag fusion. Fuses ONLY when:
+    //  - the WHERE clause is exactly one column literal (no AND/OR/other terms),
+    //  - the input factory is a CachedWindowLightRecordCursorFactory with EXACTLY one window
+    //    function and that function is a row-selecting keep flag (WindowFunction.isRowSelecting()),
+    //  - the literal resolves to that function's own BOOLEAN output column (not a base column).
+    // Anything else (multiple window fns, extra filter terms, the boolean referenced elsewhere, a
+    // non-row-selecting fn, PARTITION BY, a non-light window factory) leaves the untouched
+    // CachedWindowLight + Filter path in place. On a match, the factory is switched into
+    // row-selecting mode and the WHERE clause is consumed.
+    private boolean tryFuseKeepFlagFilter(RecordCursorFactory factory, ExpressionNode where, IQueryModel model) {
+        if (where.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        if (!(factory instanceof CachedWindowLightRecordCursorFactory)) {
+            return false;
+        }
+        final CachedWindowLightRecordCursorFactory windowFactory = (CachedWindowLightRecordCursorFactory) factory;
+        final WindowFunction fn = windowFactory.getSingleRowSelectingFunction();
+        if (fn == null) {
+            return false;
+        }
+        final RecordMetadata metadata = windowFactory.getMetadata();
+        final int colIdx = metadata.getColumnIndexQuiet(where.token);
+        // The literal must reference exactly the keep-flag function's own boolean output column.
+        if (colIdx < 0 || colIdx != fn.getColumnIndex() || metadata.getColumnType(colIdx) != ColumnType.BOOLEAN) {
+            return false;
+        }
+        windowFactory.enableRowSelecting();
+        model.setWhereClause(null);
+        return true;
     }
 
     @NotNull

@@ -71,6 +71,12 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     private RecordCursorFactory base;
     private CachedWindowLightRecordCursor cursor;
     private boolean isClosed;
+    // Keep-flag filter fusion (row-selecting mode): when enabled, the cursor runs the window compute
+    // (buffer + pass1 + preparePass2) but SKIPS the per-row boolean pass2 write and emits ONLY the
+    // rows the sole row-selecting window function keeps (see enableRowSelecting). Default off - the
+    // normal path (materialize boolean, then a separate Filter) is byte-identical and untouched.
+    private boolean rowSelecting;
+    private WindowFunction selectingFunction;
 
     public CachedWindowLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -233,6 +239,34 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         return base;
     }
 
+    /**
+     * Returns the sole window function iff this factory has EXACTLY one window function and it is a
+     * row-selecting keep flag ({@link WindowFunction#isRowSelecting()}); otherwise {@code null}.
+     * The keep-flag filter fusion in code generation uses this to decide whether the exact single
+     * keep-flag shape is present before enabling {@link #enableRowSelecting()}.
+     */
+    public WindowFunction getSingleRowSelectingFunction() {
+        if (allFunctions != null && allFunctions.size() == 1) {
+            final WindowFunction fn = allFunctions.getQuick(0);
+            if (fn.isRowSelecting()) {
+                return fn;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Switches this factory into row-selecting mode: the cursor fuses the keep-flag filter, skipping
+     * the per-row boolean pass2 write and emitting only the rows the sole row-selecting window
+     * function keeps. Must only be called after {@link #getSingleRowSelectingFunction()} returns
+     * non-null (verified by the caller). Idempotent.
+     */
+    public void enableRowSelecting() {
+        this.selectingFunction = getSingleRowSelectingFunction();
+        assert selectingFunction != null;
+        this.rowSelecting = true;
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
@@ -258,7 +292,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("CachedWindowLight");
+        // Distinct node name in row-selecting mode so the fused plan (no separate Filter, keep flag
+        // consumed) is visibly different from the normal materialize-boolean-then-Filter path.
+        sink.type(rowSelecting ? "CachedWindowLightSelect" : "CachedWindowLight");
 
         boolean oldVal = sink.getUseBaseMetadata();
         try {
@@ -353,12 +389,18 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         private final RecordArray narrowChain;
         private final WindowLightRecord recordA;
         private final WindowLightRecord recordB;
+        // Row-selecting mode only: ascending ABSOLUTE base-row indices the sole row-selecting
+        // window function keeps, filled from selectingFunction.getSelectedRows() after preparePass2.
+        // Forward iteration (hasNext) walks this list to position the base at each kept row; outputSize
+        // is its size. Random access (recordAt) receives a getRowId (already an absolute row) directly.
+        private final DirectLongList selectedRowIds;
         private final ObjList<WindowSortBuffer> sortBuffers;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long currentRowIndex;
         private boolean isOpen;
         private boolean isWindowComputed;
+        private long outputSize;
         private long size;
 
         CachedWindowLightRecordCursor(
@@ -375,6 +417,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             this.recordA = new WindowLightRecord(sourceMap);
             this.recordB = new WindowLightRecord(sourceMap);
             this.lightSpi = new LightWindowSPI(sourceMap, narrowChain, baseRowIds);
+            // Lazy (matches baseRowIds): reopen() under the tracker bound by the first of(). Only
+            // allocated/used in row-selecting mode.
+            this.selectedRowIds = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
             // Lazy: the first of() binds the tracker and reopens the chain, row-id list,
             // sort buffers and window-function maps. Starting open would skip that first
             // reopen() and read a closed partition map.
@@ -386,8 +431,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             if (!isWindowComputed) {
                 computeWindow();
             }
-            counter.add(size - currentRowIndex);
-            currentRowIndex = size;
+            final long total = rowSelecting ? outputSize : size;
+            counter.add(total - currentRowIndex);
+            currentRowIndex = total;
         }
 
         @Override
@@ -396,6 +442,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 Misc.free(baseCursor);
                 Misc.free(narrowChain);
                 Misc.free(baseRowIds);
+                Misc.free(selectedRowIds);
                 for (int i = 0, n = sortBuffers.size(); i < n; i++) {
                     Misc.free(sortBuffers.getQuick(i));
                 }
@@ -424,6 +471,15 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             if (!isWindowComputed) {
                 computeWindow();
             }
+            if (rowSelecting) {
+                if (currentRowIndex < outputSize) {
+                    // Emit only the kept rows: index the base at the selected absolute row id.
+                    positionRecordA(selectedRowIds.get(currentRowIndex));
+                    currentRowIndex++;
+                    return true;
+                }
+                return false;
+            }
             if (currentRowIndex < size) {
                 positionRecordA(currentRowIndex);
                 currentRowIndex++;
@@ -444,6 +500,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public void recordAt(Record record, long rowIndex) {
+            // rowIndex is a getRowId() value, which for this cursor is the ABSOLUTE base-row index
+            // (set via recordA.setRowIndex during iteration) in BOTH modes - not an output position -
+            // so it positions directly, exactly as the non-selecting path does.
             if (record == recordA) {
                 positionRecordA(rowIndex);
             } else {
@@ -453,6 +512,13 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public long size() {
+            if (rowSelecting) {
+                // Mirror the FilteredRecordCursor contract this fusion replaces (size not advertised
+                // ahead of iteration), so the fused query is size-identical, not just row-identical,
+                // to the untouched Filter + CachedWindowLight path. calculateSize() still returns the
+                // exact kept-row count.
+                return -1;
+            }
             return isWindowComputed ? size : -1;
         }
 
@@ -556,49 +622,58 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
             }
 
-            if (ordered2PassFunctions != null) {
-                for (int i = 0, n = ordered2PassFunctions.size(); i < n; i++) {
-                    final ObjList<WindowFunction> functions = ordered2PassFunctions.getQuick(i);
-                    if (functions == null) {
-                        continue;
-                    }
-                    final WindowSortBuffer group = sortBuffers.getQuick(i);
-                    final int functionCount = functions.size();
-                    // Skip the per-row random-access base re-read entirely when no function in this
-                    // group reads the base Record in pass2 (need-flag precomputed once in the ctor).
-                    final boolean needsRecord = ordered2PassNeedsRecord[i];
-                    group.toTop();
-                    while (group.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
-                        long rIdx = group.next();
-                        // pass2 reads only base columns through recordA and reads/writes its own
-                        // output via spi.getAddress (position-independent), so narrow positioning
-                        // would be wasted work over millions of rows. And when no function even reads
-                        // the base Record, the base-only re-read itself is skipped.
-                        if (needsRecord) {
-                            positionRecordABaseOnly(rIdx);
+            // Row-selecting fusion: the sole keep-flag function's preparePass2() has now populated its
+            // selection, so we can enumerate the kept ABSOLUTE rows directly and SKIP the per-row
+            // boolean pass2 write over all N rows (and the separate downstream Filter). Otherwise run
+            // the normal pass2 write loops that materialize the boolean into the narrow chain.
+            if (rowSelecting) {
+                selectingFunction.getSelectedRows(selectedRowIds);
+                outputSize = selectedRowIds.size();
+            } else {
+                if (ordered2PassFunctions != null) {
+                    for (int i = 0, n = ordered2PassFunctions.size(); i < n; i++) {
+                        final ObjList<WindowFunction> functions = ordered2PassFunctions.getQuick(i);
+                        if (functions == null) {
+                            continue;
                         }
-                        for (int j = 0; j < functionCount; j++) {
-                            functions.getQuick(j).pass2(recordA, rIdx, lightSpi);
+                        final WindowSortBuffer group = sortBuffers.getQuick(i);
+                        final int functionCount = functions.size();
+                        // Skip the per-row random-access base re-read entirely when no function in this
+                        // group reads the base Record in pass2 (need-flag precomputed once in the ctor).
+                        final boolean needsRecord = ordered2PassNeedsRecord[i];
+                        group.toTop();
+                        while (group.hasNext()) {
+                            circuitBreaker.statefulThrowExceptionIfTripped();
+                            long rIdx = group.next();
+                            // pass2 reads only base columns through recordA and reads/writes its own
+                            // output via spi.getAddress (position-independent), so narrow positioning
+                            // would be wasted work over millions of rows. And when no function even reads
+                            // the base Record, the base-only re-read itself is skipped.
+                            if (needsRecord) {
+                                positionRecordABaseOnly(rIdx);
+                            }
+                            for (int j = 0; j < functionCount; j++) {
+                                functions.getQuick(j).pass2(recordA, rIdx, lightSpi);
+                            }
                         }
                     }
                 }
-            }
 
-            if (unordered2PassFunctions != null) {
-                final int funcCount = unordered2PassFunctions.size();
-                // Skip the per-row random-access base re-read entirely when no function reads the
-                // base Record in pass2 (need-flag precomputed once in the ctor). This is the hot
-                // keep-flag path (m4/minmax/lttb): pass2 drives off pass1's cached buffers only.
-                final boolean needsRecord = unordered2PassNeedsRecord;
-                for (long rIdx = 0; rIdx < size; rIdx++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    // see the ordered pass2 loop: base-only positioning suffices here too.
-                    if (needsRecord) {
-                        positionRecordABaseOnly(rIdx);
-                    }
-                    for (int j = 0; j < funcCount; j++) {
-                        unordered2PassFunctions.getQuick(j).pass2(recordA, rIdx, lightSpi);
+                if (unordered2PassFunctions != null) {
+                    final int funcCount = unordered2PassFunctions.size();
+                    // Skip the per-row random-access base re-read entirely when no function reads the
+                    // base Record in pass2 (need-flag precomputed once in the ctor). This is the hot
+                    // keep-flag path (m4/minmax/lttb): pass2 drives off pass1's cached buffers only.
+                    final boolean needsRecord = unordered2PassNeedsRecord;
+                    for (long rIdx = 0; rIdx < size; rIdx++) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        // see the ordered pass2 loop: base-only positioning suffices here too.
+                        if (needsRecord) {
+                            positionRecordABaseOnly(rIdx);
+                        }
+                        for (int j = 0; j < funcCount; j++) {
+                            unordered2PassFunctions.getQuick(j).pass2(recordA, rIdx, lightSpi);
+                        }
                     }
                 }
             }
@@ -613,9 +688,13 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             isWindowComputed = false;
             currentRowIndex = 0;
             size = 0;
+            outputSize = 0;
             circuitBreaker = executionContext.getCircuitBreaker();
             narrowChain.clear();
             baseRowIds.clear();
+            if (rowSelecting) {
+                selectedRowIds.clear();
+            }
             if (!isOpen) {
                 isOpen = true;
                 // Bind the per-query tracker on the narrow chain, row-id list, sort
@@ -624,6 +703,10 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 narrowChain.setMemoryTracker(memoryTracker);
                 baseRowIds.setMemoryTracker(memoryTracker);
                 baseRowIds.reopen();
+                if (rowSelecting) {
+                    selectedRowIds.setMemoryTracker(memoryTracker);
+                    selectedRowIds.reopen();
+                }
                 reopenSortBuffers(memoryTracker);
                 for (int i = 0, n = allFunctions.size(); i < n; i++) {
                     allFunctions.getQuick(i).setMemoryTracker(memoryTracker);

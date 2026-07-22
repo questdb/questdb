@@ -1527,17 +1527,17 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testExplainPlanShowsSubsample() throws Exception {
         // `lttb(price, 500)` is a happy-path case the migration is designed to move OFF the custom
         // SUBSAMPLE cursor, so the plan no longer shows a "Subsample" node - it shows the desugared
-        // keep-flag window filter instead (same shape as testLttbDesugarsToWindowFilter).
+        // keep-flag window, now with the filter FUSED into a row-selecting node (same shape as
+        // testLttbDesugarsToWindowFilter): CachedWindowLightSelect, no separate Filter.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 500)")
                     .assertsPlan("SelectedRecord\n" +
-                            "    Filter filter: __keep_subsample\n" +
-                            "        CachedWindowLight\n" +
-                            "          unorderedFunctions: [lttb(ts,price,500) over (order by [ts])]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [lttb(ts,price,500) over (order by [ts])]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
         });
     }
 
@@ -1785,12 +1785,12 @@ public class SubsampleTest extends AbstractCairoTest {
 
     @Test
     public void testExplainPlanSubsampleBeforeOrderBy() throws Exception {
-        // `lttb(price, 500)` is a happy-path case that now desugars to a window keep-filter instead of
-        // a Subsample cursor node (see testExplainPlanShowsSubsample). The original intent of this test
-        // - SUBSAMPLE's row reduction happens before the outer ORDER BY sorts the (already-reduced)
-        // result - still holds under the window plan: the keep-filter (Filter filter: __keep_subsample /
-        // CachedWindowLight) is nested INSIDE ("Encode sort light"), i.e. printed after/deeper than, the
-        // outer sort node, meaning it runs first, feeding the sort with the already-subsampled rows.
+        // `lttb(price, 500)` is a happy-path case that now desugars to a window keep-flag and fuses the
+        // filter into a row-selecting window node (see testExplainPlanShowsSubsample). The original
+        // intent of this test - SUBSAMPLE's row reduction happens before the outer ORDER BY sorts the
+        // (already-reduced) result - still holds: the fused window node (CachedWindowLightSelect) is
+        // nested INSIDE, i.e. printed after/deeper than, the outer sort node, meaning it runs first,
+        // feeding the sort with the already-subsampled rows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -1803,12 +1803,12 @@ public class SubsampleTest extends AbstractCairoTest {
                             sb.append(cursor.getRecord().getStrA(0)).append('\n');
                         }
                         String plan = sb.toString();
-                        int keepFilterPos = plan.indexOf("__keep_subsample");
+                        int windowPos = plan.indexOf("CachedWindowLightSelect");
                         int sortPos = plan.indexOf("sort");
-                        Assert.assertTrue("Plan should contain the __keep_subsample window filter: " + plan, keepFilterPos >= 0);
+                        Assert.assertTrue("Plan should contain the fused row-selecting window node: " + plan, windowPos >= 0);
                         Assert.assertTrue("Plan should contain a sort node: " + plan, sortPos >= 0);
-                        Assert.assertTrue("__keep_subsample filter should be nested inside the outer sort: " + plan,
-                                keepFilterPos > sortPos);
+                        Assert.assertTrue("fused window node should be nested inside the outer sort: " + plan,
+                                windowPos > sortPos);
                     }
                 }
             }
@@ -3112,15 +3112,15 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testCadenceDesugarsToWindowFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");
-            // After the rewrite, EXPLAIN must show a windowed subquery + filter, not a Subsample node.
+            // After the rewrite + keep-flag filter fusion, EXPLAIN must show the fused row-selecting
+            // window node (CachedWindowLightSelect) with NO separate Filter and no leaked keep column.
             assertQuery("SELECT ts, v FROM t SUBSAMPLE cadence(3)")
                     .assertsPlan("SelectedRecord\n" +
-                            "    Filter filter: __keep_subsample\n" +
-                            "        CachedWindowLight\n" +
-                            "          unorderedFunctions: [cadence(3) over (order by [ts])]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [cadence(3) over (order by [ts])]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
         });
     }
 
@@ -3128,15 +3128,15 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testUniformDesugarsToWindowFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");
-            // After the rewrite, EXPLAIN must show a windowed subquery + filter, not a Subsample node.
+            // After the rewrite + keep-flag filter fusion, EXPLAIN must show the fused row-selecting
+            // window node (CachedWindowLightSelect) with NO separate Filter and no leaked keep column.
             assertQuery("SELECT ts, v FROM t SUBSAMPLE uniform(3)")
                     .assertsPlan("SelectedRecord\n" +
-                            "    Filter filter: __keep_subsample\n" +
-                            "        CachedWindowLight\n" +
-                            "          unorderedFunctions: [uniform(3) over (order by [ts])]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [uniform(3) over (order by [ts])]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
         });
     }
 
@@ -3144,15 +3144,15 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testM4DesugarsToWindowFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");
-            // After the rewrite, EXPLAIN must show a windowed subquery + filter, not a Subsample node.
+            // After the rewrite + keep-flag filter fusion, EXPLAIN must show the fused row-selecting
+            // window node (CachedWindowLightSelect) with NO separate Filter and no leaked keep column.
             assertQuery("SELECT ts, v FROM t SUBSAMPLE m4(v, 3)")
                     .assertsPlan("SelectedRecord\n" +
-                            "    Filter filter: __keep_subsample\n" +
-                            "        CachedWindowLight\n" +
-                            "          unorderedFunctions: [m4(ts,v,3) over (order by [ts])]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [m4(ts,v,3) over (order by [ts])]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
         });
     }
 
@@ -3211,15 +3211,15 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testMinMaxDesugarsToWindowFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");
-            // After the rewrite, EXPLAIN must show a windowed subquery + filter, not a Subsample node.
+            // After the rewrite + keep-flag filter fusion, EXPLAIN must show the fused row-selecting
+            // window node (CachedWindowLightSelect) with NO separate Filter and no leaked keep column.
             assertQuery("SELECT ts, v FROM t SUBSAMPLE minmax(v, 3)")
                     .assertsPlan("SelectedRecord\n" +
-                            "    Filter filter: __keep_subsample\n" +
-                            "        CachedWindowLight\n" +
-                            "          unorderedFunctions: [minmax(ts,v,3) over (order by [ts])]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [minmax(ts,v,3) over (order by [ts])]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
         });
     }
 
@@ -3227,29 +3227,96 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testLttbDesugarsToWindowFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");
-            // After the rewrite, EXPLAIN must show a windowed subquery + filter, not a Subsample node.
+            // After the rewrite + keep-flag filter fusion, EXPLAIN must show the fused row-selecting
+            // window node (CachedWindowLightSelect) with NO separate Filter and no leaked keep column.
             // 2-arg lttb -> 3-arg (ts, value, target) window overload.
             assertQuery("SELECT ts, v FROM t SUBSAMPLE lttb(v, 3)")
                     .assertsPlan("SelectedRecord\n" +
-                            "    Filter filter: __keep_subsample\n" +
-                            "        CachedWindowLight\n" +
-                            "          unorderedFunctions: [lttb(ts,v,3) over (order by [ts])]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [lttb(ts,v,3) over (order by [ts])]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
             // 3-arg lttb (gap) also migrates -> 4-arg (ts, value, target, gap) window overload. The
             // shared BucketSelectWindowFunction.toPlan only surfaces (ts,value,target), so the gap does
             // not appear in the plan text; its runtime effect is verified byte-identically by the
             // testLttbGapPreserving* oracle cases.
             assertQuery("SELECT ts, v FROM t SUBSAMPLE lttb(v, 3, '1h')")
                     .assertsPlan("SelectedRecord\n" +
-                            "    Filter filter: __keep_subsample\n" +
-                            "        CachedWindowLight\n" +
-                            "          unorderedFunctions: [lttb(ts,v,3) over (order by [ts])]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [lttb(ts,v,3) over (order by [ts])]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
         });
+    }
+
+    @Test
+    public void testKeepFlagFusionByteIdenticalWithNulls() throws Exception {
+        // The fused row-selecting cursor (SUBSAMPLE, which desugars + fuses the keep filter) must be
+        // BYTE-IDENTICAL to the untouched materialize-boolean-then-Filter path over interleaved-null
+        // data, for every keep-flag method. The non-fused reference is the explicit window subquery
+        // with an extra, always-true predicate on a non-null column (id >= 0), which blocks fusion
+        // (the WHERE is no longer a single keep literal) yet keeps exactly the same rows. id >= 0 is
+        // true even for null-price rows, so uniform/cadence (which keep rows position-only, without
+        // dropping nulls) stay identical too.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP, id LONG) TIMESTAMP(ts)");
+            // 200 rows: nulls at x%7==0, spikes (100.0) at x%5==0, ramp otherwise; id = x (never null).
+            execute("INSERT INTO t SELECT " +
+                    "case when x%7=0 then null when x%5=0 then 100.0 else x end, " +
+                    "x::timestamp, x FROM long_sequence(200)");
+
+            // value-inspecting keep-flag methods (drop null/NaN rows) -> nullBits ordinal->absolute mapping
+            assertFusedMatchesNonFused("m4(price, 8)", "m4(ts, price, 8)");
+            assertFusedMatchesNonFused("m4(price, 3)", "m4(ts, price, 3)");
+            assertFusedMatchesNonFused("minmax(price, 8)", "minmax(ts, price, 8)");
+            assertFusedMatchesNonFused("lttb(price, 8)", "lttb(ts, price, 8)");
+            // position-only keep-flag methods (keep by row position, nulls not dropped)
+            assertFusedMatchesNonFused("uniform(8)", "uniform(8)");
+            assertFusedMatchesNonFused("uniform(3)", "uniform(3)");
+            assertFusedMatchesNonFused("cadence(8)", "cadence(8)");
+        });
+    }
+
+    @Test
+    public void testKeepFlagFusionFallsBackOnBaseBooleanFilter() throws Exception {
+        // Conservative-match guard: a WHERE over a base BOOLEAN column (not the keep flag) must NOT
+        // fuse - the fused cursor would wrongly emit the keep-flag selection instead of filtering by
+        // the base boolean. The plan must retain the separate Filter + CachedWindowLight.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP, flag BOOLEAN) TIMESTAMP(ts)");
+            final String sql = "SELECT ts, price FROM (SELECT ts, price, flag, m4(ts, price, 8) OVER (ORDER BY ts) keep FROM t) WHERE flag";
+            final String plan = planOf(sql);
+            Assert.assertTrue("expected a separate Filter on the base boolean: " + plan, plan.contains("Filter filter: flag"));
+            Assert.assertFalse("must not fuse a base-boolean filter: " + plan, plan.contains("CachedWindowLightSelect"));
+        });
+    }
+
+    @Test
+    public void testKeepFlagFusionFallsBackOnExtraFilterTerm() throws Exception {
+        // Conservative-match guard: a WHERE that is more than the single keep literal (keep AND ...)
+        // is not the exact fuse shape, so it must fall back to Filter + CachedWindowLight.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP, id LONG) TIMESTAMP(ts)");
+            final String sql = "SELECT ts, price FROM (SELECT ts, price, id, m4(ts, price, 8) OVER (ORDER BY ts) keep FROM t) WHERE keep AND id >= 0";
+            final String plan = planOf(sql);
+            Assert.assertTrue("expected a separate Filter node: " + plan, plan.contains("Filter"));
+            Assert.assertFalse("must not fuse when extra filter terms are present: " + plan, plan.contains("CachedWindowLightSelect"));
+        });
+    }
+
+    private void assertFusedMatchesNonFused(String subsampleCall, String windowCall) throws SqlException {
+        printSql("SELECT ts, price FROM t SUBSAMPLE " + subsampleCall);
+        final String fused = sink.toString();
+        printSql("SELECT ts, price FROM (SELECT ts, price, id, " + windowCall
+                + " OVER (ORDER BY ts) keep FROM t) WHERE keep AND id >= 0");
+        Assert.assertEquals("fused vs non-fused mismatch for " + subsampleCall, fused, sink.toString());
+    }
+
+    private String planOf(String sql) throws SqlException {
+        printSql("EXPLAIN " + sql);
+        return sink.toString();
     }
 
     @Test
@@ -3787,13 +3854,18 @@ public class SubsampleTest extends AbstractCairoTest {
 
             final String query = "SELECT ts, price FROM x SUBSAMPLE m4(price, 4)";
 
-            // Switch ON (default): m4 migrates to the keep-flag window path.
+            // Switch ON (default): m4 migrates to the keep-flag window path and fuses the filter into
+            // the row-selecting window node (CachedWindowLightSelect, no separate __keep_subsample Filter).
             printSql(query);
             final String windowRows = sink.toString();
             printSql("EXPLAIN " + query);
             final String windowPlan = sink.toString();
             Assert.assertTrue(
-                    "switch-on plan should contain the window keep-filter: " + windowPlan,
+                    "switch-on plan should contain the fused row-selecting window node: " + windowPlan,
+                    windowPlan.contains("CachedWindowLightSelect")
+            );
+            Assert.assertFalse(
+                    "switch-on plan should not contain a separate keep-filter node: " + windowPlan,
                     windowPlan.contains("__keep_subsample")
             );
             Assert.assertFalse(

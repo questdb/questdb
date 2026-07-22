@@ -37,6 +37,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -289,7 +290,43 @@ public interface WindowFunction extends Function {
     ) throws SqlException {
     }
 
+    /**
+     * The output-metadata column index this function writes its result to, as set by
+     * {@link #setColumnIndex(int)} during code generation. Used by the keep-flag filter fusion to
+     * confirm a WHERE literal references exactly this function's boolean output column.
+     *
+     * @return the output column index, or {@code -1} if not applicable.
+     */
+    default int getColumnIndex() {
+        return -1;
+    }
+
+    /**
+     * Appends, in ascending order, the ABSOLUTE base-row indices this function selects (keeps).
+     * Only valid to call after {@link #preparePass2()} has run, and only on functions for which
+     * {@link #isRowSelecting()} returns {@code true}. Enables the keep-flag filter fusion to emit
+     * ONLY the kept rows without materializing a per-row boolean or running a separate filter pass.
+     *
+     * @param dest destination list; cleared and filled with the ascending kept absolute row indices.
+     */
+    default void getSelectedRows(DirectLongList dest) {
+        throw new UnsupportedOperationException();
+    }
+
     default boolean isIgnoreNulls() {
+        return false;
+    }
+
+    /**
+     * Whether this two-pass window function is a pure row-selecting keep flag: it produces a
+     * BOOLEAN "keep this row?" result and, after {@link #preparePass2()}, can enumerate the exact
+     * set of kept ABSOLUTE base-row indices via {@link #getSelectedRows(DirectLongList)}. When such
+     * a function is the sole window function and its boolean is exactly a filter predicate, the
+     * cached executor can fuse the filter into the window cursor and emit only the kept rows.
+     *
+     * @return {@code true} if this function supports row-selecting fusion; {@code false} (default) otherwise.
+     */
+    default boolean isRowSelecting() {
         return false;
     }
 
