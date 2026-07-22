@@ -107,7 +107,7 @@ public class AsOfJoinAlgorithmBenchmark {
     private static SqlExecutionContext ctx;
     private static WorkerPool pool;
 
-    @Param({"dense_ts", "unique_ts", "dense_sym", "illiquid_sym", "sparse_tail", "illiquid_idx", "idx_sweep"})
+    @Param({"dense_ts", "unique_ts", "dense_sym", "illiquid_sym", "sparse_tail", "illiquid_idx", "idx_sweep", "noidx_sweep"})
     public String dist;
 
     @Param({"default", "adaptive", "fast", "dense", "linear", "memoized", "index"})
@@ -197,6 +197,13 @@ public class AsOfJoinAlgorithmBenchmark {
         engine.execute("DROP TABLE IF EXISTS ord_sweep", ctx);
         engine.execute("CREATE TABLE ord_sweep (sym SYMBOL, ts TIMESTAMP, oid LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
         engine.execute("INSERT INTO ord_sweep SELECT '0', ((x-1)*" + Math.max(1L, RIGHT_ROWS / MASTER_ROWS) + ")::timestamp, x-1 FROM long_sequence(" + MASTER_ROWS + ")", ctx);
+        // noidx_sweep: identical to idx_sweep but slave symbol is NOT indexed (asof_index unavailable).
+        engine.execute("DROP TABLE IF EXISTS md_nidx", ctx);
+        engine.execute("CREATE TABLE md_nidx (sym SYMBOL, ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+        engine.execute("INSERT INTO md_nidx SELECT ((x-1)%" + IDX_CARD + ")::symbol, (x-1)::timestamp, x-1 FROM long_sequence(" + RIGHT_ROWS + ")", ctx);
+        engine.execute("DROP TABLE IF EXISTS ord_nidx", ctx);
+        engine.execute("CREATE TABLE ord_nidx (sym SYMBOL, ts TIMESTAMP, oid LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+        engine.execute("INSERT INTO ord_nidx SELECT '0', ((x-1)*" + Math.max(1L, RIGHT_ROWS / MASTER_ROWS) + ")::timestamp, x-1 FROM long_sequence(" + MASTER_ROWS + ")", ctx);
         engine.releaseAllWriters();
         System.out.println("asof-bench data built (rows/table=" + ROWS + ", right=" + RIGHT_ROWS + ", keys=" + KEYS
                 + ", dense=" + DENSE + ") in " + (System.nanoTime() - t0) / 1_000_000 + "ms");
@@ -290,6 +297,10 @@ public class AsOfJoinAlgorithmBenchmark {
                 // parameterizable INDEXED shape: symbol cardinality via -Dasof.bench.idx.card to sweep
                 // liquid (low card, many rows/symbol) -> illiquid (high card) and find the index crossover.
                 return "SELECT " + hint + "sum(r.v) FROM ord_sweep l ASOF JOIN md_sweep r ON (sym)";
+            case "noidx_sweep":
+                // same as idx_sweep but the slave symbol is NOT indexed: what's the best algo when no
+                // index is available? (asof_index cannot apply here.)
+                return "SELECT " + hint + "sum(r.v) FROM ord_nidx l ASOF JOIN md_nidx r ON (sym)";
             default:
                 throw new IllegalArgumentException("unknown dist: " + dist);
         }
