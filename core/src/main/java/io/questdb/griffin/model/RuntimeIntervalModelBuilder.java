@@ -832,26 +832,24 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * Shifts one source interval boundary from the source driver's resolution into this builder's and
      * applies the calendar offset, leaving the open-ended sentinels untouched.
      * <p>
-     * The offset can push a boundary past the end of the timestamp range in either direction, and the
-     * two directions mean opposite things. A LOWER boundary that underflows (or an UPPER one that
-     * overflows) lands beyond the end of the range it guards, so every representable timestamp
-     * satisfies it: the boundary constrains nothing and collapses to the open sentinel. That is how
-     * {@code ts NOT IN NULL} shifts - its inversion starts one tick above the NULL sentinel, and any
-     * negative offset underflows it.
+     * A wrap in EITHER direction declines the whole pushdown. The check detects a WRAP, not a
+     * mathematical excursion, and the forward {@code dateadd} wraps too - {@code Nanos.addDays} is a
+     * plain {@code nanos + days * DAY_NANOS} - so for a stride large enough to wrap (from ~106_752
+     * days on nanos) the projection lands back inside the range and rows really do satisfy the
+     * predicate. Declaring the scan empty there would silently drop them.
      * <p>
-     * The opposite direction cannot be represented at all. It is tempting to call it empty - no
-     * timestamp is above a lower bound that sits past the end of the range - but the check detects a
-     * WRAP, not a mathematical excursion, and the forward {@code dateadd} wraps too:
-     * {@code Nanos.addDays} is a plain {@code nanos + days * DAY_NANOS}. So for a stride large
-     * enough to wrap (from ~106_752 days on nanos) the projection really does land back inside the
-     * range and rows really do satisfy the predicate. Declaring the scan empty there would silently
-     * drop them.
+     * Collapsing the wrapped boundary to the open sentinel instead does not work either, because the
+     * preimage of a wrapped shift is not an interval: it is the two pieces the wrap splits it into.
+     * {@code [lo - D, hi - D]} with only {@code lo - D} wrapping covers the piece below {@code hi - D}
+     * and loses the one above {@code lo - D} entirely. That is not a superset, so no residual filter
+     * can repair it - a filter only ever removes rows. Only when the OTHER boundary is already open
+     * does the collapse produce a superset, and distinguishing that case buys nothing over declining.
      * <p>
-     * It raises {@code isOffsetOutOfRange} instead and the caller declines the pushdown, leaving the
+     * So this raises {@code isOffsetOutOfRange} for every wrap and the caller declines, leaving the
      * {@code dateadd} as a residual row filter that re-checks every row with the same wrapping
      * arithmetic. That is what {@link io.questdb.griffin.engine.functions.MonotonicTimestampFunction
      * MonotonicTimestampFunction}'s {@code invertConstantShift} does for the identical hazard, so
-     * both spellings of the predicate now agree. Throwing, which is what this used to do, made the
+     * both spellings of the predicate agree. Throwing, which is what this used to do, made the
      * optimiser's own arithmetic a user-visible error on a perfectly valid query.
      *
      * @param isLo whether {@code value} is the lower boundary of the source interval
@@ -865,18 +863,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // A positive offset that lowers the value has overflowed; a negative one that raises it has
         // underflowed.
         if (offset > 0 && result < base) {
-            if (!isLo) {
-                return Long.MAX_VALUE;
-            }
-            // Lower boundary wrapped past the end of the range.
+            // The boundary wrapped past the end of the range, whichever side it guards.
             isOffsetOutOfRange = true;
             return Long.MAX_VALUE;
         }
         if (offset < 0 && result > base) {
-            if (isLo) {
-                return Numbers.LONG_NULL;
-            }
-            // Upper boundary wrapped below the start of the range.
+            // The boundary wrapped below the start of the range, whichever side it guards.
             isOffsetOutOfRange = true;
             return Numbers.LONG_NULL;
         }
@@ -1108,7 +1100,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 }
                 if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
                     // A shifted interval spans the entire range, so the union does too: the offset
-                    // predicate constrains nothing. Keep this builder's own intervals and consume it.
+                    // predicate constrains nothing. Keep this builder's own intervals and consume
+                    // it. A wrapped boundary cannot reach here - applyOffset declines above.
                     return true;
                 }
                 if (lo > hi) {

@@ -160,6 +160,18 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             assertQuery("SELECT (CASE WHEN false THEN a + b END)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
             assertQuery("SELECT nullif(z, NULL)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
 
+            // A NULL first argument survives an UNEQUAL pair as well. getInt() returns the INT_NULL
+            // sentinel there, and widening it with plain sign extension would hand every 64-bit read
+            // a real -2147483648: wrong values for ::LONG, ::TIMESTAMP and ::DATE, and a NULL
+            // written to disk as data by the store path.
+            assertQuery("SELECT nullif(z, 5)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT nullif(z, 5) + 0L AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT nullif(z, 5)::TIMESTAMP IS NULL AS v FROM u").noLeakCheck().expectSize().returns("v\ntrue\n");
+            assertQuery("SELECT nullif(z, 5)::DATE IS NULL AS v FROM u").noLeakCheck().expectSize().returns("v\ntrue\n");
+            execute("CREATE TABLE dstNullIf (l LONG)");
+            execute("INSERT INTO dstNullIf SELECT nullif(z, 5) FROM u");
+            assertQuery("SELECT l FROM dstNullIf").noLeakCheck().expectSize().returns("l\nnull\n");
+
             // nullif nulls out an equal pair at long width too, judged at INT width
             assertQuery("SELECT nullif(a + b, a + b)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
 
@@ -357,6 +369,50 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
                 execute("CREATE TABLE nd" + s + " (l LONG)");
                 execute("INSERT INTO nd" + s + " SELECT a + b FROM ns" + s);
                 assertQuery("SELECT l FROM nd" + s).noLeakCheck().expectSize().returns("l\nnull\n");
+            });
+        }
+    }
+
+    @Test
+    public void testInsertIntoWiderColumnWidensOnWalTable() throws Exception {
+        // The same store rule, over the WAL write path. The copier resolves the INT-width question
+        // against the WAL writer's metadata and the rows only become visible once the apply job
+        // has run, so a rule that held on the non-WAL writer could still be lost here. The fuzzer
+        // that motivated the rule generates WAL tables exclusively, and every other store test in
+        // this class uses a non-WAL table.
+        final int[] copierTypes = {
+                RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD,
+                RecordToRowCopierUtils.COPIER_TYPE_CHUNKED,
+                RecordToRowCopierUtils.COPIER_TYPE_LOOPING
+        };
+        for (int c = 0; c < copierTypes.length; c++) {
+            setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierTypes[c]);
+            final String s = "_w" + c; // tables outlive the block, so each copier gets its own
+            assertMemoryLeak(() -> {
+                // INSERT ... VALUES: the VirtualRecord answers the width question from its own
+                // functions, and the overflowing expression must persist its long-width value.
+                execute("CREATE TABLE wl" + s + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO wl" + s + " VALUES (1_000_000 * 1_000_000, '2024-01-01T00:00:00.000000Z')");
+                drainWalQueue();
+                assertQuery("SELECT v FROM wl" + s).noLeakCheck().expectSize().returns("v\n1000000000000\n");
+
+                // INSERT ... SELECT: the width answer comes from the source factory instead.
+                execute("CREATE TABLE wsrc" + s + " (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO wsrc" + s + " VALUES (2_000_000_000, 2_000_000_000, '2024-01-01T00:00:00.000000Z')");
+                drainWalQueue(); // the source rows must be applied before the SELECT can read them
+                execute("CREATE TABLE wdst" + s + " (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO wdst" + s + " SELECT abs(a + b), ts FROM wsrc" + s);
+                drainWalQueue();
+                assertQuery("SELECT l FROM wdst" + s).noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+                // A real stored INT column has only 4 bytes, so it must keep its INT-width read.
+                execute("CREATE TABLE wic" + s + " (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO wic" + s + " VALUES (-2_147_483_648, '2024-01-01T00:00:00.000000Z'), (7, '2024-01-02T00:00:00.000000Z')");
+                drainWalQueue();
+                execute("CREATE TABLE wil" + s + " (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO wil" + s + " SELECT i, ts FROM wic" + s);
+                drainWalQueue();
+                assertQuery("SELECT l FROM wil" + s).noLeakCheck().expectSize().returns("l\nnull\n7\n");
             });
         }
     }

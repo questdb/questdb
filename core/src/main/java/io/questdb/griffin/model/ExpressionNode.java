@@ -778,8 +778,8 @@ public class ExpressionNode implements Mutable, Sinkable {
         // Integer arithmetic is not associative in QuestDB because INT_NULL and LONG_NULL are
         // reserved sentinel values. The original intermediate can hit a sentinel for a row value
         // that is unavailable to this pre-type-resolution pass, even when the constant pair does
-        // not fold to NULL. Only non-integer operators, such as boolean logic and concatenation,
-        // remain eligible here.
+        // not fold to NULL. Only non-integer operators, such as boolean logic, remain eligible
+        // here; concatenation already returned above.
         return !(a.isConstFoldLongValid && b.isConstFoldLongValid);
     }
 

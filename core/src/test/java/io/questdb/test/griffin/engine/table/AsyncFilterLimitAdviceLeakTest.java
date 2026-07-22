@@ -73,22 +73,40 @@ public class AsyncFilterLimitAdviceLeakTest extends AbstractCairoTest {
 
     @Test
     public void testSuccessfulCompileFreesLimitAdviceFunctionOnFactoryClose() throws Exception {
-        // Control for the fault test: on the path where a factory DOES adopt the LIMIT advice
-        // function, closing that factory must release it. This pins which side owns the function,
-        // so the fault-path fix cannot be "free it everywhere" and double-free here.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertFactoryCloseFreesLimitAdviceFunction(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testSuccessfulJavaFilterCompileFreesLimitAdviceFunctionOnFactoryClose() throws Exception {
+        // The non-JIT twin. The two factories carry duplicated _close() ownership code, and the
+        // test configuration defaults the JIT mode to enabled, so the query above always compiled
+        // to AsyncJitFilteredRecordCursorFactory and left the free in
+        // AsyncFilteredRecordCursorFactory._close() unpinned - reverting it kept the class green.
+        assertFactoryCloseFreesLimitAdviceFunction(SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    // Control for the fault tests: on the path where a factory DOES adopt the LIMIT advice
+    // function, closing that factory must release it. This pins which side owns the function, so
+    // the fault-path fix cannot be "free it everywhere" and double-free here.
+    private void assertFactoryCloseFreesLimitAdviceFunction(int jitMode) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlExecutionContext context = new SqlExecutionContextImpl(engine, 4)
                             .with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null)
             ) {
+                context.setJitMode(jitMode);
                 engine.execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;", context);
                 engine.execute("INSERT INTO x VALUES (1, '2024-01-01T00:00:00.000000Z');", context);
-                try (RecordCursorFactory ignored = engine.select(
+                try (RecordCursorFactory factory = engine.select(
                         "SELECT * FROM x WHERE i > 0 " +
                                 "LIMIT alloc_ts('2024-01-01T00:00:00.000000Z'::timestamp)::long",
                         context)) {
-                    // closing the factory is the assertion
+                    // Pin which twin actually ran: without this, a mode that silently declined the
+                    // JIT would leave the other factory untested exactly as before.
+                    Assert.assertEquals(jitMode == SqlJitMode.JIT_MODE_ENABLED, factory.usesCompiledFilter());
+                    // closing the factory is the rest of the assertion
                 }
             }
         });

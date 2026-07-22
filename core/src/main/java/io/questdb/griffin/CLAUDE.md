@@ -372,6 +372,12 @@ conditionals, `InLongFunctionFactory`'s split key — must not simply call both:
 a non-deterministic function is a fresh draw. Guard with `isIntWidthStable()` first (one read
 suffices), then `isRowStable()` (two reads are safe), and otherwise read once at long width.
 
+When that last arm moves a *comparison* to long width, it must move both operands. Reading one
+side at 64 bits and the other with a wrapping `getInt()` misses an equal pair — `nullif` handed
+back the very value it excludes for `nullif(<row-unstable>, a + b)`. Widening the other operand
+costs nothing when it is width stable, since `IntFunction.getLong()` is
+`Numbers.intToLong(getInt())`.
+
 ### The JIT
 
 `CompiledFilterIRSerializer` faces the same split, because the Java filter evaluates at the
@@ -385,12 +391,22 @@ compensations exist, and both must run for *any* predicate shape, not only float
   a FLOAT column always compares at DOUBLE width in Java. It runs for a bare FLOAT column and for
   an arithmetic subtree that stays F4-typed.
 
-`isFloatLeaf` deliberately does NOT accept an F8-promoting subtree such as `f + 0.0`. Widening
-only the *bound* there is not enough, because the JIT also computes the arithmetic itself at f32
-while Java computes it at f64: for a value-preserving operand (`+ 0.0`, `* 1.0`) the two agree
-and widening the bound fixes the comparison, but for `f - 0.1` the f32 and f64 sums already
-differ, so widening the bound alone moves the divergence rather than removing it. Fixing that
-shape means promoting the whole subtree to f64, not just its bound.
+- `isFloatPromotedArith` handles the third case: an arithmetic subtree a DOUBLE operand promoted to
+  F8 while a FLOAT leaf still feeds it (`f + 0.0`, `f * 1.0`, `f - 0.1`). The Java filter resolves
+  `FLOAT + DOUBLE` to `+(DD)` and evaluates the whole subtree at f64; the IR used to evaluate it at
+  f32 and return different rows, because the type observer records only COLUMNS and bind variables,
+  so a predicate whose only column is the FLOAT types every constant in it F4 — the arithmetic
+  operand as well as the bound. `markWidthSemantics` now sends every constant operand of such a node
+  to double width, and `markNarrowConstCmpWidenPair` widens the bound it is compared against even
+  when that bound has an exact float.
+
+Widening only the *bound* of an F8-promoted subtree is not a safe subset: with an f32 quotient
+against an f64 bound, `f / 3.0 > 0.3333333333333333` starts returning rows the Java filter rejects.
+The whole subtree has to move together — which needs no IR or backend change, because `convert()`
+promotes the other operand of any mixed pair (`cvtss2sd` / `vcvtps2pd`), so one f64 operand pulls
+the FLOAT column up with it. An integer literal under such a node widens to an exact I8 IMM, since
+AVX2 `convert()` has no `f64 x i32` arm. The F4-leaf requirement is what keeps a DOUBLE-only
+predicate such as `adouble + 1.0 > 2.0` on its existing four-lane f64 path.
 
 Missing either one does not merely lose rows — it can make the **scalar and vectorized backends
 disagree with each other**, so the same query on the same data returns different rows depending
@@ -488,5 +504,5 @@ must stay in sync.
 | `RecordToRowCopierUtils.java` | `widensIntSource()` and the two bytecode generators' INT source arm |
 | `LoopingRecordToRowCopier.java` | `intWidthUnstableColumns` snapshot for the wide-table copier |
 | `FactoryColumnTypes.java` | Pairs cursor metadata with a factory's `isColumnIntWidthStable` for INSERT ... SELECT / CTAS |
-| `CompiledFilterIRSerializer.java` | `isFloatLeaf`, `maybeWidenCmpConstOperand`, `markNarrowConstCmpWidenPair` — the JIT's width compensations |
+| `CompiledFilterIRSerializer.java` | `isFloatLeaf`, `isFloatPromotedArith`, `maybeWidenCmpConstOperand`, `markNarrowConstCmpWidenPair` — the JIT's width compensations |
 | `ExpressionNode.java` (griffin/model) | `cacheConstantFold()` / `isReassociationSafe()` — the constant-reassociation guard |
