@@ -711,25 +711,42 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonNumericStringConstElementReadsAsNull() throws Exception {
-        // Harmonize the all-constant IN path with the runtime path: a non-numeric string element
-        // reads as LONG_NULL (via parseLongQuiet) instead of throwing, so "k IN ('abc', 5)" agrees
-        // with a list carrying a dynamic sibling ("k IN (s, 5)", which already read 'abc' as
-        // LONG_NULL). Before the fix the all-constant form threw "invalid LONG value [abc]". The
-        // LONG_NULL element then matches a NULL key row on BOTH paths (row x=3), alongside k=5.
+    public void testNonNumericStringConstElementThrows() throws Exception {
+        // Every element the IN list resolves before the row loop - a literal, or a bind variable
+        // resolved at cursor open - is a query error when it does not parse, reported at the
+        // element's own position. Master threw from both, and "k = 'abc'" raises
+        // ImplicitCastException for the same input. Reading it as LONG_NULL instead silently
+        // matched every NULL key row, which is a wrong result rather than an error.
+        //
+        // Only the per-row path keeps parsing quietly: it re-reads its elements for every row and
+        // has no position to report. That is the one form that still matches NULLs, and it is
+        // pinned below so the boundary cannot drift.
         assertMemoryLeak(() -> {
             execute("create table t as (select x id, case when x = 3 then null else x end k, 'abc' s from long_sequence(10))");
-            // All-constant path: 'abc' -> LONG_NULL matches the NULL key row (id=3); 5 matches k=5
-            // (id=5). Project the non-null id so the match is asserted without depending on how the
-            // NULL key renders. No throw; before the fix this threw "invalid LONG value [abc]".
-            assertQuery("select id from t where k in ('abc', 5)")
-                    .noLeakCheck()
-                    .returns("""
-                            id
-                            3
-                            5
-                            """);
-            // The same element via a dynamic (column) sibling routes to the runtime path and agrees.
+
+            // All-constant list: reports the bad element at its own position.
+            assertExceptionNoLeakCheck(
+                    "select id from t where k in ('abc', 5)",
+                    29,
+                    "invalid LONG value [abc]",
+                    sqlExecutionContext
+            );
+
+            // Runtime-constant list: a bind variable resolves once per cursor, so it throws too.
+            // This is the half that silently returned the NULL rows when the strict parse was
+            // applied to the compile-time path alone.
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "abc");
+            assertExceptionNoLeakCheck(
+                    "select id from t where k in (:b0)",
+                    29,
+                    "invalid LONG value [abc]",
+                    sqlExecutionContext
+            );
+            bindVariableService.clear();
+
+            // A column sibling routes the list to the per-row path, which reads 'abc' as LONG_NULL
+            // and therefore matches the NULL key row (id=3) alongside k=5 (id=5).
             assertQuery("select id from t where k in (s, 5)")
                     .noLeakCheck()
                     .returns("""

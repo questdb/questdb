@@ -41,6 +41,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
@@ -276,6 +277,19 @@ public class InLongFunctionFactory implements FunctionFactory {
         return typeTag == ColumnType.STRING || typeTag == ColumnType.SYMBOL || typeTag == ColumnType.VARCHAR;
     }
 
+    // Every element that reaches here is constant or runtime-constant, so an unparseable one is a
+    // query error reported at the element's own position rather than a silent LONG_NULL that would
+    // match the NULL rows. Only the per-row path (InLongVarFunction) parses quietly, because it
+    // re-reads its elements for every row and has no position to report - which is exactly where
+    // master drew the line.
+    private static long parseLongElement(CharSequence seq, IntList argPositions, int i) throws SqlException {
+        try {
+            return Numbers.parseLong(seq, 0, seq.length());
+        } catch (NumericException e) {
+            throw SqlException.position(argPositions.getQuick(i)).put("invalid LONG value [").put(seq).put(']');
+        }
+    }
+
     private static void parseToSets(
             ObjList<Function> args,
             IntList argPositions,
@@ -313,15 +327,16 @@ public class InLongFunctionFactory implements FunctionFactory {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
             case ColumnType.NULL:
-                // A non-numeric string element reads as LONG_NULL, matching the runtime path
-                // (InLongVarFunction / InLongRuntimeConstFunction use parseLongQuiet): an all-constant
-                // list and a list carrying a dynamic sibling must agree on the same element.
+                // A non-numeric element is a query error here, exactly as 'a = <not a long>' raises
+                // ImplicitCastException. Reading it as LONG_NULL instead silently matched every NULL
+                // row. This covers the all-constant list and the runtime-constant one (a bind
+                // variable resolved at cursor open); both threw on master.
                 CharSequence tsValue = func.getStrA(null);
-                val = (tsValue != null) ? Numbers.parseLongQuiet(tsValue) : Numbers.LONG_NULL;
+                val = (tsValue != null) ? parseLongElement(tsValue, argPositions, i) : Numbers.LONG_NULL;
                 break;
             case ColumnType.VARCHAR:
                 Utf8Sequence seq = func.getVarcharA(null);
-                val = (seq != null) ? Numbers.parseLongQuiet(seq.asAsciiCharSequence()) : Numbers.LONG_NULL;
+                val = (seq != null) ? parseLongElement(seq.asAsciiCharSequence(), argPositions, i) : Numbers.LONG_NULL;
                 break;
             default:
                 throw SqlException.inconvertibleTypes(

@@ -1839,23 +1839,85 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampOverflowThrowsError() throws Exception {
-        // When applying the offset to a predicate timestamp would cause overflow,
-        // throw an actionable error instead of silently wrapping around.
-        //
-        // Long.MAX_VALUE microseconds from epoch is approximately year 294247.
-        // If we use dateadd('y', -300000, timestamp), the inverse offset is +300000 years.
-        // Applying +300000 years to '2022-01-01' would result in year 302022,
-        // which exceeds the maximum representable timestamp and causes overflow.
-        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));
+    public void testOffsetShiftWrappingOutOfRangeDeclinesPushdown() throws Exception {
+        // The overflow check detects a WRAP, not a mathematical excursion, and dateadd wraps too --
+        // Nanos.addDays is a plain "nanos + days * DAY_NANOS". At 200_000 days the stride exceeds
+        // 2^63, so the projection lands back inside the range about 37 years ABOVE the source
+        // timestamp, and the rows genuinely satisfy the predicate. Declaring the scan empty here
+        // would silently drop them; the pushdown has to decline and let the residual row filter
+        // re-check each row with the same wrapping arithmetic. MonotonicTimestampFunction's
+        // invertConstantShift already returns NONE for this hazard, so both spellings must agree.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP_NS, x INT) TIMESTAMP(ts) PARTITION BY YEAR;");
+            execute("INSERT INTO tab VALUES ('2020-06-01T00:00:00.000000000Z', 1);");
 
-        // dateadd('y', -300000, timestamp) means the optimizer stores +300000 as the inverse offset.
-        // When pushing down ts > '2022-01-01', it needs to apply +300000 years to 2022-01-01,
-        // resulting in year 302022 which overflows the microsecond timestamp range (~year 294247).
-        assertQuery("SELECT * FROM (" +
-                "SELECT dateadd('y', -300000, timestamp) as ts, price FROM trades" +
-                ") WHERE ts > '2022-01-01'")
-                .fails(0, "timestamp overflow");
+            // What the projection actually produces: the wrap puts it in 2057, not out of range.
+            assertQuery("SELECT dateadd('d', -200_000, ts) AS t, x FROM tab")
+                    .timestamp("t")
+                    .expectSize()
+                    .returns("""
+                            t\tx
+                            2057-05-21T23:34:33.709551616Z\t1
+                            """);
+
+            // The pushed-down form must agree with it rather than returning nothing.
+            assertQuery("SELECT * FROM (SELECT dateadd('d', -200_000, ts) AS t, x FROM tab) WHERE t > '2020-01-01'")
+                    .timestamp("t")
+                    .returns("""
+                            t\tx
+                            2057-05-21T23:34:33.709551616Z\t1
+                            """);
+
+            // The same predicate spelled without the sub-query goes through invertConstantShift,
+            // which declines for the same reason. The two spellings must return the same rows.
+            assertQuery("SELECT dateadd('d', -200_000, ts) AS t, x FROM tab WHERE dateadd('d', -200_000, ts) > '2020-01-01'")
+                    .timestamp("t")
+                    .returns("""
+                            t\tx
+                            2057-05-21T23:34:33.709551616Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimestampOverflowReturnsEmpty() throws Exception {
+        // A bound the optimiser's own inverse-offset arithmetic pushes out of the timestamp range
+        // used to fail the query. The user's query is valid, so it must not: the pushdown declines
+        // and the dateadd stays a residual row filter, which answers with the same rows the
+        // unpushed query would.
+        //
+        // Here that answer is no rows, but for the runtime evaluation's reason rather than the
+        // pruner's: Micros.yearMicros clamps a negative-year underflow to Long.MIN_VALUE, so both
+        // rows project to about Long.MIN_VALUE, which is not > '2022-01-01'. This test therefore
+        // pins "no error"; testOffsetShiftWrappingOutOfRangeDeclinesPushdown is the one that pins
+        // decline-versus-empty, where the two answers actually differ.
+        //
+        // Long.MAX_VALUE microseconds from epoch is about year 294247. dateadd('y', -300000, ts)
+        // makes the optimiser store +300000 as the inverse offset, so pushing "ts > '2022-01-01'"
+        // down asks for year 302022, past the end of the micros range.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z'), " +
+                    "(150, '2023-01-02T12:00:00.000000Z');");
+
+            assertQuery("SELECT * FROM (" +
+                    "SELECT dateadd('y', -300000, timestamp) as ts, price FROM trades" +
+                    ") WHERE ts > '2022-01-01'")
+                    .timestamp("ts")
+                    .returns("ts\tprice\n");
+
+            // CONTROL: the mirror direction, where the shift stays in range, still returns its rows.
+            // Without it an over-broad "empty" would pass the assertion above.
+            assertQuery("SELECT * FROM (" +
+                    "SELECT dateadd('y', -1, timestamp) as ts, price FROM trades" +
+                    ") WHERE ts > '2020-06-01'")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tprice
+                            2021-01-01T12:00:00.000000Z\t100.0
+                            2022-01-02T12:00:00.000000Z\t150.0
+                            """);
+        });
     }
 
     @Test

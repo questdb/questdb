@@ -4340,6 +4340,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // leak them. It must run after compileWorkerFiltersConditionally(), which restores the
         // original filter models on filterExpr, so the order cannot be swapped.
         ObjList<Function> perWorkerFilters = null;
+        // The LIMIT advice function, owned here until a factory constructor returns holding it.
+        // Both branches below build one and neither constructor frees its inputs on its own
+        // failure, so every path that does not complete a construction releases it: the JIT bail
+        // (which falls through and builds a second one for the Java filter), a throw between the
+        // construction steps, and the outer catch alike. One variable, one owner - two of them
+        // left the Java branch's copy invisible to the only catch that could free it.
+        Function limitLoFunction = null;
         try {
             // This path applies only to the read_parquet() table function.
             // For native tables, generateTableQuery0() handles pushdown separately.
@@ -4378,7 +4385,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         compiledCountOnlyFilter = new CompiledCountOnlyFilter();
                         compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
 
-                        final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                        limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                         final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
 
                         LOG.debug()
@@ -4422,6 +4429,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         Misc.free(compiledFilter);
                         Misc.free(compiledCountOnlyFilter);
                         Misc.freeObjList(bindVarFunctions);
+                        // Nulling form: the Java branch below reassigns it, and on the rethrowing
+                        // twin the outer catch would otherwise free it a second time.
+                        limitLoFunction = Misc.free(limitLoFunction);
                         LOG.debug()
                                 .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
                                 .$(", ex=").$safe(ex.getFlyweightMessage())
@@ -4431,6 +4441,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         Misc.free(compiledFilter);
                         Misc.free(compiledCountOnlyFilter);
                         Misc.freeObjList(bindVarFunctions);
+                        limitLoFunction = Misc.free(limitLoFunction);
                         throw t;
                     } finally {
                         jitIRSerializer.clear();
@@ -4439,7 +4450,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 // Use Java filter.
-                final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
                 perWorkerFilters = compileWorkerFiltersConditionally(
                         executionContext,
@@ -4473,6 +4484,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // built but before the constructor adopted them; the null-transfer above keeps the
             // constructor's own cleanup from double-freeing.
             Misc.freeObjList(perWorkerFilters, e);
+            // Null on every path that transferred it; non-null when a construction step threw.
+            Misc.free(limitLoFunction, e);
             Misc.free(filter);
             Misc.free(factory);
             throw e;
@@ -6298,18 +6311,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.PARALLEL_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else if (slaveToFree.supportsTimeFrameCursor()) {
-                                    // Both serial constructors adopt joinFilter and the window
-                                    // functions - their _close() frees them - and close themselves on
-                                    // their own ctor failure, so null those fields BEFORE the call,
-                                    // exactly as the parallel siblings above do. Transferring
-                                    // afterwards left the catch below free to close them a second
-                                    // time, and Function.close() carries no idempotency guarantee.
-                                    // groupByFunctions is deliberately NOT transferred: unlike the
-                                    // async factories, neither serial factory frees that list (the
-                                    // cursor only clears it), so the catch below stays its owner.
+                                    // Both serial constructors adopt joinFilter and groupByFunctions -
+                                    // and the general one below also adopts the window functions - so
+                                    // their _close() frees them, and each closes itself on its own ctor
+                                    // failure. Null those fields BEFORE the call, exactly as the
+                                    // parallel siblings above do: transferring afterwards leaves the
+                                    // catch below free to close them a second time, and
+                                    // Function.close() carries no idempotency guarantee.
+                                    // groupByFunctions belongs in that transfer. The catch owns it only
+                                    // on failure, so leaving it behind gives the success path no owner
+                                    // at all - the cursor merely clears the list - and every aggregate
+                                    // that allocates in its constructor leaks.
                                     if (leftSymbolIndex != -1 && !isDynamicWindow) {
                                         final Function serialJoinFilter = joinFilter;
+                                        final ObjList<GroupByFunction> serialGroupByFunctions = groupByFunctions;
                                         joinFilter = null;
+                                        groupByFunctions = null;
                                         master = new WindowJoinFastRecordCursorFactory(
                                                 asm,
                                                 configuration,
@@ -6321,7 +6338,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 context.isIncludePrevailing(),
                                                 lo,
                                                 hi,
-                                                groupByFunctions,
+                                                serialGroupByFunctions,
                                                 valueTypes,
                                                 rightSymbolIndex,
                                                 leftSymbolIndex,
@@ -6332,9 +6349,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         final Function serialJoinFilter = joinFilter;
                                         final Function serialWindowLoFunc = windowLoFunc;
                                         final Function serialWindowHiFunc = windowHiFunc;
+                                        final ObjList<GroupByFunction> serialGroupByFunctions = groupByFunctions;
                                         joinFilter = null;
                                         windowLoFunc = null;
                                         windowHiFunc = null;
+                                        groupByFunctions = null;
                                         master = new WindowJoinRecordCursorFactory(
                                                 asm,
                                                 configuration,
@@ -6353,7 +6372,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 loTimeUnit,
                                                 hiTimeUnit,
                                                 isDynamicWindow ? timestampDriver : null,
-                                                groupByFunctions,
+                                                serialGroupByFunctions,
                                                 valueTypes,
                                                 serialJoinFilter
                                         );
@@ -9118,6 +9137,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     if (distinctIntrinsic.intrinsicValue == IntrinsicModel.FALSE || distinctIntrinsic.filter != null ||
                                             distinctIntrinsic.keyColumn != null || distinctIntrinsic.keyExcludedValueFuncs.size() > 0) {
                                         tableModel.setWhereClause(savedWhereClause);
+                                        // extract() may have compiled a dynamic timestamp bound into
+                                        // the model's runtime interval builder. Dropping the model
+                                        // does not release it -- IntrinsicModel.clear() calls the
+                                        // builder's clear(), which drops references without closing
+                                        // them -- so free it here, as the two LATEST ON bail-outs do.
+                                        distinctIntrinsic.clearIntervalFilters();
                                         distinctIntrinsic = null;
                                     }
                                 }
@@ -12218,6 +12243,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function asyncLimitLoFunction;
                     final int limitLoPos;
                     if (pushLimit) {
+                        // Deliberately NOT nulled here. collectColumnIndexes(),
+                        // compileWorkerFiltersConditionally() and deepClone() all run before the
+                        // constructor and all can throw, and the constructor does not free its
+                        // inputs on its own failure, so this method has to stay the owner right
+                        // up until the constructor returns. The catch below is what frees it on
+                        // each of those paths.
                         asyncLimitLoFunction = limitLoFunction;
                         limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
                     } else {
@@ -12276,8 +12307,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } catch (Throwable th) {
             // The factory constructors do not free their inputs on failure, and the
             // outer catch no longer owns dfcFactory, so release everything this
-            // method is responsible for. limitLoFunction is null once freed above or
-            // transferred to the returned factory, keeping this free idempotent.
+            // method is responsible for. limitLoFunction is null once the not-pushed branch or
+            // the serial fallback freed it, and otherwise still owned here: the factory takes it
+            // over only by returning, and every throw between the push decision and that return
+            // lands right here. So this free is reached exactly when nothing else owns it.
             Misc.free(limitLoFunction);
             Misc.free(filter);
             Misc.free(coveringFactory);

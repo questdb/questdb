@@ -69,7 +69,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     private Function filter;
     private final ExpressionNode filterExpr;
     private PageFrameSequence<AsyncFilterAtom> frameSequence;
-    private final Function limitLoFunction;
+    private Function limitLoFunction;
     private final int limitLoPos;
     private final int maxNegativeLimit;
     private AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
@@ -157,9 +157,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.cursor = cursor;
         this.negativeLimitCursor = negativeLimitCursor;
         this.frameSequence = frameSequence;
-        this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
+        // Assigned last: _close() frees this field, so it must not be set before a statement that
+        // can still throw, or the caller's own free would become a double free.
+        this.limitLoFunction = limitLoFunction;
         this.workerCount = workerCount;
     }
 
@@ -446,11 +448,17 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.negativeLimitCursor = null;
         final DirectLongList negativeLimitRows = this.negativeLimitRows;
         this.negativeLimitRows = null;
+        // The generator hands the LIMIT advice function over on construction and keeps no
+        // reference, so this factory is its only owner. Nothing freed it before, which leaked
+        // any LIMIT bound holding native memory on every successful compile.
+        final Function limitLoFunction = this.limitLoFunction;
+        this.limitLoFunction = null;
 
         Throwable cleanupFailure = Misc.freeBestEffort(null, base);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, negativeLimitRows);
         cleanupFailure = halfCloseBestEffort(cleanupFailure, frameSequence, cursor, negativeLimitCursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, filter);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, limitLoFunction);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

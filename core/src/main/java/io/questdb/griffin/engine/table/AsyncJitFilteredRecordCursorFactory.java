@@ -68,7 +68,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
     private final SCSequence collectSubSeq = new SCSequence();
     private final ExpressionNode filterExpr;
-    private final Function limitLoFunction;
+    private Function limitLoFunction;
     private final int limitLoPos;
     private final int maxNegativeLimit;
     private final int sharedQueryWorkerCount;
@@ -481,6 +481,11 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.negativeLimitCursor = null;
         final DirectLongList negativeLimitRows = this.negativeLimitRows;
         this.negativeLimitRows = null;
+        // The generator hands the LIMIT advice function over on construction and keeps no
+        // reference, so this factory is its only owner. Nothing freed it before, which leaked
+        // any LIMIT bound holding native memory on every successful compile.
+        final Function limitLoFunction = this.limitLoFunction;
+        this.limitLoFunction = null;
 
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, negativeLimitRows);
@@ -492,6 +497,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, bindVarMemory);
         failure = Misc.freeObjListBestEffort(failure, bindVarFunctions);
+        failure = Misc.freeBestEffort(failure, limitLoFunction);
         CairoException.rethrowCleanupFailure(failure);
     }
 

@@ -214,326 +214,351 @@ public final class ParquetRowGroupFilter {
                 // band (see putDoubleEq), which is the one rewrite that changes the count.
                 int effectiveOp = opType;
                 int effectiveCount = valueCount;
-                switch (ColumnType.tagOf(columnType)) {
-                    case ColumnType.BYTE:
-                        for (int j = 0; j < valueCount; j++) {
-                            Function f = valueFunctions.getQuick(j);
-                            switch (f.getType()) {
-                                case ColumnType.SHORT:
-                                    filterValues.putInt(f.getShort(null));
-                                    break;
-                                case ColumnType.CHAR:
-                                    filterValues.putInt(f.getChar(null));
-                                    break;
-                                case ColumnType.INT:
-                                    // INT value compares at INT precision (BYTE promotes to INT):
-                                    // getInt() wraps overflowing INT arithmetic like the native
-                                    // scan; getLong() would keep the un-wrapped product and prune
-                                    // wrongly.
-                                    filterValues.putInt(f.getInt(null));
-                                    break;
-                                case ColumnType.LONG:
-                                    // LONG value compares at LONG precision: take the full width
-                                    // and clamp into the INT stats slot (out-of-range values match
-                                    // no BYTE row, and the saturated bound preserves GT/GE/LT/LE).
-                                    filterValues.putInt(clampLongToInt(f.getLong(null)));
-                                    break;
-                                case ColumnType.FLOAT:
-                                case ColumnType.DOUBLE:
-                                    if (!tryPutIntFromDouble(filterValues, f.getDouble(null), opType)) {
-                                        supported = false;
-                                    }
-                                    break;
-                                default:
-                                    filterValues.putInt(f.getByte(null));
-                            }
-                            // A break inside the switch above leaves the switch, not this loop, so
-                            // the remaining values would keep evaluating and appending after the
-                            // bound has already been declined. The INT/LONG arms are if/else chains
-                            // and break out of the loop directly.
-                            if (!supported) {
-                                break;
-                            }
-                        }
-                        break;
-                    case ColumnType.SHORT:
-                        for (int j = 0; j < valueCount; j++) {
-                            Function f = valueFunctions.getQuick(j);
-                            switch (f.getType()) {
-                                case ColumnType.INT:
-                                    // INT precision (SHORT promotes to INT); getInt() wraps like
-                                    // the native scan.
-                                    filterValues.putInt(f.getInt(null));
-                                    break;
-                                case ColumnType.LONG:
-                                    // LONG precision: full width, clamped into the INT stats slot.
-                                    filterValues.putInt(clampLongToInt(f.getLong(null)));
-                                    break;
-                                case ColumnType.FLOAT:
-                                case ColumnType.DOUBLE:
-                                    if (!tryPutIntFromDouble(filterValues, f.getDouble(null), opType)) {
-                                        supported = false;
-                                    }
-                                    break;
-                                default:
-                                    filterValues.putInt(f.getShort(null));
-                            }
-                            // See the BYTE arm: break out of the value loop, not just the switch.
-                            if (!supported) {
-                                break;
-                            }
-                        }
-                        break;
-                    case ColumnType.CHAR:
-                        for (int j = 0; j < valueCount; j++) {
-                            filterValues.putInt(valueFunctions.getQuick(j).getChar(null));
-                        }
-                        break;
-                    case ColumnType.INT:
-                        for (int j = 0; j < valueCount; j++) {
-                            Function f = valueFunctions.getQuick(j);
-                            int vType = f.getType();
-                            if (vType == ColumnType.LONG) {
-                                // An out-of-INT-range LONG bound saturates in the 32-bit stats
-                                // slot and would false-prune a group whose INT stats sit on the
-                                // boundary (all INT_MAX vs "< 5e9"). Unlike BYTE/SHORT, INT stats
-                                // can reach it, so it takes the op no INT row satisfies (prune
-                                // every group) or declines -- see unsatisfiableIntOp.
-                                long v = f.getLong(null);
-                                if (v != Numbers.LONG_NULL && (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE)) {
-                                    effectiveOp = unsatisfiableIntOp(opType, valueCount, v > 0);
-                                    if (effectiveOp == PushdownFilterExtractor.OP_UNSUPPORTED) {
-                                        supported = false;
-                                        break;
-                                    }
-                                    filterValues.putInt(unsatisfiableIntBound(v > 0));
-                                    continue;
-                                }
-                                filterValues.putInt(clampLongToInt(v));
-                            } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
-                                final double b = integralBound(f.getDouble(null), opType);
-                                if (Numbers.isNull(b)) {
-                                    supported = false;
-                                    break;
-                                }
-                                if (b < Integer.MIN_VALUE || b > Integer.MAX_VALUE) {
-                                    effectiveOp = unsatisfiableIntOp(opType, valueCount, b > 0);
-                                    if (effectiveOp == PushdownFilterExtractor.OP_UNSUPPORTED) {
-                                        supported = false;
-                                        break;
-                                    }
-                                    filterValues.putInt(unsatisfiableIntBound(b > 0));
-                                    continue;
-                                }
-                                filterValues.putInt((int) b);
-                            } else {
-                                // INT (and narrower) compare at INT precision; getInt() wraps
-                                // overflowing INT arithmetic like the native scan.
-                                filterValues.putInt(f.getInt(null));
-                            }
-                        }
-                        break;
-                    case ColumnType.TIMESTAMP: {
-                        if (opType == PushdownFilterExtractor.OP_EQ) {
-                            boolean allCompatible = true;
+                // A bound the arms below cannot materialise throws rather than returning a
+                // flag: PushdownFilterExtractor compiles every value standalone with no target
+                // type, so a string literal against a TIMESTAMP column arrives as a StrConstant
+                // whose getLong() raises ImplicitCastException. Scope the catch to this one
+                // condition -- an outer catch would abandon the whole filter list and cost every
+                // other condition in the query its pruning. supported=false rolls the partially
+                // written values back at the check below.
+                try {
+                    switch (ColumnType.tagOf(columnType)) {
+                        case ColumnType.BYTE:
                             for (int j = 0; j < valueCount; j++) {
-                                int vType = valueFunctions.getQuick(j).getType();
-                                if (!ColumnType.isTimestamp(vType) && vType != ColumnType.DATE) {
-                                    allCompatible = false;
+                                Function f = valueFunctions.getQuick(j);
+                                switch (f.getType()) {
+                                    case ColumnType.SHORT:
+                                        filterValues.putInt(f.getShort(null));
+                                        break;
+                                    case ColumnType.INT:
+                                        // INT value compares at INT precision (BYTE promotes to INT):
+                                        // getInt() wraps overflowing INT arithmetic like the native
+                                        // scan; getLong() would keep the un-wrapped product and prune
+                                        // wrongly.
+                                        filterValues.putInt(f.getInt(null));
+                                        break;
+                                    case ColumnType.LONG:
+                                        // LONG value compares at LONG precision: take the full width
+                                        // and clamp into the INT stats slot (out-of-range values match
+                                        // no BYTE row, and the saturated bound preserves GT/GE/LT/LE).
+                                        filterValues.putInt(clampLongToInt(f.getLong(null)));
+                                        break;
+                                    case ColumnType.FLOAT:
+                                    case ColumnType.DOUBLE:
+                                        if (!tryPutIntFromDouble(filterValues, f.getDouble(null), opType)) {
+                                            supported = false;
+                                        }
+                                        break;
+                                    default:
+                                        // CHAR lands here too, and must. A CHAR bound on a BYTE column
+                                        // resolves to EqShortFunctionFactory (CHAR does not overload to
+                                        // BYTE), so the row filter reads it as CharFunction.getShort ->
+                                        // castCharToNumber and sees the digit: '5' is 5. getByte() below
+                                        // takes the same castCharToNumber route and agrees. Pushing
+                                        // getChar()'s code point 53 instead prunes every group whose
+                                        // BYTE stats miss 53. The SHORT arm has always routed CHAR here.
+                                        filterValues.putInt(f.getByte(null));
+                                }
+                                // A break inside the switch above leaves the switch, not this loop, so
+                                // the remaining values would keep evaluating and appending after the
+                                // bound has already been declined. The INT/LONG arms are if/else chains
+                                // and break out of the loop directly.
+                                if (!supported) {
                                     break;
                                 }
                             }
-                            if (!allCompatible) {
-                                supported = false;
-                                break;
+                            break;
+                        case ColumnType.SHORT:
+                            for (int j = 0; j < valueCount; j++) {
+                                Function f = valueFunctions.getQuick(j);
+                                switch (f.getType()) {
+                                    case ColumnType.INT:
+                                        // INT precision (SHORT promotes to INT); getInt() wraps like
+                                        // the native scan.
+                                        filterValues.putInt(f.getInt(null));
+                                        break;
+                                    case ColumnType.LONG:
+                                        // LONG precision: full width, clamped into the INT stats slot.
+                                        filterValues.putInt(clampLongToInt(f.getLong(null)));
+                                        break;
+                                    case ColumnType.FLOAT:
+                                    case ColumnType.DOUBLE:
+                                        if (!tryPutIntFromDouble(filterValues, f.getDouble(null), opType)) {
+                                            supported = false;
+                                        }
+                                        break;
+                                    default:
+                                        filterValues.putInt(f.getShort(null));
+                                }
+                                // See the BYTE arm: break out of the value loop, not just the switch.
+                                if (!supported) {
+                                    break;
+                                }
                             }
-                        }
-
-                        TimestampDriver driver = ColumnType.getTimestampDriver(columnType);
-                        for (int j = 0; j < valueCount; j++) {
-                            Function f = valueFunctions.getQuick(j);
-                            int vType = f.getType();
-                            if (ColumnType.isTimestamp(vType) || vType == ColumnType.DATE) {
-                                if (columnType == vType) {
-                                    filterValues.putLong(f.getTimestamp(null));
+                            break;
+                        case ColumnType.CHAR:
+                            for (int j = 0; j < valueCount; j++) {
+                                filterValues.putInt(valueFunctions.getQuick(j).getChar(null));
+                            }
+                            break;
+                        case ColumnType.INT:
+                            for (int j = 0; j < valueCount; j++) {
+                                Function f = valueFunctions.getQuick(j);
+                                int vType = f.getType();
+                                if (vType == ColumnType.LONG) {
+                                    // An out-of-INT-range LONG bound saturates in the 32-bit stats
+                                    // slot and would false-prune a group whose INT stats sit on the
+                                    // boundary (all INT_MAX vs "< 5e9"). Unlike BYTE/SHORT, INT stats
+                                    // can reach it, so it takes the op no INT row satisfies (prune
+                                    // every group) or declines -- see unsatisfiableIntOp.
+                                    long v = f.getLong(null);
+                                    if (v != Numbers.LONG_NULL && (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE)) {
+                                        effectiveOp = unsatisfiableIntOp(opType, valueCount, v > 0);
+                                        if (effectiveOp == PushdownFilterExtractor.OP_UNSUPPORTED) {
+                                            supported = false;
+                                            break;
+                                        }
+                                        filterValues.putInt(unsatisfiableIntBound(v > 0));
+                                        continue;
+                                    }
+                                    filterValues.putInt(clampLongToInt(v));
+                                } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
+                                    final double b = integralBound(f.getDouble(null), opType);
+                                    if (Numbers.isNull(b)) {
+                                        supported = false;
+                                        break;
+                                    }
+                                    if (b < Integer.MIN_VALUE || b > Integer.MAX_VALUE) {
+                                        effectiveOp = unsatisfiableIntOp(opType, valueCount, b > 0);
+                                        if (effectiveOp == PushdownFilterExtractor.OP_UNSUPPORTED) {
+                                            supported = false;
+                                            break;
+                                        }
+                                        filterValues.putInt(unsatisfiableIntBound(b > 0));
+                                        continue;
+                                    }
+                                    filterValues.putInt((int) b);
                                 } else {
-                                    filterValues.putLong(driver.from(f.getTimestamp(null), ColumnType.getTimestampType(vType)));
+                                    // INT (and narrower) compare at INT precision; getInt() wraps
+                                    // overflowing INT arithmetic like the native scan.
+                                    filterValues.putInt(f.getInt(null));
                                 }
-                            } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
-                                // getLong() throws on a FLOAT/DOUBLE function, and the row-level filter
-                                // compares this column at double width, so the bound takes the same
-                                // guard as the LONG arm.
-                                if (!tryPutLongFromDouble(filterValues, f.getDouble(null), opType)) {
+                            }
+                            break;
+                        case ColumnType.TIMESTAMP: {
+                            if (opType == PushdownFilterExtractor.OP_EQ) {
+                                boolean allCompatible = true;
+                                for (int j = 0; j < valueCount; j++) {
+                                    int vType = valueFunctions.getQuick(j).getType();
+                                    if (!ColumnType.isTimestamp(vType) && vType != ColumnType.DATE) {
+                                        allCompatible = false;
+                                        break;
+                                    }
+                                }
+                                if (!allCompatible) {
                                     supported = false;
                                     break;
                                 }
-                            } else {
-                                filterValues.putLong(f.getLong(null));
                             }
-                        }
-                        break;
-                    }
-                    case ColumnType.LONG:
-                        for (int j = 0; j < valueCount; j++) {
-                            Function f = valueFunctions.getQuick(j);
-                            if (f.getType() == ColumnType.FLOAT || f.getType() == ColumnType.DOUBLE) {
-                                if (!tryPutLongFromDouble(filterValues, f.getDouble(null), opType)) {
-                                    supported = false;
-                                    break;
+
+                            TimestampDriver driver = ColumnType.getTimestampDriver(columnType);
+                            for (int j = 0; j < valueCount; j++) {
+                                Function f = valueFunctions.getQuick(j);
+                                int vType = f.getType();
+                                if (ColumnType.isTimestamp(vType) || vType == ColumnType.DATE) {
+                                    if (columnType == vType) {
+                                        filterValues.putLong(f.getTimestamp(null));
+                                    } else {
+                                        filterValues.putLong(driver.from(f.getTimestamp(null), ColumnType.getTimestampType(vType)));
+                                    }
+                                } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
+                                    // getLong() throws on a FLOAT/DOUBLE function, and the row-level filter
+                                    // compares this column at double width, so the bound takes the same
+                                    // guard as the LONG arm.
+                                    if (!tryPutLongFromDouble(filterValues, f.getDouble(null), opType)) {
+                                        supported = false;
+                                        break;
+                                    }
+                                } else {
+                                    filterValues.putLong(f.getLong(null));
                                 }
-                            } else {
-                                filterValues.putLong(f.getLong(null));
-                            }
-                        }
-                        break;
-                    case ColumnType.DATE:
-                        for (int j = 0; j < valueCount; j++) {
-                            Function f = valueFunctions.getQuick(j);
-                            int vType = f.getType();
-                            if (ColumnType.isTimestamp(vType)) {
-                                filterValues.putLong(f.getDate(null));
-                            } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
-                                // Same as the TIMESTAMP arm: getLong() throws on a FLOAT/DOUBLE
-                                // function, and the row-level filter compares at double width.
-                                if (!tryPutLongFromDouble(filterValues, f.getDouble(null), opType)) {
-                                    supported = false;
-                                    break;
-                                }
-                            } else {
-                                filterValues.putLong(f.getLong(null));
-                            }
-                        }
-                        break;
-                    case ColumnType.FLOAT:
-                        for (int j = 0; j < valueCount; j++) {
-                            if (!tryPutFloatFromDouble(filterValues, valueFunctions.getQuick(j).getDouble(null), opType)) {
-                                supported = false;
-                                break;
-                            }
-                        }
-                        break;
-                    case ColumnType.DOUBLE:
-                        if (opType == PushdownFilterExtractor.OP_EQ) {
-                            final int rewrittenCount = putDoubleEq(filterValues, valueFunctions, valueCount);
-                            if (rewrittenCount < 0) {
-                                supported = false;
-                                break;
-                            }
-                            if (rewrittenCount != valueCount) {
-                                effectiveOp = PushdownFilterExtractor.OP_BETWEEN;
-                                effectiveCount = rewrittenCount;
                             }
                             break;
                         }
-                        for (int j = 0; j < valueCount; j++) {
-                            if (!tryPutDoubleFromDouble(filterValues, valueFunctions.getQuick(j).getDouble(null), opType)) {
-                                supported = false;
-                                break;
-                            }
-                        }
-                        break;
-                    case ColumnType.IPv4:
-                        for (int j = 0; j < valueCount; j++) {
-                            filterValues.putInt(valueFunctions.getQuick(j).getIPv4(null));
-                        }
-                        break;
-                    case ColumnType.DECIMAL8:
-                        for (int j = 0; j < valueCount; j++) {
-                            filterValues.putByte(valueFunctions.getQuick(j).getDecimal8(null));
-                        }
-                        break;
-                    case ColumnType.DECIMAL16:
-                        for (int j = 0; j < valueCount; j++) {
-                            filterValues.putShort(Short.reverseBytes(valueFunctions.getQuick(j).getDecimal16(null)));
-                        }
-                        break;
-                    case ColumnType.DECIMAL32:
-                        for (int j = 0; j < valueCount; j++) {
-                            filterValues.putInt(Integer.reverseBytes(valueFunctions.getQuick(j).getDecimal32(null)));
-                        }
-                        break;
-                    case ColumnType.DECIMAL64:
-                        for (int j = 0; j < valueCount; j++) {
-                            filterValues.putLong(Long.reverseBytes(valueFunctions.getQuick(j).getDecimal64(null)));
-                        }
-                        break;
-                    case ColumnType.DECIMAL128: {
-                        Decimal128 d = Misc.getThreadLocalDecimal128();
-                        for (int j = 0; j < valueCount; j++) {
-                            valueFunctions.getQuick(j).getDecimal128(null, d);
-                            filterValues.putLong(Long.reverseBytes(d.getHigh()));
-                            filterValues.putLong(Long.reverseBytes(d.getLow()));
-                        }
-                        break;
-                    }
-                    case ColumnType.DECIMAL256: {
-                        Decimal256 d = Misc.getThreadLocalDecimal256();
-                        for (int j = 0; j < valueCount; j++) {
-                            valueFunctions.getQuick(j).getDecimal256(null, d);
-                            filterValues.putLong(Long.reverseBytes(d.getHh()));
-                            filterValues.putLong(Long.reverseBytes(d.getHl()));
-                            filterValues.putLong(Long.reverseBytes(d.getLh()));
-                            filterValues.putLong(Long.reverseBytes(d.getLl()));
-                        }
-                        break;
-                    }
-                    case ColumnType.UUID:
-                        for (int j = 0; j < valueCount; j++) {
-                            Function f = valueFunctions.getQuick(j);
-                            long lo;
-                            long hi;
-                            int vType = ColumnType.tagOf(f.getType());
-                            if (vType == ColumnType.STRING || vType == ColumnType.VARCHAR || vType == ColumnType.SYMBOL) {
-                                CharSequence str = f.getStrA(null);
-                                if (str == null) {
-                                    lo = Numbers.LONG_NULL;
-                                    hi = Numbers.LONG_NULL;
-                                } else {
-                                    try {
-                                        Uuid.checkDashesAndLength(str);
-                                        lo = Uuid.parseLo(str);
-                                        hi = Uuid.parseHi(str);
-                                    } catch (NumericException e) {
+                        case ColumnType.LONG:
+                            for (int j = 0; j < valueCount; j++) {
+                                Function f = valueFunctions.getQuick(j);
+                                if (f.getType() == ColumnType.FLOAT || f.getType() == ColumnType.DOUBLE) {
+                                    if (!tryPutLongFromDouble(filterValues, f.getDouble(null), opType)) {
                                         supported = false;
                                         break;
                                     }
+                                } else {
+                                    filterValues.putLong(f.getLong(null));
                                 }
-                            } else {
-                                lo = f.getLong128Lo(null);
-                                hi = f.getLong128Hi(null);
                             }
-                            if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
+                            break;
+                        case ColumnType.DATE:
+                            for (int j = 0; j < valueCount; j++) {
+                                Function f = valueFunctions.getQuick(j);
+                                int vType = f.getType();
+                                if (ColumnType.isTimestamp(vType)) {
+                                    filterValues.putLong(f.getDate(null));
+                                } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
+                                    // Same as the TIMESTAMP arm: getLong() throws on a FLOAT/DOUBLE
+                                    // function, and the row-level filter compares at double width.
+                                    if (!tryPutLongFromDouble(filterValues, f.getDouble(null), opType)) {
+                                        supported = false;
+                                        break;
+                                    }
+                                } else {
+                                    filterValues.putLong(f.getLong(null));
+                                }
+                            }
+                            break;
+                        case ColumnType.FLOAT:
+                            for (int j = 0; j < valueCount; j++) {
+                                if (!tryPutFloatFromDouble(filterValues, valueFunctions.getQuick(j).getDouble(null), opType)) {
+                                    supported = false;
+                                    break;
+                                }
+                            }
+                            break;
+                        case ColumnType.DOUBLE:
+                            if (opType == PushdownFilterExtractor.OP_EQ) {
+                                final int rewrittenCount = putDoubleEq(filterValues, valueFunctions, valueCount);
+                                if (rewrittenCount < 0) {
+                                    supported = false;
+                                    break;
+                                }
+                                if (rewrittenCount != valueCount) {
+                                    effectiveOp = PushdownFilterExtractor.OP_BETWEEN;
+                                    effectiveCount = rewrittenCount;
+                                }
+                                break;
+                            }
+                            for (int j = 0; j < valueCount; j++) {
+                                if (!tryPutDoubleFromDouble(filterValues, valueFunctions.getQuick(j).getDouble(null), opType)) {
+                                    supported = false;
+                                    break;
+                                }
+                            }
+                            break;
+                        case ColumnType.IPv4:
+                            for (int j = 0; j < valueCount; j++) {
+                                filterValues.putInt(valueFunctions.getQuick(j).getIPv4(null));
+                            }
+                            break;
+                        case ColumnType.DECIMAL8:
+                            for (int j = 0; j < valueCount; j++) {
+                                filterValues.putByte(valueFunctions.getQuick(j).getDecimal8(null));
+                            }
+                            break;
+                        case ColumnType.DECIMAL16:
+                            for (int j = 0; j < valueCount; j++) {
+                                filterValues.putShort(Short.reverseBytes(valueFunctions.getQuick(j).getDecimal16(null)));
+                            }
+                            break;
+                        case ColumnType.DECIMAL32:
+                            for (int j = 0; j < valueCount; j++) {
+                                filterValues.putInt(Integer.reverseBytes(valueFunctions.getQuick(j).getDecimal32(null)));
+                            }
+                            break;
+                        case ColumnType.DECIMAL64:
+                            for (int j = 0; j < valueCount; j++) {
+                                filterValues.putLong(Long.reverseBytes(valueFunctions.getQuick(j).getDecimal64(null)));
+                            }
+                            break;
+                        case ColumnType.DECIMAL128: {
+                            Decimal128 d = Misc.getThreadLocalDecimal128();
+                            for (int j = 0; j < valueCount; j++) {
+                                valueFunctions.getQuick(j).getDecimal128(null, d);
+                                filterValues.putLong(Long.reverseBytes(d.getHigh()));
+                                filterValues.putLong(Long.reverseBytes(d.getLow()));
+                            }
+                            break;
+                        }
+                        case ColumnType.DECIMAL256: {
+                            Decimal256 d = Misc.getThreadLocalDecimal256();
+                            for (int j = 0; j < valueCount; j++) {
+                                valueFunctions.getQuick(j).getDecimal256(null, d);
+                                filterValues.putLong(Long.reverseBytes(d.getHh()));
+                                filterValues.putLong(Long.reverseBytes(d.getHl()));
+                                filterValues.putLong(Long.reverseBytes(d.getLh()));
+                                filterValues.putLong(Long.reverseBytes(d.getLl()));
+                            }
+                            break;
+                        }
+                        case ColumnType.UUID:
+                            for (int j = 0; j < valueCount; j++) {
+                                Function f = valueFunctions.getQuick(j);
+                                long lo;
+                                long hi;
+                                int vType = ColumnType.tagOf(f.getType());
+                                if (vType == ColumnType.STRING || vType == ColumnType.VARCHAR || vType == ColumnType.SYMBOL) {
+                                    CharSequence str = f.getStrA(null);
+                                    if (str == null) {
+                                        lo = Numbers.LONG_NULL;
+                                        hi = Numbers.LONG_NULL;
+                                    } else {
+                                        try {
+                                            Uuid.checkDashesAndLength(str);
+                                            lo = Uuid.parseLo(str);
+                                            hi = Uuid.parseHi(str);
+                                        } catch (NumericException e) {
+                                            supported = false;
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    lo = f.getLong128Lo(null);
+                                    hi = f.getLong128Hi(null);
+                                }
+                                if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
+                                    filterValues.putLong(lo);
+                                    filterValues.putLong(hi);
+                                } else {
+                                    filterValues.putLong(Long.reverseBytes(hi));
+                                    filterValues.putLong(Long.reverseBytes(lo));
+                                }
+                            }
+                            break;
+                        case ColumnType.LONG128:
+                            for (int j = 0; j < valueCount; j++) {
+                                long lo = valueFunctions.getQuick(j).getLong128Lo(null);
+                                long hi = valueFunctions.getQuick(j).getLong128Hi(null);
                                 filterValues.putLong(lo);
                                 filterValues.putLong(hi);
-                            } else {
-                                filterValues.putLong(Long.reverseBytes(hi));
-                                filterValues.putLong(Long.reverseBytes(lo));
                             }
-                        }
-                        break;
-                    case ColumnType.LONG128:
-                        for (int j = 0; j < valueCount; j++) {
-                            long lo = valueFunctions.getQuick(j).getLong128Lo(null);
-                            long hi = valueFunctions.getQuick(j).getLong128Hi(null);
-                            filterValues.putLong(lo);
-                            filterValues.putLong(hi);
-                        }
-                        break;
-                    case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR:
-                        for (int j = 0; j < valueCount; j++) {
-                            Utf8Sequence utf8 = valueFunctions.getQuick(j).getVarcharA(null);
-                            if (utf8 != null) {
-                                int len = utf8.size();
-                                filterValues.putInt(len);
-                                filterValues.putVarchar(utf8);
-                            } else {
-                                filterValues.putInt(-1);
+                            break;
+                        case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR:
+                            for (int j = 0; j < valueCount; j++) {
+                                Utf8Sequence utf8 = valueFunctions.getQuick(j).getVarcharA(null);
+                                if (utf8 != null) {
+                                    int len = utf8.size();
+                                    filterValues.putInt(len);
+                                    filterValues.putVarchar(utf8);
+                                } else {
+                                    filterValues.putInt(-1);
+                                }
                             }
-                        }
-                        break;
-                    default:
-                        supported = false;
-                        break;
+                            break;
+                        default:
+                            supported = false;
+                            break;
+                    }
+                } catch (CairoException e) {
+                    // Debug, not error: declining one bound is a designed fallback that costs only
+                    // pruning. The outer catch keeps error level -- losing the whole filter list is
+                    // not routine. This arm catches the CairoException family (a memory limit while
+                    // appending, say); the routine case, a string bound on a non-designated
+                    // TIMESTAMP, raises ImplicitCastException, which extends RuntimeException and so
+                    // lands in the generic arm below.
+                    LOG.debug().$("skipping filter condition [column=").$safe(condition.getColumnName()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+                    supported = false;
+                } catch (Exception e) {
+                    LOG.debug().$("skipping filter condition [column=").$safe(condition.getColumnName()).$(", msg=").$(e).$(']').$();
+                    supported = false;
                 }
 
                 if (!supported || valueCount > 0x00FFFFFF) { // 16_777_215, max value count that fits in 24-bit field of ColumnFilterPacked

@@ -85,6 +85,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private CairoConfiguration configuration;
     private boolean intervalApplied = false;
     private boolean isBetweenBoundaryFunctionConsumed;
+    // Set by applyOffset when shifting a boundary wraps past the end of the timestamp range in
+    // the direction the open sentinels cannot absorb. Read and reset per source interval by the
+    // shift loop, which declines the whole pushdown when it sees it.
+    private boolean isOffsetOutOfRange;
     private boolean isOwnershipTransferred;
     private int partitionBy;
     private TimestampDriver timestampDriver;
@@ -833,13 +837,26 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * overflows) lands beyond the end of the range it guards, so every representable timestamp
      * satisfies it: the boundary constrains nothing and collapses to the open sentinel. That is how
      * {@code ts NOT IN NULL} shifts - its inversion starts one tick above the NULL sentinel, and any
-     * negative offset underflows it. The opposite direction leaves the interval unsatisfiable because
-     * the predicate asks for timestamps outside the representable range; QuestDB reports that as an
-     * error rather than silently returning nothing, so keep throwing there.
+     * negative offset underflows it.
+     * <p>
+     * The opposite direction cannot be represented at all. It is tempting to call it empty - no
+     * timestamp is above a lower bound that sits past the end of the range - but the check detects a
+     * WRAP, not a mathematical excursion, and the forward {@code dateadd} wraps too:
+     * {@code Nanos.addDays} is a plain {@code nanos + days * DAY_NANOS}. So for a stride large
+     * enough to wrap (from ~106_752 days on nanos) the projection really does land back inside the
+     * range and rows really do satisfy the predicate. Declaring the scan empty there would silently
+     * drop them.
+     * <p>
+     * It raises {@code isOffsetOutOfRange} instead and the caller declines the pushdown, leaving the
+     * {@code dateadd} as a residual row filter that re-checks every row with the same wrapping
+     * arithmetic. That is what {@link io.questdb.griffin.engine.functions.MonotonicTimestampFunction
+     * MonotonicTimestampFunction}'s {@code invertConstantShift} does for the identical hazard, so
+     * both spellings of the predicate now agree. Throwing, which is what this used to do, made the
+     * optimiser's own arithmetic a user-visible error on a perfectly valid query.
      *
      * @param isLo whether {@code value} is the lower boundary of the source interval
      */
-    private long applyOffset(long value, TimestampDriver.TimestampAddMethod addMethod, int offset, TimestampDriver otherDriver, boolean isLo) throws SqlException {
+    private long applyOffset(long value, TimestampDriver.TimestampAddMethod addMethod, int offset, TimestampDriver otherDriver, boolean isLo) {
         if (value == Numbers.LONG_NULL || value == Long.MAX_VALUE || offset == 0) {
             return value;
         }
@@ -851,25 +868,24 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             if (!isLo) {
                 return Long.MAX_VALUE;
             }
-            throw SqlException.position(0)
-                    .put("timestamp overflow: applying offset ")
-                    .put(offset)
-                    .put(" to timestamp would exceed maximum value");
+            // Lower boundary wrapped past the end of the range.
+            isOffsetOutOfRange = true;
+            return Long.MAX_VALUE;
         }
         if (offset < 0 && result > base) {
             if (isLo) {
                 return Numbers.LONG_NULL;
             }
-            throw SqlException.position(0)
-                    .put("timestamp overflow: applying offset ")
-                    .put(offset)
-                    .put(" to timestamp would exceed minimum value");
+            // Upper boundary wrapped below the start of the range.
+            isOffsetOutOfRange = true;
+            return Numbers.LONG_NULL;
         }
         return result;
     }
 
     private Throwable freeAndClearBestEffort() {
         isOwnershipTransferred = false;
+        isOffsetOutOfRange = false;
         // Detach the pending endpoint and every adopted slot before invoking user close methods.
         Throwable failure = clearBetweenParsing(null);
         failure = Misc.freeObjListBestEffort(failure, dynamicRangeList);
@@ -995,15 +1011,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * with this builder's own intervals once - not the per-interval intersection, which collapses to
      * empty for 2+ disjoint ranges. The caller consumes the and_offset predicate (sets
      * {@code node.intrinsicValue = TRUE}) only when this method reports success, so a case that cannot
-     * be represented here (a runtime/dynamic source bound) returns {@code false} and stays a residual
-     * filter rather than a wrong (empty or unconstrained) interval scan.
+     * be represented here - a runtime/dynamic source bound, or a boundary whose shift wraps out of
+     * the timestamp range - returns {@code false} and stays a residual filter rather than a wrong
+     * (empty or unconstrained) interval scan.
      *
      * @param other     the builder to merge from
      * @param addMethod the timestamp add method (from TimestampDriver)
      * @param offset    the offset value to apply
      * @return true if the offset predicate was fully represented (the caller may consume it); false if
      * it must be left as a residual filter
-     * @throws SqlException if applying the offset would cause timestamp overflow
      */
     boolean mergeWithAddMethod(RuntimeIntervalModelBuilder other, TimestampDriver.TimestampAddMethod addMethod, int offset, boolean isInjective) throws SqlException {
         if (other == null || isEmptySet() || addMethod == null || !other.intervalApplied) {
@@ -1072,8 +1088,19 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         try {
             parsedIntervals.clear();
             for (int i = 0, n = otherIntervals.size(); i < n; i += 2) {
+                isOffsetOutOfRange = false;
                 final long lo = applyOffset(otherIntervals.getQuick(i), addMethod, offset, otherDriver, true);
                 long hi = applyOffset(otherIntervals.getQuick(i + 1), addMethod, offset, otherDriver, false);
+                if (isOffsetOutOfRange) {
+                    // Decline the whole pushdown: the caller frees the temp model and rebuilds the
+                    // dateadd as a residual row filter, which re-checks each row with the same
+                    // wrapping arithmetic the projection uses. Nothing has been merged into this
+                    // builder yet - parsedIntervals is scratch that the finally clears - so an early
+                    // return leaves it untouched. Declining one interval means declining all of
+                    // them, because the surviving intervals alone would be a narrower scan than the
+                    // predicate admits.
+                    return false;
+                }
                 if (stallTicks > 0 && hi != Long.MAX_VALUE && hi != Numbers.LONG_NULL) {
                     // An open or absent bound has no stall to clear; anything else saturates rather
                     // than wrapping past the end of the range.

@@ -1139,6 +1139,46 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCharValueOnByteColumnMatchesNative() throws Exception {
+        // A CHAR bound against a BYTE column compares as the digit it spells: overload
+        // resolution picks EqShortFunctionFactory, so the row filter reads '1' through
+        // CharFunction.getShort -> castCharToNumber and sees 1, not the code point 49.
+        // Two row groups with disjoint stats pin both halves of the contract. Pushing the
+        // code point prunes BOTH groups and loses the row; declining the bound outright
+        // returns the row but stops pruning the [8,9] group, so each failure mode trips a
+        // different assertion below.
+        // 4 is the floor PropServerConfiguration applies, so 8 rows give exactly two groups.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z'),
+                    (4, '2024-01-01T03:00:00.000000Z'),
+                    (6, '2024-01-01T04:00:00.000000Z'),
+                    (7, '2024-01-01T05:00:00.000000Z'),
+                    (8, '2024-01-01T06:00:00.000000Z'),
+                    (9, '2024-01-01T07:00:00.000000Z'),
+                    (101, '2024-01-02T02:00:00.000000Z')
+                    """);
+            // Only 2024-01-01 converts -- CONVERT skips the active partition -- giving two
+            // row groups, [1,4] and [6,9].
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = '1'")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            1
+                            """);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testColumnTopDouble() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -4366,6 +4406,42 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("cnt\n145\n");
+        });
+    }
+
+    @Test
+    public void testUnmaterialisableConditionKeepsPruningForOtherConditions() throws Exception {
+        // PushdownFilterExtractor compiles each bound standalone with no target type, so a
+        // string literal against a non-designated TIMESTAMP column arrives as a StrConstant
+        // and getLong() raises ImplicitCastException. That one bound must decline on its own;
+        // it must not cost every other condition in the same query its pruning.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts2 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT),
+                           timestamp_sequence('2024-01-01', 100_000),
+                           timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(5000)
+                    """);
+            // A second partition keeps 2024-01-01 non-active so it converts.
+            execute("INSERT INTO x VALUES (8000, '2024-01-02T02:00:00.000000Z', '2024-01-02T02:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Control: the INT bound alone prunes.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = -991")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // Same bound, now sharing the query with one the filter list cannot materialise.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = -991 AND ts2 < '2024-06-01'")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 

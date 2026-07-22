@@ -120,6 +120,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     private final long windowHi;
     private final long windowLo;
     private AbstractWindowJoinFastRecordCursor cursor;
+    private ObjList<GroupByFunction> groupByFunctions;
     private Function joinFilter;
     private JoinRecordMetadata joinMetadata;
     private RecordCursorFactory masterFactory;
@@ -150,6 +151,11 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.slaveFactory = slaveFactory;
             this.joinMetadata = joinMetadata;
             this.joinFilter = joinFilter;
+            // Adopted here, before the first statement that can throw: the cursor only clears this
+            // list (Mutable.clear(), not close()), so _close() is its sole release point and the
+            // generator has already nulled its own reference. GroupByFunctionsUpdaterFactory below
+            // can throw, and so can the assert.
+            this.groupByFunctions = groupByFunctions;
             // Checked after the adopting assignment above, not at the top of the constructor: the
             // generator transfers ownership of the join filter before it calls this, and the catch
             // below frees the FIELD, so an -ea failure any earlier leaks it.
@@ -338,6 +344,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         final RecordMetadata metadata = detachMetadata();
         final AbstractWindowJoinFastRecordCursor cursor = this.cursor;
         this.cursor = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
         final Function joinFilter = this.joinFilter;
         this.joinFilter = null;
         final JoinRecordMetadata joinMetadata = this.joinMetadata;
@@ -360,6 +368,12 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             failure = Misc.freeBestEffort(failure, joinMetadata);
         }
         failure = Misc.freeBestEffort(failure, value);
+        // Last, defensively. The cursor's close() runs Misc.clearObjList(groupByFunctions), and
+        // clear() touches the very native buffers close() releases (StringDistinctAggGroupByFunction
+        // resets its sink capacity, which reallocs). Callers close the cursor before the factory and
+        // that close() is isOpen-guarded, so today the clear cannot follow the free -- ordering the
+        // free after the cursor keeps it that way if a caller ever closes the factory first.
+        failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
         CairoException.rethrowCleanupFailure(failure);
     }
 

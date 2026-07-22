@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
@@ -309,6 +310,50 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSerialWindowJoinFreesGroupByFunctionsOnClose() throws Exception {
+        // Both serial factories took groupByFunctions without adopting it: the generator's catch
+        // owns the list only on failure, neither factory kept a field for it, and the cursors only
+        // Misc.clearObjList it -- which calls Mutable.clear(), not close(). On the success path the
+        // list therefore had no owner at all, while the async siblings free theirs in
+        // AsyncWindowJoinAtom.close().
+        //
+        // The aggregate has to allocate in its CONSTRUCTOR for a compile-and-close cycle to expose
+        // that: array_agg sizes its native scratch only when a row is rendered, which is why the
+        // sibling test above stays green. string_distinct_agg mallocs two DirectUtf16Sinks in its
+        // constructor, so the orphaned function is native memory and assertMemoryLeak sees it.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTrades(engine, sqlExecutionContext, 100, 8);
+                        createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        try (RecordCursorFactory f = compiler.compile(
+                                "SELECT t.ts, string_distinct_agg(p.sym::string, ',') FROM trades t WINDOW JOIN prices p " +
+                                        "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING",
+                                sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(f, WindowJoinRecordCursorFactory.class);
+                            // Drain and render so the aggregate actually accumulates and fills its
+                            // sink, rather than only pinning the compile-and-close shape. Note this
+                            // does NOT pin the _close() free ordering: the cursor closes before the
+                            // factory and its clear is isOpen-guarded, so reordering the two frees
+                            // still passes. That ordering is defensive only.
+                            assertDrainsRenderingAggregate(f, sqlExecutionContext, 100);
+                        }
+                        try (RecordCursorFactory f = compiler.compile(
+                                "SELECT t.ts, string_distinct_agg(p.sym::string, ',') FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
+                                        "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING",
+                                sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(f, WindowJoinFastRecordCursorFactory.class);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testVectorizedWindowJoinOpenFailureReleasesAllocations() throws Exception {
         // A batch-computable aggregate (sum) over a symbol-keyed WINDOW JOIN routes to the vectorized
         // WindowJoinFastVectRecordCursor, which carries its own allocator + slaveAllocator. A tiny
@@ -361,6 +406,21 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    // Drains the cursor AND reads the aggregate column. string_distinct_agg fills its output
+    // sink only when rendered, so a hasNext()-only drain leaves the sink at its initial capacity
+    // and never exercises the grow -> clear() -> resetCapacity -> close() sequence.
+    private static void assertDrainsRenderingAggregate(RecordCursorFactory factory, SqlExecutionContext ctx, long expectedRows) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(ctx)) {
+            final Record record = cursor.getRecord();
+            long rows = 0;
+            while (cursor.hasNext()) {
+                record.getStrA(1);
+                rows++;
+            }
+            Assert.assertEquals(expectedRows, rows);
+        }
     }
 
     private static void assertInTree(RecordCursorFactory factory, Class<?> expected) {
