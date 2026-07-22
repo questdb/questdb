@@ -737,17 +737,28 @@ public final class LiveViewCheckpointFunctionCompiler {
      * <p>
      * Three things narrow it to the shape whose state really is the ring of the last
      * {@code K} values. {@code IGNORE NULLS} scans the whole frame for the last non-null and
-     * is bounded by the frame's start like any accumulator. A RANGE frame ends at a timestamp
-     * offset rather than at a row, so its forward influence reaches past the last row the lag
-     * names and is not this kind's to bound yet. And a high bound at the current row - as the
-     * runtime evaluates it, so an {@code EXCLUDE CURRENT ROW} frame is a lag of one rather
-     * than one of these - leaves no ring at all: that shape compiles to a stateless per-row
-     * projection, which carries no checkpoint surface and never reaches this compiler.
+     * is bounded by the frame's start like any accumulator. A high bound at the current row -
+     * as the runtime evaluates it, so an {@code EXCLUDE CURRENT ROW} frame is a lag of one
+     * rather than one of these - leaves no ring at all: that shape compiles to a stateless
+     * per-row projection, which carries no checkpoint surface and never reaches this compiler.
+     * <p>
+     * And a RANGE frame ends at a timestamp offset rather than at a row, so its lag names no
+     * row for this to read. Over an unbounded start the emitted value is the newest base row
+     * at or below {@code t - V}, and a row inserted at {@code m} moves every output from
+     * {@code m + V} up to the {@code + V} of the next base row that supersedes it - a distance
+     * the data sets rather than the lag. Rows at 0s, 100s and 200s under a one-second lag put
+     * a change at 50s and the moved output at 100s, which neither {@code changeMaxTs + V + 1}
+     * nor any other closed form off {@code V} reaches; the state runs as far back as that
+     * superseded row, so the floor misses it too. The RANGE family therefore keeps the
+     * CREATE-time reject over an unbounded start. What it does have is the bounded start,
+     * where the frame's own width bounds both sides and the extent stays {@code -frameLo} -
+     * that arm needs nothing from this method.
      * <p>
      * The function's own {@link WindowFunction#hasFrameLocalCheckpointState()} stands behind
-     * this: only the partitioned ROWS-frame {@code last_value} implementations declare it, so
-     * a shape this admits that compiles to some other class declines the plan rather than
-     * taking one against an extent it does not hold.
+     * this: the partitioned ROWS-frame {@code last_value} implementations declare it outright
+     * and the RANGE-frame ones declare it only for a bounded frame start, so a shape this
+     * admits that compiles to some other class declines the plan rather than taking one
+     * against an extent it does not hold.
      */
     private static boolean hasHighBoundStateExtent(CharSequence functionName, WindowExpression window, long rowsHi) {
         return rowsHi < 0

@@ -1015,14 +1015,35 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
 
             // A RANGE frame ends at a timestamp offset rather than at a row, so the last row
             // the lag names does not bound the forward influence and this stays the frame's.
+            // The width bounds it instead: the ring holds the entries within the lag plus the
+            // one carried entry, and the eviction above them drops everything older than the
+            // frame's own start, so a warm-up over the width rebuilds the state and the plan
+            // takes that width on both sides.
             final Metadata range = compileMetadata(
                     "select ts, sym, last_value(x) over (partition by sym order by ts "
                             + "range between '3' hour preceding and '1' hour preceding) l from base",
                     0
             );
             Assert.assertEquals(-10_800_000_000L, range.dependency.getFrameLo());
+            Assert.assertEquals(-3_600_000_000L, range.dependency.getFrameHi());
             Assert.assertEquals(-10_800_000_000L, range.dependency.getStateExtentLo());
             Assert.assertEquals(10_800_000_000L, range.dependency.getRangeFrameWidth());
+            Assert.assertTrue(range.dependency.hasFrameLocalState());
+            Assert.assertNotNull(range.rangePlan);
+            Assert.assertEquals(10_800_000_000L, range.rangePlan.getMaxFrameWidth());
+            Assert.assertTrue(range.isDependencyComplete);
+
+            // The IGNORE NULLS spelling evicts on the same two bounds and only declines to
+            // buffer a null argument, so it is bounded by the frame's start the same way.
+            final Metadata rangeIgnoreNulls = compileMetadata(
+                    "select ts, sym, last_value(x) ignore nulls over (partition by sym order by ts "
+                            + "range between '3' hour preceding and '1' hour preceding) l from base",
+                    0
+            );
+            Assert.assertEquals(-10_800_000_000L, rangeIgnoreNulls.dependency.getStateExtentLo());
+            Assert.assertTrue(rangeIgnoreNulls.dependency.hasFrameLocalState());
+            Assert.assertNotNull(rangeIgnoreNulls.rangePlan);
+            Assert.assertTrue(rangeIgnoreNulls.isDependencyComplete);
         });
     }
 
@@ -1059,7 +1080,14 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertFalse(ignoreNulls.dependency.isFiniteRows());
             Assert.assertNull(ignoreNulls.rowsPlan);
 
-            // And so does the RANGE spelling, whose forward influence the lag does not bound.
+            // And so does the RANGE spelling, whose lag names a timestamp offset rather than
+            // a row and so bounds neither side. The emitted value is the newest base row at
+            // or below t - V, which an unbounded start lets reach arbitrarily far back, and a
+            // row inserted at m moves every output from m + V up to the + V of whichever base
+            // row supersedes it next: rows at 0s, 100s and 200s under a one-second lag move
+            // the output at 100s from a change at 50s, which changeMaxTs + V + 1 does not
+            // reach. The function declines it from its own side too - the RANGE-frame
+            // implementations report frame-local state only for a bounded start.
             final Metadata range = compileMetadata(
                     "select ts, sym, last_value(x) over (partition by sym order by ts "
                             + "range between unbounded preceding and '1' hour preceding) l from base",
@@ -1067,7 +1095,9 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             );
             Assert.assertEquals(DependencyKind.FOLLOWING_OR_DATA_DEPENDENT, range.dependency.getKind());
             Assert.assertFalse(range.dependency.isFiniteRange());
+            Assert.assertFalse(range.dependency.hasFrameLocalState());
             Assert.assertNull(range.rangePlan);
+            Assert.assertFalse(range.isDependencyComplete);
 
             // A high bound at the current row is the stateless family rather than a ring of
             // zero values: it carries no checkpoint surface at all, so no descriptor is built

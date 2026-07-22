@@ -2546,6 +2546,23 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // computeNext keeps the entries within minDiff of the current row plus the one
+            // carried entry it emits, and the eviction above that drops everything further
+            // back than maxDiff - the frame's own look-behind. So a bounded frame start makes
+            // the state a function of the rows in [t - maxDiff, t] and of nothing else, which
+            // is the extent the descriptor declares. The IGNORE NULLS subclass evicts on the
+            // same two bounds and only declines to buffer a null argument, so it inherits
+            // this reading.
+            //
+            // An unbounded start switches the maxDiff eviction off, and the carried entry is
+            // then the newest row below the lag however far back that lies - older than every
+            // retained entry, and older than any width a warm-up could replay. That arm has
+            // no look-behind to declare, so it answers false and takes no repair plan.
+            return frameLoBounded;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();

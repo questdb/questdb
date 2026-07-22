@@ -2035,11 +2035,21 @@ public class SqlParser {
      * That is what the repair planner reads as the descriptor's state extent,
      * and the compiler applies the same three narrowings this does.
      * {@code IGNORE NULLS} scans the whole frame for the last non-null, so it is
-     * bounded by the frame's start like an accumulator; a RANGE end is a
-     * timestamp offset rather than a row, so its influence reaches past the last
-     * row the lag names; and a frame end at the current row leaves no ring at
-     * all - it compiles to a stateless per-row projection, a family whose
-     * admission needs a stateless window function to be able to declare itself.
+     * bounded by the frame's start like an accumulator; and a frame end at the
+     * current row leaves no ring at all - it compiles to a stateless per-row
+     * projection, a family whose admission needs a stateless window function to
+     * be able to declare itself.
+     * <p>
+     * A RANGE end keeps the reject for a reason of its own: it is a timestamp
+     * offset rather than a row, so it names no row for the state to be. The
+     * emitted value is the newest base row at or below {@code t - V}, which an
+     * unbounded start lets reach arbitrarily far back, and a row inserted at
+     * {@code m} moves every output from {@code m + V} up to the {@code + V} of
+     * whichever base row supersedes it next. Both distances are the data's
+     * rather than the lag's, so no bound follows from {@code V} - rows at 0s,
+     * 100s and 200s under a one-second lag move the output at 100s from a change
+     * at 50s. The bounded RANGE start needs none of this: its own width bounds
+     * the state and the forward influence alike.
      * <p>
      * The shape is read syntactically, because the parser has neither folded
      * frame bound expressions to numbers nor picked a factory yet. So a couple
