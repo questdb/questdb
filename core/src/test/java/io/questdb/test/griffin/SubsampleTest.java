@@ -3595,6 +3595,73 @@ public class SubsampleTest extends AbstractCairoTest {
         });
     }
 
+
+    @Test
+    public void testUniformAfterSampleByUsesWindowPlan() throws Exception {
+        // Proves the aggregation-context SUBSAMPLE now takes the desugared keep-flag WINDOW path
+        // (CachedWindowLightSelect fused, no separate Filter, no leaked __keep_subsample) sitting
+        // ABOVE the group-by/sample-by node - and NO Subsample cursor node.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE uniform(2)")
+                    .assertsPlan("SelectedRecord\n" +
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [uniform(2) over (order by [ts])]\n" +
+                            "        Encode sort light\n" +
+                            "          keys: [ts]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              keyFunctions: [timestamp_floor_utc('1h',ts)]\n" +
+                            "              values: [avg(price)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t\n");
+        });
+    }
+
+    @Test
+    public void testCadenceAfterSampleByUsesWindowPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE cadence(2)")
+                    .assertsPlan("SelectedRecord\n" +
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [cadence(2) over (order by [ts])]\n" +
+                            "        Encode sort light\n" +
+                            "          keys: [ts]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              keyFunctions: [timestamp_floor_utc('1h',ts)]\n" +
+                            "              values: [avg(price)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t\n");
+        });
+    }
+
+    @Test
+    public void testLttbAfterSampleByUsesWindowPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)")
+                    .assertsPlan("SelectedRecord\n" +
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [lttb(ts,avg,2) over (order by [ts])]\n" +
+                            "        Encode sort light\n" +
+                            "          keys: [ts]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              keyFunctions: [timestamp_floor_utc('1h',ts)]\n" +
+                            "              values: [avg(price)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t\n");
+        });
+    }
+
     @Test
     public void testCadenceWithBindStride() throws Exception {
         assertMemoryLeak(() -> {

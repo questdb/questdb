@@ -9351,15 +9351,16 @@ public class SqlOptimiser implements Mutable {
                 // fallback (its gate is total, see the comment on that branch) and is therefore NOT
                 // wrapped by this flag - sdt always migrates regardless of the switch.
                 final boolean subsampleWindowEnabled = configuration.isSubsampleWindowEnabled();
-                // Skip the aggregation context (e.g. SAMPLE BY / GROUP BY, once rewriteSampleBy has
-                // turned it into a group-by projection): a window function cannot be injected into an
-                // aggregating model. Those SUBSAMPLE cases stay on the untouched custom cursor path.
+                // Aggregation contexts (e.g. SAMPLE BY / GROUP BY, once rewriteSampleBy has turned them
+                // into a group-by projection) DO migrate for the five count/value arms below: a window
+                // function cannot be injected INTO an aggregating model, so desugarSubsample WRAPS the
+                // aggregating model as a subquery instead (see its isAggregationContext branch). Only the
+                // sdt arm still refuses an aggregation context (it throws).
                 if (subsampleWindowEnabled
                         && subsample.paramCount == 1
                         && Chars.equalsIgnoreCase(subsample.token, "uniform")) {
                     final ExpressionNode targetNode = subsample.args.getQuick(0);
                     if (timestamp != null
-                            && !isAggregationContext(model, nested)
                             && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
                         model = desugarUniformSubsample(model, nested, subsample, timestamp);
                     }
@@ -9376,7 +9377,6 @@ public class SqlOptimiser implements Mutable {
                     //    byte-identical; the non-integer case must reproduce the cursor's exact error).
                     final ExpressionNode strideNode = subsample.args.getQuick(0);
                     if (timestamp != null
-                            && !isAggregationContext(model, nested)
                             && isConstantUniformTarget(strideNode, sqlExecutionContext)
                             && (subsample.paramCount == 1
                             || isConstantCadenceSeed(subsample.args.getQuick(1), sqlExecutionContext))) {
@@ -9412,7 +9412,6 @@ public class SqlOptimiser implements Mutable {
                     final ExpressionNode valueNode = subsample.args.getQuick(0);
                     final ExpressionNode targetNode = subsample.args.getQuick(1);
                     if (timestamp != null
-                            && !isAggregationContext(model, nested)
                             && !subsampleInJoinContext
                             && valueNode != null
                             && valueNode.type == ExpressionNode.LITERAL
@@ -9440,7 +9439,6 @@ public class SqlOptimiser implements Mutable {
                     final ExpressionNode valueNode = subsample.args.getQuick(0);
                     final ExpressionNode targetNode = subsample.args.getQuick(1);
                     if (timestamp != null
-                            && !isAggregationContext(model, nested)
                             && !subsampleInJoinContext
                             && valueNode != null
                             && valueNode.type == ExpressionNode.LITERAL
@@ -9745,28 +9743,87 @@ public class SqlOptimiser implements Mutable {
         // CachedWindowLight and read the correct boolean value.
         keepCol.setSubsampleKeepFlag(true);
         windowCall.windowExpression = keepCol;
-        // OVER (ORDER BY ts): the designated timestamp gives deterministic input order.
+        // OVER (ORDER BY ts): the designated timestamp gives deterministic input order. In the
+        // aggregation case (below) `timestamp.token` names the aggregation OUTPUT column (e.g. the
+        // sampled/grouped `ts`), which survives as an ordinary column and is what the window orders by.
         final ExpressionNode orderByTs = expressionNodePool.next().of(LITERAL, timestamp.token, 0, timestamp.position);
         keepCol.addOrderBy(orderByTs, IQueryModel.ORDER_DIRECTION_ASCENDING);
 
-        // Inner projection = the original select model, now also projecting the keep flag.
-        model.addBottomUpColumn(keepCol);
         // The SUBSAMPLE clause is now expressed by the window + filter; drop it so the cursor path is skipped.
         nested.setSubsample(null, 0);
 
-        // Filter model: FROM <inner> WHERE __keep_subsample
+        // The model that the keep-flag window is projected alongside, and the model the keep filter
+        // reads from. For a non-aggregation `model` the window is injected directly INTO it (one fewer
+        // projection layer) and the filter is a bare flat model over it. For an aggregating `model`
+        // (SAMPLE BY / GROUP BY / DISTINCT) a window function cannot be injected into the aggregating
+        // projection - code generation throws "Window function is not allowed in context of
+        // aggregation" - so we WRAP: a fresh CHOOSE model (windowModel) selects the aggregation's
+        // output columns FROM the aggregating model as a subquery and carries the keep window, and the
+        // filter is a SELECT * ... WHERE keep over it. The filter must be an artificial-star projection
+        // (not a bare flat model) to mirror the tree the parser builds for
+        //   SELECT <cols> FROM (SELECT * FROM (SELECT <cols>, keep(...) OVER (ORDER BY ts) FROM (<agg>)) WHERE keep)
+        // A bare flat filter model over an aggregation-subquery-backed window does not propagate the
+        // window's column map to the outer projection (Invalid column), whereas the wildcard does. The
+        // `OVER (ORDER BY ts)` references the aggregation's OUTPUT `ts` - an ordinary column (the
+        // aggregation output has no *designated* timestamp, but ordering a window by a plain column
+        // does not need one).
+        final boolean aggregation = isAggregationContext(model, nested);
+        final IQueryModel windowModel;
         final IQueryModel filterModel = queryModelPool.next();
-        filterModel.setNestedModel(model);
+        if (aggregation) {
+            windowModel = queryModelPool.next();
+            windowModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
+            windowModel.setNestedModel(wrapInSubQuery(model));
+            windowModel.setNestedModelIsSubQuery(true);
+            windowModel.setModelPosition(model.getModelPosition());
+            final ObjList<QueryColumn> aggCols = model.getBottomUpColumns();
+            for (int i = 0, n = aggCols.size(); i < n; i++) {
+                windowModel.addBottomUpColumn(nextColumn(aggCols.getQuick(i).getAlias()));
+            }
+            // The keep flag must be visible to the SELECT * of the artificial-star filter model below,
+            // otherwise the wildcard omits it and the whole window is pruned during rewriteSelectClause.
+            // The outer projection re-lists the original columns only, so the keep flag is still dropped
+            // from the final result - it never surfaces in output.
+            keepCol.setIncludeIntoWildcard(true);
+            windowModel.addBottomUpColumn(keepCol);
+
+            // The WHERE __keep_subsample must sit on a plain SELECT_MODEL_NONE wrapper over the window
+            // subquery, NOT on the projecting filter model: rewriteSelectClause0 rebuilds a projecting
+            // (CHOOSE) model into fresh translating/window/group-by layers and does NOT carry the source
+            // model's whereClause onto the rebuilt chain, so a WHERE placed on the projection is silently
+            // dropped. A NONE wrapper is passed through and keeps its whereClause (this is exactly how the
+            // parser lays out `SELECT * FROM (<window>) WHERE __keep_subsample`).
+            final IQueryModel keepFilterWrap = wrapInSubQuery(windowModel);
+            keepFilterWrap.setWhereClause(expressionNodePool.next().of(LITERAL, keepAlias, 0, 0));
+            // Artificial-star projection so the outer model can resolve the (post-filter) columns.
+            filterModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
+            SqlUtil.addSelectStar(filterModel, queryColumnPool, expressionNodePool);
+            filterModel.setNestedModel(keepFilterWrap);
+        } else {
+            // Inner projection = the original select model, now also projecting the keep flag.
+            model.addBottomUpColumn(keepCol);
+            windowModel = model;
+            filterModel.setNestedModel(windowModel);
+            // Non-aggregation filter is a bare flat model; its whereClause survives rewriteSelectClause.
+            filterModel.setWhereClause(expressionNodePool.next().of(LITERAL, keepAlias, 0, 0));
+        }
+
+        // Filter model boundary.
         filterModel.setNestedModelIsSubQuery(true);
         filterModel.setModelPosition(model.getModelPosition());
-        filterModel.setWhereClause(expressionNodePool.next().of(LITERAL, keepAlias, 0, 0));
 
-        // Outer select: project the original columns only (drop __keep_subsample).
+        // Outer select: project the original columns only (drop __keep_subsample). These are
+        // windowModel's projected columns (in the wrapping case, the aggregation output columns).
         final IQueryModel outerModel = queryModelPool.next();
-        outerModel.setNestedModel(filterModel);
+        if (aggregation) {
+            outerModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
+            outerModel.setNestedModel(wrapInSubQuery(filterModel));
+        } else {
+            outerModel.setNestedModel(filterModel);
+        }
         outerModel.setNestedModelIsSubQuery(true);
         outerModel.setModelPosition(model.getModelPosition());
-        final ObjList<QueryColumn> innerCols = model.getBottomUpColumns();
+        final ObjList<QueryColumn> innerCols = windowModel.getBottomUpColumns();
         for (int i = 0, n = innerCols.size(); i < n; i++) {
             final QueryColumn qc = innerCols.getQuick(i);
             if (!Chars.equalsIgnoreCase(qc.getAlias(), keepAlias)) {
@@ -9787,6 +9844,20 @@ public class SqlOptimiser implements Mutable {
         outerModel.setUnionModel(unionModel);
 
         return outerModel;
+    }
+
+    /**
+     * Wraps {@code inner} in a fresh SELECT_MODEL_NONE model whose single nested model is {@code inner}
+     * (marked as a sub-query). This mirrors the extra boundary model the parser inserts around every
+     * {@code FROM (sub-query)} - without it, hand-built stacked projections over an aggregation subquery
+     * are collapsed/pruned during rewriteSelectClause (the keep window is dropped as if unreferenced).
+     */
+    private IQueryModel wrapInSubQuery(IQueryModel inner) {
+        final IQueryModel wrapper = queryModelPool.next();
+        wrapper.setNestedModel(inner);
+        wrapper.setNestedModelIsSubQuery(true);
+        wrapper.setModelPosition(inner.getModelPosition());
+        return wrapper;
     }
 
     /**
