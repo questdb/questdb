@@ -4305,12 +4305,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // Conservative pattern match for the single-keep-flag fusion. Fuses ONLY when:
     //  - the WHERE clause is exactly one column literal (no AND/OR/other terms),
     //  - the input factory is a CachedWindowLightRecordCursorFactory with EXACTLY one window
-    //    function and that function is a row-selecting keep flag (WindowFunction.isRowSelecting()),
+    //    function and that function is the desugared SUBSAMPLE keep flag - both row-selecting
+    //    (WindowFunction.isRowSelecting()) AND marked internal (isSubsampleKeepFlag), enforced by
+    //    getSingleRowSelectingFunction(),
     //  - the literal resolves to that function's own BOOLEAN output column (not a base column).
     // Anything else (multiple window fns, extra filter terms, the boolean referenced elsewhere, a
-    // non-row-selecting fn, PARTITION BY, a non-light window factory) leaves the untouched
-    // CachedWindowLight + Filter path in place. On a match, the factory is switched into
-    // row-selecting mode and the WHERE clause is consumed.
+    // non-row-selecting fn, an UNMARKED hand-written row-selecting keep boolean that a user could also
+    // PROJECT, PARTITION BY, a non-light window factory) leaves the untouched CachedWindowLight +
+    // Filter path in place. On a match, the factory is switched into row-selecting mode and the WHERE
+    // clause is consumed.
+    // Why the marker matters: the fused cursor skips writing the per-row boolean. If a hand-written
+    // query both filters on AND projects the keep boolean, the projected copy would read the unwritten
+    // slot (false for every kept row). Gating on the desugar-only marker guarantees the boolean is
+    // dropped by the outer projection before it can surface, so fusion stays correct.
     private boolean tryFuseKeepFlagFilter(RecordCursorFactory factory, ExpressionNode where, IQueryModel model) {
         if (where.type != ExpressionNode.LITERAL) {
             return false;
@@ -4329,7 +4336,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (colIdx < 0 || colIdx != fn.getColumnIndex() || metadata.getColumnType(colIdx) != ColumnType.BOOLEAN) {
             return false;
         }
-        windowFactory.enableRowSelecting();
+        windowFactory.enableRowSelecting(fn);
         model.setWhereClause(null);
         return true;
     }
@@ -10709,6 +10716,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     WindowFunction windowFunction = (WindowFunction) f;
+                    // Carry the desugared SUBSAMPLE keep-flag marker from the WindowExpression onto the
+                    // function so the keep-flag filter fusion (getSingleRowSelectingFunction) can fuse
+                    // ONLY the internal __keep_subsample column, never a hand-written projected keep boolean.
+                    if (ac.isSubsampleKeepFlag()) {
+                        windowFunction.markSubsampleKeepFlag();
+                    }
                     // Until windowFunction is added to groupedWindow or naturalOrderFunctions,
                     // the outer catch cannot find it. toOrderIndices and initRecordComparator
                     // both throw, and some functions (e.g. cume_dist over partition by) own

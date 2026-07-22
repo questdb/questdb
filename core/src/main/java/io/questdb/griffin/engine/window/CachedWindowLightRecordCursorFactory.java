@@ -248,7 +248,12 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     public WindowFunction getSingleRowSelectingFunction() {
         if (allFunctions != null && allFunctions.size() == 1) {
             final WindowFunction fn = allFunctions.getQuick(0);
-            if (fn.isRowSelecting()) {
+            // Fuse ONLY the internal desugared SUBSAMPLE keep flag (isSubsampleKeepFlag). Its boolean
+            // is guaranteed dropped by the outer projection, so skipping the per-row boolean write is
+            // safe. A hand-written window query may also produce a row-selecting function but is never
+            // marked; fusing it would zero out a projected keep boolean (all rows read false), so it
+            // must stay on the Filter + CachedWindowLight path.
+            if (fn.isRowSelecting() && fn.isSubsampleKeepFlag()) {
                 return fn;
             }
         }
@@ -261,9 +266,16 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
      * function keeps. Must only be called after {@link #getSingleRowSelectingFunction()} returns
      * non-null (verified by the caller). Idempotent.
      */
-    public void enableRowSelecting() {
-        this.selectingFunction = getSingleRowSelectingFunction();
-        assert selectingFunction != null;
+    public void enableRowSelecting(WindowFunction selectingFunction) {
+        // The caller (SqlCodeGenerator.tryFuseKeepFlagFilter) has already resolved and validated the
+        // sole row-selecting keep-flag function via getSingleRowSelectingFunction(); take it directly
+        // rather than recomputing behind an assert (a no-op under -da, which would leave a null
+        // selectingFunction and NPE at cursor time). Guard defensively: a null here means the caller's
+        // contract was violated, so stay on the normal boolean-materializing path.
+        if (selectingFunction == null) {
+            return;
+        }
+        this.selectingFunction = selectingFunction;
         this.rowSelecting = true;
     }
 

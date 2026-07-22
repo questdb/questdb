@@ -9737,6 +9737,13 @@ public class SqlOptimiser implements Mutable {
         // The keep flag is an internal helper consumed by the WHERE filter only. Exclude it from
         // wildcard expansion so it cannot leak into the output of SELECT * FROM t SUBSAMPLE <method>(...).
         keepCol.setIncludeIntoWildcard(false);
+        // Mark this as the internal subsample keep flag so code generation may fuse the WHERE filter
+        // into a row-selecting window cursor (skipping the per-row boolean write). This marker is the
+        // ONLY thing that authorises fusion: the outer projection below drops __keep_subsample, so its
+        // boolean is guaranteed never to surface in output. Hand-written window queries that filter on
+        // AND project a row-selecting keep boolean are never marked, so they fall back to Filter +
+        // CachedWindowLight and read the correct boolean value.
+        keepCol.setSubsampleKeepFlag(true);
         windowCall.windowExpression = keepCol;
         // OVER (ORDER BY ts): the designated timestamp gives deterministic input order.
         final ExpressionNode orderByTs = expressionNodePool.next().of(LITERAL, timestamp.token, 0, timestamp.position);

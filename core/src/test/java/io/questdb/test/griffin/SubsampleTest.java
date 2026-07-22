@@ -3306,6 +3306,51 @@ public class SubsampleTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testKeepFlagFusionFallsBackWhenProjectingKeepBoolean() throws Exception {
+        // Critical correctness guard (bug found in review of commit 2085c8ac6f): a hand-written window
+        // query that BOTH filters on AND projects the row-selecting keep boolean must NOT fuse. The
+        // fused cursor skips writing the per-row boolean, so a projected copy would read the unwritten
+        // narrow-chain slot - false for every kept row - instead of true. Fusion is now gated on the
+        // desugar-only __keep_subsample marker (isSubsampleKeepFlag), so this hand-written shape falls
+        // back to Filter + CachedWindowLight and the projected keep is correctly true for every row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, price DOUBLE, id LONG) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 10.0, 1)," +
+                    "('2024-01-01T01:00:00.000000Z', 20.0, 2)," +
+                    "('2024-01-01T02:00:00.000000Z', 30.0, 3)," +
+                    "('2024-01-01T03:00:00.000000Z', 40.0, 4)," +
+                    "('2024-01-01T04:00:00.000000Z', 50.0, 5)");
+
+            final String sql = "SELECT ts, price, id, keep FROM (SELECT ts, price, id, m4(ts, price, 8) OVER (ORDER BY ts) keep FROM t) WHERE keep";
+
+            // Must fall back: no fused row-selecting node, and a separate Filter on the keep boolean.
+            final String plan = planOf(sql);
+            Assert.assertFalse("must not fuse when the keep boolean is projected: " + plan, plan.contains("CachedWindowLightSelect"));
+            Assert.assertTrue("expected a separate Filter node + CachedWindowLight: " + plan,
+                    plan.contains("Filter") && plan.contains("CachedWindowLight"));
+
+            // target 8 >= 5 rows -> all rows kept -> the projected keep must be true for EVERY row
+            // (the bug returned false for every row).
+            assertSql(
+                    "ts\tprice\tid\tkeep\n" +
+                            "2024-01-01T00:00:00.000000Z\t10.0\t1\ttrue\n" +
+                            "2024-01-01T01:00:00.000000Z\t20.0\t2\ttrue\n" +
+                            "2024-01-01T02:00:00.000000Z\t30.0\t3\ttrue\n" +
+                            "2024-01-01T03:00:00.000000Z\t40.0\t4\ttrue\n" +
+                            "2024-01-01T04:00:00.000000Z\t50.0\t5\ttrue\n",
+                    sql
+            );
+
+            // The real SUBSAMPLE feature must STILL fuse: same m4/target over the same table desugars
+            // to the internal marked keep flag and takes the fused row-selecting path.
+            final String subsamplePlan = planOf("SELECT ts, price FROM t SUBSAMPLE m4(price, 8)");
+            Assert.assertTrue("SUBSAMPLE m4 must still fuse into the row-selecting node: " + subsamplePlan,
+                    subsamplePlan.contains("CachedWindowLightSelect"));
+        });
+    }
+
     private void assertFusedMatchesNonFused(String subsampleCall, String windowCall) throws SqlException {
         printSql("SELECT ts, price FROM t SUBSAMPLE " + subsampleCall);
         final String fused = sink.toString();

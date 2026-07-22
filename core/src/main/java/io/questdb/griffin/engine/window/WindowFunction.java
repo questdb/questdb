@@ -318,6 +318,28 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Whether this function is the desugared SUBSAMPLE {@code __keep_subsample} keep flag, as marked
+     * by code generation via {@link #markSubsampleKeepFlag()} when the originating
+     * {@code WindowExpression} carries the desugar marker. The keep-flag filter fusion fuses ONLY
+     * functions for which this returns {@code true}: the boolean of such a column is guaranteed to be
+     * dropped by the outer projection, so skipping its per-row materialization is safe. A hand-written
+     * window query that projects a row-selecting keep boolean is NOT marked and must not fuse.
+     *
+     * @return {@code true} if this function is the internal subsample keep flag; {@code false} (default) otherwise.
+     */
+    default boolean isSubsampleKeepFlag() {
+        return false;
+    }
+
+    /**
+     * Marks this function as the internal subsample keep flag; see {@link #isSubsampleKeepFlag()}.
+     * Called by code generation only when the originating {@code WindowExpression} is the desugared
+     * {@code __keep_subsample} column. Default no-op for functions that cannot be row-selecting.
+     */
+    default void markSubsampleKeepFlag() {
+    }
+
+    /**
      * Whether this two-pass window function is a pure row-selecting keep flag: it produces a
      * BOOLEAN "keep this row?" result and, after {@link #preparePass2()}, can enumerate the exact
      * set of kept ABSOLUTE base-row indices via {@link #getSelectedRows(DirectLongList)}. When such
