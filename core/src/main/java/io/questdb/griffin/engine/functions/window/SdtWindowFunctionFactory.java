@@ -47,6 +47,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
@@ -210,6 +211,26 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void getSelectedRows(DirectLongList dest) {
+            // Row-selecting fusion (SUBSAMPLE sdt): enumerate the kept ABSOLUTE rows directly from the
+            // finalized keep-byte buffer instead of materializing a BOOLEAN column + downstream Filter.
+            // pass1 writes exactly one keep-byte per row at its own monotonic offset (appendOffset,
+            // 0,1,2,... == the base chain row index on the fused OVER (ORDER BY ts) path), and the
+            // SwingingDoor's eager-tentative-marking + back-patch has converged by end of input: every
+            // row still tentatively kept (the last pending point, and any point before a RESPECT-NULLS
+            // gap) keeps its keep=1 byte, so the buffer is final by the time this runs (after
+            // preparePass2, which only rewinds readOffset). Walking 0..rowCount ascending and emitting
+            // each keep==1 index is therefore byte-identical to the rows pass2 would have flagged true.
+            dest.clear();
+            final long rowCount = appendOffset / RECORD_SIZE;
+            for (long absRow = 0; absRow < rowCount; absRow++) {
+                if (mem.getByte(absRow * RECORD_SIZE) != 0) {
+                    dest.add(absRow);
+                }
+            }
+        }
+
+        @Override
         public void initRecordComparator(
                 SqlCodeGenerator sqlGenerator,
                 RecordMetadata metadata,
@@ -224,6 +245,14 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public boolean isIgnoreNulls() {
             return ignoreNulls;
+        }
+
+        @Override
+        public boolean isRowSelecting() {
+            // Sole-window-function keep flag: after preparePass2 the keep-byte buffer is finalized, so
+            // getSelectedRows() enumerates the exact kept absolute rows and the codegen keep-flag filter
+            // can be fused into the cursor (SUBSAMPLE sdt only ever produces OVER (ORDER BY ts)).
+            return true;
         }
 
         // Sink: write keep-byte at absolute buffer offset `index`.
@@ -297,6 +326,10 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
     }
 
     // ---- partitioned, two-pass; per-partition SwingingDoor state lives in the Map ----
+    // Intentionally NOT row-selecting: keep bytes are written in ORDER BY order but the buffer would
+    // interleave rows across partitions, so a single ascending absolute-row keep-set can't be exposed
+    // cheaply. This is moot for SUBSAMPLE, which only desugars to OVER (ORDER BY ts) (no PARTITION BY),
+    // and the fuse gate excludes PARTITION BY anyway, so this function stays on the unfused pass2 path.
     static class SdtOverPartitionFunction extends BasePartitionedWindowFunction implements SwingingDoor.Sink {
         private final double compdev;
         private final boolean ignoreNulls;

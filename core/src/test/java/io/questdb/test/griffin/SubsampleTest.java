@@ -3763,16 +3763,44 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testSdtDesugarsToWindowFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            // After the rewrite + keep-flag filter fusion, EXPLAIN must show the fused row-selecting
+            // window node (CachedWindowLightSelect) with NO separate Filter and no leaked keep column -
+            // sdt exposes its finalized swinging-door keep-set via getSelectedRows() (mirrors
+            // testM4DesugarsToWindowFilter). The O(N) BOOLEAN Filter is replaced by O(selected) output.
             assertSql(
                     "QUERY PLAN\n" +
                             "SelectedRecord\n" +
-                            "    Filter filter: __keep_subsample\n" +
-                            "        CachedWindowLight\n" +
-                            "          unorderedFunctions: [sdt(ts, price, 0.5) over (order by [ts])]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: x\n",
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [sdt(ts, price, 0.5) over (order by [ts])]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n",
                     "EXPLAIN SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)"
+            );
+        });
+    }
+
+    @Test
+    public void testSdtKeepsAllRowsFused() throws Exception {
+        // compdev = 0 forces the swinging door to keep (nearly) every row: exercises the fused
+        // row-selecting path where the keep-set is the full/near-full result, and confirms it stays
+        // byte-identical to the unfused window+keep-filter oracle.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO x SELECT rnd_double() * 100, timestamp_sequence('2024-01-01', 60000000) FROM long_sequence(200)");
+            printSql("SELECT ts, price FROM (SELECT *, sdt(ts, price, 0.0) OVER (ORDER BY ts) k FROM x) WHERE k");
+            final String expected = sink.toString();
+            assertSql(expected, "SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.0)");
+            // and the fused plan is used
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [sdt(ts, price, 0.0) over (order by [ts])]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n",
+                    "EXPLAIN SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.0)"
             );
         });
     }
@@ -3986,11 +4014,17 @@ public class SubsampleTest extends AbstractCairoTest {
             );
 
             // sdt has no cursor fallback: it must still migrate to the window path with the
-            // switch off (its total gate is independent of cairo.subsample.window.enabled).
+            // switch off (its total gate is independent of cairo.subsample.window.enabled), and it
+            // fuses into the row-selecting window node (the keep-flag fusion is likewise independent
+            // of that switch), so no separate __keep_subsample Filter appears.
             printSql("EXPLAIN SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)");
             final String sdtPlan = sink.toString();
             Assert.assertTrue(
-                    "sdt should still migrate to the window path with the switch off: " + sdtPlan,
+                    "sdt should still migrate to the fused window path with the switch off: " + sdtPlan,
+                    sdtPlan.contains("CachedWindowLightSelect")
+            );
+            Assert.assertFalse(
+                    "sdt should not contain a separate keep-filter node when fused: " + sdtPlan,
                     sdtPlan.contains("__keep_subsample")
             );
             Assert.assertFalse(
