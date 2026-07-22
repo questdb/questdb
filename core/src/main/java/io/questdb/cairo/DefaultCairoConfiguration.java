@@ -1744,7 +1744,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isWalCompositeFastAppendEnabled() {
-        return false;
+        return true;
     }
 
     @Override

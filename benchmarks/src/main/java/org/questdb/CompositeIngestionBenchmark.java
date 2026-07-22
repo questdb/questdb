@@ -48,17 +48,18 @@ import java.util.Arrays;
  * dimension, i.e. {@code partition by day, exch}) against a byte-for-byte identical PLAIN twin
  * ({@code partition by day} only).
  * <p>
- * Mechanics: today, a composite table forces a full commit on every WAL apply -- it cannot defer/batch
- * successive small transactions behind the WAL LAG the way a plain table can, because each apply may
- * touch several exch "cells" at once and the composite writer has no lag-coalescing path yet. This
- * benchmark quantifies that per-commit gap for a realistic high-frequency ingestion shape (many small
- * transactions, each spanning multiple {@code exch} values -- e.g. multi-exchange tick ingestion). The
- * follow-up (#5, cell-aware WAL-LAG batching) is meant to close this gap; this benchmark exists to
- * quantify it, not to assert a threshold on it.
+ * Mechanics: today (flag off), a composite table forces a full commit on every WAL apply -- it cannot
+ * defer/batch successive small transactions behind the WAL LAG the way a plain table can, because each
+ * apply may touch several exch "cells" at once and the composite writer has no lag-coalescing path yet.
+ * This benchmark quantifies that per-commit gap for a realistic high-frequency ingestion shape (many
+ * small transactions, each spanning multiple {@code exch} values -- e.g. multi-exchange tick ingestion).
+ * Composite fast-append ({@code composite.bench.fastappend}, spec 1 single-cell + spec 2 multi-cell) is
+ * the mechanism that closes this gap for ordered append-only ingestion; #5 (cell-aware WAL-LAG batching)
+ * was explored separately and found inert. This benchmark exists to quantify the gap and, flag-on, the
+ * win -- not to assert a threshold on either.
  * <p>
  * Twin tables {@code ci} (composite) and {@code pi} (plain) are created ONCE in {@link #main}. The
- * measured unit is one "commit": insert a small batch of {@link #BATCH_ROWS} rows (one per {@code exch}
- * value, so every batch drives a multi-cell commit on the composite side), then drain the WAL
+ * measured unit is one "commit": insert a small batch of {@link #BATCH_ROWS} rows, then drain the WAL
  * (ApplyWal2TableJob + CheckWalTransactionsJob) so the batch is actually applied/committed before the
  * next one starts. The composite loop and the plain loop run the identical batch sequence (same
  * timestamps/exch/px per iteration index, computed deterministically) but are timed separately, each
@@ -68,17 +69,26 @@ import java.util.Arrays;
  * <p>
  * Tunables (system properties): {@code composite.bench.k} (measured iterations/table, default 2000),
  * {@code composite.bench.warmup} (warmup iterations/table, default 100), {@code composite.bench.exch}
- * (distinct exch values = rows/batch, default 6; {@code exch=1} makes every batch a SINGLE-CELL ordered
- * append-only commit -- the composite single-cell fast-append's target shape), {@code
- * composite.bench.step.us} (microseconds between consecutive rows, default 1000), {@code
- * composite.bench.fastappend} (boolean, default {@code false}) -- overrides {@link
- * CairoConfiguration#isWalCompositeFastAppendEnabled()} for this run's engine so the SAME benchmark can
- * measure flag-off (today's full composite O3 path on every commit, the baseline) vs flag-on (the
- * fast-append early-return, when the commit shape and the kept-open cell qualify) across two separate
- * process invocations. The engagement of the fast path is reported directly from the writer's own static
- * counters ({@link TableWriter#getCompositeFastAppendEligibleCount()} / {@link
- * TableWriter#getCompositeFastAppendCommittedCount()}) around the composite loop, so a run's printed
- * output is also the engagement proof, not just a timing number.
+ * (distinct exch values, default 6; {@code exch=1} makes every batch a SINGLE-CELL ordered append-only
+ * commit -- the composite single-cell fast-append's target shape; {@code exch>=2} with the default
+ * SEQUENTIAL shape makes every batch a MULTI-CELL ordered append-only commit, one row per cell -- the
+ * composite multi-cell fast-append's target shape, spec 2), {@code composite.bench.interleaved} (boolean,
+ * default {@code false}) -- switches the multi-cell shape from SEQUENTIAL (one row per exch per batch,
+ * so per-cell order and the batch's global row order trivially coincide) to INTERLEAVED ({@code
+ * composite.bench.rowspercell} rows per exch per batch, default 3: each cell's own row sequence is still
+ * strictly increasing, but the batch's GLOBAL row order is NOT -- see {@link
+ * #buildInterleavedBatchInsertSql}, which exercises the multi-cell predicate's per-cell-only ordering
+ * check on a shape the trivial SEQUENTIAL case structurally cannot reach), {@code composite.bench.step.us}
+ * (microseconds between consecutive rows, default 1000), {@code composite.bench.fastappend} (boolean,
+ * default {@code false}) -- overrides {@link CairoConfiguration#isWalCompositeFastAppendEnabled()} for
+ * this run's engine so the SAME benchmark can measure flag-off (today's full composite O3 path on every
+ * commit, the baseline) vs flag-on (the fast-append early-return, when the commit shape and the kept-open
+ * cell(s) qualify) across two separate process invocations. The engagement of the fast path is reported
+ * directly from the writer's own static counters -- single-cell ({@link
+ * TableWriter#getCompositeFastAppendEligibleCount()} / {@link TableWriter#getCompositeFastAppendCommittedCount()})
+ * and multi-cell ({@link TableWriter#getCompositeMultiCellFastAppendEligibleCount()} / {@link
+ * TableWriter#getCompositeMultiCellFastAppendCommittedCount()}) -- around the composite loop, so a run's
+ * printed output is also the engagement proof, not just a timing number.
  * <p>
  * Build (note {@code -am} so the benchmark links the in-tree core, not the installed jar) and run via
  * this class's plain {@code main} (manual {@code System.nanoTime} timing + percentile table -- the
@@ -92,27 +102,34 @@ import java.util.Arrays;
  */
 public class CompositeIngestionBenchmark {
 
-    // Distinct exch values; also the number of rows per batch (one row per exch => every batch is a
-    // multi-cell commit on the composite side).
+    // Distinct exch values; also the number of rows per batch in the (default) SEQUENTIAL shape (one
+    // row per exch => every batch is a multi-cell commit on the composite side).
     private static final int NUM_EXCH = Integer.getInteger("composite.bench.exch", 6);
-    private static final int BATCH_ROWS = NUM_EXCH;
+    // Multi-cell fast-append (spec 2) shape toggle -- see the class doc's Tunables paragraph. Declared
+    // before BATCH_ROWS (which reads it) to avoid an illegal forward reference in static init order.
+    private static final boolean INTERLEAVED = Boolean.getBoolean("composite.bench.interleaved");
+    // Rows per exch per batch in the INTERLEAVED shape only (ignored when INTERLEAVED is false).
+    private static final int ROWS_PER_CELL = Integer.getInteger("composite.bench.rowspercell", 3);
+    private static final int BATCH_ROWS = INTERLEAVED ? NUM_EXCH * ROWS_PER_CELL : NUM_EXCH;
     // Microseconds between consecutive rows (within and across batches). Kept small and fixed so the
     // whole run (warmup + measured, both tables) stays inside a single day partition -- the numbers
     // reflect per-commit apply overhead, not partition-creation overhead.
     private static final long STEP_MICROS = Long.getLong("composite.bench.step.us", 1000L);
     private static final int WARMUP_ITERATIONS = Integer.getInteger("composite.bench.warmup", 100);
     private static final int K = Integer.getInteger("composite.bench.k", 2000);
-    // Composite single-cell fast-append (spec 1) override: forces isWalCompositeFastAppendEnabled() for
-    // this run's engine regardless of the production default (off). Default false preserves this
-    // benchmark's pre-existing behavior (full composite O3 path on every commit).
+    // Composite fast-append (spec 1 single-cell + spec 2 multi-cell) override: forces
+    // isWalCompositeFastAppendEnabled() for this run's engine regardless of the production default.
+    // Default false preserves this benchmark's pre-existing behavior (full composite O3 path on every
+    // commit).
     private static final boolean FASTAPPEND_ENABLED = Boolean.getBoolean("composite.bench.fastappend");
     // Anchor seed data at 2024-01-01T00:00:00Z.
     private static final String BASE_TS = "2024-01-01T00:00:00.000000Z";
 
     public static void main(String[] args) throws Exception {
         System.out.printf(
-                "CompositeIngestionBenchmark: %d exch values, %d rows/batch, %d warmup + %d measured commits/table, fastappend=%b%n",
-                NUM_EXCH, BATCH_ROWS, WARMUP_ITERATIONS, K, FASTAPPEND_ENABLED);
+                "CompositeIngestionBenchmark: %d exch values, %s shape, %d rows/batch, %d warmup + %d measured commits/table, fastappend=%b%n",
+                NUM_EXCH, INTERLEAVED ? ("interleaved(rowsPerCell=" + ROWS_PER_CELL + ")") : "sequential",
+                BATCH_ROWS, WARMUP_ITERATIONS, K, FASTAPPEND_ENABLED);
         System.out.println();
 
         final Path root = Files.createTempDirectory("composite-ingest-bench-");
@@ -149,21 +166,31 @@ public class CompositeIngestionBenchmark {
                 System.out.printf("%-14s %10s %10s %10s %10s %10s%n",
                         "table", "avg_us", "p50_us", "p90_us", "p99_us", "min_us");
 
-                // Engagement proof (Task 4): snapshot the writer's own static fast-append counters
-                // immediately around the ci loop -- they are JVM-wide (see TableWriter's own field docs)
-                // but nothing else touches "ci" in this window, and "pi" (dimCount==0) never increments
-                // them regardless of the flag, so a before/after delta here attributes cleanly.
+                // Engagement proof (Task 4 single-cell; Task 5 adds multi-cell): snapshot the writer's own
+                // static fast-append counters immediately around the ci loop -- they are JVM-wide (see
+                // TableWriter's own field docs) but nothing else touches "ci" in this window, and "pi"
+                // (dimCount==0) never increments them regardless of the flag, so a before/after delta here
+                // attributes cleanly. Both single- and multi-cell counters are read regardless of shape:
+                // which one (if either) actually moves is itself part of the engagement proof.
                 final long fastAppendEligibleBefore = TableWriter.getCompositeFastAppendEligibleCount();
                 final long fastAppendCommittedBefore = TableWriter.getCompositeFastAppendCommittedCount();
+                final long multiCellEligibleBefore = TableWriter.getCompositeMultiCellFastAppendEligibleCount();
+                final long multiCellCommittedBefore = TableWriter.getCompositeMultiCellFastAppendCommittedCount();
                 final long[] compositeTimings = runCommitLoop(engine, ctx, "ci");
                 final long fastAppendEligibleDelta = TableWriter.getCompositeFastAppendEligibleCount() - fastAppendEligibleBefore;
                 final long fastAppendCommittedDelta = TableWriter.getCompositeFastAppendCommittedCount() - fastAppendCommittedBefore;
+                final long multiCellEligibleDelta = TableWriter.getCompositeMultiCellFastAppendEligibleCount() - multiCellEligibleBefore;
+                final long multiCellCommittedDelta = TableWriter.getCompositeMultiCellFastAppendCommittedCount() - multiCellCommittedBefore;
                 final Stats compositeStats = Stats.of(compositeTimings);
                 printStats("composite(ci)", compositeStats);
                 final long totalCiCommits = WARMUP_ITERATIONS + K;
                 System.out.printf(
-                        "composite fast-append engagement: flag=%b eligible=%d committed=%d of %d total ci commits (%d warmup + %d measured)%n",
+                        "composite single-cell fast-append engagement: flag=%b eligible=%d committed=%d of %d total ci commits (%d warmup + %d measured)%n",
                         FASTAPPEND_ENABLED, fastAppendEligibleDelta, fastAppendCommittedDelta, totalCiCommits,
+                        WARMUP_ITERATIONS, K);
+                System.out.printf(
+                        "composite multi-cell fast-append engagement: flag=%b eligible=%d committed=%d of %d total ci commits (%d warmup + %d measured)%n",
+                        FASTAPPEND_ENABLED, multiCellEligibleDelta, multiCellCommittedDelta, totalCiCommits,
                         WARMUP_ITERATIONS, K);
                 final long compositeRows = queryRowCount(compiler, ctx, "ci");
                 final long expectedRows = (long) (WARMUP_ITERATIONS + K) * BATCH_ROWS;
@@ -200,11 +227,23 @@ public class CompositeIngestionBenchmark {
     }
 
     /**
-     * Deterministic per-iteration batch: {@link #BATCH_ROWS} rows, one per exch value (0..NUM_EXCH-1),
-     * strictly increasing timestamps. Computed purely from {@code tableName} and {@code iterationIndex}
-     * so the composite ({@code ci}) and plain ({@code pi}) loops insert byte-identical batches.
+     * Dispatches to the configured batch shape ({@link #INTERLEAVED}). Computed purely from
+     * {@code tableName} and {@code iterationIndex} so the composite ({@code ci}) and plain ({@code pi})
+     * loops insert byte-identical batches.
      */
     private static String buildBatchInsertSql(String tableName, long iterationIndex) {
+        return INTERLEAVED
+                ? buildInterleavedBatchInsertSql(tableName, iterationIndex)
+                : buildSequentialBatchInsertSql(tableName, iterationIndex);
+    }
+
+    /**
+     * SEQUENTIAL shape (default): {@link #BATCH_ROWS} rows, one per exch value (0..NUM_EXCH-1), strictly
+     * increasing timestamps. Since every cell gets exactly one row per batch, per-cell order and the
+     * batch's global row order trivially coincide -- this shape can never exercise a multi-row-per-cell
+     * per-commit ordering check.
+     */
+    private static String buildSequentialBatchInsertSql(String tableName, long iterationIndex) {
         final StringBuilder sb = new StringBuilder(32 + BATCH_ROWS * 48);
         sb.append("insert into ").append(tableName).append("(ts, exch, px) values ");
         for (int j = 0; j < BATCH_ROWS; j++) {
@@ -216,6 +255,44 @@ public class CompositeIngestionBenchmark {
             final double px = 100.0 + ((iterationIndex * BATCH_ROWS + j) % 997);
             sb.append("(('").append(BASE_TS).append("'::timestamp + ").append(offsetMicros)
                     .append("L)::timestamp,'EXCH").append(exchIdx).append("',").append(px).append(')');
+        }
+        return sb.toString();
+    }
+
+    /**
+     * INTERLEAVED shape ({@code composite.bench.interleaved=true}): {@link #ROWS_PER_CELL} rows per exch
+     * value per batch. Per-cell timestamp {@code ts(c, r) = base + (c*ROWS_PER_CELL + r)*STEP} is
+     * strictly increasing in repetition {@code r} for a fixed exch {@code c} -- and because the outer
+     * loop below is over {@code r} (every repetition {@code r}'s rows precede repetition {@code r+1}'s in
+     * row order, regardless of the inner exch order), each individual cell's OWN row sequence is strictly
+     * increasing in row-arrival order too, exactly what {@code isCompositeMultiCellFastAppendPossible}'s
+     * per-cell scan requires. But the inner exch loop alternates ascending/descending order every
+     * repetition ("boustrophedon"), so the batch's GLOBAL row-order timestamp sequence is NOT monotonic
+     * (repetition r=1 emits exch N-1..0, and ts(c,1) increases with c, so that block's row-order ts
+     * sequence strictly decreases). Cross-batch, {@code batchBase} strictly increases by a full batch
+     * span each iteration, so every cell's cross-batch order (and the append-only-past-committed-max
+     * gate) is preserved regardless of intra-batch emission order. This proves the multi-cell predicate
+     * keys off true per-cell order (it never reads the incoming global {@code ordered} flag), not
+     * incidental global order -- something the SEQUENTIAL shape structurally cannot exercise.
+     */
+    private static String buildInterleavedBatchInsertSql(String tableName, long iterationIndex) {
+        final StringBuilder sb = new StringBuilder(32 + BATCH_ROWS * 48);
+        sb.append("insert into ").append(tableName).append("(ts, exch, px) values ");
+        final long batchBase = iterationIndex * BATCH_ROWS * STEP_MICROS;
+        boolean first = true;
+        for (int r = 0; r < ROWS_PER_CELL; r++) {
+            final boolean descending = (r % 2) == 1;
+            for (int k = 0; k < NUM_EXCH; k++) {
+                final int c = descending ? (NUM_EXCH - 1 - k) : k;
+                if (!first) {
+                    sb.append(',');
+                }
+                first = false;
+                final long offsetMicros = batchBase + ((long) c * ROWS_PER_CELL + r) * STEP_MICROS;
+                final double px = 100.0 + ((iterationIndex * BATCH_ROWS + (long) c * ROWS_PER_CELL + r) % 997);
+                sb.append("(('").append(BASE_TS).append("'::timestamp + ").append(offsetMicros)
+                        .append("L)::timestamp,'EXCH").append(c).append("',").append(px).append(')');
+            }
         }
         return sb.toString();
     }

@@ -923,7 +923,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
         walApplyEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_ENABLED, true);
-        this.walCompositeFastAppendEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_COMPOSITE_FASTAPPEND_ENABLED, false);
+        this.walCompositeFastAppendEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_COMPOSITE_FASTAPPEND_ENABLED, true);
         this.walCompositeFastAppendMaxOpenCells = getInt(properties, env, PropertyKey.CAIRO_WAL_COMPOSITE_FASTAPPEND_MAX_OPEN_CELLS, 64);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
         this.walSegmentRolloverSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, 50 * Numbers.SIZE_1MB);
