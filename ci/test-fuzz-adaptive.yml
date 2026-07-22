@@ -13,8 +13,9 @@
 # YAML-defined variables cannot be overridden from the UI. Until it is set,
 # the NotifyOnFailure job skips cleanly.
 #
-# Delete this file after the squash-merge; the branch deletion leaves the
-# definition with nothing to schedule.
+# The 15-minute schedule runs ordinary fuzz tests only. Exhaustive adaptive crash tests run once nightly,
+# sharded into separate JVMs so a long/OOM-prone sweep cannot poison the rest of the suite. Delete this file
+# after the squash-merge; the branch deletion leaves the definition with nothing to schedule.
 
 trigger: none
 
@@ -23,6 +24,12 @@ pr: none
 schedules:
   - cron: "*/15 * * * *"
     displayName: Run every 15 minutes
+    branches:
+      include:
+        - nw_adaptive_commit
+    always: true
+  - cron: "0 1 * * *"
+    displayName: Run adaptive crash nightly
     branches:
       include:
         - nw_adaptive_commit
@@ -53,6 +60,7 @@ stages:
 
     jobs:
       - job: RunOn
+        condition: ne(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly')
         workspace:
           clean: all
         displayName: "on"
@@ -87,12 +95,78 @@ stages:
               isCheckoutEnabled: false
               isHetznerAptMirrorEnabled: false
 
+      - job: RunAdaptiveCrashNightly
+        displayName: "adaptive crash nightly"
+        condition: eq(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly')
+        workspace:
+          clean: all
+        strategy:
+          matrix:
+            randomized:
+              os: Linux
+              jdk: "1.25"
+              testset: "all"
+              includeTests: "**/cairo/crash/RandomizedAdaptiveCrashFuzzTest.java"
+              excludeTests: ""
+              javadoc_step: ""
+              javadoc_profile: ""
+            crash_sweeps:
+              os: Linux
+              jdk: "1.25"
+              testset: "all"
+              includeTests: "**/cairo/crash/AdaptiveIndexedSymbolLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMatViewLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiPartitionLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiTableLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveO3CrashSweepTest.java,**/cairo/crash/AdaptiveO3LazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveRebootOrphanReclaimCrashTest.java"
+              excludeTests: ""
+              javadoc_step: ""
+              javadoc_profile: ""
+            soak_self_check:
+              os: Linux
+              jdk: "1.25"
+              testset: "all"
+              includeTests: "**/cairo/crash/AdaptiveCrashSweepSelfCheckTest.java,**/cairo/crash/AdaptiveSoakCrashTest.java"
+              excludeTests: ""
+              javadoc_step: ""
+              javadoc_profile: ""
+            durability_fuzz:
+              os: Linux
+              jdk: "1.25"
+              testset: "all"
+              includeTests: "**/cairo/crash/AdaptiveMultiWriterDurableAckCrashFuzzTest.java,**/cairo/crash/AdaptiveQwpDurableAckNoLossCrashTest.java,**/cairo/crash/VarcharPowerLossFuzzTest.java"
+              excludeTests: ""
+              javadoc_step: ""
+              javadoc_profile: ""
+        pool:
+          name: hetzner-adaptive-commit-fuzz
+        timeoutInMinutes: 180
+        variables:
+          SOURCE_CODE_CHANGED: true
+          MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx6144m -XX:+UseParallelGC"
+          MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dquestdb.fuzz.nightly=true -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
+          ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).zip"
+          ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).log"
+        steps:
+          - template: templates/checkout-source.yml
+          - template: templates/use-hetzner-apt-mirrors.yml
+          - bash: |
+              sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven build-essential zip
+              JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
+              echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+              echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
+              echo "JAVA_HOME will be set to: $JAVA_PATH"
+          - template: templates/steps.yml
+            parameters:
+              isCheckoutEnabled: false
+              isHetznerAptMirrorEnabled: false
+              testTimeoutInMinutes: 165
+              artifactNameSuffix: "-$(System.JobName)"
+
       - job: NotifyOnFailure
         displayName: "Notify Slack on failure"
         # The notify job stays on the soak pool too; RunOn has released its
         # agent by the time this job queues.
         pool: hetzner-adaptive-commit-fuzz
-        dependsOn: RunOn
+        dependsOn:
+          - RunOn
+          - RunAdaptiveCrashNightly
         condition: failed()
         steps:
           - checkout: none
