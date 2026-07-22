@@ -3730,6 +3730,38 @@ public class SubsampleTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSdtAggContext() throws Exception {
+        // The timestamp survives at the AST level even though the runtime cursor for these shapes
+        // (DISTINCT, bare aggregate) loses the designated-timestamp designation - so
+        // isAggregationContext() is what actually gates this, and it is reachable.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT DISTINCT ts, price FROM x SUBSAMPLE sdt(price, 0.5)",
+                    43,
+                    "SUBSAMPLE sdt is not supported in an aggregation context"
+            );
+            assertException(
+                    "SELECT count(*) FROM x SUBSAMPLE sdt(price, 0.5)",
+                    33,
+                    "SUBSAMPLE sdt is not supported in an aggregation context"
+            );
+        });
+    }
+
+    @Test
+    public void testSdtNonLiteralValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT ts, price FROM x SUBSAMPLE sdt(price * 2, 0.5)",
+                    34,
+                    "SUBSAMPLE sdt requires a plain column as its first argument"
+            );
+        });
+    }
+
     private static int deterministicCadenceOffset(long seed, int stride) {
         long h = seed;
         h = (h ^ (h >>> 30)) * 0xbf58476d1ce4e5b9L;
