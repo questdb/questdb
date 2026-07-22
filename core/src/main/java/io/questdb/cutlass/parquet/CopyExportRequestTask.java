@@ -56,6 +56,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
@@ -124,8 +125,16 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     @Override
     public void clear() {
+        final RecordCursorFactory selectFactory = this.selectFactory;
+        this.selectFactory = null;
+        final CreateTableOperation createOp = this.createOp;
+        this.createOp = null;
+        final RecordCursorFactory tempTableFactory = this.tempTableFactory;
+        this.tempTableFactory = null;
+        final PageFrameCursor ownedPageFrameCursor = tempTableFactory != null ? this.pageFrameCursor : null;
+        this.pageFrameCursor = null;
+
         this.bindVariableService = null;
-        this.selectFactory = Misc.free(selectFactory);
         this.entry = null;
         this.exportMode = null;
         this.selectText = null;
@@ -139,24 +148,28 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.statisticsEnabled = true;
         this.now = 0;
         this.nowTimestampType = 0;
-        this.createOp = Misc.free(createOp);
-        if (tempTableFactory != null) {
-            // Temp-table path owns both the factory and the cursor.
-            tempTableFactory = Misc.free(tempTableFactory);
-            pageFrameCursor = Misc.free(pageFrameCursor);
-        } else {
-            // Ownership belongs to BaseParquetExporter subclass (streamingPfc)
-            // or ExportQueryProcessorState (for DIRECT_PAGE_FRAME).
-            pageFrameCursor = null;
-        }
         writeCallback = null;
         metadata = null;
-        streamPartitionParquetExporter.clear();
-        memoryTracker = null;
         descending = false;
         bloomFilterColumns = null;
         bloomFilterColumnsPosition = -1;
         bloomFilterFpp = Double.NaN;
+
+        Throwable cleanupFailure = null;
+        try {
+            // This owns tracker-charged Rust decode buffers. Release them before the
+            // job returns the tracker to its pool, even when another owner fails to close.
+            streamPartitionParquetExporter.clear();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        } finally {
+            memoryTracker = null;
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, selectFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, createOp);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, tempTableFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownedPageFrameCursor);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     @Override
@@ -476,20 +489,37 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         @Override
         public void clear() {
             // free memory after one query finished, will re-malloc on next query
-            Misc.free(columnNames);
-            Misc.free(columnData);
-            Misc.free(columnMetadata);
-            Misc.free(bloomFilterColumnIndexes);
-            Misc.free(decodeColumns);
-            Misc.free(decodeRowGroupBuffers);
+            Throwable cleanupFailure = Misc.freeBestEffort(null, decodeRowGroupBuffers);
             decodeRowGroupBuffers.setMemoryTracker(null);
-            closeWriter();
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, columnNames);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, columnData);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, columnMetadata);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, bloomFilterColumnIndexes);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, decodeColumns);
+            try {
+                closeWriter();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (th != cleanupFailure) {
+                    cleanupFailure.addSuppressed(th);
+                }
+            }
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
             rowsWrittenToRowGroups = 0;
             totalRows = 0;
-            freeOwnedPageFrameCursor();
+            try {
+                freeOwnedPageFrameCursor();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (th != cleanupFailure) {
+                    cleanupFailure.addSuppressed(th);
+                }
+            }
             exportFinished = false;
+            CairoException.rethrowCleanupFailure(cleanupFailure);
         }
 
         @Override
@@ -522,8 +552,13 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
         public void freeOwnedPageFrameCursor() {
             if (tempTableFactory != null) {
-                tempTableFactory = Misc.free(tempTableFactory);
-                pageFrameCursor = Misc.free(pageFrameCursor);
+                final RecordCursorFactory tempTableFactory = CopyExportRequestTask.this.tempTableFactory;
+                CopyExportRequestTask.this.tempTableFactory = null;
+                final PageFrameCursor pageFrameCursor = CopyExportRequestTask.this.pageFrameCursor;
+                CopyExportRequestTask.this.pageFrameCursor = null;
+                Throwable cleanupFailure = Misc.freeBestEffort(null, tempTableFactory);
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, pageFrameCursor);
+                CairoException.rethrowCleanupFailure(cleanupFailure);
             }
         }
 
@@ -533,6 +568,11 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
         public long getCurrentPartitionIndex() {
             return currentPartitionIndex;
+        }
+
+        @TestOnly
+        public RowGroupBuffers getDecodeRowGroupBuffers() {
+            return decodeRowGroupBuffers;
         }
 
         public long getRowsWrittenToRowGroups() {
