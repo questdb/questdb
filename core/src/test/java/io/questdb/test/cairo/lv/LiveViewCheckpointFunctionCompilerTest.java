@@ -527,6 +527,62 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The descriptor records the high bound the runtime evaluates, not the one the model
+     * carries. {@code WindowContextImpl.getRowsHi()} rewrites an {@code EXCLUDE CURRENT ROW}
+     * frame's {@code 0} to {@code -1} before any factory sees it, so a descriptor reading the
+     * model would claim a frame ending at the current row while the factory evaluates one
+     * ending below it.
+     * <p>
+     * Neither spelling is a finite descriptor: the two frame gates still ask for a high bound
+     * at exactly the current row. That is what makes this an honesty fix rather than a
+     * widening - it costs the ROWS spelling the plan it used to get by accident, and the plan
+     * it gets back is the one a widened gate hands out deliberately.
+     */
+    @Test
+    public void testExcludeCurrentRowDescribesTheRuntimeFrameHighBound() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            final Metadata rows = compileMetadata(
+                    "select ts, sym, sum(x) over (partition by sym order by ts "
+                            + "rows between 3 preceding and current row exclude current row) s from base",
+                    0
+            );
+            Assert.assertEquals(-3, rows.dependency.getFrameLo());
+            Assert.assertEquals(-1, rows.dependency.getFrameHi());
+            Assert.assertEquals(DependencyKind.FOLLOWING_OR_DATA_DEPENDENT, rows.dependency.getKind());
+            Assert.assertFalse(rows.dependency.isFiniteRows());
+            Assert.assertNull(rows.rowsPlan);
+            Assert.assertFalse(rows.isDependencyComplete);
+
+            // The RANGE spelling reaches the same -1, and that -1 is already normalized -
+            // one tick of the designated timestamp, not one unit of whatever the frame
+            // start was written in.
+            final Metadata range = compileMetadata(
+                    "select ts, sym, avg(x) over (partition by sym order by ts "
+                            + "range between 2 seconds preceding and current row exclude current row) a from base",
+                    0
+            );
+            Assert.assertEquals(-1, range.dependency.getFrameHi());
+            Assert.assertEquals(DependencyKind.FOLLOWING_OR_DATA_DEPENDENT, range.dependency.getKind());
+            Assert.assertFalse(range.dependency.isFiniteRange());
+            Assert.assertNull(range.rangePlan);
+            Assert.assertFalse(range.isDependencyComplete);
+
+            // EXCLUDE NO OTHERS is the same frame written without the exclusion, and it is
+            // the one the model and the runtime already agreed on.
+            final Metadata unexcluded = compileMetadata(
+                    "select ts, sym, sum(x) over (partition by sym order by ts "
+                            + "rows between 3 preceding and current row exclude no others) s from base",
+                    0
+            );
+            Assert.assertEquals(0, unexcluded.dependency.getFrameHi());
+            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW, unexcluded.dependency.getKind());
+            Assert.assertTrue(unexcluded.dependency.isFiniteRows());
+            Assert.assertNotNull(unexcluded.rowsPlan);
+        });
+    }
+
     @Test
     public void testRangeWidthOutOfRangeFailsCompilation() throws Exception {
         assertMemoryLeak(() -> {

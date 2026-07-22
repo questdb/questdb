@@ -187,7 +187,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                 partitionSignature,
                 orderSignature,
                 frameLo,
-                window.getRowsHi(),
+                effectiveRowsHi(window),
                 timestampType,
                 function.hasFrameLocalCheckpointState(),
                 keyed,
@@ -502,12 +502,13 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (window.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE || window.isResolvedWindowAnchored()) {
             return DependencyKind.FIXED_ANCHOR_SEGMENT;
         }
+        final long rowsHi = effectiveRowsHi(window);
         if (isRanking(functionName)
                 && window.getRowsLo() == Long.MIN_VALUE
-                && window.getRowsHi() == Long.MAX_VALUE) {
+                && rowsHi == Long.MAX_VALUE) {
             return DependencyKind.UNANCHORED_RANK;
         }
-        if (window.getRowsLo() != Long.MIN_VALUE && window.getRowsLo() <= 0 && window.getRowsHi() == 0) {
+        if (window.getRowsLo() != Long.MIN_VALUE && window.getRowsLo() <= 0 && rowsHi == 0) {
             if (window.getFramingMode() == WindowExpression.FRAMING_ROWS) {
                 return DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW;
             }
@@ -518,10 +519,37 @@ public final class LiveViewCheckpointFunctionCompiler {
                 return DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW;
             }
         }
-        if (window.getRowsLo() == Long.MIN_VALUE && window.getRowsHi() == 0) {
+        if (window.getRowsLo() == Long.MIN_VALUE && rowsHi == 0) {
             return DependencyKind.UNBOUNDED_CUMULATIVE_NO_RESET;
         }
         return DependencyKind.FOLLOWING_OR_DATA_DEPENDENT;
+    }
+
+    /**
+     * Returns the frame's high bound as the runtime evaluates it, which is what the
+     * descriptor has to describe. {@link WindowExpression#getRowsHi()} answers the raw model
+     * value, so an {@code EXCLUDE CURRENT ROW} frame still reads {@code 0} there even though
+     * {@code WindowContextImpl.getRowsHi()} rewrites it to {@code -1} before any factory sees
+     * it - the runtime frame ends one unit below the current row, one tick for RANGE and one
+     * row for ROWS.
+     * <p>
+     * Reading the model value instead leaves the descriptor claiming a frame the runtime does
+     * not evaluate, and the two kinds disagree about it: the RANGE arm of
+     * {@link #dependencyKind} turns the exclusion away through its
+     * {@code EXCLUDE_NO_OTHERS} test while the ROWS arm admits it and records
+     * {@code frameHi = 0}. That over-states the ROWS frame, which is conservative rather than
+     * wrong - a repair bound derived from a wider frame still covers the narrower one - but it
+     * is accidental, and it stops being harmless the moment a bound is derived from
+     * {@link LiveViewCheckpointDependency#getFrameHi()} itself.
+     * <p>
+     * {@code WindowExpression} carries no other exclusion mode this far: only
+     * {@code EXCLUDE NO OTHERS} and {@code EXCLUDE CURRENT ROW} pass
+     * {@code WindowContextImpl.validate()}.
+     */
+    private static long effectiveRowsHi(WindowExpression window) {
+        return window.getExclusionKind() == WindowExpression.EXCLUDE_CURRENT_ROW && window.getRowsHi() == 0
+                ? -1
+                : window.getRowsHi();
     }
 
     /**
