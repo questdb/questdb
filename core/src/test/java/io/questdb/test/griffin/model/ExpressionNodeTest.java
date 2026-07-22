@@ -36,6 +36,24 @@ import org.junit.Test;
 public class ExpressionNodeTest {
 
     @Test
+    public void testDeepCloneAndCopyFromCarryLateralDepth() {
+        // LateralJoinRewriter pass 1 tags correlated refs with lateralDepth and later passes
+        // branch on it (allLiteralsAreCorrelated, hasCorrelatedExprAtDepth, unqualified-ref
+        // substitution). deepClone must carry the tag like copyFrom does, per the
+        // "update deepClone method after adding a new field" invariant in ExpressionNode.
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
+
+        final ExpressionNode node = pool.next().of(ExpressionNode.LITERAL, "x", 0, 0);
+        node.lateralDepth = 2;
+
+        final ExpressionNode clone = ExpressionNode.deepClone(pool, node);
+        Assert.assertEquals(2, clone.lateralDepth);
+
+        final ExpressionNode copy = pool.next().copyFrom(node);
+        Assert.assertEquals(2, copy.lateralDepth);
+    }
+
+    @Test
     public void testDeepCloneAndCopyFromCarryScalarBoundHolder() {
         // The holder is a compile-time link shared by reference (like queryModel): the pruning
         // bound publishes a single frozen value into it and every residual re-compile - including

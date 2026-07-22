@@ -413,11 +413,6 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public ObjList<CharSequence> getLateralCountColumns() {
-        return delegate.getLateralCountColumns();
-    }
-
-    @Override
     public ObjList<ExpressionNode> getLatestBy() {
         return delegate.getLatestBy();
     }
@@ -843,6 +838,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean isLateralCountCoalesceRequired() {
+        return delegate.isLateralCountCoalesceRequired();
+    }
+
+    @Override
     public boolean isNestedModelIsSubQuery() {
         return delegate.isNestedModelIsSubQuery();
     }
@@ -855,6 +855,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public boolean isOrderDescendingByDesignatedTimestampOnly() {
         return delegate.isOrderDescendingByDesignatedTimestampOnly();
+    }
+
+    @Override
+    public boolean isOuterRefWildcardExcluded() {
+        return delegate.isOuterRefWildcardExcluded();
     }
 
     @Override
@@ -1113,6 +1118,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setLatestByType(int latestByType) {
         throw new UnsupportedOperationException();
     }
@@ -1184,6 +1194,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setOuterRefWildcardExcluded(boolean isOuterRefWildcardExcluded) {
         throw new UnsupportedOperationException();
     }
 

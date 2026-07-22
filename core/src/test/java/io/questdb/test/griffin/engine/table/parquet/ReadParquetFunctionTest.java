@@ -27,12 +27,16 @@ package io.questdb.test.griffin.engine.table.parquet;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -55,6 +59,7 @@ import java.util.Arrays;
 import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 @RunWith(Parameterized.class)
 public class ReadParquetFunctionTest extends AbstractCairoTest {
@@ -288,6 +293,114 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         .assertsPlan(expectedPlan);
                 assertSqlCursors0("select an_int, a_long, a_str from x");
             }
+        });
+    }
+
+    @Test
+    public void testColumnProjectionDuplicatedColumn() throws Exception {
+        // A duplicated/crossed projection (v, ts, v as v2) cannot be pushed down into the
+        // parquet reader, so the compiled shape is SelectedRecord over the parquet scan.
+        // SelectedRecordCursorFactory.getPageFrameCursor used to cast the base page-frame
+        // cursor to TablePageFrameCursor unconditionally, so every page-frame consumer
+        // (parquet export, QWP egress, parallel GROUP BY) hit a ClassCastException over the
+        // plain ReadParquetPageFrameCursor. The projection wrapper needs nothing
+        // table-specific for the plain surface, so it hands out a plain PageFrameCursor
+        // wrapper over a non-table base and the projected scan works.
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            execute("create table x as (select x::int v, (x * 1_000_000)::timestamp ts from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+            }
+
+            try (RecordCursorFactory factory = select("select v, ts, v as v2 from read_parquet('x.parquet')")) {
+                RecordCursorFactory f = factory;
+                while (f != null && !(f instanceof SelectedRecordCursorFactory)) {
+                    f = f.getBaseFactory();
+                }
+                Assert.assertNotNull("the duplicated projection must compile to SelectedRecord over the parquet scan", f);
+                if (parallel) {
+                    Assert.assertTrue("projection must keep the parquet base page-frame capability", factory.supportsPageFrameCursor());
+                    try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                        Assert.assertFalse(
+                                "the projection wrapper must not claim TablePageFrameCursor over a non-table base",
+                                cursor instanceof TablePageFrameCursor
+                        );
+                        Assert.assertTrue("the parquet base is external", cursor.isExternal());
+                        Assert.assertEquals(
+                                "column mapping must be projected to the selected column count",
+                                3, cursor.getColumnMapping().getColumnCount()
+                        );
+                        long frameRows = 0;
+                        PageFrame frame;
+                        while ((frame = cursor.next()) != null) {
+                            Assert.assertEquals(3, frame.getColumnCount());
+                            frameRows += frame.getPartitionHi() - frame.getPartitionLo();
+                        }
+                        Assert.assertEquals("every parquet row must flow through the projection", rows, frameRows);
+                        Assert.assertEquals(rows, cursor.size());
+                        cursor.toTop();
+                        Assert.assertNotNull("the cursor must be reusable after toTop", cursor.next());
+                    }
+                } else {
+                    Assert.assertFalse("the serial parquet scan has no page-frame capability", factory.supportsPageFrameCursor());
+                }
+            }
+
+            assertQuery("select v, ts, v as v2 from read_parquet('x.parquet')")
+                    // the parallel scan's page-frame record cursor supports random access, the
+                    // serial scan's cursor does not
+                    .supportsRandomAccess(parallel)
+                    .expectSize()
+                    .returns("""
+                            v\tts\tv2
+                            1\t1970-01-01T00:00:01.000000Z\t1
+                            2\t1970-01-01T00:00:02.000000Z\t2
+                            3\t1970-01-01T00:00:03.000000Z\t3
+                            4\t1970-01-01T00:00:04.000000Z\t4
+                            5\t1970-01-01T00:00:05.000000Z\t5
+                            6\t1970-01-01T00:00:06.000000Z\t6
+                            7\t1970-01-01T00:00:07.000000Z\t7
+                            8\t1970-01-01T00:00:08.000000Z\t8
+                            9\t1970-01-01T00:00:09.000000Z\t9
+                            10\t1970-01-01T00:00:10.000000Z\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testColumnProjectionDuplicatedColumnGroupBy() throws Exception {
+        // End-to-end page-frame consumer over the duplicated projection: with parallel
+        // read_parquet the GROUP BY consumer drives the projected page frames through
+        // SelectedRecordCursorFactory.getPageFrameCursor - the exact seam that used to
+        // throw ClassCastException. The serial mode covers the record-cursor fallback.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select x::int v, (x * 1_000_000)::timestamp ts from long_sequence(10))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+            }
+
+            assertQuery("select sum(v) s1, count(ts) c, sum(v2) s2 from (select v, ts, v as v2 from read_parquet('x.parquet'))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s1\tc\ts2
+                            55\t10\t55
+                            """);
         });
     }
 

@@ -4619,9 +4619,14 @@ public final class IntervalUtils {
         LongGroupSort.quickSort(2, out, startIndex / 2, startIndex / 2 + queryIntervalCount);
 
         // Determine the query time range to narrow the schedule scan.
-        // Query intervals are sorted by lo at this point.
+        // Query intervals are sorted by lo at this point, but they may overlap or
+        // nest (union happens later), so hi values are not monotonic: the last
+        // interval's hi is not necessarily the maximum. Scan all hi values.
         long queryLo = out.getQuick(startIndex);
-        long queryHi = out.getQuick(out.size() - 1);
+        long queryHi = out.getQuick(startIndex + 1);
+        for (int i = startIndex + 3, n = out.size(); i < n; i += 2) {
+            queryHi = Math.max(queryHi, out.getQuick(i));
+        }
 
         // Find the sub-range of the schedule that overlaps with [queryLo, queryHi].
         // Schedule is sorted chronologically as [lo0, hi0, lo1, hi1, ...] in microseconds.

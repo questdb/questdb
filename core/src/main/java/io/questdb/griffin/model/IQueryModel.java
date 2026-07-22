@@ -313,8 +313,6 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     int getJoinType();
 
-    ObjList<CharSequence> getLateralCountColumns();
-
     ObjList<ExpressionNode> getLatestBy();
 
     int getLatestByType();
@@ -481,11 +479,15 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isForceBackwardScan();
 
+    boolean isLateralCountCoalesceRequired();
+
     boolean isNestedModelIsSubQuery();
 
     boolean isOptimisable();
 
     boolean isOrderDescendingByDesignatedTimestampOnly();
+
+    boolean isOuterRefWildcardExcluded();
 
     boolean isOwnCorrelatedAtDepth(int depth, int flag);
 
@@ -585,6 +587,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setJoinType(int joinType);
 
+    void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired);
+
     void setLatestByType(int latestByType);
 
     void setLimit(ExpressionNode lo, ExpressionNode hi);
@@ -614,6 +618,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setOriginatingViewNameExpr(ExpressionNode originatingViewNameExpr);
 
     void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause);
+
+    void setOuterRefWildcardExcluded(boolean isOuterRefWildcardExcluded);
 
     void setPivotGroupByColumnHasNoAlias(boolean pivotGroupByColumnHasNoAlias);
 
