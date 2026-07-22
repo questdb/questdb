@@ -1540,20 +1540,19 @@ fn update_partition_data(
                 col_idx
             ));
         }
-        let primary_col_size = checked_slice_len::<u8>(primary_col_size, "primary column size")?;
-        let secondary_col_size =
-            checked_slice_len::<u8>(secondary_col_size, "secondary column size")?;
-        let symbol_offsets_count =
-            checked_slice_len::<u64>(symbol_offsets_count, "symbol offsets count")?;
         let primary_ptr = primary_col_addr as *const u8;
         let secondary_ptr = secondary_col_addr as *const u8;
         let symbol_offsets_ptr = symbol_offsets_addr as *const u64;
 
         column.column_top = col_top;
         column.row_count = row_count;
+        // A null pointer carries a producer sentinel size (e.g. PageFrame.getAuxPageSize()
+        // reports -1 for a frame without an aux vector), so each size is validated only
+        // when its pointer is live.
         column.primary_data = if primary_ptr.is_null() {
             &[]
         } else {
+            let primary_col_size = checked_slice_len::<u8>(primary_col_size, "primary column size")?;
             // SAFETY: JNI caller guarantees a valid pointer to `primary_col_size` bytes of column data.
             // The memory is backed by Java memory-mapped files and remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(primary_ptr, primary_col_size) }
@@ -1561,6 +1560,8 @@ fn update_partition_data(
         column.secondary_data = if secondary_ptr.is_null() {
             &[]
         } else {
+            let secondary_col_size =
+                checked_slice_len::<u8>(secondary_col_size, "secondary column size")?;
             // SAFETY: JNI caller guarantees a valid pointer to `secondary_col_size` bytes of column data.
             // The memory is backed by Java memory-mapped files and remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(secondary_ptr, secondary_col_size) }
@@ -1568,7 +1569,9 @@ fn update_partition_data(
         column.symbol_offsets = if symbol_offsets_ptr.is_null() {
             &[]
         } else {
-            // SAFETY: JNI caller guarantees a valid pointer to `symbol_offsets_size` elements of symbol offset data.
+            let symbol_offsets_count =
+                checked_slice_len::<u64>(symbol_offsets_count, "symbol offsets count")?;
+            // SAFETY: JNI caller guarantees a valid pointer to `symbol_offsets_count` elements of symbol offset data.
             // The memory is backed by Java memory-mapped files and remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_count) }
         };
@@ -2126,29 +2129,76 @@ mod validation_tests {
     }
 
     #[test]
+    fn streaming_column_metadata_ignores_sentinel_sizes_on_null_pointers() {
+        // Producers pair a null pointer with a sentinel size (e.g. PageFrame.getAuxPageSize()
+        // reports -1 for a frame without an aux vector); the size must be ignored, not rejected.
+        let mut partition = one_column_partition(ColumnTypeTag::Int.into_type());
+        let mut metadata = [0i64; 7];
+        metadata[2] = -1;
+        metadata[4] = -1;
+        metadata[6] = -1;
+        update_partition_data(&mut partition, metadata.as_ptr(), 1)
+            .expect("negative sizes alongside null pointers are producer sentinels");
+        assert!(partition.columns[0].primary_data.is_empty());
+        assert!(partition.columns[0].secondary_data.is_empty());
+        assert!(partition.columns[0].symbol_offsets.is_empty());
+    }
+
+    #[test]
     fn streaming_column_metadata_rejects_negative_lengths() {
         let mut valid_partition = one_column_partition(ColumnTypeTag::Int.into_type());
         let valid_metadata = [0i64; 7];
         update_partition_data(&mut valid_partition, valid_metadata.as_ptr(), 1)
             .expect("zero-length metadata is valid");
 
-        for (field, index) in [
-            ("column top", 0),
-            ("primary size", 2),
-            ("secondary size", 4),
-            ("symbol offsets count", 6),
+        // A negative size on a live pointer is corrupt metadata, not a sentinel.
+        let payload = [0u8; 8];
+        let offsets = [0u64; 1];
+        for (expected, addr_index, size_index, addr) in [
+            (
+                "primary column size must not be negative",
+                1,
+                2,
+                payload.as_ptr() as i64,
+            ),
+            (
+                "secondary column size must not be negative",
+                3,
+                4,
+                payload.as_ptr() as i64,
+            ),
+            (
+                "symbol offsets count must not be negative",
+                5,
+                6,
+                offsets.as_ptr() as i64,
+            ),
         ] {
             let mut partition = one_column_partition(ColumnTypeTag::Int.into_type());
             let mut metadata = [0i64; 7];
-            metadata[index] = -1;
-            let result = update_partition_data(&mut partition, metadata.as_ptr(), 1);
-            assert!(result.is_err(), "negative {field} must be rejected");
+            metadata[addr_index] = addr;
+            metadata[size_index] = -1;
+            assert_error_contains(
+                update_partition_data(&mut partition, metadata.as_ptr(), 1),
+                expected,
+            );
         }
+
+        let mut negative_top = one_column_partition(ColumnTypeTag::Int.into_type());
+        let mut metadata = [0i64; 7];
+        metadata[0] = -1;
+        assert_error_contains(
+            update_partition_data(&mut negative_top, metadata.as_ptr(), 1),
+            "column top must not be negative",
+        );
 
         let mut partition = one_column_partition(ColumnTypeTag::Int.into_type());
         let mut metadata = [0i64; 7];
         metadata[0] = 2;
-        assert!(update_partition_data(&mut partition, metadata.as_ptr(), 1).is_err());
+        assert_error_contains(
+            update_partition_data(&mut partition, metadata.as_ptr(), 1),
+            "column top 2 exceeds row count 1",
+        );
     }
 
     #[test]
