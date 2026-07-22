@@ -6323,4 +6323,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testAutoSelectIndexedForSmallMasterIndexedSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table quotes (sym symbol index, ts timestamp, bid double) timestamp(ts) partition by day bypass wal");
+            execute("insert into quotes select ('s'||(x%1000))::symbol, (x*1000)::timestamp, x from long_sequence(200000)");
+            execute("create table trades (sym symbol, ts timestamp, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into trades select 's1', (x*1000000)::timestamp, x from long_sequence(50)");
+            printSql("EXPLAIN SELECT sum(q.bid) FROM trades t ASOF JOIN quotes q ON (sym)");
+            TestUtils.assertContains(sink, "AsOf Join Indexed Scan");
+        });
+    }
 }

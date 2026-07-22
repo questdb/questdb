@@ -5145,7 +5145,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slaveSymbolColumnIndex,
                                         symbolJoinKeyMapping,
                                         slaveContext,
-                                        toleranceInterval
+                                        toleranceInterval,
+                                        null
                                 );
                             }
                             boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias);
@@ -5185,6 +5186,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         null,
                                         null
                                 );
+                            }
+                            // Auto-select the index-accelerated scan when the slave symbol is indexed and the
+                            // master is confidently small relative to the slave (index is O(master lookups) vs
+                            // Dense O(slave scan); crossover ~2% master/slave ratio). Unknown estimate -> Dense.
+                            if (configuration.isSqlAsOfAutoAlgoEnabled()
+                                    && slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
+                                long slaveN = estimateBaseRowCount(slave, executionContext);
+                                long masterN = estimateBaseRowCount(master, executionContext);
+                                long masterLimit = masterLimitOrMinus1(model.getJoinModels().getQuick(0));
+                                long effMaster = masterLimit >= 0
+                                        ? (masterN >= 0 ? Math.min(masterN, masterLimit) : masterLimit)
+                                        : masterN;
+                                int bp = configuration.getSqlAsOfIndexMaxMasterBp();
+                                if (slaveN > 0 && effMaster >= 0 && effMaster * 10000L <= slaveN * (long) bp) {
+                                    return new AsOfJoinIndexedRecordCursorFactory(
+                                            configuration,
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            joinColumnSplit,
+                                            slaveSymbolColumnIndex,
+                                            symbolJoinKeyMapping,
+                                            slaveContext,
+                                            toleranceInterval,
+                                            "auto:master~" + effMaster + " slave~" + slaveN + " bp<=" + bp
+                                    );
+                                }
                             }
                             // Default single-symbol ASOF: forward-scan DenseSingleSymbol. Resilient to
                             // symbol cardinality and timestamp density (O(n), no per-master back-scan cliff).
