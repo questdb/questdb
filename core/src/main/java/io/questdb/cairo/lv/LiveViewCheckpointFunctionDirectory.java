@@ -33,7 +33,9 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-/** Sorted, checksummed mapping from compiler-stable function identity to root. */
+/**
+ * Sorted, checksummed mapping from compiler-stable function identity to root.
+ */
 public class LiveViewCheckpointFunctionDirectory implements Closeable {
 
     public static final int PAGE_KIND = 0x19;

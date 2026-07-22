@@ -1323,13 +1323,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * {@code entry}, a logical boundary the replay has just finished
          * reproducing.
          *
-         * @param entry                   the boundary's current logical entry,
-         *                                including the root version being superseded
-         * @param functions               the live compiled window functions, standing
-         *                                at exactly {@code entry.maxTimestamp}
-         * @param anchorWindow            the live anchor window, or null
-         * @param effectiveLvRowPosition  replay-derived cumulative live-view row
-         *                                position at the boundary
+         * @param entry                  the boundary's current logical entry,
+         *                               including the root version being superseded
+         * @param functions              the live compiled window functions, standing
+         *                               at exactly {@code entry.maxTimestamp}
+         * @param anchorWindow           the live anchor window, or null
+         * @param effectiveLvRowPosition replay-derived cumulative live-view row
+         *                               position at the boundary
          */
         public void capture(
                 @NotNull LiveViewCheckpointTimelineEntry entry,

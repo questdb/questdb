@@ -141,12 +141,16 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
-    /** Returns the immutable finite-RANGE repair contract, or null for a mixed/non-RANGE view. */
+    /**
+     * Returns the immutable finite-RANGE repair contract, or null for a mixed/non-RANGE view.
+     */
     public @Nullable LiveViewCheckpointRangePlan getCheckpointRangePlan() {
         return checkpointRangePlan;
     }
 
-    /** Returns the immutable finite-ROWS repair contract, or null for a mixed/non-ROWS view. */
+    /**
+     * Returns the immutable finite-ROWS repair contract, or null for a mixed/non-ROWS view.
+     */
     public @Nullable LiveViewCheckpointRowsPlan getCheckpointRowsPlan() {
         return checkpointRowsPlan;
     }

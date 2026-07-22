@@ -131,7 +131,9 @@ public final class LiveViewCheckpointRowsPlan implements QuietCloseable {
         this.timestampType = timestampType;
     }
 
-    /** Frees the key functions an expression-keyed projector owns. Called by the factory. */
+    /**
+     * Frees the key functions an expression-keyed projector owns. Called by the factory.
+     */
     @Override
     public void close() {
         Misc.freeObjList(keyFunctions);
@@ -141,7 +143,9 @@ public final class LiveViewCheckpointRowsPlan implements QuietCloseable {
         return functionCount;
     }
 
-    /** Returns the map key shape the {@link #getKeySink() projector} writes. */
+    /**
+     * Returns the map key shape the {@link #getKeySink() projector} writes.
+     */
     public @NotNull ColumnTypes getKeyColumnTypes() {
         return keyColumnTypes;
     }
@@ -185,7 +189,9 @@ public final class LiveViewCheckpointRowsPlan implements QuietCloseable {
         return partitionByColumnIndexes.size();
     }
 
-    /** Returns the base-factory column index of the {@code n}-th PARTITION BY column. */
+    /**
+     * Returns the base-factory column index of the {@code n}-th PARTITION BY column.
+     */
     public int getPartitionByColumnIndex(int n) {
         return partitionByColumnIndexes.getQuick(n);
     }
@@ -194,7 +200,9 @@ public final class LiveViewCheckpointRowsPlan implements QuietCloseable {
         return partitionSignature;
     }
 
-    /** Returns the designated timestamp's column index in the base factory's metadata. */
+    /**
+     * Returns the designated timestamp's column index in the base factory's metadata.
+     */
     public int getTimestampIndex() {
         return timestampIndex;
     }

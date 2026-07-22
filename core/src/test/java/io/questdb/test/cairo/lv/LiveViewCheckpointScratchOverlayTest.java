@@ -344,7 +344,9 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
         return list;
     }
 
-    /** A function outside the checkpoint pipeline: neither pass may carry it. */
+    /**
+     * A function outside the checkpoint pipeline: neither pass may carry it.
+     */
     private static class IncapableStub extends BaseWindowFunction {
         private int restoreBeginCount;
 
@@ -372,7 +374,9 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
         }
     }
 
-    /** A record whose only column is the anchor window's LONG partition key. */
+    /**
+     * A record whose only column is the anchor window's LONG partition key.
+     */
     private static class KeyRecord implements Record {
         private long key;
 

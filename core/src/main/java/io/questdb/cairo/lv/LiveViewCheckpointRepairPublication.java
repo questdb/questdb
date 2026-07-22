@@ -109,7 +109,9 @@ public final class LiveViewCheckpointRepairPublication implements Mutable {
         return stage;
     }
 
-    /** True when this repair committed a live-view WAL replacement. */
+    /**
+     * True when this repair committed a live-view WAL replacement.
+     */
     public boolean hasCommittedReplacement() {
         return committedLvSeqTxn != Numbers.LONG_NULL;
     }
@@ -152,7 +154,9 @@ public final class LiveViewCheckpointRepairPublication implements Mutable {
         this.durableState = durableState;
     }
 
-    /** Opens a repair: the pinned snapshot is classified and the bounds derived. */
+    /**
+     * Opens a repair: the pinned snapshot is classified and the bounds derived.
+     */
     public void plan() {
         advanceTo(RepairPublicationStage.PLAN);
     }

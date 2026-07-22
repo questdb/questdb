@@ -17568,7 +17568,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
 
-
     @Test
     public void testCheckpointTimelineWalPurgeFloorRetainsPriorSlot() throws Exception {
         // The head arm follows the newest boundary this process sealed. The
@@ -17704,7 +17703,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("DROP LIVE VIEW lv");
         });
     }
-
 
 
     @Test

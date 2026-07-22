@@ -80,7 +80,9 @@ public final class LiveViewCheckpointFunctionIdentity {
         return canonicalWindowName;
     }
 
-    /** Returns an owned copy suitable for passing to a persistent root builder. */
+    /**
+     * Returns an owned copy suitable for passing to a persistent root builder.
+     */
     public byte[] getEncoded() {
         return Arrays.copyOf(encoded, encoded.length);
     }

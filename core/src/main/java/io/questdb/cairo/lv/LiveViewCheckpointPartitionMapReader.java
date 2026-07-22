@@ -32,7 +32,9 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-/** Logarithmic reader for a generation-pinned persistent partition map. */
+/**
+ * Logarithmic reader for a generation-pinned persistent partition map.
+ */
 public class LiveViewCheckpointPartitionMapReader implements Closeable {
 
     private static final int SEGMENT_CACHE_SIZE = 8;

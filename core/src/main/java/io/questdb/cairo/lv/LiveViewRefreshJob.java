@@ -423,7 +423,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return processNotifications();
     }
 
-    /** Test-only failure injection for crash-ordering coverage of timeline publication. */
+    /**
+     * Test-only failure injection for crash-ordering coverage of timeline publication.
+     */
     @TestOnly
     public void setCheckpointTimelineTestFailureStage(int stage) {
         checkpointTimelineTestFailureStage = stage;

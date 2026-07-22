@@ -487,72 +487,72 @@ public final class LiveViewCheckpointRepairPlan {
      * takes a tie and every repair the comparison cannot reach: a rebuild that did not
      * localize reads the whole view history and can never be the cheaper of the two.
      *
-     * @param anchors                  the versioned timeline's predecessor lookup
-     *                                 over the logical boundaries a resume may roll
-     *                                 back to
-     * @param lateRowTs                lowest timestamp the triggering DATA commit
-     *                                 touched, or {@link Numbers#LONG_NULL} for a
-     *                                 non-DATA / recovery trigger
-     * @param viewLowerBoundTimestamp  the view's {@code START FROM} boundary
-     *                                 {@code S}
-     * @param triggerSeqTxn            base {@code seqTxn} that triggered the repair
-     * @param pinnedSeqTxn             {@code seqTxn} of the pinned base reader
-     *                                 ({@code E}); never below
-     *                                 {@code triggerSeqTxn}
-     * @param applyAheadMinTs          minimum in-view timestamp of the apply-ahead
-     *                                 range, or {@link Numbers#LONG_NULL} when that
-     *                                 range is unclassifiable; ignored unless
-     *                                 {@link #isApplyAheadClassificationRequired}
-     *                                 holds
-     * @param rangeFrameWidth          the widest finite RANGE look-behind {@code W} among
-     *                                 the view's RANGE window functions, in
-     *                                 designated-timestamp units, or
-     *                                 {@link Numbers#LONG_NULL} when the view has none
-     * @param rowsBoundSource          the view's finite ROWS discovery, or null when the
-     *                                 view has no ROWS window function
-     * @param anchorPlan               the view's fixed anchor segment, or null when the view
-     *                                 is unanchored, the anchor has no closed-form segment
-     *                                 boundary, or an anchored window function is not reset
-     *                                 by that anchor
-     *                                 <p>
-     *                                 The three describe disjoint sets of window functions
-     *                                 and a factory may carry several at once, in which case
-     *                                 the bounds are their union. The caller must hand over a
-     *                                 set that covers every window function in the view -
-     *                                 {@code LiveViewCheckpointFunctionCompiler.isDependencyComplete}
-     *                                 is what proves it - because a function outside the
-     *                                 union is one the replay cannot reconstruct
-     * @param insertOnlyChangeSet      whether every change this repair incorporates only
-     *                                 added rows. Gates the ROWS discovery, whose affected
-     *                                 key domain is read off the post-change snapshot and
-     *                                 would miss a key a deletion emptied out of the change
-     *                                 interval. Ignored by the RANGE path, whose bounds a
-     *                                 deletion cannot escape
-     * @param durableOutputMaxTs       the highest designated timestamp the live-view
-     *                                 table durably holds, or
-     *                                 {@link Numbers#LONG_NULL} when it holds no row
-     *                                 at all; a lower bound on {@code D}, the
-     *                                 earliest output the runtime incorporated but
-     *                                 has not made durable
-     * @param changeMaxTs              the highest designated timestamp any change
-     *                                 this repair incorporates touched - the
-     *                                 triggering commit, everything the drain rolled
-     *                                 back with it, and the apply-ahead range - or
-     *                                 {@link Numbers#LONG_NULL} when the caller
-     *                                 cannot bound it (a non-DATA or structural entry
-     *                                 in the incorporated range, an unclassified
-     *                                 apply-ahead range, or a caller that does not
-     *                                 track it)
-     * @param runtimeFrontierTs        the highest designated timestamp the runtime
-     *                                 window state has incorporated, or
-     *                                 {@link Numbers#LONG_NULL} when the repair
-     *                                 cannot put that state back afterwards (no
-     *                                 checkpoint-state support, or an anchored view
-     *                                 whose anchor state this phase does not carry)
-     * @param scanCostSource           prices a candidate scan interval against the pinned
-     *                                 snapshot, or null to leave the choice between a
-     *                                 qualifying anchor and a localized rebuild
-     *                                 unpriced - which keeps the anchor
+     * @param anchors                 the versioned timeline's predecessor lookup
+     *                                over the logical boundaries a resume may roll
+     *                                back to
+     * @param lateRowTs               lowest timestamp the triggering DATA commit
+     *                                touched, or {@link Numbers#LONG_NULL} for a
+     *                                non-DATA / recovery trigger
+     * @param viewLowerBoundTimestamp the view's {@code START FROM} boundary
+     *                                {@code S}
+     * @param triggerSeqTxn           base {@code seqTxn} that triggered the repair
+     * @param pinnedSeqTxn            {@code seqTxn} of the pinned base reader
+     *                                ({@code E}); never below
+     *                                {@code triggerSeqTxn}
+     * @param applyAheadMinTs         minimum in-view timestamp of the apply-ahead
+     *                                range, or {@link Numbers#LONG_NULL} when that
+     *                                range is unclassifiable; ignored unless
+     *                                {@link #isApplyAheadClassificationRequired}
+     *                                holds
+     * @param rangeFrameWidth         the widest finite RANGE look-behind {@code W} among
+     *                                the view's RANGE window functions, in
+     *                                designated-timestamp units, or
+     *                                {@link Numbers#LONG_NULL} when the view has none
+     * @param rowsBoundSource         the view's finite ROWS discovery, or null when the
+     *                                view has no ROWS window function
+     * @param anchorPlan              the view's fixed anchor segment, or null when the view
+     *                                is unanchored, the anchor has no closed-form segment
+     *                                boundary, or an anchored window function is not reset
+     *                                by that anchor
+     *                                <p>
+     *                                The three describe disjoint sets of window functions
+     *                                and a factory may carry several at once, in which case
+     *                                the bounds are their union. The caller must hand over a
+     *                                set that covers every window function in the view -
+     *                                {@code LiveViewCheckpointFunctionCompiler.isDependencyComplete}
+     *                                is what proves it - because a function outside the
+     *                                union is one the replay cannot reconstruct
+     * @param insertOnlyChangeSet     whether every change this repair incorporates only
+     *                                added rows. Gates the ROWS discovery, whose affected
+     *                                key domain is read off the post-change snapshot and
+     *                                would miss a key a deletion emptied out of the change
+     *                                interval. Ignored by the RANGE path, whose bounds a
+     *                                deletion cannot escape
+     * @param durableOutputMaxTs      the highest designated timestamp the live-view
+     *                                table durably holds, or
+     *                                {@link Numbers#LONG_NULL} when it holds no row
+     *                                at all; a lower bound on {@code D}, the
+     *                                earliest output the runtime incorporated but
+     *                                has not made durable
+     * @param changeMaxTs             the highest designated timestamp any change
+     *                                this repair incorporates touched - the
+     *                                triggering commit, everything the drain rolled
+     *                                back with it, and the apply-ahead range - or
+     *                                {@link Numbers#LONG_NULL} when the caller
+     *                                cannot bound it (a non-DATA or structural entry
+     *                                in the incorporated range, an unclassified
+     *                                apply-ahead range, or a caller that does not
+     *                                track it)
+     * @param runtimeFrontierTs       the highest designated timestamp the runtime
+     *                                window state has incorporated, or
+     *                                {@link Numbers#LONG_NULL} when the repair
+     *                                cannot put that state back afterwards (no
+     *                                checkpoint-state support, or an anchored view
+     *                                whose anchor state this phase does not carry)
+     * @param scanCostSource          prices a candidate scan interval against the pinned
+     *                                snapshot, or null to leave the choice between a
+     *                                qualifying anchor and a localized rebuild
+     *                                unpriced - which keeps the anchor
      */
     public void of(
             @NotNull AnchorSource anchors,
@@ -1031,9 +1031,9 @@ public final class LiveViewCheckpointRepairPlan {
      */
     public interface ScanCostSource {
         /**
-         * @param lowTs            inclusive low bound of the candidate scan
-         * @param highTsInclusive  inclusive high bound, {@link Long#MAX_VALUE} for a
-         *                         scan that runs to the end of the base table
+         * @param lowTs           inclusive low bound of the candidate scan
+         * @param highTsInclusive inclusive high bound, {@link Long#MAX_VALUE} for a
+         *                        scan that runs to the end of the base table
          * @return an estimate of the base rows the interval holds, or 0 when it holds
          * none. Never {@link Numbers#LONG_NULL}: an interval the source cannot price is
          * not a thing the plan can act on

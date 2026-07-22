@@ -28,7 +28,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 
-/** Stops a timestamp-ordered cursor after the inclusive high timestamp. */
+/**
+ * Stops a timestamp-ordered cursor after the inclusive high timestamp.
+ */
 final class TimestampUpperBoundCursor implements RecordCursor {
     private RecordCursor base;
     private boolean done;

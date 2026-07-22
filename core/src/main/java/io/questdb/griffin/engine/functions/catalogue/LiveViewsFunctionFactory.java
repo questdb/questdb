@@ -477,8 +477,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_O3_REPLAY_SCAN_ROWS -> instance.getO3ReplayScanRows();
                         // START FROM BEGINNING has no lower bound and persists
                         // LONG_NULL, which passes through as NULL.
-                        case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP ->
-                                toMicros(definition.getViewLowerBoundTimestamp());
+                        case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP -> toMicros(definition.getViewLowerBoundTimestamp());
                         case COLUMN_WRITER_STALL_MICROS -> {
                             // Current uninterrupted stall duration.
                             // writerStallStartUs is set when the in-mem tier's slow-path

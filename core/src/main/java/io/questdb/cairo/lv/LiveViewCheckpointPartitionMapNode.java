@@ -29,7 +29,9 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
-/** In-heap image of one immutable persistent partition-map B+ tree page. */
+/**
+ * In-heap image of one immutable persistent partition-map B+ tree page.
+ */
 final class LiveViewCheckpointPartitionMapNode {
 
     private static final int FORMAT_VERSION = 1;

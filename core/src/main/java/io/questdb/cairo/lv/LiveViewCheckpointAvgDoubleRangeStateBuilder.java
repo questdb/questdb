@@ -80,7 +80,9 @@ public class LiveViewCheckpointAvgDoubleRangeStateBuilder implements Closeable {
         scratch = new LiveViewCheckpointStateCodec.Scratch(memoryTracker);
     }
 
-    /** Appends one finite row in designated-timestamp order. */
+    /**
+     * Appends one finite row in designated-timestamp order.
+     */
     public void append(
             @NotNull LiveViewCheckpointDataSegmentWriter writer,
             long timestamp,

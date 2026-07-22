@@ -24,7 +24,9 @@
 
 package io.questdb.cairo.lv;
 
-/** On-disk framing constants for persistent partition-map metadata pages. */
+/**
+ * On-disk framing constants for persistent partition-map metadata pages.
+ */
 public final class LiveViewCheckpointPartitionMap {
 
     public static final int PAGE_KIND_INTERNAL = 0x17;

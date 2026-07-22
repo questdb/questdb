@@ -361,7 +361,9 @@ public class LiveViewCheckpointDataStore implements Closeable {
             stagedRefs.clear();
         }
 
-        /** Called only after the metadata generation commit point. */
+        /**
+         * Called only after the metadata generation commit point.
+         */
         public void markPublished() {
             ensureOpen();
             published = true;

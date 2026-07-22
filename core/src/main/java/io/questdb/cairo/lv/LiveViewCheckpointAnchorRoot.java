@@ -51,7 +51,9 @@ import java.util.Arrays;
 public class LiveViewCheckpointAnchorRoot implements Closeable {
 
     public static final int PAGE_KIND = 0x1b;
-    /** Bytes one partition entry's scalar payload occupies: the last-seen anchor value. */
+    /**
+     * Bytes one partition entry's scalar payload occupies: the last-seen anchor value.
+     */
     static final int ENTRY_STATE_SIZE = Long.BYTES;
     private static final int FIXED_SIZE = 4 * Integer.BYTES + LiveViewCheckpointPageRef.BYTES;
     private static final int FORMAT_VERSION = 1;

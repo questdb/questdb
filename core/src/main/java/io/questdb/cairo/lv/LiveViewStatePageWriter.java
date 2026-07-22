@@ -53,7 +53,9 @@ public final class LiveViewStatePageWriter {
         return sink != null;
     }
 
-    /** Opens a page at the sink's current append offset. */
+    /**
+     * Opens a page at the sink's current append offset.
+     */
     public LiveViewStatePageWriter of(@NotNull MemoryA sink) {
         return of(sink, MAX_PAGE_SIZE);
     }
@@ -115,7 +117,9 @@ public final class LiveViewStatePageWriter {
         sink.putShort(value);
     }
 
-    /** Returns the exact number of bytes appended to this page. */
+    /**
+     * Returns the exact number of bytes appended to this page.
+     */
     public long size() {
         ensureOpen();
         final long appendOffset = sink.getAppendOffset();

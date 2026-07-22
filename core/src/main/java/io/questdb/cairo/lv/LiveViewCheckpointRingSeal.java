@@ -141,16 +141,16 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
     /**
      * Freezes one partition's ring into {@code out}.
      *
-     * @param dataWriter                  the open data segment new chunks land in
-     * @param function                    the ring's owner, streamed through
-     *                                    {@link WindowFunction#freezeCheckpointRingState}
-     * @param value                       the partition's map value, or null for a
-     *                                    scalar function
-     * @param key                         the encoded partition key
-     * @param previous                    the same partition's entry in the boundary
-     *                                    before this one, or null when there is none
-     *                                    or when the caller cannot prove this batch
-     *                                    sits strictly above that boundary
+     * @param dataWriter                   the open data segment new chunks land in
+     * @param function                     the ring's owner, streamed through
+     *                                     {@link WindowFunction#freezeCheckpointRingState}
+     * @param value                        the partition's map value, or null for a
+     *                                     scalar function
+     * @param key                          the encoded partition key
+     * @param previous                     the same partition's entry in the boundary
+     *                                     before this one, or null when there is none
+     *                                     or when the caller cannot prove this batch
+     *                                     sits strictly above that boundary
      * @param previousBoundaryMaxTimestamp the boundary {@code previous} was frozen at
      * @return the logical state bytes this partition's ring accounts for, keys
      * excluded

@@ -183,7 +183,9 @@ public final class LiveViewCheckpointAnchorPlan {
         return start > timestamp ? Long.MIN_VALUE : start;
     }
 
-    /** Returns how many {@link #getUnit() units} one segment spans. */
+    /**
+     * Returns how many {@link #getUnit() units} one segment spans.
+     */
     public int getStride() {
         return stride;
     }
@@ -192,7 +194,9 @@ public final class LiveViewCheckpointAnchorPlan {
         return timestampType;
     }
 
-    /** Returns the floor unit as {@code timestamp_floor} spells it. */
+    /**
+     * Returns the floor unit as {@code timestamp_floor} spells it.
+     */
     public char getUnit() {
         return unit;
     }

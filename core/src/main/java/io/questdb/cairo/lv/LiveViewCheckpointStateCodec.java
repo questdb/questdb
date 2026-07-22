@@ -281,7 +281,9 @@ public final class LiveViewCheckpointStateCodec {
         return checkedWrittenLength(sink, start);
     }
 
-    /** Selects exact XOR only when it meets the fixed adaptive-saving rule. */
+    /**
+     * Selects exact XOR only when it meets the fixed adaptive-saving rule.
+     */
     public static int selectDoubleCodec(long sourceAddress, int rowCount) {
         validateEncodeArguments(sourceAddress, rowCount);
         final int rawLength = rawLength(rowCount);
@@ -289,7 +291,9 @@ public final class LiveViewCheckpointStateCodec {
         return savesEnough(rawLength, encodedLength) ? DOUBLE_XOR : DOUBLE_RAW_64;
     }
 
-    /** Selects checked delta-of-delta only when supported and sufficiently smaller. */
+    /**
+     * Selects checked delta-of-delta only when supported and sufficiently smaller.
+     */
     public static int selectTimestampCodec(long sourceAddress, int rowCount) {
         validateEncodeArguments(sourceAddress, rowCount);
         final int rawLength = rawLength(rowCount);

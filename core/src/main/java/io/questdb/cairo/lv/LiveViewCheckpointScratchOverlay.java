@@ -130,7 +130,9 @@ public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
         captured = true;
     }
 
-    /** Drops the captured state and releases the buffer holding it. */
+    /**
+     * Drops the captured state and releases the buffer holding it.
+     */
     public void clear() {
         frames.clear();
         anchorOffset = -1;

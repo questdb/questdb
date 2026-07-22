@@ -776,7 +776,9 @@ public class LiveViewWindow implements QuietCloseable {
         anchorExpression.toTop();
     }
 
-    /** Validates one anchor entry's encoded key without changing runtime state. */
+    /**
+     * Validates one anchor entry's encoded key without changing runtime state.
+     */
     public void validateCheckpointEntry(@NotNull LiveViewStatePageReader keySource) {
         final long consumed = LiveViewSnapshotKeyCodec.validateKey(keySource, 0, partitionKeyTypes);
         if (consumed != keySource.size()) {

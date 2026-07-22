@@ -1187,7 +1187,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             case 2 -> "ts, sym, i, first_value(i) OVER (" + frame + ") AS v";
             case 3 -> "ts, sym, count() OVER (" + frame + ") AS v";
             case 4 -> "ts, sym, x, avg(x) OVER (" + frame + ") AS v";
-            case 5 -> "ts, sym, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn";
+            case 5 ->
+                    "ts, sym, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn";
             case 6 -> "ts, sym, i, min(i) OVER (" + frame + ") AS v";
             case RANGE_SUM_VARIANT -> "ts, sym, i, sum(i) OVER (" + rangeFrame + ") AS v";
             case RANGE_AVG_VARIANT -> "ts, sym, x, avg(x) OVER (" + rangeFrame + ") AS v";

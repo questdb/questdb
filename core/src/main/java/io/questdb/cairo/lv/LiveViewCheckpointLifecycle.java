@@ -180,7 +180,9 @@ public final class LiveViewCheckpointLifecycle {
         return result(false, walPurgeFloor, normalizedBaseSeqTxn, cleanup, purgeResult, stats, repairSweep);
     }
 
-    /** Removes final-name orphans after a new slot durably advances past them. */
+    /**
+     * Removes final-name orphans after a new slot durably advances past them.
+     */
     public static CleanupStats purgeFinalOrphans(
             @NotNull CairoConfiguration configuration,
             @NotNull Path checkpointsDir,

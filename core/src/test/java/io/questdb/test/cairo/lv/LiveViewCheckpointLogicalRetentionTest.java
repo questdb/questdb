@@ -351,7 +351,9 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + VIEW_SQL);
     }
 
-    /** Point lookup of one logical boundary by its full {@code (maxTimestamp, checkpointId)} key. */
+    /**
+     * Point lookup of one logical boundary by its full {@code (maxTimestamp, checkpointId)} key.
+     */
     private boolean findsEntry(
             LiveViewInstance instance,
             long maxTimestamp,

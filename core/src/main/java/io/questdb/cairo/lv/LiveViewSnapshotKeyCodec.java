@@ -184,7 +184,9 @@ public final class LiveViewSnapshotKeyCodec {
         return offset;
     }
 
-    /** Page-bounded counterpart used by the versioned checkpoint store. */
+    /**
+     * Page-bounded counterpart used by the versioned checkpoint store.
+     */
     public static long readKey(MapKey dst, LiveViewStatePageReader source, long offset, ColumnTypes keyTypes) {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
             final int type = ColumnType.tagOf(keyTypes.getColumnType(i));
@@ -514,7 +516,9 @@ public final class LiveViewSnapshotKeyCodec {
         return offset;
     }
 
-    /** Page-aware fixed-width value-slot writer used by ranking state. */
+    /**
+     * Page-aware fixed-width value-slot writer used by ranking state.
+     */
     public static void writeKey(LiveViewStatePageWriter sink, Record record, ColumnTypes types, int startIndex) {
         for (int i = 0, n = types.getColumnCount(); i < n; i++) {
             final int columnIndex = startIndex + i;

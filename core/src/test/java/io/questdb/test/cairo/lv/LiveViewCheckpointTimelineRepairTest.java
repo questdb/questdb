@@ -1731,7 +1731,9 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         );
     }
 
-    /** Rows the live view's own table durably holds. */
+    /**
+     * Rows the live view's own table durably holds.
+     */
     private long durableRowCount(LiveViewInstance instance) {
         try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
             return reader.size();
@@ -1748,7 +1750,9 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         }
     }
 
-    /** True while the view still has a published checkpoint timeline superblock. */
+    /**
+     * True while the view still has a published checkpoint timeline superblock.
+     */
     private boolean hasTimeline(LiveViewInstance instance) {
         try (
                 Path checkpointsDir = checkpointsDir(instance);

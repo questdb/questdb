@@ -62,7 +62,9 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-/** Compiler-only builder for stable live-view checkpoint function metadata. */
+/**
+ * Compiler-only builder for stable live-view checkpoint function metadata.
+ */
 public final class LiveViewCheckpointFunctionCompiler {
     private static final String STATE_PAGE_CODEC_FAMILY = "live-view-state-page";
 
@@ -103,16 +105,16 @@ public final class LiveViewCheckpointFunctionCompiler {
      * {@link #isDependencyComplete} is what proves the three plans between them cover
      * the whole factory.
      *
-     * @param spec                       the definition's captured anchored window
-     * @param anchorNode                 the parsed anchor expression, already desugared
-     *                                   for a DAILY anchor
-     * @param projectedMetadata          the metadata the anchor expression resolves
-     *                                   against - the same one the runtime anchor
-     *                                   function is compiled with
-     * @param windowFunctions            every window function the compiled factory
-     *                                   carries
-     * @param anchorableWindowFunctions  the subset the anchor dispatches
-     *                                   {@code resetPartition} to
+     * @param spec                      the definition's captured anchored window
+     * @param anchorNode                the parsed anchor expression, already desugared
+     *                                  for a DAILY anchor
+     * @param projectedMetadata         the metadata the anchor expression resolves
+     *                                  against - the same one the runtime anchor
+     *                                  function is compiled with
+     * @param windowFunctions           every window function the compiled factory
+     *                                  carries
+     * @param anchorableWindowFunctions the subset the anchor dispatches
+     *                                  {@code resetPartition} to
      */
     public static @Nullable LiveViewCheckpointAnchorPlan anchorPlan(
             @NotNull LiveViewDefinition.LvAnchorSpec spec,

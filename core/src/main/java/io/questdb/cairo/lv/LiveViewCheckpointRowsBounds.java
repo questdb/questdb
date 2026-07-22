@@ -242,7 +242,9 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         return affectedKeyCount;
     }
 
-    /** @return qualifying rows the backward predecessor scan pulled. */
+    /**
+     * @return qualifying rows the backward predecessor scan pulled.
+     */
     public long getBackwardScanRows() {
         return backwardScanRows;
     }
@@ -256,7 +258,9 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         return dependencyLowTs;
     }
 
-    /** @return qualifying rows the forward convergence scan pulled. */
+    /**
+     * @return qualifying rows the forward convergence scan pulled.
+     */
     public long getForwardScanRows() {
         return forwardScanRows;
     }
@@ -325,7 +329,9 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         return scanBudgetStatus != ScanBudgetStatus.WITHIN;
     }
 
-    /** Normalizes a configured budget, mapping the disabling {@code <= 0} to no bound. */
+    /**
+     * Normalizes a configured budget, mapping the disabling {@code <= 0} to no bound.
+     */
     private static long budgetOf(long configured) {
         return configured > 0 ? configured : Long.MAX_VALUE;
     }
@@ -359,7 +365,9 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         scanRows = 0;
     }
 
-    /** Resolves the record's key, joining it to {@code Q} on first sight. */
+    /**
+     * Resolves the record's key, joining it to {@code Q} on first sight.
+     */
     private MapValue createKey(LiveViewCheckpointRowsPlan plan, Record record) {
         final MapKey key = keyMap.withKey();
         key.put(record, plan.getKeySink());

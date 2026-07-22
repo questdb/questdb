@@ -918,7 +918,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final String frame = "PARTITION BY sym ORDER BY ts ROWS BETWEEN " + n + " PRECEDING AND CURRENT ROW";
         return switch (variant) {
             case 0 -> "ts, sym, i, sum(i) OVER (" + frame + ") AS v";
-            case 1 -> "ts, sym, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn";
+            case 1 ->
+                    "ts, sym, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn";
             default -> throw new IllegalArgumentException("variant=" + variant);
         };
     }

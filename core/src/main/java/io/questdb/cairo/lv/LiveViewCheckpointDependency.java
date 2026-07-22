@@ -140,7 +140,9 @@ public final class LiveViewCheckpointDependency {
         return structuralConvergence;
     }
 
-    /** Returns the base table's designated timestamp type the frame bounds are expressed in. */
+    /**
+     * Returns the base table's designated timestamp type the frame bounds are expressed in.
+     */
     public int getTimestampType() {
         return timestampType;
     }

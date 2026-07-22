@@ -100,7 +100,9 @@ public final class LiveViewStatePageReader {
         return source != null;
     }
 
-    /** Opens an exact page slice after overflow-safe source bounds checks. */
+    /**
+     * Opens an exact page slice after overflow-safe source bounds checks.
+     */
     public LiveViewStatePageReader of(@NotNull MemoryR source, long pageStart, long pageLength) {
         if (pageStart < 0 || pageLength < 0 || pageStart > source.size() || pageLength > source.size() - pageStart) {
             throw invalid("state page reference out of bounds")

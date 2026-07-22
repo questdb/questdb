@@ -34,7 +34,9 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-/** Durable state root referenced by one logical timeline entry. */
+/**
+ * Durable state root referenced by one logical timeline entry.
+ */
 public class LiveViewCheckpointRoot implements Closeable {
 
     public static final int PAGE_KIND = 0x1a;
