@@ -9344,10 +9344,18 @@ public class SqlOptimiser implements Mutable {
             final ExpressionNode subsample = nested.getSubsample();
             if (subsample != null) {
                 final ExpressionNode timestamp = nested.getTimestamp();
+                // Kill-switch: cairo.subsample.window.enabled (default true) gates ONLY the five
+                // count/value migration arms below (uniform/cadence/m4/minmax/lttb) - when false, they
+                // all fall through to the untouched pre-migration custom cursor path, exactly as if none
+                // of the gate conditions in each arm had matched. The sdt arm below has NO cursor
+                // fallback (its gate is total, see the comment on that branch) and is therefore NOT
+                // wrapped by this flag - sdt always migrates regardless of the switch.
+                final boolean subsampleWindowEnabled = configuration.isSubsampleWindowEnabled();
                 // Skip the aggregation context (e.g. SAMPLE BY / GROUP BY, once rewriteSampleBy has
                 // turned it into a group-by projection): a window function cannot be injected into an
                 // aggregating model. Those SUBSAMPLE cases stay on the untouched custom cursor path.
-                if (subsample.paramCount == 1
+                if (subsampleWindowEnabled
+                        && subsample.paramCount == 1
                         && Chars.equalsIgnoreCase(subsample.token, "uniform")) {
                     final ExpressionNode targetNode = subsample.args.getQuick(0);
                     if (timestamp != null
@@ -9355,7 +9363,8 @@ public class SqlOptimiser implements Mutable {
                             && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
                         model = desugarUniformSubsample(model, nested, subsample, timestamp);
                     }
-                } else if ((subsample.paramCount == 1 || subsample.paramCount == 2)
+                } else if (subsampleWindowEnabled
+                        && (subsample.paramCount == 1 || subsample.paramCount == 2)
                         && Chars.equalsIgnoreCase(subsample.token, "cadence")) {
                     // Migrate cadence only when the window path is byte-identical to the old cursor:
                     //  - stride (arg 0) is a compile-time constant in [2, MAX_INT]. This falls through
@@ -9373,7 +9382,8 @@ public class SqlOptimiser implements Mutable {
                             || isConstantCadenceSeed(subsample.args.getQuick(1), sqlExecutionContext))) {
                         model = desugarCadenceSubsample(model, nested, subsample, timestamp);
                     }
-                } else if (subsample.paramCount == 2
+                } else if (subsampleWindowEnabled
+                        && subsample.paramCount == 2
                         && (Chars.equalsIgnoreCase(subsample.token, "m4")
                         || Chars.equalsIgnoreCase(subsample.token, "minmax"))) {
                     // Migrate m4(value, target) / minmax(value, target) to their keep-flag window
@@ -9409,7 +9419,8 @@ public class SqlOptimiser implements Mutable {
                             && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
                         model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, subsample.token);
                     }
-                } else if ((subsample.paramCount == 2 || subsample.paramCount == 3)
+                } else if (subsampleWindowEnabled
+                        && (subsample.paramCount == 2 || subsample.paramCount == 3)
                         && Chars.equalsIgnoreCase(subsample.token, "lttb")) {
                     // Migrate lttb(value, target[, gap]) to the lttb keep-flag window function only when
                     // the window path is byte-identical to the old cursor. Mirrors the m4/minmax gate:

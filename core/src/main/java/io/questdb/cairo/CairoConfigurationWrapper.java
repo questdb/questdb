@@ -1754,6 +1754,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSubsampleWindowEnabled() {
+        return getDelegate().isSubsampleWindowEnabled();
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return getDelegate().isTableTypeConversionEnabled();
     }

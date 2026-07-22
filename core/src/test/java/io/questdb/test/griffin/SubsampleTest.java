@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
@@ -3758,6 +3759,76 @@ public class SubsampleTest extends AbstractCairoTest {
                     "SELECT ts, price FROM x SUBSAMPLE sdt(price * 2, 0.5)",
                     34,
                     "SUBSAMPLE sdt requires a plain column as its first argument"
+            );
+        });
+    }
+
+    // ---- cairo.subsample.window.enabled kill-switch ----
+    // Default-on boolean gating ONLY the five count/value migration arms (uniform/cadence/m4/
+    // minmax/lttb). When false, those five fall through to the untouched pre-migration custom
+    // SUBSAMPLE cursor. sdt has no cursor fallback (its gate is total - see the sdt section above)
+    // and is therefore unaffected: it must still migrate to the window path regardless of the flag.
+
+    @Test
+    public void testSubsampleWindowKillSwitch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO x VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (5.0, '2024-01-01T02:00:00.000000Z'),
+                    (30.0, '2024-01-01T03:00:00.000000Z'),
+                    (15.0, '2024-01-01T04:00:00.000000Z'),
+                    (25.0, '2024-01-01T05:00:00.000000Z'),
+                    (8.0, '2024-01-01T06:00:00.000000Z'),
+                    (35.0, '2024-01-01T07:00:00.000000Z')
+                    """);
+
+            final String query = "SELECT ts, price FROM x SUBSAMPLE m4(price, 4)";
+
+            // Switch ON (default): m4 migrates to the keep-flag window path.
+            printSql(query);
+            final String windowRows = sink.toString();
+            printSql("EXPLAIN " + query);
+            final String windowPlan = sink.toString();
+            Assert.assertTrue(
+                    "switch-on plan should contain the window keep-filter: " + windowPlan,
+                    windowPlan.contains("__keep_subsample")
+            );
+            Assert.assertFalse(
+                    "switch-on plan should not contain a Subsample cursor node: " + windowPlan,
+                    windowPlan.contains("Subsample")
+            );
+
+            // Switch OFF: m4 must fall through to the untouched custom cursor and return
+            // byte-identical rows to the switch-on run.
+            setProperty(PropertyKey.CAIRO_SUBSAMPLE_WINDOW_ENABLED, "false");
+            printSql(query);
+            final String cursorRows = sink.toString();
+            TestUtils.assertEquals(windowRows, cursorRows);
+            printSql("EXPLAIN " + query);
+            final String cursorPlan = sink.toString();
+            Assert.assertTrue(
+                    "switch-off plan should contain the Subsample cursor node: " + cursorPlan,
+                    cursorPlan.contains("Subsample")
+            );
+            Assert.assertFalse(
+                    "switch-off plan should not contain the window keep-filter: " + cursorPlan,
+                    cursorPlan.contains("__keep_subsample")
+            );
+
+            // sdt has no cursor fallback: it must still migrate to the window path with the
+            // switch off (its total gate is independent of cairo.subsample.window.enabled).
+            printSql("EXPLAIN SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)");
+            final String sdtPlan = sink.toString();
+            Assert.assertTrue(
+                    "sdt should still migrate to the window path with the switch off: " + sdtPlan,
+                    sdtPlan.contains("__keep_subsample")
+            );
+            Assert.assertFalse(
+                    "sdt should never fall back to a Subsample cursor node: " + sdtPlan,
+                    sdtPlan.contains("Subsample")
             );
         });
     }
