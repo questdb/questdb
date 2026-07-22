@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo;
+package io.questdb.test.cairo.crash;
 
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
@@ -43,6 +43,8 @@ import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -70,6 +72,17 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
 public class VarcharPowerLossFuzzTest extends AbstractCairoTest {
 
     private static final int ITERATIONS = 60;
+
+    // Randomized power-loss fuzz: belongs in the fuzz/soak pipeline, not the regular unit suite (which now
+    // also selects io.questdb.test.cairo.crash). Gate behind -Dquestdb.fuzz.nightly=true so PR CI skips it
+    // and the soak runs it. Deterministic cases live in VarcharPowerLossCorruptionTest (ungated, regular).
+    @Before
+    public void assumeNightlyFuzz() {
+        Assume.assumeTrue(
+                "varchar power-loss fuzz is nightly-only; run with -Dquestdb.fuzz.nightly=true",
+                Boolean.getBoolean("questdb.fuzz.nightly")
+        );
+    }
 
     @Test
     public void testFuzzTornAuxTailNeverOverwritesCommittedDataVarchar() throws Exception {

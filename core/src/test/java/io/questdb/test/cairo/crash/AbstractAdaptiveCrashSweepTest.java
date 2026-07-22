@@ -27,6 +27,8 @@ package io.questdb.test.cairo.crash;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
 
 /**
  * Base for the ADAPTIVE exhaustive crash-point SWEEP (SP-D increment D1.a). Provides
@@ -73,6 +75,21 @@ import org.junit.Assert;
  * is deterministic and reproducible between the count pass and every sweep pass.
  */
 public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsistencyTest {
+
+    /**
+     * Adaptive crash-point SWEEPS are long-running (each test iterates EVERY durability op of its commit
+     * phase as a separate crash+recover point, ~minutes each) and are fuzz/soak workloads, not unit tests.
+     * The regular pipeline now also selects {@code io.questdb.test.cairo.crash}, so gate the whole sweep
+     * family behind {@code -Dquestdb.fuzz.nightly=true}: PR CI skips them via a fast assumption, while the
+     * adaptive soak pipeline sets the flag and runs them.
+     */
+    @Before
+    public void assumeNightlySweep() {
+        Assume.assumeTrue(
+                "adaptive crash sweeps are nightly-only; run with -Dquestdb.fuzz.nightly=true",
+                Boolean.getBoolean("questdb.fuzz.nightly")
+        );
+    }
 
     /**
      * Original crash-consistency sweep cap (2026-06-22 spec); truncation past N is logged, never silent.

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo;
+package io.questdb.test.cairo.crash;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoError;

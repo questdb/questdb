@@ -39,7 +39,10 @@ variables:
   # which re-enables retry on ConnectException) instead of failing the build; the connect
   # timeout in maven-settings-hetzner.xml bounds each attempt. See test-pipeline.yml for the
   # full rationale.
-  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
+  # -Dquestdb.fuzz.nightly=true enables the nightly-gated adaptive crash sweeps + varchar power-loss fuzz
+  # (io.questdb.test.cairo.crash) so this soak actually runs them; PR/regular CI leaves the flag unset and
+  # skips them via a fast assumption.
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dquestdb.fuzz.nightly=true -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
   # Full reactor (the fuzz regex spans core and compat), but no fuzz test serves the
@@ -62,7 +65,7 @@ stages:
               os: Linux
               jdk: "1.25"
               testset: "all"
-              includeTests: "%regex[.*Fuzz.*class]"
+              includeTests: "%regex[.*Fuzz.*class],**/cairo/crash/**"
               javadoc_step: ""
               javadoc_profile: ""
         pool:
