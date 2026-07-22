@@ -320,6 +320,124 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCostPrefersTheSpliceOverASurvivingAnchor() throws Exception {
+        // Every logical root retained, which is the shape the versioned timeline makes
+        // ordinary: a sealed predecessor almost always sits below a correction, here at
+        // 20s under a change at 25s. Resuming from it because it exists replays every
+        // row above it - 11 of the 13 in the base - while the dependency interval is two
+        // frame widths wide however old the correction and however long the view has
+        // been running. The plan prices both and takes the splice.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 32);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job, 12);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+
+                appendAndRefresh(job, 25, 100);
+
+                Assert.assertEquals(
+                        "an anchor at 20s qualifies for the resume and must lose on price",
+                        0,
+                        instance.getO3ResumeReplayRows()
+                );
+                Assert.assertEquals("the rebuild must stop at H", 6, instance.getO3ReplayScanRows());
+                Assert.assertEquals("the rebuild must re-emit [R, H) only", 4, instance.getO3BoundaryReplayRows());
+                Assert.assertEquals(
+                        "a spliced timeline keeps every logical entry it had",
+                        12,
+                        entryCount(instance)
+                );
+                Assert.assertEquals(generationBefore + 1, generation(instance));
+
+                final LongList after = snapshotTimeline(instance);
+                // Prefix (10s, 20s) reused, including the 20s root the resume would have
+                // restored from and then superseded.
+                assertSameRoot(before, after, 0);
+                assertSameRoot(before, after, 1);
+                // Repaired interval (30s, 40s, 50s).
+                for (int i = 2; i <= 4; i++) {
+                    assertNewRoot(before, after, i);
+                }
+                // Converged suffix (60s through 120s): seven roots a resume would have
+                // recomputed and re-emitted, reused here by page identity with only
+                // their cumulative positions moved by the one inserted row.
+                for (int i = 5; i < 12; i++) {
+                    assertSameRoot(before, after, i);
+                    Assert.assertEquals(
+                            "suffix position at index " + i,
+                            i + 2,
+                            after.getQuick(i * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION)
+                    );
+                }
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t42.0\n");
+        });
+    }
+
+    @Test
+    public void testCostKeepsTheAnchorForAChangeNearTheHead() throws Exception {
+        // The other side of the same comparison, and the reason it is a comparison. A
+        // correction at 115s leaves the anchor at 110s a two-row tail, while localizing
+        // would warm the frame up from 85s and - the frame reaching past the runtime
+        // frontier - read to the end of the base anyway. The resume is cheaper and the
+        // plan takes it, with the same anchors retained and the same view as above.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 32);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job, 12);
+
+                appendAndRefresh(job, 115, 100);
+
+                Assert.assertEquals(
+                        "the resume re-evaluates 115s and 120s and nothing else",
+                        2,
+                        instance.getO3ResumeReplayRows()
+                );
+                Assert.assertEquals(0, instance.getO3BoundaryReplayRows());
+                Assert.assertEquals(2, instance.getO3ReplayScanRows());
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t6.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t10.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t14.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:01:55.000000Z\ta\t130.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t142.0\n");
+        });
+    }
+
+    @Test
     public void testLocalizedRepairOwnsItsCandidateThroughADescriptor() throws Exception {
         // The same localized repair as above, watched through the filesystem. The
         // temporary data segment the capture writes is named by no metadata until the
@@ -1408,12 +1526,16 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     private LiveViewInstance buildHistory(LiveViewRefreshJob job) throws Exception {
-        for (int commit = 1; commit <= HISTORY_COMMITS; commit++) {
+        return buildHistory(job, HISTORY_COMMITS);
+    }
+
+    private LiveViewInstance buildHistory(LiveViewRefreshJob job, int commits) throws Exception {
+        for (int commit = 1; commit <= commits; commit++) {
             appendAndRefresh(job, commit * 10, commit);
         }
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull(instance);
-        Assert.assertEquals(HISTORY_COMMITS, entryCount(instance));
+        Assert.assertEquals(commits, entryCount(instance));
         return instance;
     }
 

@@ -275,6 +275,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // pinned reader. Both are idle outside a repair, which never nests.
     private final LiveViewCheckpointRowsBounds rowsBounds;
     private final RowsBoundDiscovery rowsBoundDiscovery = new RowsBoundDiscovery();
+    // Prices a repair's two candidate scan intervals off the pinned reader's partition
+    // metadata, so the plan chooses between an anchor resume and a localized rebuild on
+    // what each would read. One per worker, bound to the repair's reader per plan.
+    private final LiveViewCheckpointScanCost scanCost = new LiveViewCheckpointScanCost();
     // Reusable counter for the seed sweep's skipRows() resume positioning.
     private final RecordCursor.Counter seedSkipCounter = new RecordCursor.Counter();
     // Test-only: when armed, an out-of-order repair skips the inline apply of its
@@ -3409,14 +3413,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", highTsExclusive=").$(repairPlan.getHighTsExclusive())
                     .$(", resumeFromAnchor=").$(repairPlan.isResumeFromAnchor())
                     .$(", anchorLvSeqTxn=").$(repairPlan.getAnchorLvSeqTxn())
-                    .$(", anchorMaxTs=").$(repairPlan.getAnchorMaxTs()).I$();
+                    .$(", anchorMaxTs=").$(repairPlan.getAnchorMaxTs())
+                    // The two estimates the disposition above was chosen on, so a repair
+                    // that took the more expensive-looking route is diagnosable. Both are
+                    // LONG_NULL when no anchor competed and nothing needed pricing.
+                    .$(", resumeScanRows=").$(repairPlan.getResumeScanRows())
+                    .$(", rebuildScanRows=").$(repairPlan.getRebuildScanRows()).I$();
             if (repairPlan.isResumeFromAnchor()) {
                 replayFromAnchor(instance, windowFactory, repairPlan, reader);
             } else {
-                // No sealed anchor sits below the change (the whole ring predates
-                // it, the trigger carries no timestamp to search with, or apply
-                // raced ahead over an unclassifiable range), so the repair falls
-                // back to the O(view age) rebuild from the view boundary.
+                // Either no sealed anchor sits below the change (the whole ring
+                // predates it, the trigger carries no timestamp to search with, or
+                // apply raced ahead over an unclassifiable range), in which case this
+                // is the O(view age) rebuild from the view boundary; or one does and
+                // the plan priced its resume above the localized rebuild, in which
+                // case this reads only [L, H).
                 suspended = o3HeadMissReplay(instance, windowFactory, repairPlan, reader, false, null, true);
             }
         } finally {
@@ -3557,6 +3568,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * checkpoint-state support has no way to save it. An anchored view's anchor map
      * rides on that same contract - {@link LiveViewCheckpointScratchOverlay} carries it
      * beside the function state - so an anchored view quotes its frontier here too.
+     * <p>
+     * The third disk read is {@link LiveViewCheckpointScanCost}, which prices the two
+     * dispositions off the pinned reader's partition metadata so the plan takes the
+     * cheaper rather than whichever exists. It opens no partition and reads no column,
+     * and it is what stops a sealed anchor sitting just below an old correction from
+     * turning a bounded repair back into a replay of the whole view above it. The cost
+     * it does add is the ROWS discovery: an anchored repair over a view holding a
+     * bounded ROWS function discovers its bounds even when the resume goes on to win,
+     * because those bounds are the only thing that could answer the question. The
+     * discovery's own scan budget bounds what that costs.
      */
     private void planO3Repair(
             LiveViewInstance instance,
@@ -3634,6 +3655,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 ? instance.getLatestSeenTs()
                 : Numbers.LONG_NULL;
         final long[] headPair = instance.getHeadCheckpointSeqAndMaxTs();
+        scanCost.of(reader);
         repairPlan.of(
                 instance,
                 lateRowTs,
@@ -3649,7 +3671,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 effectiveInsertOnly,
                 durableOutputMaxTs,
                 effectiveChangeMaxTs,
-                runtimeFrontierTs
+                runtimeFrontierTs,
+                scanCost
         );
         if (rowsBoundSource != null && rowsBoundDiscovery.hasDiscovered()) {
             // The discovery's reads are this repair's reads, so they join the same
@@ -3715,9 +3738,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * restore from disk), scans the base table from {@code anchorMaxTs + 1}
      * forward (never below {@code viewLowerBoundTimestamp}), and emits a single
      * REPLACE_RANGE commit covering that same range through positive infinity.
-     * Cheaper than the boundary rebuild because the anchor's state already
+     * Cheaper than the whole-history rebuild because the anchor's state already
      * reflects everything in {@code [viewLowerBoundTimestamp, anchorMaxTs]} - the
-     * replay only re-evaluates the tail above the anchor.
+     * replay only re-evaluates the tail above the anchor. Not cheaper than a
+     * <i>localized</i> rebuild by construction, though: that one stops at a finite
+     * convergence boundary while this reads to the end of the base table, so the plan
+     * prices the two and this path runs only when it wins.
      * <p>
      * Pure execution: {@link LiveViewCheckpointRepairPlan} has already chosen the
      * anchor, the commit point and the retire floor against the pinned snapshot,
@@ -4046,8 +4072,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Cost of the unlocalized rebuild is O(retained_rows x n_window_functions) of
      * {@code computeNext} plus the partition-rewrite I/O - acceptable for short-lived
      * views but several seconds to minutes for long-lived ones per the cost model.
-     * {@link #replayFromAnchor} avoids the worst of this when the plan finds a sealed
-     * anchor below the change.
+     * {@link #replayFromAnchor} avoids the worst of this when a sealed anchor below the
+     * change reads fewer base rows than the interval this rebuild would localize to;
+     * the plan compares the two and routes here when it does not.
      * <p>
      * Pure execution: {@code plan} carries the pinned snapshot's {@code seqTxn}
      * (the commit and watermark point), the correction floor {@code C}, the scan and

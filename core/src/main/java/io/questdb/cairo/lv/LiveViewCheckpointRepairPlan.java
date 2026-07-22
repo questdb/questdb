@@ -153,6 +153,20 @@ import org.jetbrains.annotations.Nullable;
  * caller is responsible for handing over a complete set: every window function
  * must be covered by one of the three, or none of them describes the view.
  * <p>
+ * Which of the two dispositions runs is decided on price, not on availability. A
+ * resume reads {@code [anchorMaxTs + 1, EOF)} - its high bound is end-of-frame, so
+ * nothing stops it below the end of the base table - while a localized rebuild
+ * reads {@code [L, H)}. Neither dominates: a change near the head leaves the resume
+ * a short tail that no warm-up can beat, and a change deep in history leaves it the
+ * whole view above the correction while the dependency interval stays the width of
+ * one frame. The plan therefore derives the rebuild bounds even when an anchor is
+ * available, prices both intervals through {@link ScanCostSource} against the same
+ * pinned snapshot, and takes the cheaper; a tie, an unpriceable repair and a rebuild
+ * that could not localize all keep the resume, which needs no warm-up and stages
+ * nothing. This is what stops a dense checkpoint cadence from defeating the
+ * localization: the anchor a cadence leaves just below an old correction is exactly
+ * the anchor whose resume replays every row above it.
+ * <p>
  * A later extension adds the affected/output key domains {@code A}/{@code Q} to
  * the plan itself. For the timestamp-global RANGE replacement they are degenerate:
  * {@code Q} is every key with a qualifying row in {@code [R, H)}, which is exactly
@@ -189,7 +203,9 @@ public final class LiveViewCheckpointRepairPlan {
     private boolean localized;
     private long outputLowTs;
     private long pinnedSeqTxn;
+    private long rebuildScanRows;
     private long replayLowTs;
+    private long resumeScanRows;
     private long retireLowTs;
     private long triggerSeqTxn;
 
@@ -226,7 +242,9 @@ public final class LiveViewCheckpointRepairPlan {
         this.localized = other.localized;
         this.outputLowTs = other.outputLowTs;
         this.pinnedSeqTxn = other.pinnedSeqTxn;
+        this.rebuildScanRows = other.rebuildScanRows;
         this.replayLowTs = other.replayLowTs;
+        this.resumeScanRows = other.resumeScanRows;
         this.retireLowTs = other.retireLowTs;
         this.triggerSeqTxn = other.triggerSeqTxn;
     }
@@ -326,12 +344,33 @@ public final class LiveViewCheckpointRepairPlan {
     }
 
     /**
+     * @return the estimated base rows a localized rebuild over {@code [L, H)} would
+     * pull, or {@link Numbers#LONG_NULL} when nothing priced it - no anchor competes
+     * for the repair, no {@link ScanCostSource} was supplied, or the rebuild could
+     * not localize and so has no interval to price. Diagnostic once the plan is
+     * built: the disposition below already reflects the comparison.
+     */
+    public long getRebuildScanRows() {
+        return rebuildScanRows;
+    }
+
+    /**
      * @return {@code L}: the inclusive timestamp the replay scans from. Never
      * overflows for a resume: every anchor sits strictly below a real timestamp,
      * so {@code anchorMaxTs + 1} stays representable.
      */
     public long getReplayLowTs() {
         return replayLowTs;
+    }
+
+    /**
+     * @return the estimated base rows a resume from the selected anchor would pull -
+     * every row at or above its floor, because its high bound is end-of-frame - or
+     * {@link Numbers#LONG_NULL} when no anchor qualified or no {@link ScanCostSource}
+     * was supplied. Diagnostic; see {@link #getRebuildScanRows()}.
+     */
+    public long getResumeScanRows() {
+        return resumeScanRows;
     }
 
     /**
@@ -434,6 +473,13 @@ public final class LiveViewCheckpointRepairPlan {
      * localized to {@code [L, ...)} when the view carries a finite RANGE dependency
      * and the trigger carries a timestamp; otherwise it reads the whole view
      * history, which needs no such guarantee either.
+     * <p>
+     * A qualifying anchor does not settle the question. The rebuild bounds are derived
+     * either way and both intervals priced through {@code scanCostSource}, because an
+     * anchor sitting just below an old correction buys a resume that still replays
+     * every row above it - the very cost the dependency interval bounds. The resume
+     * takes a tie and every repair the comparison cannot reach: a rebuild that did not
+     * localize reads the whole view history and can never be the cheaper of the two.
      *
      * @param anchors                  sealed checkpoints the resume may roll back
      *                                 to, newest last
@@ -500,6 +546,10 @@ public final class LiveViewCheckpointRepairPlan {
      *                                 cannot put that state back afterwards (no
      *                                 checkpoint-state support, or an anchored view
      *                                 whose anchor state this phase does not carry)
+     * @param scanCostSource           prices a candidate scan interval against the pinned
+     *                                 snapshot, or null to leave the choice between a
+     *                                 qualifying anchor and a localized rebuild
+     *                                 unpriced - which keeps the anchor
      */
     public void of(
             @NotNull AnchorSource anchors,
@@ -516,7 +566,8 @@ public final class LiveViewCheckpointRepairPlan {
             boolean insertOnlyChangeSet,
             long durableOutputMaxTs,
             long changeMaxTs,
-            long runtimeFrontierTs
+            long runtimeFrontierTs,
+            @Nullable ScanCostSource scanCostSource
     ) throws SqlException {
         assert pinnedSeqTxn >= triggerSeqTxn : "pinned base snapshot is below the trigger";
         this.triggerSeqTxn = triggerSeqTxn;
@@ -589,21 +640,28 @@ public final class LiveViewCheckpointRepairPlan {
                 anchorMaxTs = anchors.getAnchorMaxTs(index);
             }
         }
-        if (hasAnchor) {
-            disposition = DISPOSITION_RESUME_FROM_ANCHOR;
-            // The anchor's state already covers rows up to and including its
-            // maxTs, so the replay starts strictly above it. Floored at the view's
-            // boundary so the resume applies the same row predicate as the seed,
-            // the forward drain and the boundary rebuild.
-            replayLowTs = Math.max(anchorMaxTs + 1, viewLowerBoundTimestamp);
-            // The restored anchor state IS the warm-up, so the resume emits every
-            // row it reads: L and R coincide.
-            outputLowTs = replayLowTs;
-            localized = false;
-        } else {
-            disposition = DISPOSITION_BOUNDARY_REBUILD;
-            anchorLvSeqTxn = Numbers.LONG_NULL;
-            anchorMaxTs = Numbers.LONG_NULL;
+        // The anchor's state already covers rows up to and including its maxTs, so a
+        // resume starts strictly above it. Floored at the view's boundary so it applies
+        // the same row predicate as the seed, the forward drain and the boundary
+        // rebuild.
+        final long resumeLowTs = hasAnchor ? Math.max(anchorMaxTs + 1, viewLowerBoundTimestamp) : Numbers.LONG_NULL;
+        rebuildScanRows = Numbers.LONG_NULL;
+        // What the resume would read: every base row at or above its floor, because its
+        // high bound is end-of-frame and no dependency stops it below the end of the
+        // base table.
+        resumeScanRows = hasAnchor && scanCostSource != null
+                ? scanCostSource.estimateScanRows(resumeLowTs, Long.MAX_VALUE)
+                : Numbers.LONG_NULL;
+        // The whole-history rebuild, which every path below either keeps or narrows.
+        outputLowTs = viewLowerBoundTimestamp;
+        replayLowTs = viewLowerBoundTimestamp;
+        localized = false;
+        // Derive the rebuild bounds even with an anchor in hand: the two dispositions
+        // are compared on price below, and an anchor the cadence left just under an old
+        // correction buys a resume that replays the whole view above it. An unpriced
+        // repair skips the derivation outright - the anchor wins by default, so the
+        // bounds would be discarded, and for a ROWS view deriving them reads base rows.
+        if (!hasAnchor || resumeScanRows != Numbers.LONG_NULL) {
             deriveRebuildBounds(
                     viewLowerBoundTimestamp,
                     rangeFrameWidth,
@@ -613,6 +671,28 @@ public final class LiveViewCheckpointRepairPlan {
                     durableOutputMaxTs,
                     runtimeFrontierTs
             );
+        }
+        if (localized && resumeScanRows != Numbers.LONG_NULL) {
+            // Only a localized rebuild is worth pricing. An unlocalized one reads the
+            // whole view history from S, which is every row the resume reads and then
+            // the ones below the anchor as well.
+            rebuildScanRows = scanCostSource.estimateScanRows(replayLowTs, getScanHighTsInclusive());
+        }
+        if (hasAnchor && (rebuildScanRows == Numbers.LONG_NULL || rebuildScanRows >= resumeScanRows)) {
+            disposition = DISPOSITION_RESUME_FROM_ANCHOR;
+            replayLowTs = resumeLowTs;
+            // The restored anchor state IS the warm-up, so the resume emits every
+            // row it reads: L and R coincide.
+            outputLowTs = replayLowTs;
+            localized = false;
+            // A resume converges nowhere below the end of the base table, so whatever
+            // bound the rebuild derived above is discarded with the rest of its plan.
+            highBoundTag = HighBoundTag.EOF;
+            highTsExclusive = Numbers.LONG_NULL;
+        } else {
+            disposition = DISPOSITION_BOUNDARY_REBUILD;
+            anchorLvSeqTxn = Numbers.LONG_NULL;
+            anchorMaxTs = Numbers.LONG_NULL;
         }
     }
 
@@ -726,7 +806,18 @@ public final class LiveViewCheckpointRepairPlan {
      * Everything collapses to the whole-history rebuild - both floors at {@code S} and
      * {@code H} left at end-of-frame - when there is no change floor, when the live-view
      * table holds no durable row at all, or when the view carries no finite dependency
-     * of any shape.
+     * of any shape. The caller has already written that rebuild into the floors, so
+     * every guard below returns rather than restating it.
+     * <p>
+     * No cost guard stands in front of the ROWS discovery, and none can. The rebuild
+     * beats the resume exactly when the rows it adds below the anchor's floor are fewer
+     * than the rows the resume adds above {@code H}, and both quantities need the very
+     * bounds the discovery returns: the interval every shape is known to read without
+     * asking - {@code [R, changeMaxTs]} - sits inside the resume's tail whenever the
+     * anchor is below {@code R}, which the anchor search guarantees on the common path.
+     * So an anchored repair over a view holding a bounded ROWS function pays the
+     * discovery even when the resume goes on to win. The discovery's own scan budget is
+     * what bounds that, and the alternative it buys is an unbounded tail replay.
      */
     private void deriveRebuildBounds(
             long viewLowerBoundTimestamp,
@@ -737,9 +828,6 @@ public final class LiveViewCheckpointRepairPlan {
             long durableOutputMaxTs,
             long runtimeFrontierTs
     ) throws SqlException {
-        outputLowTs = viewLowerBoundTimestamp;
-        replayLowTs = viewLowerBoundTimestamp;
-        localized = false;
         final boolean hasRange = rangeFrameWidth != Numbers.LONG_NULL;
         final boolean hasRows = rowsBoundSource != null;
         final boolean hasAnchor = anchorPlan != null;
@@ -943,5 +1031,32 @@ public final class LiveViewCheckpointRepairPlan {
          * changed. Meaningful only under {@link HighBoundTag#FINITE}.
          */
         long getRowsHighTsExclusive();
+    }
+
+    /**
+     * Prices one candidate scan interval so the plan can pick the cheaper of the two
+     * dispositions instead of taking whichever is available.
+     * <p>
+     * The two are not ordered by construction. A resume restores state that is already
+     * correct below its anchor but reads every base row above it; a localized rebuild
+     * warms its state up from the dependency floor but stops at the convergence
+     * boundary. Which reads fewer rows depends entirely on where the correction sits
+     * relative to the base table's head, which is a property of the data.
+     * <p>
+     * Estimates need only be comparable with one another, and only over one pinned
+     * snapshot: the plan never compares one against a row budget or reports it as a
+     * count. {@link LiveViewCheckpointScanCost} implements this off the pinned reader's
+     * partition metadata.
+     */
+    public interface ScanCostSource {
+        /**
+         * @param lowTs            inclusive low bound of the candidate scan
+         * @param highTsInclusive  inclusive high bound, {@link Long#MAX_VALUE} for a
+         *                         scan that runs to the end of the base table
+         * @return an estimate of the base rows the interval holds, or 0 when it holds
+         * none. Never {@link Numbers#LONG_NULL}: an interval the source cannot price is
+         * not a thing the plan can act on
+         */
+        long estimateScanRows(long lowTs, long highTsInclusive);
     }
 }

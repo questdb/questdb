@@ -19105,11 +19105,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         "2026-11-01T00:00:20.000000Z\t20\t3\n" +
                         "2026-11-01T00:00:25.000000Z\t25\t4\n" +
                         "2026-11-01T00:00:30.000000Z\t30\t5\n");
-                // This view has no WHERE filter, so the resume replay scans exactly
-                // the rows it re-emits: o3_replay_scan_rows equals o3_resume_replay_rows.
+                // This view has no WHERE filter, so the resume replay scans exactly the 4 rows
+                // it re-emits. The other 5 are planning: the plan prices the resume against a
+                // localized rebuild before choosing, and for a ROWS frame those bounds come from
+                // a discovery that reads base rows. A 1_000_000-row frame walks the history out
+                // and proves no finite H, so the resume wins - having paid for the answer.
                 assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows, o3_replay_scan_rows FROM live_views()")
                         .noLeakCheck().noRandomAccess()
-                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\to3_replay_scan_rows\n4\t0\t4\n");
+                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\to3_replay_scan_rows\n4\t0\t9\n");
                 Assert.assertEquals(5L, lv.getLvRowsTotal());
                 Assert.assertEquals(5L, lv.getStateReader().getLvConsumedSeqTxn());
                 // The ahead row retires stale anchors 20 and 30; 10 and the

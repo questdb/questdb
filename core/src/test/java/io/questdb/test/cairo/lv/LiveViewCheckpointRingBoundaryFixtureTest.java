@@ -485,9 +485,11 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 assertViewMatchesRecompute(viewSql);
 
                 // An O3 row within the retained horizon: 55s is above the oldest surviving anchor
-                // (50s) and below the head (120s), so the replay resumes from that anchor and
-                // re-emits only the tail above it. The ring bounds the work - this is its win -
-                // and the boundary counter stays untouched.
+                // (50s) and below the head (120s), so a resume qualifies. It does not run. A
+                // resume reads to the end of the base table, which is the 16 rows above 50s,
+                // while the bounded frame's [L, H) holds 14 - so the plan prices the localized
+                // rebuild lower and takes it. The ring's claim here was that it bounds the work;
+                // both dispositions do, and what decides between them is which reads fewer rows.
                 setCurrentMicros((HISTORY_COMMITS + 1) * 200_000L);
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
                         "('" + secondsTs(55) + "', 'a', 55), " +
@@ -496,23 +498,25 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 drainJob(job);
                 drainWalQueue();
 
-                Assert.assertTrue(
-                        "an O3 within the ring horizon must resume from an anchor",
-                        lv.getO3ResumeReplayRows() > 0
+                Assert.assertEquals(
+                        "a resume priced above the localized rebuild must not run",
+                        0,
+                        lv.getO3ResumeReplayRows()
                 );
                 Assert.assertEquals(
-                        "a bounded resume must not take the boundary rebuild",
-                        0,
+                        "the localized rebuild re-emits [55s, 85s): 55s, 60s, 70s, 80s over two keys",
+                        8,
                         lv.getO3BoundaryReplayRows()
                 );
                 assertViewMatchesRecompute(viewSql);
 
                 // An O3 row older than the whole collapsed ring: 5s is below every surviving
-                // anchor, so no anchor qualifies and the replay falls back to the O(view age)
-                // boundary rebuild from the START FROM boundary. This is precisely the residual
-                // the versioned timeline removes - the evicted sub-50s anchors would have bounded
-                // it. A boundary rebuild is a normal O3 path, not a refresh fault, so the view
-                // still converges to the from-base recompute (asserted by assertViewMatchesRecompute).
+                // anchor, so no anchor qualifies at all and the boundary rebuild is the only
+                // disposition left. That was the residual the versioned timeline was built to
+                // remove, and the finite dependency is what removed it - the rebuild bounds
+                // itself at [L, H) rather than reading from the START FROM boundary. A boundary
+                // rebuild is a normal O3 path, not a refresh fault, so the view still converges
+                // to the from-base recompute (asserted by assertViewMatchesRecompute).
                 final long boundaryBefore = lv.getO3BoundaryReplayRows();
                 final long resumeBefore = lv.getO3ResumeReplayRows();
                 setCurrentMicros((HISTORY_COMMITS + 2) * 200_000L);
