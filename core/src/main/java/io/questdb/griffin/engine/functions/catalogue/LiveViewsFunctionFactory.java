@@ -154,7 +154,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             case LiveViewInstance.REPAIR_PLAN_RANGE | LiveViewInstance.REPAIR_PLAN_ANCHOR -> "range+anchor";
             case LiveViewInstance.REPAIR_PLAN_ROWS | LiveViewInstance.REPAIR_PLAN_ANCHOR -> "rows+anchor";
             case LiveViewInstance.REPAIR_PLAN_RANGE | LiveViewInstance.REPAIR_PLAN_ROWS
-                    | LiveViewInstance.REPAIR_PLAN_ANCHOR -> "range+rows+anchor";
+                         | LiveViewInstance.REPAIR_PLAN_ANCHOR -> "range+rows+anchor";
             default -> null;
         };
     }
