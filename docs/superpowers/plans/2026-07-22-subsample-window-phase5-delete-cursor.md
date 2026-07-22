@@ -85,3 +85,26 @@ mvn -q -pl core -Dtest='SubsampleTest,M4WindowFunctionTest,MinMaxWindowFunctionT
 
 ## Execution Handoff
 (Provided after user review.)
+
+---
+
+## SCOPE EXPANSION (2026-07-22, after Task 2 BLOCKED finding + user decision "extend desugar, then delete")
+
+The cursor handles TWO contexts the window desugar cannot yet: SUBSAMPLE-after-aggregation and SUBSAMPLE-in-join. User chose to EXTEND the desugar to cover both (no feature loss), THEN delete. This inserts two tasks BEFORE the old Task 2 (which becomes 2c). New order: 2a → 2b → 2c → 3 → 4.
+
+### Task 2a: desugar SUBSAMPLE-after-aggregation (SAMPLE BY / GROUP BY)
+- **Problem:** `rewriteSampleBy` runs before `rewriteSubsample`; the model is aggregating, so `desugarSubsample` adding the keep `WindowExpression` INTO that model throws "Window function is not allowed in context of aggregation."
+- **Fix:** when the subsample's model is an aggregation (SAMPLE BY/GROUP BY), don't inject the window into it — WRAP it: build a projection model OVER the aggregating model, attach the keep window + filter to the WRAPPER (the window's `OVER (ORDER BY ts)` references the aggregation's output designated timestamp, which survives). i.e. `SELECT cols FROM (<aggregating model>) <window+keep-filter>`.
+- Oracle: the ~6 aggregation tests (`testLttbAfterSampleBy`, `testUniformAfterSampleBy`, `testCadenceAfterSampleBy`, `testSubsampleWithGroupBy`, `testSampleByLosesDesignationButSubsampleStillWorks`, …) must stay byte-identical, now via the window path. Cross-check vs the still-present cursor before shifting them.
+- Note the early user insight: "sample by loses the designated timestamp, but it should generate an outer order by; generate the order by then subsample."
+
+### Task 2b: desugar SUBSAMPLE-in-join (ASOF/other joins)
+- **Problem:** desugar's `OVER (ORDER BY ts)` uses the bare `ts` token → ambiguous across join branches → SqlException. The current `subsampleInJoinContext` guard falls through to the cursor.
+- **Fix:** QUALIFY the order-by timestamp with the designated timestamp's source (the join's master/left table alias), so `OVER (ORDER BY <alias>.ts)` is unambiguous. Remove/replace the join fall-through guard once qualification works. Verify the join's designated timestamp resolution.
+- Oracle: `testSubsampleWithJoin`, `testSubsampleWithActualJoin`, `testSubsampleNotHoistedFromJoinBranch`, `testSubsampleBranchLocalInJoin`, `testM4OverJoinFallsThroughToCursor` (this one asserts the cursor plan — update to the window plan) — byte-identical rows via the window path.
+
+### Task 2c (was Task 2): total gates + remove kill-switch
+- As originally specified, but now aggregation + join contexts MIGRATE (via 2a/2b) instead of throwing. sdt still refuses agg/join (its total gate throws) — unless 2a/2b naturally cover sdt too (check: sdt could also fuse post-aggregation; decide per byte-identity).
+- After 2a+2b+2c: EVERY SUBSAMPLE shape migrates-or-throws; `generateSubsample`'s cursor branch is unreachable → Task 3 deletes it.
+
+**Checkpoint state:** Task 1 complete (HEAD c07a55f528). Tasks 2a/2b/2c/3/4 pending. Nothing broken; 42 commits; branch not pushed.
