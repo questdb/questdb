@@ -13720,7 +13720,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // ordinal see a stable shape. The documented columns come first, the
         // three o3_*_rows columns trail as replay observability, and the
         // checkpoint_* group closes the set in its four blocks: the
-        // generation's shape, collection, cost, and localized repair.
+        // generation's shape, collection, cost, and localized repair. The last
+        // block ends on checkpoint_repair_plan, which describes the repair a
+        // view's SQL admits rather than one repair's progress.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -13744,7 +13746,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "checkpoint_repair_in_progress\tcheckpoint_repair_correction_timestamp\t"
                         + "checkpoint_repair_low_timestamp\tcheckpoint_repair_high_timestamp\t"
                         + "checkpoint_repair_roots_versioned\tcheckpoint_repair_new_bytes\t"
-                        + "checkpoint_repair_resumes\tcheckpoint_repair_failures\n");
+                        + "checkpoint_repair_resumes\tcheckpoint_repair_failures\t"
+                        + "checkpoint_repair_plan\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
@@ -13763,6 +13766,54 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "lv\tbase\tactive\t5\tSECOND\t30\tSECOND\n");
 
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLiveViewsCatalogueExposesCheckpointRepairPlan() throws Exception {
+        // checkpoint_repair_plan names the dependency plans a localized repair would
+        // union, so the latency cliff this column exists for - a view that rebuilds
+        // its whole history for every out-of-order row below the head - is legible
+        // without reading the log.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Two shapes in one view, and both must appear: a RANGE frame with a
+            // lagging high bound - which the classifier admits and which took no plan
+            // at all before it did - beside a bounded ROWS frame.
+            execute("CREATE LIVE VIEW lv_mixed FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, pg, " +
+                    "sum(x) OVER (PARTITION BY pg ORDER BY ts RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING) AS s, " +
+                    "sum(x) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS r " +
+                    "FROM base");
+            // lag() reads five rows back through a frame promising three, so the ROWS
+            // plan declines it and the view is left with no bound at all.
+            execute("CREATE LIVE VIEW lv_none FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, pg, " +
+                    "lag(x, 5) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS l " +
+                    "FROM base");
+
+            // Neither view has compiled its SELECT yet, and "not known" is a different
+            // statement about a view than "no plan covers it".
+            assertQuery("SELECT view_name, checkpoint_repair_plan FROM live_views() ORDER BY view_name")
+                    .noLeakCheck()
+                    .returns("view_name\tcheckpoint_repair_plan\n" +
+                            "lv_mixed\t\n" +
+                            "lv_none\t\n");
+
+            execute("INSERT INTO base VALUES ('2026-05-12T00:00:00.000001Z', 1, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            assertQuery("SELECT view_name, checkpoint_repair_plan FROM live_views() ORDER BY view_name")
+                    .noLeakCheck()
+                    .returns("view_name\tcheckpoint_repair_plan\n" +
+                            "lv_mixed\trange+rows\n" +
+                            "lv_none\tnone\n");
+
+            execute("DROP LIVE VIEW lv_mixed");
+            execute("DROP LIVE VIEW lv_none");
         });
     }
 

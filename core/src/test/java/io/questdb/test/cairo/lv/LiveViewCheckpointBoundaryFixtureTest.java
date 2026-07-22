@@ -126,6 +126,11 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
         final String oracleSql = "SELECT ts, sym, sum(x) OVER (PARTITION BY sym, " + LOCALIZATION_ANCHOR_EXPRESSION
                 + " ORDER BY ts) AS s, " + slidingWindow + " FROM base";
         final ReplayCost cost = runOldO3BoundaryRebuild(viewSql, oracleSql, false);
+        Assert.assertEquals(
+                "live_views() must report both shapes, not the first one found",
+                LiveViewInstance.REPAIR_PLAN_ROWS | LiveViewInstance.REPAIR_PLAN_ANCHOR,
+                cost.repairPlans
+        );
         Assert.assertEquals("bound discovery plus the union's [L, H) rebuild", 15 + 16, cost.scannedRows);
         Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 10, cost.emittedRows);
         // The whole-history rebuild this replaces, for scale.
@@ -182,6 +187,11 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
         final String oracleSql = "SELECT ts, sym, sum(x) OVER (PARTITION BY sym, " + LOCALIZATION_ANCHOR_EXPRESSION
                 + " ORDER BY ts) AS s, " + slidingWindow + " FROM base";
         final ReplayCost cost = runOldO3BoundaryRebuild(viewSql, oracleSql, false);
+        Assert.assertEquals(
+                "one uncovered function leaves the view with no plan to report",
+                LiveViewInstance.REPAIR_PLAN_NONE,
+                cost.repairPlans
+        );
         assertResumeBoundsAnUnlocalizableRepair(cost);
     }
 
@@ -203,6 +213,11 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
                 + "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS r "
                 + "FROM base";
         final ReplayCost cost = runOldO3BoundaryRebuild(viewSql, viewSql, false);
+        Assert.assertEquals(
+                "live_views() must report both shapes, not the first one found",
+                LiveViewInstance.REPAIR_PLAN_RANGE | LiveViewInstance.REPAIR_PLAN_ROWS,
+                cost.repairPlans
+        );
         Assert.assertEquals("bound discovery plus the union's [L, H) rebuild", 15 + 14, cost.scannedRows);
         Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
     }
@@ -541,6 +556,10 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
                 true
         );
+        // The plan the column reports is the view's, not this repair's: the frame still
+        // carries a ROWS bound and a later insert-only change would take it. What the
+        // deletion denies is one repair, which is why the two are separate readings.
+        Assert.assertEquals(LiveViewInstance.REPAIR_PLAN_ROWS, cost.repairPlans);
         assertResumeBoundsAnUnlocalizableRepair(cost);
     }
 
@@ -558,6 +577,11 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
                 "lag(x, 5)",
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
                 false
+        );
+        Assert.assertEquals(
+                "a declined plan is reported as no plan, not as the frame's shape",
+                LiveViewInstance.REPAIR_PLAN_NONE,
+                cost.repairPlans
         );
         assertResumeBoundsAnUnlocalizableRepair(cost);
     }
@@ -858,6 +882,7 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
                 drainJob(job);
                 drainWalQueue();
 
+                cost.repairPlans = lv.getCheckpointRepairDependencyPlans();
                 cost.resumedRows = lv.getO3ResumeReplayRows();
                 cost.scannedRows = lv.getO3ReplayScanRows();
                 cost.emittedRows = lv.getO3BoundaryReplayRows();
@@ -931,10 +956,11 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
     }
 
     // What one boundary rebuild cost: base rows the source cursor pulled and output rows it
-    // re-emitted. Mutable because assertMemoryLeak takes a void lambda and the numbers have to
-    // leave it.
+    // re-emitted, plus the REPAIR_PLAN_* mask the view carried while it ran. Mutable because
+    // assertMemoryLeak takes a void lambda and the numbers have to leave it.
     private static class ReplayCost {
         private long emittedRows;
+        private int repairPlans;
         private long resumedRows;
         private long scannedRows;
     }

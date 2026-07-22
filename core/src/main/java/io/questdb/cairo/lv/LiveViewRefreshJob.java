@@ -956,6 +956,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     ));
                 }
                 ensureAnchorFunction(instance, factory);
+                // Which plans bound this view's repair follows from the factory alone, so
+                // it settles here rather than at the first out-of-order row. That is what
+                // lets live_views() report the answer for a view no late row has reached
+                // yet, which is the one whose latency cliff is still invisible.
+                instance.setCheckpointRepairDependencyPlans(
+                        repairDependencyPlans(instance, unwrapWindowFactory(factory))
+                );
                 instance.setCompiledFactory(factory);
                 committed = true;
             } finally {
@@ -1069,6 +1076,50 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 Misc.free(fn);
             }
         }
+    }
+
+    /**
+     * Reports which dependency plans cover the compiled factory's window functions, as
+     * the {@code LiveViewInstance.REPAIR_PLAN_*} bit mask {@code live_views()} surfaces.
+     * <p>
+     * {@link #planO3Repair} asks the same question of the same three plans every time a
+     * late row arrives, and this answers it once, when the factory compiles. The two
+     * agree by construction - both read the plans off the cached factory and the anchor
+     * window built beside it - but they are not the same statement. This one describes
+     * the view's SQL: which bounds a localized repair would union. That one decides a
+     * particular repair, and can still deny it on grounds the SQL does not carry, such
+     * as a ROWS plan over a base that deduplicates.
+     * <p>
+     * The mask is {@code REPAIR_PLAN_NONE} whenever one window function sits outside the
+     * union, because a repair the plans cover only in part is a repair declined outright:
+     * the replacement it publishes is timestamp-global, so it re-emits the uncovered
+     * function's output from a replay that cannot reconstruct it. Reporting the plans
+     * that do exist would name bounds nothing takes.
+     */
+    private static int repairDependencyPlans(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
+        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+        final boolean hasAnchorPlan = anchorWindow != null && anchorWindow.getCheckpointAnchorPlan() != null;
+        final boolean hasRangePlan = windowFactory.getCheckpointRangePlan() != null;
+        final boolean hasRowsPlan = windowFactory.getCheckpointRowsPlan() != null;
+        if (!LiveViewCheckpointFunctionCompiler.isDependencyComplete(
+                windowFactory.getWindowFunctions(),
+                hasRangePlan,
+                hasRowsPlan,
+                hasAnchorPlan
+        )) {
+            return LiveViewInstance.REPAIR_PLAN_NONE;
+        }
+        int plans = LiveViewInstance.REPAIR_PLAN_NONE;
+        if (hasRangePlan) {
+            plans |= LiveViewInstance.REPAIR_PLAN_RANGE;
+        }
+        if (hasRowsPlan) {
+            plans |= LiveViewInstance.REPAIR_PLAN_ROWS;
+        }
+        if (hasAnchorPlan) {
+            plans |= LiveViewInstance.REPAIR_PLAN_ANCHOR;
+        }
+        return plans;
     }
 
     /**

@@ -113,7 +113,15 @@ import io.questdb.std.ObjList;
  *     repair is suspended across refresh turns. The counters
  *     {@code checkpoint_repair_roots_versioned}, {@code _new_bytes},
  *     {@code _resumes} and {@code _failures} are lifetime totals and reset on
- *     restart.</li>
+ *     restart. {@code checkpoint_repair_plan} closes the group with the shape of
+ *     the repair rather than one repair's progress: it names the dependency plans
+ *     the view's window functions carry - {@code range}, {@code rows},
+ *     {@code anchor} or a {@code +}-joined combination - and reads {@code none}
+ *     for a view no plan covers, which rebuilds its whole history for every
+ *     out-of-order row below the head. It is NULL until the view compiles its
+ *     SELECT, and it describes what the SQL admits rather than what the next
+ *     repair does: a named plan can still be denied per refresh, a ROWS one over
+ *     a base that deduplicates most commonly.</li>
  * </ul>
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
@@ -125,6 +133,28 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             case 'm' -> "MINUTE";
             case 'h' -> "HOUR";
             case 'd' -> "DAY";
+            default -> null;
+        };
+    }
+
+    /**
+     * Renders the {@code REPAIR_PLAN_*} mask a view carries as the plan names a
+     * localized repair would union - {@code none} when it would union nothing and
+     * every out-of-order row below the head therefore rebuilds the whole view
+     * history. NULL, rather than {@code none}, while the view has not compiled its
+     * SELECT: the two say different things, and only the first is a latency cliff.
+     */
+    static String getRepairPlan(int plans) {
+        return switch (plans) {
+            case LiveViewInstance.REPAIR_PLAN_NONE -> "none";
+            case LiveViewInstance.REPAIR_PLAN_RANGE -> "range";
+            case LiveViewInstance.REPAIR_PLAN_ROWS -> "rows";
+            case LiveViewInstance.REPAIR_PLAN_RANGE | LiveViewInstance.REPAIR_PLAN_ROWS -> "range+rows";
+            case LiveViewInstance.REPAIR_PLAN_ANCHOR -> "anchor";
+            case LiveViewInstance.REPAIR_PLAN_RANGE | LiveViewInstance.REPAIR_PLAN_ANCHOR -> "range+anchor";
+            case LiveViewInstance.REPAIR_PLAN_ROWS | LiveViewInstance.REPAIR_PLAN_ANCHOR -> "rows+anchor";
+            case LiveViewInstance.REPAIR_PLAN_RANGE | LiveViewInstance.REPAIR_PLAN_ROWS
+                    | LiveViewInstance.REPAIR_PLAN_ANCHOR -> "range+rows+anchor";
             default -> null;
         };
     }
@@ -168,6 +198,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_CHECKPOINT_REPAIR_IN_PROGRESS = 41;
         private static final int COLUMN_CHECKPOINT_REPAIR_LOW_TIMESTAMP = 43;
         private static final int COLUMN_CHECKPOINT_REPAIR_NEW_BYTES = 46;
+        private static final int COLUMN_CHECKPOINT_REPAIR_PLAN = 49;
         private static final int COLUMN_CHECKPOINT_REPAIR_RESUMES = 47;
         private static final int COLUMN_CHECKPOINT_REPAIR_ROOTS_VERSIONED = 45;
         private static final int COLUMN_CHECKPOINT_TIMELINE_ENTRIES = 26;
@@ -539,6 +570,10 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_IN_MEMORY_INTERVAL_UNIT -> getIntervalUnit(definition.getInMemoryIntervalUnit());
                         case COLUMN_VIEW_SQL -> definition.getViewSql();
                         case COLUMN_INVALIDATION_REASON -> instance.getInvalidationReason();
+                        // The dependency plans a localized repair would union, read off
+                        // the compiled SELECT. NULL until the view compiles one.
+                        case COLUMN_CHECKPOINT_REPAIR_PLAN ->
+                                getRepairPlan(instance.getCheckpointRepairDependencyPlans());
                         default -> null;
                     };
                 }
@@ -625,6 +660,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_repair_new_bytes", ColumnType.LONG));          // 46
             metadata.add(new TableColumnMetadata("checkpoint_repair_resumes", ColumnType.LONG));            // 47
             metadata.add(new TableColumnMetadata("checkpoint_repair_failures", ColumnType.LONG));           // 48
+            metadata.add(new TableColumnMetadata("checkpoint_repair_plan", ColumnType.STRING));             // 49
             METADATA = metadata;
         }
     }

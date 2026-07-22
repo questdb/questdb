@@ -81,6 +81,15 @@ public class LiveViewInstance implements QuietCloseable {
     public static final int CHECKPOINT_TIMELINE_OLDEST_RETAINED_GENERATION = 6;
     public static final int CHECKPOINT_TIMELINE_PHYSICAL_BYTES = 4;
     public static final int CHECKPOINT_TIMELINE_ROW_POSITION_DELTA_BYTES = 5;
+    // Bit flags of checkpointRepairDependencyPlans, not indexes into the repair
+    // tuple above. A view whose mask is REPAIR_PLAN_NONE takes no localized repair
+    // at all; REPAIR_PLAN_UNKNOWN says the view has not compiled its SELECT yet,
+    // which is a different statement from "no plan covers it".
+    public static final int REPAIR_PLAN_ANCHOR = 4;
+    public static final int REPAIR_PLAN_NONE = 0;
+    public static final int REPAIR_PLAN_RANGE = 1;
+    public static final int REPAIR_PLAN_ROWS = 2;
+    public static final int REPAIR_PLAN_UNKNOWN = -1;
     private static final int HEAD_CHECKPOINT_BASE_SEQ_TXN = 3;
     private static final int HEAD_CHECKPOINT_LV_SEQ_TXN = 0;
     private static final int HEAD_CHECKPOINT_MAX_TS = 1;
@@ -221,6 +230,17 @@ public class LiveViewInstance implements QuietCloseable {
     // Indexes: CHECKPOINT_REPAIR_IN_PROGRESS / _CORRECTION_TS / _LOW_TS /
     // _HIGH_TS.
     private volatile long[] checkpointRepair = EMPTY_CHECKPOINT_REPAIR;
+    // Dependency plans the compiler granted this view's window functions, as a
+    // REPAIR_PLAN_* bit mask. REPAIR_PLAN_NONE when the RANGE, ROWS and anchor plans
+    // do not between them cover every function - such a view rebuilds its whole
+    // history for every out-of-order row below the head, which is the latency cliff
+    // live_views().checkpoint_repair_plan exists to make legible. The mask is a
+    // property of the compiled SELECT, not of any one repair: it names the bounds a
+    // localized repair would union, and the refresh-time gates (a ROWS plan over a
+    // dedup base, a view with no snapshot capability) can still deny it. The refresh
+    // worker settles it when it compiles the factory; volatile for the catalogue
+    // thread. REPAIR_PLAN_UNKNOWN until then.
+    private volatile int checkpointRepairDependencyPlans = REPAIR_PLAN_UNKNOWN;
     // Lifetime counts over the localized repair path: repairs that failed to
     // publish a splice (each one retires the timeline and rebuilds), repairs that
     // resumed a suspended session in a later refresh turn, roots re-versioned by
@@ -934,6 +954,16 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long[] getCheckpointRepair() {
         return checkpointRepair;
+    }
+
+    /**
+     * @return the {@code REPAIR_PLAN_*} bit mask of the dependency plans covering this
+     * view's window functions, {@link #REPAIR_PLAN_NONE} when they cover none of it, or
+     * {@link #REPAIR_PLAN_UNKNOWN} before the view compiles its SELECT. See
+     * {@link #checkpointRepairDependencyPlans}
+     */
+    public int getCheckpointRepairDependencyPlans() {
+        return checkpointRepairDependencyPlans;
     }
 
     public long getCheckpointRepairFailures() {
@@ -1737,6 +1767,16 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setApplyLagDeferUntilUs(long applyLagDeferUntilUs) {
         this.applyLagDeferUntilUs = applyLagDeferUntilUs;
+    }
+
+    /**
+     * Records which dependency plans cover the compiled SELECT's window functions.
+     * The refresh worker calls this every time it compiles the factory, so a view
+     * whose cached factory was freed and rebuilt reports the rebuilt one's plans. See
+     * {@link #checkpointRepairDependencyPlans}
+     */
+    public void setCheckpointRepairDependencyPlans(int plans) {
+        this.checkpointRepairDependencyPlans = plans;
     }
 
     /**
