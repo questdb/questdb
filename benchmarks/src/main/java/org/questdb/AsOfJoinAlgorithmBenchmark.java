@@ -103,7 +103,7 @@ public class AsOfJoinAlgorithmBenchmark {
     private static SqlExecutionContext ctx;
     private static WorkerPool pool;
 
-    @Param({"dense_ts", "unique_ts", "dense_sym", "illiquid_sym"})
+    @Param({"dense_ts", "unique_ts", "dense_sym", "illiquid_sym", "sparse_tail"})
     public String dist;
 
     @Param({"default", "adaptive", "fast", "dense", "linear", "memoized"})
@@ -170,6 +170,12 @@ public class AsOfJoinAlgorithmBenchmark {
         engine.execute("DROP TABLE IF EXISTS ord", ctx);
         engine.execute("CREATE TABLE ord (sym SYMBOL, ts TIMESTAMP, oid LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
         engine.execute("INSERT INTO ord SELECT '500', ((x-1)*" + (RIGHT_ROWS / 1000) + ")::timestamp, x-1 FROM long_sequence(1000)", ctx);
+        // sparse_tail: huge right (RIGHT_ROWS, single key, unique ts), tiny left window at the tail.
+        // Each left row has a cheap targeted predecessor (Fast wins); Dense must reach the window first.
+        createLong("r_tail");
+        engine.execute("INSERT INTO r_tail SELECT 0, (x-1)::timestamp, x-1 FROM long_sequence(" + RIGHT_ROWS + ")", ctx);
+        createLong("l_tail");
+        engine.execute("INSERT INTO l_tail SELECT 0, (" + RIGHT_ROWS + " - 200 + x)::timestamp, x-1 FROM long_sequence(200)", ctx);
         engine.releaseAllWriters();
         System.out.println("asof-bench data built (rows/table=" + ROWS + ", right=" + RIGHT_ROWS + ", keys=" + KEYS
                 + ", dense=" + DENSE + ") in " + (System.nanoTime() - t0) / 1_000_000 + "ms");
@@ -248,6 +254,10 @@ public class AsOfJoinAlgorithmBenchmark {
                 return "SELECT " + hint + "sum(r.payload) FROM l_dsym l ASOF JOIN r_dsym r ON (sym)";
             case "illiquid_sym":
                 return "SELECT " + hint + "sum(r.v) FROM ord l ASOF JOIN md r ON (sym)";
+            case "sparse_tail":
+                // small left window at the TAIL of a huge right: the classic Fast-favourable shape
+                // (Dense must walk the right frame forward to reach the window; Fast jumps to it).
+                return "SELECT " + hint + "sum(r.payload) FROM l_tail l ASOF JOIN r_tail r ON (key)";
             default:
                 throw new IllegalArgumentException("unknown dist: " + dist);
         }
