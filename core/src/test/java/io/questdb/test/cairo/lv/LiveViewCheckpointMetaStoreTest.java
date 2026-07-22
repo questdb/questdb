@@ -31,9 +31,9 @@ import io.questdb.cairo.lv.LiveViewCheckpointMetaSegmentWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDelta;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaWriter;
-import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCheckpointTimeline;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
@@ -420,7 +420,6 @@ public class LiveViewCheckpointMetaStoreTest extends AbstractCairoTest {
     ) {
         final long missingSegmentId = 999_999;
         try (LiveViewCheckpointMetaSegmentWriter writer = new LiveViewCheckpointMetaSegmentWriter(configuration);
-             LiveViewCheckpointSegmentDirectory segmentDirectory = new LiveViewCheckpointSegmentDirectory(configuration);
              Path dir = new Path()) {
             writer.of(checkpointsDir(dir), 0);
 
@@ -443,7 +442,9 @@ public class LiveViewCheckpointMetaStoreTest extends AbstractCairoTest {
             page.putInt(LiveViewCheckpointLayout.PAGE_HEADER_SIZE + Integer.BYTES);
             writer.endPage(rowPositionRoot);
 
-            segmentDirectory.writeTo(writer, segmentDirectoryRoot);
+            page = writer.beginPage(LiveViewCheckpointSegmentDirectory.PAGE_KIND_LEAF);
+            page.putInt(0);
+            writer.endPage(segmentDirectoryRoot);
             writer.commit();
         }
     }

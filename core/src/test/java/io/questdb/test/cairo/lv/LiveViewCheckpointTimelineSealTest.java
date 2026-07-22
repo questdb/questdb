@@ -36,7 +36,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
-import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
@@ -173,9 +173,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     Assert.assertEquals(0, entry.checkpointId);
                     Assert.assertEquals(ts(timestamp(20)), entry.maxTimestamp);
 
-                    final LiveViewCheckpointSegmentDirectory directory =
-                            new LiveViewCheckpointSegmentDirectory(configuration);
-                    try {
+                    try (LiveViewCheckpointSegmentDirectoryReader directory =
+                                 new LiveViewCheckpointSegmentDirectoryReader(configuration)) {
                         try (Path checkpointsDir = checkpointsDir(instance)) {
                             directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
                         }
@@ -183,11 +182,9 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                         Assert.assertEquals(
                                 "the retry must not reuse the final-name orphan's segment id",
                                 expectedRetryDataSegmentId,
-                                directory.getSegmentId(0)
+                                directory.lastSegmentId()
                         );
-                        Assert.assertEquals(1, directory.getReferenceCountAt(0));
-                    } finally {
-                        directory.close();
+                        Assert.assertEquals(1, directory.getReferenceCount(expectedRetryDataSegmentId));
                     }
                 }
                 assertNoRefreshFaults("lv");
@@ -283,20 +280,15 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     functions.of(checkpointsDir, functionDirectoryRef);
                     Assert.assertEquals(1, functions.size());
 
-                    final LiveViewCheckpointSegmentDirectory directory =
-                            new LiveViewCheckpointSegmentDirectory(configuration);
-                    try {
+                    try (LiveViewCheckpointSegmentDirectoryReader directory =
+                                 new LiveViewCheckpointSegmentDirectoryReader(configuration)) {
                         directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
                         Assert.assertEquals(3, directory.size());
-                        for (int i = 0; i < directory.size(); i++) {
-                            Assert.assertEquals(1, directory.getReferenceCountAt(i));
-                        }
+                        directory.iterateAll(entry -> Assert.assertEquals(1, entry.referenceCount));
                         // The anchor reaches no data segment, so the newest root's
                         // only one is the function state the same seal wrote.
                         Assert.assertEquals(1, root.getSegmentIdCount());
                         Assert.assertTrue(directory.getFileLength(root.getSegmentId(0)) > 0);
-                    } finally {
-                        directory.close();
                     }
                 }
                 assertNoRefreshFaults("lv");
@@ -328,8 +320,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                         LiveViewCheckpointGenerationPin pin = store.pin();
                         LiveViewCheckpointTimelineReader timeline = openTimelineReader(instance);
                         LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
-                        LiveViewCheckpointSegmentDirectory directory =
-                                new LiveViewCheckpointSegmentDirectory(configuration);
+                        LiveViewCheckpointSegmentDirectoryReader directory =
+                                new LiveViewCheckpointSegmentDirectoryReader(configuration);
                         Path checkpointsDir = checkpointsDir(instance)
                 ) {
                     Assert.assertEquals(DENSE_COMMITS, timeline.size(pin.getTimelineRootRef()));
@@ -346,15 +338,15 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             root.getSegmentIdCount() > 1
                     );
                     directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
-                    int sharedSegments = 0;
-                    for (int i = 0; i < directory.size(); i++) {
-                        if (directory.getReferenceCountAt(i) > 1) {
-                            sharedSegments++;
+                    final int[] sharedSegments = {0};
+                    directory.iterateAll(entry -> {
+                        if (entry.referenceCount > 1) {
+                            sharedSegments[0]++;
                         }
-                    }
+                    });
                     Assert.assertTrue(
                             "no data segment is referenced by more than one root",
-                            sharedSegments > 0
+                            sharedSegments[0] > 0
                     );
                 }
 
@@ -593,8 +585,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                         LiveViewCheckpointGenerationPin pin = store.pin();
                         LiveViewCheckpointTimelineReader timeline = openTimelineReader(instance);
                         LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
-                        LiveViewCheckpointSegmentDirectory directory =
-                                new LiveViewCheckpointSegmentDirectory(configuration);
+                        LiveViewCheckpointSegmentDirectoryReader directory =
+                                new LiveViewCheckpointSegmentDirectoryReader(configuration);
                         Path checkpointsDir = checkpointsDir(instance)
                 ) {
                     final LiveViewCheckpointTimelineEntry oldest = new LiveViewCheckpointTimelineEntry();

@@ -35,6 +35,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointRepairState;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
@@ -1122,8 +1123,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 try (
                         LiveViewCheckpointMetaStore store = openStore(instance);
                         LiveViewCheckpointGenerationPin pin = store.pin();
-                        LiveViewCheckpointSegmentDirectory directory =
-                                new LiveViewCheckpointSegmentDirectory(configuration);
+                        LiveViewCheckpointSegmentDirectoryReader directory =
+                                new LiveViewCheckpointSegmentDirectoryReader(configuration);
                         Path checkpointsDir = checkpointsDir(instance)
                 ) {
                     directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());

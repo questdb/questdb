@@ -69,7 +69,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     private final LiveViewCheckpointPartitionMapReader partitionReader;
     private final LiveViewCheckpointAvgDoubleRangeStateReader ringStateReader;
     private final LiveViewCheckpointRoot root;
-    private final LiveViewCheckpointSegmentDirectory segmentDirectory;
+    private final LiveViewCheckpointSegmentDirectoryReader segmentDirectory;
+    private final LiveViewCheckpointSegmentDirectoryEntry segmentDirectoryEntry = new LiveViewCheckpointSegmentDirectoryEntry();
     private final LiveViewStatePageReader statePageReader = new LiveViewStatePageReader();
     private final LiveViewCheckpointTimelineReader timelineReader;
     private int dataReaderClock;
@@ -86,7 +87,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         partitionReader = new LiveViewCheckpointPartitionMapReader(configuration);
         ringStateReader = new LiveViewCheckpointAvgDoubleRangeStateReader(configuration);
         root = new LiveViewCheckpointRoot(configuration);
-        segmentDirectory = new LiveViewCheckpointSegmentDirectory(configuration);
+        segmentDirectory = new LiveViewCheckpointSegmentDirectoryReader(configuration);
         timelineReader = new LiveViewCheckpointTimelineReader(configuration);
         Arrays.fill(dataSegmentIds, -1);
     }
@@ -276,20 +277,6 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         }
     }
 
-    private int findDirectoryIndex(long segmentId) {
-        int lo = 0;
-        int hi = segmentDirectory.size();
-        while (lo < hi) {
-            final int mid = (lo + hi) >>> 1;
-            if (segmentDirectory.getSegmentId(mid) < segmentId) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        return lo < segmentDirectory.size() && segmentDirectory.getSegmentId(lo) == segmentId ? lo : -1;
-    }
-
     private boolean functionCatalogueContains(long segmentId) {
         int lo = 0;
         int hi = functionRoot.getSegmentUseCountSize();
@@ -317,10 +304,9 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     }
 
     private LiveViewCheckpointDataSegmentReader openStatePage(@NotNull LiveViewCheckpointStatePageRef ref) {
-        final int directoryIndex = validateStatePageSegment(ref);
         final LiveViewCheckpointDataSegmentReader reader = readerFor(
                 ref.getSegmentId(),
-                segmentDirectory.getFileLengthAt(directoryIndex)
+                validateStatePageSegment(ref)
         );
         if (ref.getStoredLength() != ref.getDecodedLength() || ref.getRowCount() != 1) {
             throw invalid("raw state page length or row count invalid");
@@ -542,7 +528,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         }
         for (int i = 0, n = functionRoot.getSegmentUseCountSize(); i < n; i++) {
             final long segmentId = functionRoot.getSegmentId(i);
-            if (!rootCatalogueContains(segmentId) || findDirectoryIndex(segmentId) < 0) {
+            if (!rootCatalogueContains(segmentId) || !segmentDirectory.find(segmentId, segmentDirectoryEntry)) {
                 throw invalid("function data segment is absent from its parent root, segmentId=").put(segmentId);
             }
         }
@@ -592,19 +578,20 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
      * root's own catalogue, by the function root's, and by the published segment
      * directory with a live reference count.
      *
-     * @return the segment's index in the published directory
+     * @return the segment's published file length, the bound every page read of it
+     * is checked against
      */
-    private int validateStatePageSegment(@NotNull LiveViewCheckpointStatePageRef ref) {
+    private long validateStatePageSegment(@NotNull LiveViewCheckpointStatePageRef ref) {
         if (!rootCatalogueContains(ref.getSegmentId()) || !functionCatalogueContains(ref.getSegmentId())) {
             throw invalid("state page segment is absent from its root catalogue, segmentId=")
                     .put(ref.getSegmentId());
         }
-        final int directoryIndex = findDirectoryIndex(ref.getSegmentId());
-        if (directoryIndex < 0 || segmentDirectory.getReferenceCountAt(directoryIndex) <= 0) {
+        if (!segmentDirectory.find(ref.getSegmentId(), segmentDirectoryEntry)
+                || segmentDirectoryEntry.referenceCount <= 0) {
             throw invalid("state page segment is absent from the published directory, segmentId=")
                     .put(ref.getSegmentId());
         }
-        return directoryIndex;
+        return segmentDirectoryEntry.fileLength;
     }
 
     private void validateFunctions(@NotNull ObjList<WindowFunction> functions) {

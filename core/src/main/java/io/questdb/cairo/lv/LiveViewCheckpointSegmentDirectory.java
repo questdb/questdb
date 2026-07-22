@@ -24,408 +24,106 @@
 
 package io.questdb.cairo.lv;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.std.LongHashSet;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Transient;
-import io.questdb.std.str.Path;
-import org.jetbrains.annotations.NotNull;
-
-import java.io.Closeable;
-
 /**
- * Generation-transactional segment catalogue stored as one checksummed metadata
- * page. Reference counts are per logical root, not per page: each root's segment
- * id list is deduplicated before a change is applied. A zero count records the
- * generation at which the segment became obsolete for later pin-safe purge.
+ * Node framing for the persistent copy-on-write B+ tree that catalogues data
+ * segments and their generation-transactional reference counts.
+ * <p>
+ * The directory is ordered by {@code segmentId} and stored as immutable,
+ * individually-checksummed metadata pages (kind {@link #PAGE_KIND_LEAF} or
+ * {@link #PAGE_KIND_INTERNAL}), exactly like the timeline tree beside it. A
+ * publication copies only the search paths its mutations touch and reuses every
+ * untouched subtree by page reference, so the metadata a seal writes follows the
+ * segments it added or re-referenced rather than how many segments are live.
+ *
+ * <h2>Leaf page payload</h2>
+ * <pre>
+ *   count            INT
+ *   count x entry:
+ *     segmentId           LONG   (+0)
+ *     fileLength          LONG   (+8)
+ *     referenceCount      LONG   (+16)
+ *     retireGeneration    LONG   (+24)
+ * </pre>
+ * Entry stride is {@link #LEAF_ENTRY_STRIDE} (32 bytes). Entries are sorted
+ * ascending by {@code segmentId}, which is unique because segment ids are
+ * monotonic within a history epoch and never reused.
+ * <p>
+ * Reference counts are per logical root, not per page: a root that names one
+ * segment from several of its pages counts once. A zero count carries the
+ * generation at which the segment became obsolete, so a later purge can prove no
+ * reader can still reach it.
+ *
+ * <h2>Internal page payload</h2>
+ * <pre>
+ *   count            INT   (number of children)
+ *   count x child:
+ *     minSegmentId        LONG   (+0)   min key of the child subtree
+ *     childRef            PAGE_REF, 20 bytes (+8)
+ * </pre>
+ * Child stride is {@link #INTERNAL_CHILD_STRIDE} (28 bytes). Storing each
+ * child's minimum key rather than {@code n-1} separators keeps descent and node
+ * construction simple: the child that may hold key {@code K} is the rightmost
+ * child whose minimum key is {@code <=} {@code K}.
  */
-public class LiveViewCheckpointSegmentDirectory implements Closeable {
+public final class LiveViewCheckpointSegmentDirectory {
 
-    public static final int PAGE_KIND = 0x15;
+    /**
+     * Byte offset of {@code fileLength} within a leaf entry.
+     */
+    public static final int ENTRY_FILE_LENGTH_OFFSET = 8;
+    /**
+     * Byte offset of {@code referenceCount} within a leaf entry.
+     */
+    public static final int ENTRY_REFERENCE_COUNT_OFFSET = 16;
+    /**
+     * Byte offset of {@code retireGeneration} within a leaf entry.
+     */
+    public static final int ENTRY_RETIRE_GENERATION_OFFSET = 24;
+    /**
+     * Byte offset of {@code segmentId} within a leaf entry.
+     */
+    public static final int ENTRY_SEGMENT_ID_OFFSET = 0;
+    /**
+     * Byte offset of a child's {@code minSegmentId} within an internal child
+     * record.
+     */
+    public static final int INTERNAL_CHILD_MIN_SEGMENT_ID_OFFSET = 0;
+    /**
+     * Byte offset of a child's {@code childRef} within an internal child record.
+     */
+    public static final int INTERNAL_CHILD_REF_OFFSET = 8;
+    /**
+     * On-page size of one internal child record: one key LONG plus a
+     * {@link LiveViewCheckpointPageRef}.
+     */
+    public static final int INTERNAL_CHILD_STRIDE = INTERNAL_CHILD_REF_OFFSET + LiveViewCheckpointPageRef.BYTES; // 28
+    /**
+     * On-page size of one leaf entry: four LONGs.
+     */
+    public static final int LEAF_ENTRY_STRIDE = ENTRY_RETIRE_GENERATION_OFFSET + Long.BYTES; // 32
+    /**
+     * Byte offset of a node's {@code count} field at the start of its payload
+     * (a leaf's entry count or an internal node's child count).
+     */
+    public static final int NODE_COUNT_OFFSET = 0;
+    /**
+     * Bytes ahead of the first entry/child record in a node payload.
+     */
+    public static final int NODE_HEADER_SIZE = Integer.BYTES; // 4
+    /**
+     * Page kind of an internal (branch) node in the segment directory tree.
+     */
+    public static final int PAGE_KIND_INTERNAL = 0x1c;
+    /**
+     * Page kind of a leaf node holding segment catalogue entries.
+     */
+    public static final int PAGE_KIND_LEAF = 0x15;
+    /**
+     * {@code retireGeneration} of a segment that at least one current root still
+     * references.
+     */
     public static final long RETIRE_GENERATION_NONE = -1;
-    private static final int ENTRY_FILE_LENGTH_OFFSET = Long.BYTES;
-    private static final int ENTRY_REFERENCE_COUNT_OFFSET = 2 * Long.BYTES;
-    private static final int ENTRY_RETIRE_GENERATION_OFFSET = 3 * Long.BYTES;
-    private static final int ENTRY_SEGMENT_ID_OFFSET = 0;
-    private static final int ENTRY_STRIDE = 4 * Long.BYTES;
-    private static final int FORMAT_VERSION = 1;
-    private static final int HEADER_SIZE = 2 * Integer.BYTES;
-    private static final int LONGS_PER_ENTRY = 4;
-    private static final int COUNT_OFFSET = Integer.BYTES;
-    private static final int VERSION_OFFSET = 0;
-    private final LongHashSet addedSegmentIds = new LongHashSet();
-    private final LongList entries = new LongList();
-    private final LiveViewCheckpointMetaSegmentReader reader;
-    private final LongHashSet removedSegmentIds = new LongHashSet();
 
-    public LiveViewCheckpointSegmentDirectory(@NotNull CairoConfiguration configuration) {
-        reader = new LiveViewCheckpointMetaSegmentReader(configuration);
-    }
-
-    /**
-     * Registers a newly published segment with the number of logical roots that
-     * reference it in the candidate generation.
-     */
-    public void addSegment(long segmentId, long fileLength, long referenceCount) {
-        if (segmentId < 0 || fileLength <= 0 || referenceCount <= 0) {
-            throw CairoException.critical(0)
-                    .put("invalid live view checkpoint segment directory entry")
-                    .put(" [segmentId=").put(segmentId)
-                    .put(", fileLength=").put(fileLength)
-                    .put(", referenceCount=").put(referenceCount)
-                    .put(']');
-        }
-        int index = findIndex(segmentId);
-        if (index >= 0) {
-            throw CairoException.critical(0)
-                    .put("duplicate live view checkpoint data segment, segmentId=")
-                    .put(segmentId);
-        }
-        index = -index - 1;
-        final int base = index * LONGS_PER_ENTRY;
-        entries.add(base, segmentId);
-        entries.add(base + 1, fileLength);
-        entries.add(base + 2, referenceCount);
-        entries.add(base + 3, RETIRE_GENERATION_NONE);
-    }
-
-    /**
-     * Applies one generation's root replacement. Repeated references to pages in
-     * the same segment count once for each root side.
-     */
-    public void applyRootReferenceChanges(
-            @NotNull LongList removedRootSegmentIds,
-            @NotNull LongList addedRootSegmentIds,
-            long generation
-    ) {
-        if (generation < 0) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint retire generation must be non-negative, was ")
-                    .put(generation);
-        }
-        removedSegmentIds.clear();
-        for (int i = 0, n = removedRootSegmentIds.size(); i < n; i++) {
-            final long segmentId = removedRootSegmentIds.getQuick(i);
-            validateReferenceSegmentId(segmentId);
-            removedSegmentIds.add(segmentId);
-        }
-        addedSegmentIds.clear();
-        for (int i = 0, n = addedRootSegmentIds.size(); i < n; i++) {
-            final long segmentId = addedRootSegmentIds.getQuick(i);
-            validateReferenceSegmentId(segmentId);
-            addedSegmentIds.add(segmentId);
-        }
-
-        // Validate the complete transaction before mutating a count. A failed
-        // candidate build must leave the reusable directory image untouched.
-        for (int i = 0, n = removedSegmentIds.size(); i < n; i++) {
-            final long segmentId = removedSegmentIds.get(i);
-            final int index = findIndex(segmentId);
-            if (index < 0) {
-                throw CairoException.critical(0)
-                        .put("cannot remove reference to unknown live view checkpoint data segment, segmentId=")
-                        .put(segmentId);
-            }
-            if (entries.getQuick(index * LONGS_PER_ENTRY + 2) <= 0) {
-                throw CairoException.critical(0)
-                        .put("live view checkpoint data segment reference count underflow, segmentId=")
-                        .put(segmentId);
-            }
-        }
-        for (int i = 0, n = addedSegmentIds.size(); i < n; i++) {
-            final long segmentId = addedSegmentIds.get(i);
-            final int index = findIndex(segmentId);
-            if (index < 0) {
-                throw CairoException.critical(0)
-                        .put("cannot add reference to unknown live view checkpoint data segment, segmentId=")
-                        .put(segmentId);
-            }
-            long count = entries.getQuick(index * LONGS_PER_ENTRY + 2);
-            if (removedSegmentIds.contains(segmentId)) {
-                count--;
-            }
-            if (count == Long.MAX_VALUE) {
-                throw CairoException.critical(0)
-                        .put("live view checkpoint data segment reference count overflow, segmentId=")
-                        .put(segmentId);
-            }
-        }
-
-        for (int i = 0, n = removedSegmentIds.size(); i < n; i++) {
-            decrementReferenceCount(removedSegmentIds.get(i), generation);
-        }
-        for (int i = 0, n = addedSegmentIds.size(); i < n; i++) {
-            incrementReferenceCount(addedSegmentIds.get(i));
-        }
-    }
-
-    public void clear() {
-        addedSegmentIds.clear();
-        entries.clear();
-        removedSegmentIds.clear();
-    }
-
-    @Override
-    public void close() {
-        Misc.free(reader);
-        addedSegmentIds.clear();
-        entries.clear();
-        removedSegmentIds.clear();
-    }
-
-    public long getFileLength(long segmentId) {
-        return entryValue(segmentId, 1, "file length");
-    }
-
-    public long getFileLengthAt(int index) {
-        return entryValueAt(index, 1, "file length");
-    }
-
-    public long getObsoleteBytes() {
-        long bytes = 0;
-        for (int i = 0, n = size(); i < n; i++) {
-            final int base = i * LONGS_PER_ENTRY;
-            if (entries.getQuick(base + 2) == 0) {
-                bytes = checkedAdd(bytes, entries.getQuick(base + 1), "obsolete byte count");
-            }
-        }
-        return bytes;
-    }
-
-    public long getReferencedBytes() {
-        long bytes = 0;
-        for (int i = 0, n = size(); i < n; i++) {
-            final int base = i * LONGS_PER_ENTRY;
-            if (entries.getQuick(base + 2) > 0) {
-                bytes = checkedAdd(bytes, entries.getQuick(base + 1), "referenced byte count");
-            }
-        }
-        return bytes;
-    }
-
-    public long getReferenceCount(long segmentId) {
-        return entryValue(segmentId, 2, "reference count");
-    }
-
-    public long getReferenceCountAt(int index) {
-        return entryValueAt(index, 2, "reference count");
-    }
-
-    public long getRetireGeneration(long segmentId) {
-        return entryValue(segmentId, 3, "retire generation");
-    }
-
-    public long getRetireGenerationAt(int index) {
-        return entryValueAt(index, 3, "retire generation");
-    }
-
-    public long getSegmentId(int index) {
-        if (index < 0 || index >= size()) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint segment directory index out of bounds [index=")
-                    .put(index).put(", size=").put(size()).put(']');
-        }
-        return entries.getQuick(index * LONGS_PER_ENTRY);
-    }
-
-    /**
-     * Loads and structurally validates a checksummed directory root without
-     * opening or scanning any referenced data file.
-     */
-    public void of(
-            @Transient @NotNull Path checkpointsDir,
-            @NotNull LiveViewCheckpointPageRef rootRef
-    ) {
-        clear();
-        if (rootRef.isNull()) {
-            return;
-        }
-        reader.of(checkpointsDir, rootRef.getSegmentId());
-        reader.openPage(rootRef);
-        if (reader.getPageKind() != PAGE_KIND) {
-            throw invalid("segment directory page kind unknown")
-                    .put(", kind=").put(reader.getPageKind());
-        }
-        final int payloadLength = reader.getPagePayloadLength();
-        if (payloadLength < HEADER_SIZE) {
-            throw invalid("segment directory payload too small")
-                    .put(", payloadLength=").put(payloadLength);
-        }
-        final int version = reader.getInt(VERSION_OFFSET);
-        if (version != FORMAT_VERSION) {
-            throw invalid("segment directory format version mismatch")
-                    .put(" [expected=").put(FORMAT_VERSION)
-                    .put(", actual=").put(version)
-                    .put(']');
-        }
-        final int count = reader.getInt(COUNT_OFFSET);
-        if (count < 0) {
-            throw invalid("segment directory count negative").put(", count=").put(count);
-        }
-        final long expectedLength = (long) HEADER_SIZE + (long) count * ENTRY_STRIDE;
-        if (expectedLength != payloadLength) {
-            throw invalid("segment directory payload length mismatch")
-                    .put(" [count=").put(count)
-                    .put(", expected=").put(expectedLength)
-                    .put(", actual=").put(payloadLength)
-                    .put(']');
-        }
-        long previousSegmentId = -1;
-        long offset = HEADER_SIZE;
-        for (int i = 0; i < count; i++, offset += ENTRY_STRIDE) {
-            final long segmentId = reader.getLong(offset + ENTRY_SEGMENT_ID_OFFSET);
-            final long fileLength = reader.getLong(offset + ENTRY_FILE_LENGTH_OFFSET);
-            final long referenceCount = reader.getLong(offset + ENTRY_REFERENCE_COUNT_OFFSET);
-            final long retireGeneration = reader.getLong(offset + ENTRY_RETIRE_GENERATION_OFFSET);
-            if (segmentId < 0 || segmentId <= previousSegmentId) {
-                throw invalid("segment directory ids not strictly increasing")
-                        .put(" [previous=").put(previousSegmentId)
-                        .put(", current=").put(segmentId)
-                        .put(']');
-            }
-            if (fileLength <= 0 || referenceCount < 0) {
-                throw invalid("segment directory entry value invalid")
-                        .put(" [segmentId=").put(segmentId)
-                        .put(", fileLength=").put(fileLength)
-                        .put(", referenceCount=").put(referenceCount)
-                        .put(']');
-            }
-            if ((referenceCount == 0 && retireGeneration < 0)
-                    || (referenceCount > 0 && retireGeneration != RETIRE_GENERATION_NONE)) {
-                throw invalid("segment directory retirement state invalid")
-                        .put(" [segmentId=").put(segmentId)
-                        .put(", referenceCount=").put(referenceCount)
-                        .put(", retireGeneration=").put(retireGeneration)
-                        .put(']');
-            }
-            entries.add(segmentId, fileLength, referenceCount, retireGeneration);
-            previousSegmentId = segmentId;
-        }
-    }
-
-    public int size() {
-        return entries.size() / LONGS_PER_ENTRY;
-    }
-
-    /**
-     * Serializes the complete candidate-generation directory into an immutable,
-     * checksummed metadata page.
-     */
-    public void writeTo(
-            @NotNull LiveViewCheckpointMetaSegmentWriter writer,
-            @NotNull LiveViewCheckpointPageRef out
-    ) {
-        final MemoryA mem = writer.beginPage(PAGE_KIND);
-        mem.putInt(FORMAT_VERSION);
-        mem.putInt(size());
-        for (int i = 0, n = entries.size(); i < n; i++) {
-            mem.putLong(entries.getQuick(i));
-        }
-        writer.endPage(out);
-    }
-
-    private static void validateReferenceSegmentId(long segmentId) {
-        if (segmentId < 0) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint data segment reference id must be non-negative, was ")
-                    .put(segmentId);
-        }
-    }
-
-    private static long checkedAdd(long a, long b, CharSequence what) {
-        if (b > Long.MAX_VALUE - a) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint segment directory ")
-                    .put(what).put(" overflow");
-        }
-        return a + b;
-    }
-
-    private void decrementReferenceCount(long segmentId, long generation) {
-        final int index = findIndex(segmentId);
-        if (index < 0) {
-            throw CairoException.critical(0)
-                    .put("cannot remove reference to unknown live view checkpoint data segment, segmentId=")
-                    .put(segmentId);
-        }
-        final int countIndex = index * LONGS_PER_ENTRY + 2;
-        final long count = entries.getQuick(countIndex);
-        if (count <= 0) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint data segment reference count underflow, segmentId=")
-                    .put(segmentId);
-        }
-        entries.setQuick(countIndex, count - 1);
-        if (count == 1) {
-            entries.setQuick(countIndex + 1, generation);
-        }
-    }
-
-    private long entryValue(long segmentId, int field, CharSequence fieldName) {
-        final int index = findIndex(segmentId);
-        if (index < 0) {
-            throw CairoException.critical(0)
-                    .put("unknown live view checkpoint data segment ")
-                    .put(fieldName).put(", segmentId=").put(segmentId);
-        }
-        return entries.getQuick(index * LONGS_PER_ENTRY + field);
-    }
-
-    private long entryValueAt(int index, int field, CharSequence fieldName) {
-        if (index < 0 || index >= size()) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint segment directory ").put(fieldName)
-                    .put(" index out of bounds [index=").put(index)
-                    .put(", size=").put(size()).put(']');
-        }
-        return entries.getQuick(index * LONGS_PER_ENTRY + field);
-    }
-
-    /**
-     * Returns the entry index, or {@code -insertionPoint - 1}.
-     */
-    private int findIndex(long segmentId) {
-        int lo = 0;
-        int hi = size() - 1;
-        while (lo <= hi) {
-            final int mid = (lo + hi) >>> 1;
-            final long value = entries.getQuick(mid * LONGS_PER_ENTRY);
-            if (value < segmentId) {
-                lo = mid + 1;
-            } else if (value > segmentId) {
-                hi = mid - 1;
-            } else {
-                return mid;
-            }
-        }
-        return -lo - 1;
-    }
-
-    private void incrementReferenceCount(long segmentId) {
-        final int index = findIndex(segmentId);
-        if (index < 0) {
-            throw CairoException.critical(0)
-                    .put("cannot add reference to unknown live view checkpoint data segment, segmentId=")
-                    .put(segmentId);
-        }
-        final int countIndex = index * LONGS_PER_ENTRY + 2;
-        final long count = entries.getQuick(countIndex);
-        if (count == Long.MAX_VALUE) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint data segment reference count overflow, segmentId=")
-                    .put(segmentId);
-        }
-        entries.setQuick(countIndex, count + 1);
-        if (count == 0) {
-            entries.setQuick(countIndex + 1, RETIRE_GENERATION_NONE);
-        }
-    }
-
-    private CairoException invalid(CharSequence reason) {
-        return CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                .put("live view checkpoint ").put(reason);
+    private LiveViewCheckpointSegmentDirectory() {
     }
 }

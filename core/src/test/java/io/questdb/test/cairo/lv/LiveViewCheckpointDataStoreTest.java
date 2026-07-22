@@ -33,7 +33,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaSegmentWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
-import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -48,6 +48,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.io.Closeable;
 
 public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
 
@@ -70,11 +72,11 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
     public void testAbandonedCollidingAndCorruptRepackCleanup() throws Exception {
         assertMemoryLeak(() -> {
             final DataSegment source = writeDataSegment(1, 11, 22);
-            try (LiveViewCheckpointSegmentDirectory directory = new LiveViewCheckpointSegmentDirectory(configuration);
+            try (Catalogue directory = new Catalogue();
                  LiveViewCheckpointMetaStore metaStore = openMetaStore();
                  LiveViewCheckpointDataStore dataStore = openDataStore(metaStore)) {
                 directory.addSegment(1, source.fileLength, 1);
-                publish(metaStore, directory, 1, 101);
+                directory.publish(metaStore, 1, 101);
 
                 final ObjList<LiveViewCheckpointStatePageRef> sourceRefs = new ObjList<>();
                 sourceRefs.add(source.refs.getQuick(0));
@@ -133,11 +135,11 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
     public void testCandidateOwnershipBlocksPurgeAcrossPublication() throws Exception {
         assertMemoryLeak(() -> {
             final DataSegment source = writeDataSegment(1, 55);
-            try (LiveViewCheckpointSegmentDirectory directory = new LiveViewCheckpointSegmentDirectory(configuration);
+            try (Catalogue directory = new Catalogue();
                  LiveViewCheckpointMetaStore metaStore = openMetaStore();
                  LiveViewCheckpointDataStore dataStore = openDataStore(metaStore)) {
                 directory.addSegment(1, source.fileLength, 1);
-                publish(metaStore, directory, 1, 101);
+                directory.publish(metaStore, 1, 101);
                 final ObjList<LiveViewCheckpointStatePageRef> sourceRefs = new ObjList<>();
                 sourceRefs.add(source.refs.getQuick(0));
                 final ObjList<LiveViewCheckpointStatePageRef> targetRefs = new ObjList<>();
@@ -150,9 +152,9 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                     final LongList added = new LongList();
                     added.add(2);
                     directory.applyRootReferenceChanges(removed, added, 2);
-                    publish(metaStore, directory, 2, 102);
+                    directory.publish(metaStore, 2, 102);
                     candidate.markPublished();
-                    publish(metaStore, directory, 3, 103);
+                    directory.publish(metaStore, 3, 103);
 
                     // Both slots now say the source is retired and there are no
                     // old reader pins. Candidate ownership alone protects it.
@@ -183,14 +185,14 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
         };
         assertMemoryLeak(failingFacade, () -> {
             final DataSegment source = writeDataSegment(1, 77);
-            try (LiveViewCheckpointSegmentDirectory directory = new LiveViewCheckpointSegmentDirectory(configuration);
+            try (Catalogue directory = new Catalogue();
                  LiveViewCheckpointMetaStore metaStore = openMetaStore();
                  LiveViewCheckpointDataStore dataStore = openDataStore(metaStore)) {
                 directory.addSegment(1, source.fileLength, 1);
-                publish(metaStore, directory, 1, 101);
-                retire(directory, 1, 2);
-                publish(metaStore, directory, 2, 102);
-                publish(metaStore, directory, 3, 103); // overwrites generation 1 fallback
+                directory.publish(metaStore, 1, 101);
+                directory.retire(1, 2);
+                directory.publish(metaStore, 2, 102);
+                directory.publish(metaStore, 3, 103); // overwrites generation 1 fallback
 
                 final LiveViewCheckpointDataStore.PurgeResult failed = dataStore.purge();
                 Assert.assertEquals(0, failed.getPurgedSegmentCount());
@@ -211,12 +213,12 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final DataSegment first = writeDataSegment(1, 11, 22);
             final DataSegment second = writeDataSegment(2, 33);
-            try (LiveViewCheckpointSegmentDirectory directory = new LiveViewCheckpointSegmentDirectory(configuration);
+            try (Catalogue directory = new Catalogue();
                  LiveViewCheckpointMetaStore metaStore = openMetaStore();
                  LiveViewCheckpointDataStore dataStore = openDataStore(metaStore)) {
                 directory.addSegment(1, first.fileLength, 1);
                 directory.addSegment(2, second.fileLength, 1);
-                publish(metaStore, directory, 1, 101);
+                directory.publish(metaStore, 1, 101);
 
                 final LiveViewCheckpointGenerationPin oldPin = metaStore.pin();
                 try {
@@ -243,7 +245,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                         final LongList added = new LongList();
                         added.add(3);
                         directory.applyRootReferenceChanges(removed, added, 2);
-                        publish(metaStore, directory, 2, 102);
+                        directory.publish(metaStore, 2, 102);
                         candidate.markPublished();
                     }
 
@@ -253,7 +255,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                     Assert.assertTrue(dataFileExists(1));
                     Assert.assertTrue(dataFileExists(2));
 
-                    publish(metaStore, directory, 3, 103); // overwrite generation 1
+                    directory.publish(metaStore, 3, 103); // overwrite generation 1
                     // The fallback no longer needs the sources, but the reader
                     // that pinned generation 1 still does.
                     assertNoPurge(dataStore.purge());
@@ -277,13 +279,13 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
     public void testRetiredSegmentOutlivesItsOwnGenerationWithoutAnyReader() throws Exception {
         assertMemoryLeak(() -> {
             final DataSegment source = writeDataSegment(1, 88);
-            try (LiveViewCheckpointSegmentDirectory directory = new LiveViewCheckpointSegmentDirectory(configuration);
+            try (Catalogue directory = new Catalogue();
                  LiveViewCheckpointMetaStore metaStore = openMetaStore();
                  LiveViewCheckpointDataStore dataStore = openDataStore(metaStore)) {
                 directory.addSegment(1, source.fileLength, 1);
-                publish(metaStore, directory, 1, 101);
-                retire(directory, 1, 2);
-                publish(metaStore, directory, 2, 102);
+                directory.publish(metaStore, 1, 101);
+                directory.retire(1, 2);
+                directory.publish(metaStore, 2, 102);
 
                 // No reader holds a pin, yet the segment survives: generation 1
                 // still occupies the other A/B slot and still references it, and
@@ -297,7 +299,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 // Generation 3 overwrites the slot that held generation 1 and
                 // moves the purge's own pin above the retire generation, so both
                 // protections lapse together and the segment goes.
-                publish(metaStore, directory, 3, 103);
+                directory.publish(metaStore, 3, 103);
                 final LiveViewCheckpointDataStore.PurgeResult purged = dataStore.purge();
                 Assert.assertEquals(1, purged.getPurgedSegmentCount());
                 Assert.assertEquals(source.fileLength, purged.getPurgedBytes());
@@ -368,32 +370,6 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
         return store;
     }
 
-    private void publish(
-            LiveViewCheckpointMetaStore store,
-            LiveViewCheckpointSegmentDirectory directory,
-            long generation,
-            long metadataSegmentId
-    ) {
-        final LiveViewCheckpointPageRef directoryRoot = new LiveViewCheckpointPageRef();
-        try (LiveViewCheckpointMetaSegmentWriter writer = new LiveViewCheckpointMetaSegmentWriter(configuration);
-             Path dir = new Path()) {
-            writer.of(checkpointsDir(dir), metadataSegmentId);
-            directory.writeTo(writer, directoryRoot);
-            writer.commit();
-        }
-        final LiveViewCheckpointSuperblock superblock = store.getSuperblock();
-        superblock.generation = generation;
-        superblock.timelineRootRef.clear();
-        superblock.rowPositionDeltaRootRef.clear();
-        superblock.segmentDirectoryRootRef.of(
-                directoryRoot.getSegmentId(),
-                directoryRoot.getOffset(),
-                directoryRoot.getLength()
-        );
-        superblock.nextSegmentId = metadataSegmentId + 1;
-        store.publish();
-    }
-
     private int readInt(long segmentId, long fileLength, LiveViewCheckpointStatePageRef ref) {
         try (LiveViewCheckpointDataSegmentReader reader = new LiveViewCheckpointDataSegmentReader(configuration);
              Path dir = new Path()) {
@@ -403,12 +379,6 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
             reader.assertFullyConsumed(Integer.BYTES, Integer.BYTES, 1);
             return value;
         }
-    }
-
-    private static void retire(LiveViewCheckpointSegmentDirectory directory, long segmentId, long generation) {
-        final LongList removed = new LongList();
-        removed.add(segmentId);
-        directory.applyRootReferenceChanges(removed, new LongList(), generation);
     }
 
     private DataSegment writeDataSegment(long segmentId, int... values) {
@@ -436,6 +406,56 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
         private DataSegment(long fileLength, ObjList<LiveViewCheckpointStatePageRef> refs) {
             this.fileLength = fileLength;
             this.refs = refs;
+        }
+    }
+
+    /**
+     * One long-lived catalogue across a test: every publication starts a fresh
+     * copy-on-write session against the root the previous one published, which is
+     * how the production seal and repair paths drive the directory.
+     */
+    private final class Catalogue implements Closeable {
+
+        private final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointSegmentDirectoryWriter writer =
+                new LiveViewCheckpointSegmentDirectoryWriter(configuration);
+
+        private Catalogue() {
+            try (Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+            }
+            writer.begin(root);
+        }
+
+        @Override
+        public void close() {
+            writer.close();
+        }
+
+        private void addSegment(long segmentId, long fileLength, long referenceCount) {
+            writer.addSegment(segmentId, fileLength, referenceCount);
+        }
+
+        private void applyRootReferenceChanges(LongList removed, LongList added, long generation) {
+            writer.applyRootReferenceChanges(removed, added, generation);
+        }
+
+        private void publish(LiveViewCheckpointMetaStore store, long generation, long metadataSegmentId) {
+            writer.publish(metadataSegmentId, root);
+            final LiveViewCheckpointSuperblock superblock = store.getSuperblock();
+            superblock.generation = generation;
+            superblock.timelineRootRef.clear();
+            superblock.rowPositionDeltaRootRef.clear();
+            superblock.segmentDirectoryRootRef.of(root.getSegmentId(), root.getOffset(), root.getLength());
+            superblock.nextSegmentId = metadataSegmentId + 1;
+            store.publish();
+            writer.begin(root);
+        }
+
+        private void retire(long segmentId, long generation) {
+            final LongList removed = new LongList();
+            removed.add(segmentId);
+            writer.applyRootReferenceChanges(removed, new LongList(), generation);
         }
     }
 }

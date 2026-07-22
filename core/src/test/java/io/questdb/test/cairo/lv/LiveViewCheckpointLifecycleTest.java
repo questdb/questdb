@@ -38,6 +38,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -447,14 +448,12 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             long nextSegmentId
     ) {
         final LiveViewCheckpointPageRef directoryRoot = new LiveViewCheckpointPageRef();
-        try (LiveViewCheckpointSegmentDirectory directory =
-                     new LiveViewCheckpointSegmentDirectory(configuration);
-             LiveViewCheckpointMetaSegmentWriter writer =
+        try (LiveViewCheckpointMetaSegmentWriter writer =
                      new LiveViewCheckpointMetaSegmentWriter(configuration);
              LiveViewCheckpointMetaStore store = openStore();
              Path dir = checkpointsDir()) {
             writer.of(dir, metadataSegmentId);
-            directory.writeTo(writer, directoryRoot);
+            writeEmptySegmentDirectoryRoot(writer, directoryRoot);
             writer.commit();
 
             final LiveViewCheckpointSuperblock superblock = store.getSuperblock();
@@ -471,6 +470,19 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             );
             store.publish();
         }
+    }
+
+    /**
+     * An empty catalogue is a tree with no entries. These cases publish no data
+     * segment at all, so the root they name is an empty leaf.
+     */
+    private static void writeEmptySegmentDirectoryRoot(
+            LiveViewCheckpointMetaSegmentWriter writer,
+            LiveViewCheckpointPageRef out
+    ) {
+        final MemoryA page = writer.beginPage(LiveViewCheckpointSegmentDirectory.PAGE_KIND_LEAF);
+        page.putInt(0);
+        writer.endPage(out);
     }
 
     private boolean repairDescriptorExists(long repairId) {

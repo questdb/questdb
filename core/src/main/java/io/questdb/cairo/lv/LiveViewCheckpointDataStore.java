@@ -61,7 +61,8 @@ public class LiveViewCheckpointDataStore implements Closeable {
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final LiveViewCheckpointMetaStore metaStore;
-    private final LiveViewCheckpointSegmentDirectory segmentDirectory;
+    private final LiveViewCheckpointSegmentDirectoryReader segmentDirectory;
+    private final PurgeSweep sweep = new PurgeSweep();
     private boolean isOpen;
 
     public LiveViewCheckpointDataStore(
@@ -71,7 +72,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.metaStore = metaStore;
-        this.segmentDirectory = new LiveViewCheckpointSegmentDirectory(configuration);
+        this.segmentDirectory = new LiveViewCheckpointSegmentDirectoryReader(configuration);
     }
 
     public Candidate beginCandidate() {
@@ -105,38 +106,15 @@ public class LiveViewCheckpointDataStore implements Closeable {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
             segmentDirectory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
-            final long oldestValidSlotGeneration = metaStore.getOldestValidSuperblockGeneration();
-            final long minPinnedGeneration = metaStore.getMinPinnedGeneration();
-            long purgedBytes = 0;
-            int purgedSegments = 0;
-            int failedSegments = 0;
-            for (int i = 0, n = segmentDirectory.size(); i < n; i++) {
-                final long segmentId = segmentDirectory.getSegmentId(i);
-                if (segmentDirectory.getReferenceCountAt(i) != 0 || isCandidateOwned(segmentId)) {
-                    continue;
-                }
-                final long retireGeneration = segmentDirectory.getRetireGenerationAt(i);
-                if (oldestValidSlotGeneration < retireGeneration || minPinnedGeneration <= retireGeneration) {
-                    continue;
-                }
-                try (Path path = new Path()) {
-                    LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
-                    if (!ff.exists(path.$())) {
-                        continue;
-                    }
-                    if (ff.removeQuiet(path.$())) {
-                        purgedSegments++;
-                        purgedBytes = checkedAdd(purgedBytes, segmentDirectory.getFileLengthAt(i));
-                    } else {
-                        failedSegments++;
-                        LOG.error()
-                                .$("could not purge live view checkpoint data segment [path=")
-                                .$(path)
-                                .$(',').$(" errno=").$(ff.errno()).I$();
-                    }
-                }
-            }
-            return new PurgeResult(purgedSegments, failedSegments, purgedBytes);
+            sweep.of(
+                    metaStore.getOldestValidSuperblockGeneration(),
+                    metaStore.getMinPinnedGeneration()
+            );
+            // Walking the catalogue costs the segment count, not the timeline
+            // length: the tree carries one entry per segment however many logical
+            // checkpoints reference it.
+            segmentDirectory.iterateAll(sweep);
+            return new PurgeResult(sweep.purgedSegments, sweep.failedSegments, sweep.purgedBytes);
         }
     }
 
@@ -223,8 +201,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
 
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
             segmentDirectory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
-            final int segmentCount = segmentDirectory.size();
-            if (segmentCount > 0 && targetSegmentId <= segmentDirectory.getSegmentId(segmentCount - 1)) {
+            if (targetSegmentId <= segmentDirectory.lastSegmentId()) {
                 throw CairoException.critical(0)
                         .put("live view checkpoint compaction target id must be monotonic, segmentId=")
                         .put(targetSegmentId);
@@ -476,6 +453,57 @@ public class LiveViewCheckpointDataStore implements Closeable {
         ) {
             this.sourceRef = sourceRef;
             this.targetRef = targetRef;
+        }
+    }
+
+    /**
+     * Reusable ordered sweep over the pinned generation's catalogue. A segment is
+     * unlinked only when it is unreferenced, unowned by a compaction candidate,
+     * unreachable from both valid superblock slots, and older than every live
+     * reader pin. A failed unlink stays catalogued and is retried on the next
+     * call.
+     */
+    private final class PurgeSweep implements LiveViewCheckpointSegmentDirectoryReader.Visitor {
+
+        private int failedSegments;
+        private long minPinnedGeneration;
+        private long oldestValidSlotGeneration;
+        private long purgedBytes;
+        private int purgedSegments;
+
+        @Override
+        public void onEntry(LiveViewCheckpointSegmentDirectoryEntry entry) {
+            final long segmentId = entry.segmentId;
+            if (entry.referenceCount != 0 || isCandidateOwned(segmentId)) {
+                return;
+            }
+            if (oldestValidSlotGeneration < entry.retireGeneration || minPinnedGeneration <= entry.retireGeneration) {
+                return;
+            }
+            try (Path path = new Path()) {
+                LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
+                if (!ff.exists(path.$())) {
+                    return;
+                }
+                if (ff.removeQuiet(path.$())) {
+                    purgedSegments++;
+                    purgedBytes = checkedAdd(purgedBytes, entry.fileLength);
+                } else {
+                    failedSegments++;
+                    LOG.error()
+                            .$("could not purge live view checkpoint data segment [path=")
+                            .$(path)
+                            .$(',').$(" errno=").$(ff.errno()).I$();
+                }
+            }
+        }
+
+        private void of(long oldestValidSlotGeneration, long minPinnedGeneration) {
+            this.oldestValidSlotGeneration = oldestValidSlotGeneration;
+            this.minPinnedGeneration = minPinnedGeneration;
+            purgedBytes = 0;
+            purgedSegments = 0;
+            failedSegments = 0;
         }
     }
 }

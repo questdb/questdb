@@ -29,8 +29,10 @@ import io.questdb.cairo.lv.LiveViewCheckpointAvgDoubleRangeStateBuilder;
 import io.questdb.cairo.lv.LiveViewCheckpointAvgDoubleRangeStateReader;
 import io.questdb.cairo.lv.LiveViewCheckpointDataSegmentWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapEntry;
-import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointStateCodec;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
 import io.questdb.std.Files;
@@ -46,6 +48,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -61,6 +64,8 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
         try (Path path = new Path()) {
             checkpointsDir(path).concat(LiveViewCheckpointLayout.DATA_DIR_NAME).slash();
             configuration.getFilesFacade().mkdirs(path, configuration.getMkDirMode());
+            checkpointsDir(path).concat(LiveViewCheckpointLayout.META_DIR_NAME).slash();
+            configuration.getFilesFacade().mkdirs(path, configuration.getMkDirMode());
         }
     }
 
@@ -70,7 +75,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
             final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
             final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
             final long[] secondSegmentBytes = new long[1];
-            try (LiveViewCheckpointSegmentDirectory directory = new LiveViewCheckpointSegmentDirectory(configuration)) {
+            try (Catalogue directory = new Catalogue()) {
                 writeInitial(first, directory, 1, 4_106);
 
                 try (LiveViewCheckpointAvgDoubleRangeStateBuilder builder = new LiveViewCheckpointAvgDoubleRangeStateBuilder(configuration);
@@ -84,7 +89,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
                     builder.append(writer, 4_108_000, 10_002.0);
                     builder.freeze(writer, KEY, -0.0, 4_104, second);
                     secondSegmentBytes[0] = writer.commit();
-                    directory.addSegment(2, secondSegmentBytes[0], 1);
+                    directory.addSegment(2, secondSegmentBytes[0]);
                 }
 
                 // Both chunks the first root sealed are referenced verbatim; the
@@ -130,7 +135,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
                 assertRestored(second, directory, secondTimestamps, secondValues);
                 try (LiveViewCheckpointAvgDoubleRangeStateReader reader = new LiveViewCheckpointAvgDoubleRangeStateReader(configuration);
                      Path dir = new Path()) {
-                    reader.of(checkpointsDir(dir), directory, second);
+                    reader.of(checkpointsDir(dir), directory.reader, second);
                     Assert.assertEquals(5, reader.getHeadOffset());
                     Assert.assertEquals(4_104, reader.getRowCount());
                     Assert.assertEquals(
@@ -146,7 +151,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
     public void testMalformedMetadataAndDataAreRejected() throws Exception {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPartitionMapEntry valid = new LiveViewCheckpointPartitionMapEntry();
-            try (LiveViewCheckpointSegmentDirectory directory = new LiveViewCheckpointSegmentDirectory(configuration)) {
+            try (Catalogue directory = new Catalogue()) {
                 writeInitial(valid, directory, 30, 3);
 
                 final byte[] shortScalar = Arrays.copyOf(
@@ -185,7 +190,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
 
                 Assert.assertEquals(LiveViewCheckpointStateCodec.TIMESTAMP_RAW_64, valid.getStatePageRef(0).getCodec());
                 final FilesFacade ff = configuration.getFilesFacade();
-                final long fileLength = directory.getFileLength(30);
+                final long fileLength = directory.reader.getFileLength(30);
                 try (Path path = new Path()) {
                     final long fd = ff.openRW(dataPath(path, 30).$(), 0);
                     final long address = ff.mmap(fd, fileLength, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
@@ -211,7 +216,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
             final List<LongList> timestampSnapshots = new ArrayList<>();
             final List<LongList> valueSnapshots = new ArrayList<>();
             long nextTimestamp = 0;
-            try (LiveViewCheckpointSegmentDirectory directory = new LiveViewCheckpointSegmentDirectory(configuration)) {
+            try (Catalogue directory = new Catalogue()) {
                 LiveViewCheckpointPartitionMapEntry previous = new LiveViewCheckpointPartitionMapEntry();
                 for (int generation = 0; generation < 40; generation++) {
                     final LiveViewCheckpointPartitionMapEntry next = new LiveViewCheckpointPartitionMapEntry();
@@ -239,7 +244,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
                             values.add(Double.doubleToRawLongBits(value));
                         }
                         builder.freeze(writer, KEY, generation + 0.125, timestamps.size(), next);
-                        directory.addSegment(100 + generation, writer.commit(), 1);
+                        directory.addSegment(100 + generation, writer.commit());
                     }
                     roots.add(next);
                     timestampSnapshots.add(new LongList(timestamps));
@@ -258,7 +263,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
             final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
-            try (LiveViewCheckpointSegmentDirectory directory = new LiveViewCheckpointSegmentDirectory(configuration)) {
+            try (Catalogue directory = new Catalogue()) {
                 writeInitial(first, directory, 20, LiveViewCheckpointStateCodec.CHUNK_ROWS + 12);
                 try (LiveViewCheckpointAvgDoubleRangeStateBuilder builder = new LiveViewCheckpointAvgDoubleRangeStateBuilder(configuration);
                      LiveViewCheckpointDataSegmentWriter unopenedWriter = new LiveViewCheckpointDataSegmentWriter(configuration);
@@ -272,7 +277,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
                 assertRefEquals(first.getStatePageRef(3), second.getStatePageRef(1));
                 try (LiveViewCheckpointAvgDoubleRangeStateReader reader = new LiveViewCheckpointAvgDoubleRangeStateReader(configuration);
                      Path dir = new Path()) {
-                    reader.of(checkpointsDir(dir), directory, second);
+                    reader.of(checkpointsDir(dir), directory.reader, second);
                     Assert.assertEquals(5, reader.getHeadOffset());
                     Assert.assertEquals(7, reader.getRowCount());
                 }
@@ -282,14 +287,14 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
 
     private static void assertInvalid(
             LiveViewCheckpointPartitionMapEntry entry,
-            LiveViewCheckpointSegmentDirectory directory,
+            Catalogue directory,
             boolean readPayload,
             CharSequence message
     ) {
         try (LiveViewCheckpointAvgDoubleRangeStateReader reader = new LiveViewCheckpointAvgDoubleRangeStateReader(configuration);
              Path dir = new Path()) {
             try {
-                reader.of(checkpointsDir(dir), directory, entry);
+                reader.of(checkpointsDir(dir), directory.reader, entry);
                 if (readPayload) {
                     reader.forEachRow((timestamp, value) -> {
                     });
@@ -315,13 +320,13 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
 
     private static void assertRestored(
             LiveViewCheckpointPartitionMapEntry entry,
-            LiveViewCheckpointSegmentDirectory directory,
+            Catalogue directory,
             LongList expectedTimestamps,
             LongList expectedValues
     ) {
         try (LiveViewCheckpointAvgDoubleRangeStateReader reader = new LiveViewCheckpointAvgDoubleRangeStateReader(configuration);
              Path dir = new Path()) {
-            reader.of(checkpointsDir(dir), directory, entry);
+            reader.of(checkpointsDir(dir), directory.reader, entry);
             Assert.assertEquals(expectedTimestamps.size(), reader.getRowCount());
             final int[] index = {0};
             reader.forEachRow((timestamp, value) -> {
@@ -367,7 +372,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
 
     private static void writeInitial(
             LiveViewCheckpointPartitionMapEntry out,
-            LiveViewCheckpointSegmentDirectory directory,
+            Catalogue directory,
             long segmentId,
             int rows
     ) {
@@ -380,7 +385,36 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
                 builder.append(writer, i * 1_000L, i + 0.25);
             }
             builder.freeze(writer, KEY, 42.5, rows, out);
-            directory.addSegment(segmentId, writer.commit(), 1);
+            directory.addSegment(segmentId, writer.commit());
+        }
+    }
+
+    /**
+     * Publishes each added data segment into a fresh copy-on-write directory
+     * generation and keeps a reader bound to the newest root, which is the
+     * bounds source a chunk read validates its page references against.
+     */
+    private static final class Catalogue implements Closeable {
+
+        private final LiveViewCheckpointSegmentDirectoryReader reader =
+                new LiveViewCheckpointSegmentDirectoryReader(configuration);
+        private final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+        private long nextMetaSegmentId = 1_000;
+
+        @Override
+        public void close() {
+            reader.close();
+        }
+
+        private void addSegment(long segmentId, long fileLength) {
+            try (LiveViewCheckpointSegmentDirectoryWriter writer = new LiveViewCheckpointSegmentDirectoryWriter(configuration);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                writer.begin(root);
+                writer.addSegment(segmentId, fileLength, 1);
+                writer.publish(nextMetaSegmentId++, root);
+                reader.of(checkpointsDir(dir), root);
+            }
         }
     }
 }

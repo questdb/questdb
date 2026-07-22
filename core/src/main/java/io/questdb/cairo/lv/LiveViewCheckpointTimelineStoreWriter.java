@@ -83,6 +83,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
     private final HashSet<String> lifecycleReconciledDirs = new HashSet<>();
     private final CairoConfiguration configuration;
+    // Read-only argument of a cadence seal's reference transaction, which only
+    // ever adds; kept per instance so the seal path allocates nothing for it.
+    private final LongList emptySegmentIds = new LongList();
     private final MemoryCARW keyBuffer;
     private final LiveViewCheckpointRingSeal ringSeal;
     @TestOnly
@@ -270,8 +273,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 LiveViewCheckpointRowPositionDeltaReader deltaReader = new LiveViewCheckpointRowPositionDeltaReader(configuration);
                 LiveViewCheckpointRoot oldCheckpointRoot = new LiveViewCheckpointRoot(configuration);
                 LiveViewCheckpointFunctionDirectory oldFunctionDirectory = new LiveViewCheckpointFunctionDirectory(configuration);
-                LiveViewCheckpointSegmentDirectory segmentDirectory = new LiveViewCheckpointSegmentDirectory(configuration);
-                LiveViewCheckpointMetaSegmentWriter directoryWriter = new LiveViewCheckpointMetaSegmentWriter(configuration);
+                LiveViewCheckpointSegmentDirectoryWriter directoryWriter = new LiveViewCheckpointSegmentDirectoryWriter(configuration);
                 RootBuilders roots = new RootBuilders();
                 LiveViewCheckpointTimelineWriter timelineWriter = new LiveViewCheckpointTimelineWriter(configuration);
                 LiveViewCheckpointRowPositionDeltaWriter deltaWriter = new LiveViewCheckpointRowPositionDeltaWriter(configuration)
@@ -281,6 +283,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             deltaReader.of(checkpointsDir);
             timelineWriter.of(checkpointsDir);
             deltaWriter.of(checkpointsDir);
+            directoryWriter.of(checkpointsDir);
 
             if (!metaStore.isValid()) {
                 throw CairoException.critical(0)
@@ -311,7 +314,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPageRef oldTimelineRoot = copy(superblock.timelineRootRef);
             final LiveViewCheckpointPageRef oldDeltaRoot = copy(superblock.rowPositionDeltaRootRef);
             final LiveViewCheckpointPageRef oldDirectoryRoot = copy(superblock.segmentDirectoryRootRef);
-            segmentDirectory.of(checkpointsDir, oldDirectoryRoot);
+            directoryWriter.begin(oldDirectoryRoot);
 
             // The data segment reaches its final name before any metadata can
             // reference it, exactly as the cadence seal orders it. An empty
@@ -373,7 +376,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 if (dropSegmentId(addedSegmentIds, capture.dataSegmentId)) {
                     captureSegmentRootRefs++;
                 }
-                segmentDirectory.applyRootReferenceChanges(removedSegmentIds, addedSegmentIds, generation);
+                directoryWriter.applyRootReferenceChanges(removedSegmentIds, addedSegmentIds, generation);
 
                 final long prefixCorrection = deltaReader.prefixSum(
                         oldDeltaRoot,
@@ -399,7 +402,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             nextSegmentId = roots.nextSegmentId;
             long metadataBytesAdded = roots.metadataBytesAdded;
             if (dataSegmentBytes > 0) {
-                segmentDirectory.addSegment(capture.dataSegmentId, dataSegmentBytes, captureSegmentRootRefs);
+                directoryWriter.addSegment(capture.dataSegmentId, dataSegmentBytes, captureSegmentRootRefs);
             }
 
             final LiveViewCheckpointPageRef newTimelineRoot = new LiveViewCheckpointPageRef();
@@ -435,10 +438,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
 
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-            directoryWriter.of(checkpointsDir, nextSegmentId++);
             final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
-            segmentDirectory.writeTo(directoryWriter, newDirectoryRoot);
-            metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.commit());
+            directoryWriter.publish(nextSegmentId++, newDirectoryRoot);
+            metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.getLastSegmentBytes());
             if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
                 throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
             }
@@ -509,9 +511,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 LiveViewCheckpointRowPositionDeltaReader deltaReader = new LiveViewCheckpointRowPositionDeltaReader(configuration);
                 LiveViewCheckpointRoot oldCheckpointRoot = new LiveViewCheckpointRoot(configuration);
                 LiveViewCheckpointFunctionDirectory oldFunctionDirectory = new LiveViewCheckpointFunctionDirectory(configuration);
-                LiveViewCheckpointSegmentDirectory segmentDirectory = new LiveViewCheckpointSegmentDirectory(configuration);
                 LiveViewCheckpointDataSegmentWriter dataWriter = new LiveViewCheckpointDataSegmentWriter(configuration);
-                LiveViewCheckpointMetaSegmentWriter directoryWriter = new LiveViewCheckpointMetaSegmentWriter(configuration);
+                LiveViewCheckpointSegmentDirectoryWriter directoryWriter = new LiveViewCheckpointSegmentDirectoryWriter(configuration);
                 RootBuilders roots = new RootBuilders();
                 LiveViewCheckpointTimelineWriter timelineWriter = new LiveViewCheckpointTimelineWriter(configuration)
         ) {
@@ -519,6 +520,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             timelineReader.of(checkpointsDir);
             deltaReader.of(checkpointsDir);
             timelineWriter.of(checkpointsDir);
+            directoryWriter.of(checkpointsDir);
 
             final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
             final long protectedSegmentIdCeiling = metaStore.isValid() ? superblock.getNextSegmentIdCeiling() : 0;
@@ -566,7 +568,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 oldCheckpointRoot.getFunctionDirectoryRef(oldFunctionDirectoryRef);
                 oldFunctionDirectory.of(checkpointsDir, oldFunctionDirectoryRef);
             }
-            segmentDirectory.of(checkpointsDir, oldDirectoryRoot);
+            directoryWriter.begin(oldDirectoryRoot);
 
             long nextSegmentId = metaStore.isValid() ? superblock.nextSegmentId : 0;
             nextSegmentId = Math.max(nextSegmentId, orphanUpperBound);
@@ -637,17 +639,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             metadataBytesAdded = checkedAdd(metadataBytesAdded, timelineWriter.getLastSegmentBytes());
 
             if (hasData) {
-                segmentDirectory.addSegment(dataSegmentId, dataSegmentBytes, 1);
+                directoryWriter.addSegment(dataSegmentId, dataSegmentBytes, 1);
                 dropSegmentId(reusedSegmentIds, dataSegmentId);
             }
             if (reusedSegmentIds.size() > 0) {
-                segmentDirectory.applyRootReferenceChanges(new LongList(), reusedSegmentIds, generation);
+                directoryWriter.applyRootReferenceChanges(emptySegmentIds, reusedSegmentIds, generation);
             }
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-            directoryWriter.of(checkpointsDir, nextSegmentId++);
             final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
-            segmentDirectory.writeTo(directoryWriter, newDirectoryRoot);
-            metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.commit());
+            directoryWriter.publish(nextSegmentId++, newDirectoryRoot);
+            metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.getLastSegmentBytes());
             if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
                 throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
             }

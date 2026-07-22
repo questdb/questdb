@@ -64,7 +64,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable, L
     private boolean initialized;
     private long lastTimestamp;
     private long openSegmentId = -1;
-    private LiveViewCheckpointSegmentDirectory segmentDirectory;
+    private LiveViewCheckpointSegmentDirectoryReader segmentDirectory;
     private final LiveViewCheckpointStateCodec.Scratch scratch;
     private LiveViewCheckpointStatePageRef[] statePageRefs = new LiveViewCheckpointStatePageRef[0];
     private long sumBits;
@@ -177,7 +177,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable, L
      */
     public void of(
             @Transient @NotNull Path checkpointsDir,
-            @NotNull LiveViewCheckpointSegmentDirectory segmentDirectory,
+            @NotNull LiveViewCheckpointSegmentDirectoryReader segmentDirectory,
             @NotNull LiveViewCheckpointPartitionMapEntry entry
     ) {
         ofMetadata(entry);

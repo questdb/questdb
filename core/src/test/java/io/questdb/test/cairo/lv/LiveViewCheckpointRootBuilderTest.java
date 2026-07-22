@@ -35,7 +35,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointRootBuilder;
-import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.LongList;
@@ -126,7 +126,10 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                 assertRefEquals(sumRoot, ref);
             }
 
-            try (LiveViewCheckpointSegmentDirectory segments = new LiveViewCheckpointSegmentDirectory(configuration)) {
+            try (LiveViewCheckpointSegmentDirectoryWriter segments = new LiveViewCheckpointSegmentDirectoryWriter(configuration);
+                 Path dir = new Path()) {
+                segments.of(checkpointsDir(dir));
+                segments.begin(new LiveViewCheckpointPageRef());
                 for (int i = 0; i < referenced1.size(); i++) {
                     segments.addSegment(referenced1.getQuick(i), 100 + i, 1);
                 }

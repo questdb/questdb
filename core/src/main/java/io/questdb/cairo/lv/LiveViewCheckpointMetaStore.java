@@ -58,14 +58,14 @@ public class LiveViewCheckpointMetaStore implements Closeable {
     private final Path checkpointsDir = new Path();
     private final LiveViewCheckpointGenerationTracker generationTracker = new LiveViewCheckpointGenerationTracker();
     private final LiveViewCheckpointRowPositionDeltaReader rowPositionDeltaReader;
-    private final LiveViewCheckpointSegmentDirectory segmentDirectory;
+    private final LiveViewCheckpointSegmentDirectoryReader segmentDirectoryReader;
     private final LiveViewCheckpointSuperblock superblock;
     private final LiveViewCheckpointTimelineReader timelineReader;
     private boolean isOpen;
 
     public LiveViewCheckpointMetaStore(@NotNull CairoConfiguration configuration) {
         superblock = new LiveViewCheckpointSuperblock(configuration);
-        segmentDirectory = new LiveViewCheckpointSegmentDirectory(configuration);
+        segmentDirectoryReader = new LiveViewCheckpointSegmentDirectoryReader(configuration);
         timelineReader = new LiveViewCheckpointTimelineReader(configuration);
         rowPositionDeltaReader = new LiveViewCheckpointRowPositionDeltaReader(configuration);
     }
@@ -74,7 +74,7 @@ public class LiveViewCheckpointMetaStore implements Closeable {
     public void close() {
         generationTracker.close();
         Misc.free(rowPositionDeltaReader);
-        Misc.free(segmentDirectory);
+        Misc.free(segmentDirectoryReader);
         Misc.free(timelineReader);
         Misc.free(superblock);
         Misc.free(checkpointsDir);
@@ -197,7 +197,8 @@ public class LiveViewCheckpointMetaStore implements Closeable {
         if (!superblock.rowPositionDeltaRootRef.isNull()) {
             rowPositionDeltaReader.rootChildCount(superblock.rowPositionDeltaRootRef);
         }
-        // Decode the bounded catalogue root, but do not open or scan data files.
-        segmentDirectory.of(checkpointsDir, superblock.segmentDirectoryRootRef);
+        // Decode the bounded catalogue root, but do not walk its subtrees or open
+        // a data file.
+        segmentDirectoryReader.of(checkpointsDir, superblock.segmentDirectoryRootRef);
     }
 }

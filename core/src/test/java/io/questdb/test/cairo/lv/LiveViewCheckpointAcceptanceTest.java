@@ -66,14 +66,10 @@ import org.junit.Test;
  *     same count over a history three times longer;</li>
  *     <li><b>refresh lag</b> - repeated historical corrections leave the view
  *     caught up with the base after every round, and the work each round
- *     publishes is constant as the timeline grows past a hundred entries.</li>
+ *     publishes is constant as the timeline grows past a hundred entries;</li>
+ *     <li><b>publication metadata</b> - a seal's metadata cost is flat across the
+ *     run, because every structure it touches copies only its search path.</li>
  * </ul>
- * One measured shortfall is asserted rather than omitted, so the gap is a
- * failing expectation the day it closes rather than a forgotten one - see
- * {@link #testSteadyStateGrowthWritesOneFrameImagePerRoot}: publication metadata
- * grows with the segment count, because the segment directory is one page
- * rewritten in full per publication while the timeline tree beside it copies
- * only its search path.
  * <p>
  * Wall clock is asserted only where the operation under test dominates it - the
  * lookup case, which runs against nothing else. A checkpoint seal's own elapsed
@@ -437,17 +433,28 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
                         10 * dataBytes[4] >= 9 * SEALS * lateDataPerSeal
                 );
 
-                // Recorded shortfall 2: publication metadata grows with the number of
-                // live segments, because the segment directory is a single page rewritten
-                // in full on every publication while the timeline tree beside it copies
-                // only its search path. Total metadata is therefore super-linear in
-                // checkpoint count. Same reasoning as above: asserted, not omitted.
+                // Publication metadata per seal: flat once the tree nodes fill,
+                // because every structure a publication touches is copy-on-write.
+                // The segment directory was the last one that was not - one page
+                // holding every live segment, rewritten in full on every
+                // publication, so a seal paid 32 bytes per catalogued segment and
+                // that bill grew without bound. It is now a tree that copies its
+                // search path, like the timeline beside it, and a seal pays a node
+                // per level instead.
+                //
+                // The first window is the cheap one for both trees - their leaves
+                // are still filling towards the 64-record capacity a copy rewrites
+                // in full - which is why flatness is asserted from the second
+                // window on. What is left growing beyond that is tree height, and
+                // the next level costs one more node at 4096 entries.
                 final long earlyMetadataPerSeal = metadataBytes[1] / SAMPLE;
+                final long midMetadataPerSeal = (metadataBytes[2] - metadataBytes[1]) / SAMPLE;
                 final long lateMetadataPerSeal = (metadataBytes[4] - metadataBytes[3]) / SAMPLE;
                 Assert.assertTrue(
                         "publication metadata per seal: " + earlyMetadataPerSeal + " bytes over the first "
-                                + SAMPLE + " roots, " + lateMetadataPerSeal + " bytes over the last " + SAMPLE,
-                        lateMetadataPerSeal >= 2 * earlyMetadataPerSeal
+                                + SAMPLE + " roots, " + midMetadataPerSeal + " over the second " + SAMPLE
+                                + ", " + lateMetadataPerSeal + " over the last " + SAMPLE,
+                        5 * lateMetadataPerSeal <= 6 * midMetadataPerSeal
                 );
             }
         });
