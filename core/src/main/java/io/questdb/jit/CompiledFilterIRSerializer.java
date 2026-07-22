@@ -148,7 +148,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int PRIORITY_SYM_NEQ = 7;
     // Node kinds hasWideLaneConversionSource() looks for. See hasWideLaneSourceNode().
     private static final int WIDE_LANE_SOURCE_FLOAT_LEAF = 0;
-    private static final int WIDE_LANE_SOURCE_FLOAT_PROMOTED_ARITH = 4;
     private static final int WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST = 1;
     private static final int WIDE_LANE_SOURCE_LONG_WIDTH_OPERAND = 3;
     private static final int WIDE_LANE_SOURCE_NARROW_INT_LEAF = 2;
@@ -173,8 +172,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
-    // Memoizes containsFloat4Leaf() for the current predicate. See arithExprTypeCache.
-    private final ObjIntHashMap<ExpressionNode> containsFloat4Cache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // Memoizes containsFloatExpression() for the current predicate. See arithExprTypeCache.
     private final ObjIntHashMap<ExpressionNode> containsFloatCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // Memoizes containsNarrowIntegerValue() for the current predicate. See arithExprTypeCache.
@@ -263,7 +260,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         constantFloatFoldCache.clear();
         constantFloatFoldValues.clear();
         genuineArithTypeCache.clear();
-        containsFloat4Cache.clear();
         containsFloatCache.clear();
         containsNarrowIntCache.clear();
         requiresWideLaneArithCache.clear();
@@ -555,32 +551,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return node != null
                 && node.type == ExpressionNode.CONSTANT
                 && (arithExprType(node) == I4_TYPE || arithExprType(node) == I8_TYPE);
-    }
-
-    /**
-     * Reports whether the subtree reads a FLOAT column or bind variable, i.e. a leaf the backend
-     * loads as f32. {@link #containsFloatExpression} answers the broader question and admits a
-     * DOUBLE leaf too; the promotion rule needs to tell the two apart, because a subtree that is
-     * F8 all the way down already evaluates at f64 and must not be disturbed.
-     */
-    private boolean containsFloat4Leaf(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        final int cached = containsFloat4Cache.get(node);
-        if (cached != NOT_CACHED) {
-            return cached != 0;
-        }
-        final boolean result = containsFloat4Leaf0(node);
-        containsFloat4Cache.put(node, result ? 1 : 0);
-        return result;
-    }
-
-    private boolean containsFloat4Leaf0(ExpressionNode node) {
-        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
-            return arithExprType(node) == F4_TYPE;
-        }
-        return containsFloat4Leaf(node.lhs) || containsFloat4Leaf(node.rhs);
     }
 
     private boolean containsFloatExpression(ExpressionNode node) {
@@ -1739,11 +1709,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return (hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_FLOAT_LEAF)
                 && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST))
                 || (hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_NARROW_INT_LEAF)
-                && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_LONG_WIDTH_OPERAND))
-                // An F8-promoted float-arithmetic subtree needs no second ingredient: every
-                // constant operand it holds is widened unconditionally, and so is the bound it is
-                // compared against, whether or not that bound has an exact float.
-                || hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_FLOAT_PROMOTED_ARITH);
+                && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_LONG_WIDTH_OPERAND));
     }
 
     /**
@@ -1756,7 +1722,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         final boolean isMatch = switch (kind) {
             case WIDE_LANE_SOURCE_FLOAT_LEAF -> isFloatLeaf(node);
-            case WIDE_LANE_SOURCE_FLOAT_PROMOTED_ARITH -> isFloatPromotedArith(node);
             case WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST -> isFloatWideningConst(node);
             case WIDE_LANE_SOURCE_NARROW_INT_LEAF -> isNarrowIntLeaf(node);
             case WIDE_LANE_SOURCE_LONG_WIDTH_OPERAND -> genuineArithType(node) == I8_TYPE;
@@ -1885,41 +1850,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return false;
         }
         return arithExprType(node) == F4_TYPE;
-    }
-
-    /**
-     * Reports whether the node is an arithmetic subtree that a DOUBLE constant or column promoted to
-     * F8 while a FLOAT leaf still feeds it - {@code f + 0.0}, {@code f * 1.0}, {@code f - 0.1}.
-     * <p>
-     * The Java filter resolves {@code FLOAT + DOUBLE} to {@code +(DD)}
-     * ({@link io.questdb.griffin.engine.functions.math.AddDoubleFunctionFactory}), so it evaluates
-     * the whole subtree at f64. The IR used to evaluate it at f32 instead, and returned different
-     * rows: the type observer records only COLUMNS and bind variables, so a predicate whose only
-     * column is the FLOAT types every constant in it F4, both the arithmetic operand and the
-     * comparison bound. The operation carries no type of its own - the backend derives it from its
-     * two operand records - so f32 operands make an f32 add, and {@code f + 0.0 > 0.99999998}
-     * dropped every row where the f64 comparison keeps it.
-     * <p>
-     * Widening only the BOUND does not fix it and is not a safe subset: with an f32 add against an
-     * f64 bound, {@code f / 3.0 > 0.3333333333333333} starts returning rows the Java filter
-     * rejects. The whole subtree has to move to f64 together. Marking every constant operand of
-     * such a node achieves that without a single IR or backend change, because {@code convert()}
-     * promotes the other operand of any mixed pair (f32 -> f64 via {@code cvtss2sd} /
-     * {@code vcvtps2pd}), so one f64 operand pulls the FLOAT column up with it.
-     * <p>
-     * The F4-leaf requirement is what keeps a DOUBLE-only predicate on its existing 4-lane f64
-     * path: {@code adouble + 1.0 > 2.0} is F8 too, but everything in it is already f64 and marking
-     * its constants would only cost it the vectorized loop.
-     */
-    private boolean isFloatPromotedArith(ExpressionNode node) {
-        if (node == null || node.type != ExpressionNode.OPERATION) {
-            return false;
-        }
-        final boolean isUnaryMinus = node.paramCount == 1 && Chars.equals(node.token, '-');
-        if (!isArithmeticOperation(node) && !isUnaryMinus) {
-            return false;
-        }
-        return arithExprType(node) == F8_TYPE && containsFloat4Leaf(node);
     }
 
     /**
@@ -2147,17 +2077,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    /**
-     * Sends one operand of an F8-promoted float-arithmetic node to double width, when that operand
-     * is a constant. A column or bind-variable operand needs no mark: {@code convert()} promotes an
-     * f32 record whenever the other side of the pair is already f64.
-     */
-    private void markFloatPromotedArithOperand(ExpressionNode child) {
-        if (isWideLaneNumericConstant(child)) {
-            markFloatCmpConst(child);
-        }
-    }
-
     private void markWidthSemantics(ExpressionNode node, WidthCtx w) {
         if (node == null) {
             return;
@@ -2204,14 +2123,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     isFloatActive,
                     isFloatLong
             );
-            if (isFloatPromotedArith(node)) {
-                // Every constant operand of this node moves to f64 (or, for an integer literal, to
-                // an exact I8 IMM - AVX2 convert() has no f64 x i32 arm). One f64 operand is enough
-                // to pull the FLOAT column up through convert(), and the recursion below reaches a
-                // nested F8 node's own constants.
-                markFloatPromotedArithOperand(node.lhs);
-                markFloatPromotedArithOperand(node.rhs);
-            }
             if (isUnaryMinus) {
                 // Route the operand through the same path as a binary operand: it is the
                 // only way a leaf reaches i64WrapLeaves. Recursing straight into
@@ -2430,17 +2341,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             markFloatCmpConst(b);
             return;
         } else if (isFloatLeaf(b) && isFloatWideningConst(a)) {
-            markFloatCmpConst(a);
-            return;
-        } else if (isFloatPromotedArith(a) && isWideLaneNumericConstant(b)) {
-            // The operand evaluates at f64 (see isFloatPromotedArith), so the bound has to be read
-            // there too - including a bound that HAS an exact float. isFloatWideningConst screens
-            // for a constant no 32-bit float reproduces, which is the right question only when the
-            // other side stays f32; here an exactly-representable bound emitted as f32 would still
-            // be compared against an f64 operand.
-            markFloatCmpConst(b);
-            return;
-        } else if (isFloatPromotedArith(b) && isWideLaneNumericConstant(a)) {
             markFloatCmpConst(a);
             return;
         } else {

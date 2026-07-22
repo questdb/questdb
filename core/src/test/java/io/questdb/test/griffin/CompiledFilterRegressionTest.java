@@ -1157,55 +1157,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFloatArithmeticPromotedToDoubleMatchesJava() throws Exception {
-        // Mixing a FLOAT operand with a DOUBLE constant promotes the subtree to F8, so
-        // markNarrowConstCmpWidenPair never marks it and serializeNumber rounds the bound to a
-        // 32-bit float - while the backend evaluates the arithmetic itself at f32 and the Java
-        // filter evaluates it at f64. Every row is 1.0f, and 1.0 > 0.99999998 holds at double
-        // width, so the Java filter keeps all eight rows.
-        assertMemoryLeak(() -> {
-            execute("create table pf as (select cast(1.0 as float) f, timestamp_sequence(0, 1_000_000) k " +
-                    "from long_sequence(8)) timestamp(k)");
-            final String all = "count\n8\n";
-            final String none = "count\n0\n";
-
-            // The reported family: an inexact bound against a value-preserving operand.
-            assertJitScalarAndVectorMatchJava("select count() from pf where f + 0.0 > 0.99999998", all);
-            assertJitScalarAndVectorMatchJava("select count() from pf where f * 1.0 > 0.99999998", all);
-            assertJitScalarAndVectorMatchJava("select count() from pf where f - 0.0 < 1.00000003", all);
-            // Division diverges the same way, and is where widening only the BOUND breaks down:
-            // 1.0f/3.0f is 0.33333334f, so an f32 quotient against an f64 bound would answer this
-            // pair the wrong way round. Both must be read at f64.
-            assertJitScalarAndVectorMatchJava("select count() from pf where f / 3.0 < 0.33333334", all);
-            // Control for exactly that: at f64 the quotient IS the bound, so '>' holds for no row.
-            // A bound-only fix returns 8 here.
-            assertJitScalarAndVectorMatchJava("select count() from pf where f / 3.0 > 0.3333333333333333", none);
-
-            // Every constant here has an EXACT float, so nothing is rounded and the divergence is
-            // purely the width of the '+': 1e-8f + 1.0f is 1.0f at f32, and above 1.0 at f64.
-            // isFloatWideningConst screens these out, which is why the bound arm alone cannot fix it.
-            execute("create table pe as (select cast(1e-8 as float) f, timestamp_sequence(0, 1_000_000) k " +
-                    "from long_sequence(8)) timestamp(k)");
-            assertJitScalarAndVectorMatchJava("select count() from pe where f + 1.0 > 1.0", all);
-
-            // The mirror failure mode - a false POSITIVE. 16777217 has no exact float and rounds to
-            // 16777216f, so the f32 equality matched every row while the f64 one matches none.
-            execute("create table pd as (select cast(16777216.0 as float) f, timestamp_sequence(0, 1_000_000) k " +
-                    "from long_sequence(8)) timestamp(k)");
-            assertJitScalarAndVectorMatchJava("select count() from pd where f + 0.0 = 16_777_217", none);
-
-            // Controls. A FLOAT-only subtree keeps its f32 arithmetic on both paths - the Java
-            // filter resolves it to +(FF) - while the COMPARISON still happens at double width, so
-            // the existing isFloatLeaf / markFloatCmpConst arm already carries it. A DOUBLE-only
-            // subtree was f64 end to end all along.
-            assertJitScalarAndVectorMatchJava("select count() from pf where f + 0.0f > 0.99999998", all);
-            execute("create table pdd as (select 1.0 d, timestamp_sequence(0, 1_000_000) k " +
-                    "from long_sequence(8)) timestamp(k)");
-            assertJitScalarAndVectorMatchJava("select count() from pdd where d + 0.0 > 0.99999998", all);
-        });
-    }
-
-    @Test
     public void testFloatDirectCompareOutOfRangeConstWiden() throws Exception {
         // A FLOAT column compared directly against an out-of-INT-range integer constant
         // diverged. INT and FLOAT are both 4 bytes, so hasMixedSizes() is false and the type
