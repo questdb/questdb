@@ -128,40 +128,14 @@ public class InLongTest extends AbstractCairoTest {
                     bindVariableService.setLong(2, 55333);
                 }
         ));
-        cases.add(BindVarTuple.ok(
-                // A non-numeric string element reads as LONG_NULL (via parseLongQuiet) instead of
-                // throwing, matching the runtime path so an all-constant and a bind-variable IN list
-                // agree. $3 parses to NULL and matches the NULL keys; $1 and $2 match their rows.
-                "non-numeric string binds to NULL",
-                """
-                        x\ta
-                        2\tnull
-                        5\tnull
-                        9\tnull
-                        11\tnull
-                        13\tnull
-                        14\tnull
-                        16\tnull
-                        17\t55333
-                        26\t402266
-                        40\tnull
-                        42\tnull
-                        45\tnull
-                        52\tnull
-                        58\tnull
-                        59\tnull
-                        65\tnull
-                        67\tnull
-                        70\tnull
-                        73\tnull
-                        76\tnull
-                        83\tnull
-                        87\tnull
-                        90\tnull
-                        91\tnull
-                        95\tnull
-                        100\tnull
-                        """,
+        cases.add(BindVarTuple.fails(
+                // A bind variable resolves before the row loop, so it takes the constant path:
+                // an element that does not parse is a query error at its own position, not a
+                // silent LONG_NULL that would match every NULL row. Only the per-row path
+                // (InLongVarFunction) parses quietly.
+                "bad long",
+                23,
+                "invalid LONG value [not a long]",
                 bindVariableService -> {
                     bindVariableService.setStr(0, "402266");
                     bindVariableService.setLong(1, 55333);
