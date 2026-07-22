@@ -187,6 +187,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public IntList getCoveringColumnIndices(int columnIndex) {
+        return createTableOperation.getCoveringColumnIndices(columnIndex);
+    }
+
+    @Override
     public CreateTableOperation getCreateTableOperation() {
         return createTableOperation;
     }
@@ -334,6 +339,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public boolean isDeferred() {
         return deferred;
+    }
+
+    @Override
+    public boolean isCovering(int index) {
+        return createTableOperation.isCovering(index);
     }
 
     @Override
@@ -504,6 +514,22 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
+            final ObjList<String> passthroughColumnNames = new ObjList<>(baseTableMetadata.getColumnCount());
+            if (passthrough) {
+                passthroughColumnNames.setPos(baseTableMetadata.getColumnCount());
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    final QueryColumn column = columns.getQuick(i);
+                    final int baseColumnIndex = resolveBaseColumnIndex(
+                            column.getAst(),
+                            queryModel,
+                            baseTableName,
+                            baseTableMetadata
+                    );
+                    if (baseColumnIndex > -1 && passthroughColumnNames.getQuick(baseColumnIndex) == null) {
+                        passthroughColumnNames.setQuick(baseColumnIndex, SqlUtil.toColumnName(column.getName()));
+                    }
+                }
+            }
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
@@ -519,7 +545,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         // table's index - otherwise the view silently drops it, forcing full scans for
                         // indexed/LATEST ON reads that could use an index seek. Passthrough-only: an
                         // aggregating view's rows are not base rows, so it never inherits.
-                        inheritBaseSymbolColumnIndex(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
+                        inheritBaseSymbolColumnIndex(
+                                column.getAst(),
+                                queryModel,
+                                columnModel,
+                                baseTableName,
+                                baseTableMetadata,
+                                passthroughColumnNames
+                        );
                     }
                 }
             }
@@ -694,7 +727,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     /**
-     * Inherits the base table's SYMBOL index (type and value block capacity) into {@code columnModel}
+     * Inherits the base table's SYMBOL index (type, value block capacity, and available covering columns)
+     * into {@code columnModel}
      * when {@code columnNode} is a bare column reference that resolves - through the nested-model chain,
      * exactly like {@link #copyBaseTableSymbolColumnCapacity} - to an indexed SYMBOL column of the base
      * table. A reference that lands on an expression at any level (e.g. {@code upper(k) sym} in an inner
@@ -708,38 +742,75 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @Nullable IQueryModel queryModel,
             @NotNull CreateTableColumnModel columnModel,
             @NotNull CharSequence baseTableName,
-            @NotNull TableMetadata baseTableMetadata
+            @NotNull TableMetadata baseTableMetadata,
+            @NotNull ObjList<String> passthroughColumnNames
     ) {
         if (columnNode == null || queryModel == null || columnNode.type != ExpressionNode.LITERAL || columnModel.isIndexed()) {
             return;
         }
-        if (queryModel.getTableName() != null) {
-            if (Chars.equalsIgnoreCase(queryModel.getTableName(), baseTableName)) {
-                final CharSequence columnName = resolveColumnName(columnNode, queryModel);
-                if (columnName != null) {
-                    final int columnIndex = baseTableMetadata.getColumnIndexQuiet(columnName);
-                    if (columnIndex > -1
-                            && ColumnType.isSymbol(baseTableMetadata.getColumnType(columnIndex))
-                            && baseTableMetadata.isColumnIndexed(columnIndex)) {
-                        columnModel.setIndexType(
-                                baseTableMetadata.getColumnMetadata(columnIndex).getIndexType(),
-                                columnNode.position,
-                                baseTableMetadata.getIndexValueBlockCapacity(columnIndex)
-                        );
+        final int columnIndex = resolveBaseColumnIndex(columnNode, queryModel, baseTableName, baseTableMetadata);
+        if (columnIndex < 0
+                || !ColumnType.isSymbol(baseTableMetadata.getColumnType(columnIndex))
+                || !baseTableMetadata.isColumnIndexed(columnIndex)) {
+            return;
+        }
+
+        final TableColumnMetadata baseColumnMetadata = baseTableMetadata.getColumnMetadata(columnIndex);
+        columnModel.setIndexType(
+                baseColumnMetadata.getIndexType(),
+                columnNode.position,
+                baseTableMetadata.getIndexValueBlockCapacity(columnIndex)
+        );
+        final IntList coveringColumnWriterIndices = baseColumnMetadata.getCoveringColumnIndices();
+        if (coveringColumnWriterIndices != null) {
+            for (int i = 0, n = coveringColumnWriterIndices.size(); i < n; i++) {
+                final int coveringColumnIndex = resolveDenseColumnIndex(
+                        baseTableMetadata,
+                        coveringColumnWriterIndices.getQuick(i)
+                );
+                if (coveringColumnIndex > -1) {
+                    final String outputColumnName = passthroughColumnNames.getQuick(coveringColumnIndex);
+                    if (outputColumnName != null) {
+                        columnModel.addCoveringColumnName(outputColumnName, columnNode.position);
                     }
                 }
             }
-        } else {
-            // Resolve through the nested model: follow the alias to the inner column's expression.
-            final QueryColumn column = queryModel.getAliasToColumnMap().get(columnNode.token);
-            inheritBaseSymbolColumnIndex(
-                    column != null ? column.getAst() : columnNode,
-                    queryModel.getNestedModel(),
-                    columnModel,
-                    baseTableName,
-                    baseTableMetadata
-            );
         }
+    }
+
+    private static int resolveBaseColumnIndex(
+            @Nullable ExpressionNode columnNode,
+            @Nullable IQueryModel queryModel,
+            @NotNull CharSequence baseTableName,
+            @NotNull TableMetadata baseTableMetadata
+    ) {
+        if (columnNode == null || queryModel == null || columnNode.type != ExpressionNode.LITERAL) {
+            return -1;
+        }
+        if (queryModel.getTableName() != null) {
+            if (Chars.equalsIgnoreCase(queryModel.getTableName(), baseTableName)) {
+                final CharSequence columnName = resolveColumnName(columnNode, queryModel);
+                return columnName != null ? baseTableMetadata.getColumnIndexQuiet(columnName) : -1;
+            }
+            return -1;
+        }
+
+        final QueryColumn column = queryModel.getAliasToColumnMap().get(columnNode.token);
+        return resolveBaseColumnIndex(
+                column != null ? column.getAst() : columnNode,
+                queryModel.getNestedModel(),
+                baseTableName,
+                baseTableMetadata
+        );
+    }
+
+    private static int resolveDenseColumnIndex(TableMetadata metadata, int writerIndex) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getWriterIndex(i) == writerIndex) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private boolean isPassthrough(FunctionFactoryCache functionFactoryCache, IQueryModel queryModel) {

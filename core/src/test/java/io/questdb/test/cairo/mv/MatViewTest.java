@@ -45,6 +45,7 @@ import io.questdb.cairo.mv.WalTxnRangeLoader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
@@ -56,6 +57,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -8000,6 +8002,79 @@ public class MatViewTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
+        });
+    }
+
+    @Test
+    public void testPassthroughInheritsPostingIndexInclude() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (" +
+                    "s SYMBOL INDEX TYPE POSTING INCLUDE (v), " +
+                    "v DOUBLE, " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW copy AS (SELECT * FROM base)");
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("copy"))) {
+                final int symbolIndex = metadata.getColumnIndex("s");
+                final IntList coveringColumnIndices = metadata.getColumnMetadata(symbolIndex).getCoveringColumnIndices();
+                Assert.assertNotNull(coveringColumnIndices);
+                Assert.assertEquals(2, coveringColumnIndices.size());
+                Assert.assertEquals(metadata.getColumnIndex("v"), coveringColumnIndices.getQuick(0));
+                Assert.assertEquals(metadata.getColumnIndex("ts"), coveringColumnIndices.getQuick(1));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughInheritsPostingIndexIncludeAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (" +
+                    "s SYMBOL INDEX TYPE POSTING INCLUDE (v), " +
+                    "v DOUBLE, " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW copy AS (SELECT s sym, v payload, ts FROM base)");
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("copy"))) {
+                final int symbolIndex = metadata.getColumnIndex("sym");
+                final IntList coveringColumnIndices = metadata.getColumnMetadata(symbolIndex).getCoveringColumnIndices();
+                Assert.assertNotNull(coveringColumnIndices);
+                Assert.assertEquals(2, coveringColumnIndices.size());
+                Assert.assertEquals(metadata.getColumnIndex("payload"), coveringColumnIndices.getQuick(0));
+                Assert.assertEquals(metadata.getColumnIndex("ts"), coveringColumnIndices.getQuick(1));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughPostingIndexIncludeSkipsOmittedAndDerivedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (" +
+                    "s SYMBOL INDEX TYPE POSTING INCLUDE (v), " +
+                    "v DOUBLE, " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW omitted_copy AS (SELECT s, ts FROM base)");
+            execute("CREATE MATERIALIZED VIEW derived_copy AS (SELECT s, v + 1 payload, ts FROM base)");
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("omitted_copy"))) {
+                final int symbolIndex = metadata.getColumnIndex("s");
+                final IntList coveringColumnIndices = metadata.getColumnMetadata(symbolIndex).getCoveringColumnIndices();
+                Assert.assertNotNull(coveringColumnIndices);
+                Assert.assertEquals(1, coveringColumnIndices.size());
+                Assert.assertEquals(metadata.getColumnIndex("ts"), coveringColumnIndices.getQuick(0));
+            }
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("derived_copy"))) {
+                final int symbolIndex = metadata.getColumnIndex("s");
+                final IntList coveringColumnIndices = metadata.getColumnMetadata(symbolIndex).getCoveringColumnIndices();
+                Assert.assertNotNull(coveringColumnIndices);
+                Assert.assertEquals(1, coveringColumnIndices.size());
+                Assert.assertEquals(metadata.getColumnIndex("ts"), coveringColumnIndices.getQuick(0));
+            }
         });
     }
 

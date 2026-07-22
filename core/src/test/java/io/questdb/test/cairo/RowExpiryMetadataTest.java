@@ -236,12 +236,11 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         // locate the policy. Every other expiry test uses an empty covering section, so this is the only guard
         // over a non-empty one.
         //
-        // PATH TAKEN: a materialized view CANNOT carry a posting/covering INCLUDE index — the mat-view CREATE
-        // grammar rejects "index type posting include (...)" ("unexpected token [index]"), and the only index
-        // form a mat view accepts (", index (col)") is a plain symbol index that produces NO covering section.
-        // So this is a LOW-LEVEL test: build a real _meta with a NON-EMPTY covering section on a PLAIN table
-        // (posting INCLUDE), then PATCH a trailing EXPIRE policy onto that _meta in place (the create path
-        // already wrote an empty policy there) and re-read it through the public reader. The reader runs the
+        // PATH TAKEN: the mat-view CREATE grammar cannot declare "index type posting include (...)" directly.
+        // Passthrough views may inherit a covering index from their base table, but this test deliberately
+        // isolates the metadata reader from that inheritance path: build a real _meta with a NON-EMPTY covering
+        // section on a PLAIN table, then PATCH a trailing EXPIRE policy onto that _meta in place (the create
+        // path already wrote an empty policy there) and re-read it through the public reader. The reader runs the
         // real getMetaExpiryPolicyOffset over the non-empty covering section; if the offset walk regresses and
         // fails to skip it, the reader lands on the wrong bytes and reads back null / a different interval, so
         // the assertions below FAIL. (The patch helper mirrors the walk only to find WHERE to write; the
