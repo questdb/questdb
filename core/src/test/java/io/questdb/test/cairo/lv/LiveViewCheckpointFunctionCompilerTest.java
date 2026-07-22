@@ -541,10 +541,9 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
 
-            // RANGE, ending an hour below its own row. frameLo carries the parser's unit
-            // conversion; the high bound does not go through it yet, so frameHi is still the
-            // raw model value and nothing may read it as a tick offset. The plan reads the
-            // look-behind, which is normalized and unaffected by the lag.
+            // RANGE, ending an hour below its own row. Both bounds carry the parser's unit
+            // conversion, so both are tick offsets of the designated timestamp and the pair is
+            // commensurable. The plan reads the look-behind, which the lag leaves alone.
             final Metadata range = compileMetadata(
                     "select ts, sym, avg(x) over (partition by sym order by ts "
                             + "range between '3' hour preceding and '1' hour preceding) a from base",
@@ -552,7 +551,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             );
             Assert.assertEquals(DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW, range.dependency.getKind());
             Assert.assertEquals(-10_800_000_000L, range.dependency.getFrameLo());
-            Assert.assertEquals(-1, range.dependency.getFrameHi());
+            Assert.assertEquals(-3_600_000_000L, range.dependency.getFrameHi());
             Assert.assertTrue(range.dependency.isFiniteRange());
             Assert.assertEquals(10_800_000_000L, range.dependency.getRangeFrameWidth());
             Assert.assertNotNull(range.rangePlan);
@@ -700,23 +699,118 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A RANGE bound the designated timestamp's units cannot carry produces a runtime frame
+     * that is not the one the user wrote, so the compiler names it at its own position rather
+     * than checkpointing a view against it. Both bounds run the same check, and each names
+     * itself, so an error over a two-unit frame says which end failed.
+     */
     @Test
-    public void testRangeWidthOutOfRangeFailsCompilation() throws Exception {
+    public void testRangeFrameBoundOutOfRangeFailsCompilation() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            execute("create table base_ns (ts timestamp_ns, sym symbol, x double) timestamp(ts) partition by day wal");
+
             // TimestampDriver.from(long, char) narrows days to int, so this width collapses to
-            // a zero-wide runtime frame. The descriptor cannot describe the frame the user
-            // asked for, so compilation fails instead of checkpointing a mismatched bound.
-            try {
-                compileMetadata(
+            // a zero-wide runtime frame.
+            assertRangeBoundRejected(
+                    "select ts, sym, avg(x) over (partition by sym order by ts "
+                            + "range between 4294967296 days preceding and current row) a from base",
+                    "RANGE frame width is out of range for the designated timestamp"
+            );
+            // The same narrowing on the high bound, which reaches the descriptor through the
+            // same conversion and is named as the frame's end.
+            assertRangeBoundRejected(
+                    "select ts, sym, avg(x) over (partition by sym order by ts "
+                            + "range between 5000 days preceding and 4294967296 days preceding) a from base",
+                    "RANGE frame end lag is out of range for the designated timestamp"
+            );
+            // A bound finer than the timestamp's resolution divides down to zero, which is the
+            // same failure seen from the other side: the frame the runtime evaluates ends at
+            // the current row, not one nanosecond below it.
+            assertRangeBoundRejected(
+                    "select ts, sym, avg(x) over (partition by sym order by ts "
+                            + "range between 2 seconds preceding and 1 nanosecond preceding) a from base",
+                    "RANGE frame end lag is out of range for the designated timestamp"
+            );
+            // The unchecked multiply inside from() wraps 200000 days of nanoseconds onto a
+            // positive value. The runtime's own frame validation runs first and turns it away
+            // as a FOLLOWING bound, which is the right refusal for the wrong reason - the
+            // frame is not one the user wrote at all. The live view is rejected either way,
+            // and the compiler's sign test stands behind the runtime's.
+            assertRangeBoundRejected(
+                    "select ts, sym, avg(x) over (partition by sym order by ts "
+                            + "range between 100000 days preceding and 200000 days preceding) a from base_ns",
+                    "frame end supports _number_ PRECEDING and CURRENT ROW only"
+            );
+
+            // What the sign test cannot catch: 300000 days of nanoseconds wraps onto a
+            // negative value, so it reads here as a legal lag of the wrong magnitude - about
+            // 236 years rather than the 821 asked for. The descriptor still agrees with the
+            // frame the runtime evaluates, since WindowContextImpl.of() calls the same
+            // conversion, so the repair bounds stay sound and what is lost is the user's
+            // frame, in a plain window query as much as in a live view. Closing it belongs in
+            // the conversion rather than in either caller's guard, which is why both bounds
+            // share one test here.
+            final Metadata wrapped = compileMetadata(
+                    "select ts, sym, avg(x) over (partition by sym order by ts "
+                            + "range between 100000 days preceding and 300000 days preceding) a from base_ns",
+                    0
+            );
+            Assert.assertEquals(-8_640_000_000_000_000_000L, wrapped.dependency.getFrameLo());
+            Assert.assertEquals(-7_473_255_926_290_448_384L, wrapped.dependency.getFrameHi());
+        });
+    }
+
+    /**
+     * Both RANGE bounds reach the descriptor in the designated timestamp column's native
+     * units, because both carry whatever unit the user wrote and the runtime converts both
+     * before building the frame. A descriptor holding a converted low bound beside a raw high
+     * one would disagree with that frame and would hold two numbers that cannot be compared to
+     * each other, which is what a bound read off the high end needs them to be.
+     */
+    @Test
+    public void testRangeFrameHighBoundIsNormalizedIntoTimestampUnits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            final String[] highBounds = {
+                    "1 day", "1 hour", "1 minute", "1 second", "1 millisecond", "1 microsecond", "1000 nanoseconds"
+            };
+            final long[] expectedMicros = {-86_400_000_000L, -3_600_000_000L, -60_000_000L, -1_000_000L, -1_000L, -1L, -1L};
+            for (int i = 0; i < highBounds.length; i++) {
+                final Metadata metadata = compileMetadata(
                         "select ts, sym, avg(x) over (partition by sym order by ts "
-                                + "range between 4294967296 days preceding and current row) a from base",
+                                + "range between 2 days preceding and " + highBounds[i] + " preceding) a from base",
                         0
                 );
-                Assert.fail("expected RANGE width rejection");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "RANGE width is out of range for the designated timestamp");
+                Assert.assertEquals(highBounds[i], expectedMicros[i], metadata.dependency.getFrameHi());
+                // The pair is commensurable: one width, one lag, both micros, and the frame
+                // they describe is non-empty.
+                Assert.assertEquals(highBounds[i], -172_800_000_000L, metadata.dependency.getFrameLo());
+                Assert.assertTrue(highBounds[i], metadata.dependency.getFrameLo() < metadata.dependency.getFrameHi());
+                Assert.assertTrue(highBounds[i], metadata.dependency.isFiniteRange());
+                Assert.assertEquals(highBounds[i], 172_800_000_000L, metadata.dependency.getRangeFrameWidth());
             }
+
+            // The conversion follows the base's own resolution rather than a fixed unit.
+            execute("create table base_ns (ts timestamp_ns, sym symbol, x double) timestamp(ts) partition by day wal");
+            final Metadata nanos = compileMetadata(
+                    "select ts, sym, avg(x) over (partition by sym order by ts "
+                            + "range between '24' hour preceding and '2' second preceding) a from base_ns",
+                    0
+            );
+            Assert.assertEquals(ColumnType.TIMESTAMP_NANO, nanos.dependency.getTimestampType());
+            Assert.assertEquals(-86_400_000_000_000L, nanos.dependency.getFrameLo());
+            Assert.assertEquals(-2_000_000_000L, nanos.dependency.getFrameHi());
+
+            // A high bound at the current row carries no unit and reaches the descriptor
+            // unchanged, so the shape admitted before the lagging ones were is unaffected.
+            final Metadata currentRow = compileMetadata(
+                    "select ts, sym, avg(x) over (partition by sym order by ts "
+                            + "range between '24' hour preceding and current row) a from base",
+                    0
+            );
+            Assert.assertEquals(0, currentRow.dependency.getFrameHi());
         });
     }
 
@@ -835,6 +929,15 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
         final Metadata metadata = compileMetadata(sql, 0);
         Assert.assertFalse(sql, metadata.dependency.isFiniteRange());
         Assert.assertNull(sql, metadata.rangePlan);
+    }
+
+    private static void assertRangeBoundRejected(String sql, String expectedMessage) throws Exception {
+        try {
+            compileMetadata(sql, 0);
+            Assert.fail(sql);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        }
     }
 
     private static Metadata compileMetadata(String sql, int functionIndex) throws Exception {

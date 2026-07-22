@@ -76,10 +76,25 @@ public final class LiveViewCheckpointDependency {
         this.numericConvergence = numericConvergence;
     }
 
+    /**
+     * Returns the negated lag the frame ends at: 0 at the current row, negative below it. A
+     * RANGE descriptor reports it in the designated timestamp column's native units and a ROWS
+     * descriptor as a row count, which is the same split {@link #getFrameLo()} carries, so the
+     * two bounds of one descriptor are always commensurable with each other.
+     * <p>
+     * The compiler folds {@code EXCLUDE CURRENT ROW} in before recording it, so this describes
+     * the frame the window factories evaluate rather than the one the parser model holds.
+     */
     public long getFrameHi() {
         return frameHi;
     }
 
+    /**
+     * Returns the negated look-behind the frame starts at, in the units
+     * {@link #getFrameHi()} describes. {@link #getRangeFrameWidth()} and
+     * {@link #getRowsPrecedingCount()} are the readers a repair uses; they answer the same
+     * magnitude with the finite-frame check the bound needs in front of it.
+     */
     public long getFrameLo() {
         return frameLo;
     }

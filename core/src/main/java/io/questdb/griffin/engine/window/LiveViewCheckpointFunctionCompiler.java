@@ -179,15 +179,23 @@ public final class LiveViewCheckpointFunctionCompiler {
         // current row, and SqlCodeGenerator has already run validateRange() over every
         // live-view window expression, so such a frame is known to be ordered by the
         // designated timestamp ascending and its width is safe to read as a timestamp offset.
-        final long frameLo = kind == DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW
+        final boolean isRange = kind == DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW;
+        final long frameLo = isRange
                 ? rangeFrameLo(function.getName(), window, timestampType)
                 : window.getRowsLo();
+        // Both RANGE bounds carry the unit the user wrote, so both go through the same
+        // conversion, and the descriptor holds two commensurable timestamp offsets. A ROWS
+        // frame counts rows at either end and carries no unit, so its bounds stay as the
+        // model records them.
+        final long frameHi = isRange
+                ? rangeFrameHi(function.getName(), window, timestampType)
+                : effectiveRowsHi(window);
         final LiveViewCheckpointDependency dependency = new LiveViewCheckpointDependency(
                 kind,
                 partitionSignature,
                 orderSignature,
                 frameLo,
-                effectiveRowsHi(window),
+                frameHi,
                 timestampType,
                 function.hasFrameLocalCheckpointState(),
                 keyed,
@@ -572,9 +580,25 @@ public final class LiveViewCheckpointFunctionCompiler {
      * method describes only the one the runtime turns into a frame adjustment.
      */
     private static long effectiveRowsHi(WindowExpression window) {
-        return window.getExclusionKind() == WindowExpression.EXCLUDE_CURRENT_ROW && window.getRowsHi() == 0
+        return effectiveRowsHi(window, window.getRowsHi());
+    }
+
+    /**
+     * Folds {@code EXCLUDE CURRENT ROW} into a high bound a caller has already converted into
+     * the designated timestamp's units, which is the order the runtime applies the two
+     * adjustments in: {@code WindowContextImpl.of()} converts the unit, and its
+     * {@code getRowsHi()} rewrites the {@code 0} afterwards.
+     * <p>
+     * That order is what the {@code -1} requires. It is already a normalized quantity - one
+     * tick for RANGE, one row for ROWS - so a conversion running after it would scale it a
+     * second time. Converting first happens to agree today because {@code CURRENT ROW} carries
+     * no time unit and {@link #rangeFrameBound} returns early without one, but the two stop
+     * agreeing the moment the parser attaches a unit to a bound that reads as zero.
+     */
+    private static long effectiveRowsHi(WindowExpression window, long rowsHi) {
+        return window.getExclusionKind() == WindowExpression.EXCLUDE_CURRENT_ROW && rowsHi == 0
                 ? -1
-                : window.getRowsHi();
+                : rowsHi;
     }
 
     /**
@@ -765,36 +789,93 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
+     * Converts one RANGE frame bound from the unit the user wrote into the designated
+     * timestamp's native units, repeating exactly the conversion {@code WindowContextImpl.of()}
+     * applies to build the runtime frame. Both bounds run through here because the descriptor
+     * is only sound while it and the compiled frame agree bit-for-bit, and because a
+     * descriptor mixing a converted low bound with a raw high one holds two numbers that
+     * cannot be compared to each other.
+     * <p>
+     * {@code from(long, char)} yields 0 for an unrecognized unit and narrows minutes, hours,
+     * days and weeks to {@code int}, so a bound beyond that range silently collapses to zero
+     * or flips sign. Such a frame has no usable dependency bound, so the compiler names it at
+     * its own position rather than checkpointing a view whose runtime frame is not the one the
+     * user asked for.
+     * <p>
+     * The test below is a sign flip, and that catches less than the whole of the problem: the
+     * unchecked {@code long} multiply inside {@code from()} can also wrap onto a negative
+     * value, which reads here as a legal bound of the wrong magnitude. The descriptor still
+     * agrees with the frame the runtime evaluates - both sides call the same conversion - so
+     * the repair bounds stay sound and what is lost is the user's frame, in a live view and in
+     * a plain window query alike. Closing that hole belongs in the conversion itself; keeping
+     * both bounds on one test here is what lets a single fix reach both.
+     */
+    private static long rangeFrameBound(
+            CharSequence functionName,
+            WindowExpression window,
+            int timestampType,
+            long bound,
+            char unit,
+            int unitPosition,
+            CharSequence boundName
+    ) throws SqlException {
+        if (unit == 0 || !ColumnType.isTimestamp(timestampType)) {
+            return bound;
+        }
+        final long converted = ColumnType.getTimestampDriver(timestampType).from(bound, unit);
+        if (converted >= 0 && bound < 0) {
+            final int position = unitPosition > 0 ? unitPosition : window.getAst().position;
+            throw SqlException.$(position, "live view RANGE frame ").put(boundName)
+                    .put(" is out of range for the designated timestamp [function=")
+                    .put(functionName).put("(), value=").put(-bound).put(unit).put(']');
+        }
+        return converted;
+    }
+
+    /**
+     * Resolves the descriptor's {@code frameHi} to the negated finite lag {@code V} the frame
+     * ends at, in the designated timestamp's native units, with {@code EXCLUDE CURRENT ROW}
+     * folded in after the conversion - see {@link #effectiveRowsHi(WindowExpression, long)}
+     * for why that order is the one that holds.
+     * <p>
+     * A frame ending at the current row carries no unit and reaches 0 unchanged, so the
+     * conversion costs nothing for the shape that was admitted before the lagging ones were.
+     */
+    private static long rangeFrameHi(
+            CharSequence functionName,
+            WindowExpression window,
+            int timestampType
+    ) throws SqlException {
+        return effectiveRowsHi(window, rangeFrameBound(
+                functionName,
+                window,
+                timestampType,
+                window.getRowsHi(),
+                window.getRowsHiExprTimeUnit(),
+                window.getRowsHiExprPos(),
+                "end lag"
+        ));
+    }
+
+    /**
      * Resolves the descriptor's {@code frameLo} to the negated finite RANGE width {@code W}
-     * in the designated timestamp's native units. {@link WindowExpression#getRowsLo()} still
-     * carries the width in the units the user wrote, so this repeats exactly the conversion
-     * {@code WindowContextImpl.of()} applies to build the runtime frame - the repair floor
-     * {@code L = R - W} is only sound while the descriptor and the compiled frame agree
-     * bit-for-bit.
+     * in the designated timestamp's native units, which is what the repair floor
+     * {@code L = R - W} subtracts from a timestamp.
      */
     private static long rangeFrameLo(
             CharSequence functionName,
             WindowExpression window,
             int timestampType
     ) throws SqlException {
-        final long rowsLo = window.getRowsLo();
-        final char unit = window.getRowsLoExprTimeUnit();
-        if (unit == 0 || !ColumnType.isTimestamp(timestampType)) {
-            return rowsLo;
-        }
-        final long frameLo = ColumnType.getTimestampDriver(timestampType).from(rowsLo, unit);
-        // from(long, char) yields 0 for an unrecognized unit, and narrows minutes/hours/days
-        // to int, so a width beyond that range silently collapses to zero or flips sign.
-        // Such a frame has no usable dependency bound - reject it instead of checkpointing a
-        // view whose runtime frame is not the one the user asked for.
-        if (frameLo >= 0 && rowsLo < 0) {
-            final int position = window.getRowsLoExprPos() > 0
-                    ? window.getRowsLoExprPos()
-                    : window.getAst().position;
-            throw SqlException.$(position, "live view RANGE width is out of range for the designated timestamp [function=")
-                    .put(functionName).put("(), width=").put(-rowsLo).put(unit).put(']');
-        }
-        return frameLo;
+        return rangeFrameBound(
+                functionName,
+                window,
+                timestampType,
+                window.getRowsLo(),
+                window.getRowsLoExprTimeUnit(),
+                window.getRowsLoExprPos(),
+                "width"
+        );
     }
 
     /**
