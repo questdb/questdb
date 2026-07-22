@@ -24,10 +24,12 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class MinMaxWindowFunctionTest extends AbstractCairoTest {
@@ -84,6 +86,25 @@ public class MinMaxWindowFunctionTest extends AbstractCairoTest {
                 .timestamp("ts")
                 .expectSize()
                 .assertBinds(cases);
+    }
+
+    @Test
+    public void testConstantTargetOutOfRangeFailsAtCompileTime() throws Exception {
+        // Fix 2: a constant target's range is validated at newInstance (compile time), matching the
+        // pre-bind-var-support factory and the legacy SUBSAMPLE cursor's own constant handling - not
+        // deferred to cursor-open. select(...) below only compiles the query (it never calls
+        // factory.getCursor(...)), so a thrown SqlException here proves the failure happened during
+        // compilation, not execution.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v double) timestamp(ts)");
+            try {
+                select("select ts, v, minmax(ts, v, 1) over (order by ts) keep from t");
+                Assert.fail("expected compilation to fail for an out-of-range constant target");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "target points must be at least 2");
+                Assert.assertEquals(28, e.getPosition());
+            }
+        });
     }
 
     @Test

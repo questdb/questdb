@@ -24,9 +24,13 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class UniformWindowFunctionTest extends AbstractCairoTest {
@@ -174,6 +178,47 @@ public class UniformWindowFunctionTest extends AbstractCairoTest {
                                             Row forward scan
                                             Frame forward scan on: t
                                     """);
+        });
+    }
+
+    @Test
+    public void testConstantTargetOutOfRangeFailsAtCompileTime() throws Exception {
+        // Fix 2: a constant target's range is validated at newInstance (compile time), matching the
+        // pre-bind-var-support factory and the legacy SUBSAMPLE cursor's own constant handling - not
+        // deferred to cursor-open. select(...) below only compiles the query (it never calls
+        // factory.getCursor(...)), so a thrown SqlException here proves the failure happened during
+        // compilation, not execution.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v double) timestamp(ts)");
+            try {
+                select("select ts, uniform(0) over (order by ts) from t");
+                Assert.fail("expected compilation to fail for an out-of-range constant target");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "target must be a positive constant");
+                Assert.assertEquals(19, e.getPosition());
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableWrongTypeRejectedWithFriendlyMessage() throws Exception {
+        // A bind variable already bound to a non-numeric type before this query compiles (e.g. reused
+        // across differently-shaped statements) must be rejected with the same "integer expected for
+        // target point count" message SqlCodeGenerator.generateSubsample's cursor produces for a
+        // wrongly-typed target/stride - not a generic "no matching function" overload error, and not
+        // an uncaught cast failure surfacing later inside init()/pass1.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v double) timestamp(ts)");
+            BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "abc");
+            try {
+                select("select ts, uniform($1) over (order by ts) from t");
+                Assert.fail("expected compilation to fail for a non-numeric bind-variable target");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "integer expected for target point count");
+                Assert.assertEquals(19, e.getPosition());
+            }
         });
     }
 

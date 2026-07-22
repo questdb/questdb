@@ -91,16 +91,38 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
             throw SqlException.$(position, "uniform() does not support PARTITION BY");
         }
 
-        // target is read PER-EXECUTION (see UniformFunction.init) rather than frozen here, so a
-        // bind-variable target that is unset at compile - and may be re-bound between executions -
-        // resolves against its current value. A plain constant reads to the same value at open, so
-        // constant behavior is unchanged.
+        // A bind-variable target that is unset at compile - and may be re-bound between executions -
+        // is read PER-EXECUTION (see UniformFunction.init) rather than frozen here. A constant target
+        // is range-validated right below (compile time, matching the pre-bind-var-support factory and
+        // the legacy SUBSAMPLE cursor's own constant handling); a constant otherwise reads to the same
+        // value at every open, so constant behavior is unchanged.
         Function targetArg = args.getQuick(0);
+        int targetPosition = argPositions.getQuick(0);
         if (!targetArg.isConstant() && !targetArg.isRuntimeConstant()) {
-            throw SqlException.$(argPositions.getQuick(0), "target must be a constant or bind variable");
+            throw SqlException.$(targetPosition, "target must be a constant or bind variable");
+        }
+        // Mirrors SqlCodeGenerator.generateSubsample's target/stride handling: resolve an UNDEFINED
+        // bind variable to LONG, and reject anything not convertible to LONG (e.g. a bind variable
+        // already bound to a non-numeric type).
+        coerceRuntimeConstantType(targetArg, ColumnType.LONG, sqlExecutionContext, "target point count must be an integer", targetPosition);
+        final short targetTypeTag = ColumnType.tagOf(targetArg.getType());
+        if (targetTypeTag != ColumnType.INT && targetTypeTag != ColumnType.LONG
+                && targetTypeTag != ColumnType.SHORT && targetTypeTag != ColumnType.BYTE) {
+            throw SqlException.$(targetPosition, "integer expected for target point count");
         }
 
-        return new UniformFunction(targetArg, argPositions.getQuick(0));
+        // A constant target's range is validated HERE, at compile time - byte-identical (message and
+        // position) to the pre-bind-var-support factory. A bind-variable target is range-validated
+        // per-execution in UniformFunction.init(); see there.
+        long resolvedTarget = 0;
+        if (targetArg.isConstant()) {
+            resolvedTarget = targetArg.getLong(null);
+            if (resolvedTarget == Numbers.LONG_NULL || resolvedTarget < 1) {
+                throw SqlException.$(targetPosition, "target must be a positive constant");
+            }
+        }
+
+        return new UniformFunction(targetArg, targetPosition, resolvedTarget);
     }
 
     // uniform(n) over (order by xxx) - no partition by, no framing.
@@ -124,10 +146,14 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         private long pass2Ordinal;   // running row counter during pass2 (same traversal order as pass1)
         private long selIdx;         // monotonic cursor into `selected` during pass2
 
-        UniformFunction(Function targetArg, int targetPosition) {
+        UniformFunction(Function targetArg, int targetPosition, long resolvedTarget) {
             super(null);
             this.targetArg = targetArg;
             this.targetPosition = targetPosition;
+            // For a constant target, already range-validated at newInstance (compile time); for a
+            // bind-variable target this is an unused placeholder, overwritten every execution in
+            // init() below.
+            this.target = resolvedTarget;
         }
 
         @Override
@@ -140,15 +166,19 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            // Resolve target for THIS execution. Mirrors SubsampleRecordCursorFactory.getCursor's
-            // targetFunc.init()+getTargetPoints(): a bind-variable target is re-read (and range-checked)
-            // every run, so re-binding between executions takes effect; a constant reads the same value.
             targetArg.init(symbolTableSource, executionContext);
-            long t = targetArg.getLong(null);
-            if (t == Numbers.LONG_NULL || t < 1) {
-                throw SqlException.$(targetPosition, "target must be a positive constant");
+            if (!targetArg.isConstant()) {
+                // Resolve target for THIS execution. Mirrors SubsampleRecordCursorFactory.getCursor's
+                // targetFunc.init()+getTargetPoints(): a bind-variable target is re-read (and
+                // range-checked) every run, so re-binding between executions takes effect.
+                long t = targetArg.getLong(null);
+                if (t == Numbers.LONG_NULL || t < 1) {
+                    throw SqlException.$(targetPosition, "target must be a positive constant");
+                }
+                target = t;
             }
-            target = t;
+            // A constant target was already resolved and range-validated at newInstance (compile
+            // time); it reads the same value every execution, so there is nothing to redo here.
         }
 
         @Override

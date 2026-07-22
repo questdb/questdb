@@ -118,15 +118,19 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                     .put(ColumnType.nameOf(valueArg.getType()));
         }
 
-        // target is read PER-EXECUTION (see BucketSelectWindowFunction.init) rather than frozen here,
-        // so a bind-variable target that is unset at compile - and may be re-bound between executions -
-        // resolves against its current value. A plain constant reads to the same value at open, so
-        // constant behavior is unchanged.
+        // A bind-variable target that is unset at compile - and may be re-bound between executions -
+        // is read PER-EXECUTION (see BucketSelectWindowFunction.init) rather than frozen here. A
+        // constant target is range-validated right below (compile time, matching the
+        // pre-bind-var-support factory and the legacy SUBSAMPLE cursor's own constant handling); a
+        // constant otherwise reads to the same value at every open, so constant behavior is unchanged.
+        final int targetPosition = argPositions.getQuick(2);
         if (!targetArg.isConstant() && !targetArg.isRuntimeConstant()) {
-            throw SqlException.$(argPositions.getQuick(2), "target must be a constant or bind variable");
+            throw SqlException.$(targetPosition, "target must be a constant or bind variable");
         }
+        final long resolvedTarget = BucketSelectWindowFunction.coerceAndValidateConstantTarget(
+                targetArg, targetPosition, sqlExecutionContext);
 
-        return new BucketSelectWindowFunction(tsArg, valueArg, targetArg, argPositions.getQuick(2), M4Algorithm.INSTANCE, NAME);
+        return new BucketSelectWindowFunction(tsArg, valueArg, targetArg, targetPosition, resolvedTarget, M4Algorithm.INSTANCE, NAME);
     }
 
     // m4(ts, value, target) over (order by xxx) - no partition by, no framing.
@@ -185,15 +189,47 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         // null -> NaN mapping.
         private final short valueTag;
 
-        BucketSelectWindowFunction(Function tsArg, Function valueArg, Function targetArg, int targetPosition, SubsampleAlgorithm algorithm, String name) {
+        BucketSelectWindowFunction(Function tsArg, Function valueArg, Function targetArg, int targetPosition, long resolvedTarget, SubsampleAlgorithm algorithm, String name) {
             super(null);
             this.tsArg = tsArg;
             this.valueArg = valueArg;
             this.valueTag = ColumnType.tagOf(valueArg.getType());
             this.targetArg = targetArg;
             this.targetPosition = targetPosition;
+            // For a constant target, already range-validated at newInstance (compile time); for a
+            // bind-variable target this is an unused placeholder, overwritten every execution in
+            // init() below.
+            this.target = resolvedTarget;
             this.algorithm = algorithm;
             this.name = name;
+        }
+
+        // Shared by M4FunctionFactory/MinMaxFunctionFactory/LttbFunctionFactory's newInstance(0):
+        // mirrors SqlCodeGenerator.generateSubsample's target/stride handling for the non-CADENCE
+        // (target point count) case - coerce an UNDEFINED bind variable to LONG, reject anything not
+        // convertible to LONG, reject a non-integer tag, and - for a CONSTANT target only - validate
+        // its range right here at compile time (byte-identical message/position to the
+        // pre-bind-var-support factories). A bind-variable target is range-validated per-execution in
+        // init() instead; see there. Returns the resolved value for a constant target, or 0 (unused
+        // placeholder) for a bind variable.
+        static long coerceAndValidateConstantTarget(Function targetArg, int targetPosition, SqlExecutionContext sqlExecutionContext) throws SqlException {
+            coerceRuntimeConstantType(targetArg, ColumnType.LONG, sqlExecutionContext, "target point count must be an integer", targetPosition);
+            final short targetTypeTag = ColumnType.tagOf(targetArg.getType());
+            if (targetTypeTag != ColumnType.INT && targetTypeTag != ColumnType.LONG
+                    && targetTypeTag != ColumnType.SHORT && targetTypeTag != ColumnType.BYTE) {
+                throw SqlException.$(targetPosition, "integer expected for target point count");
+            }
+            if (!targetArg.isConstant()) {
+                return 0;
+            }
+            long target = targetArg.getLong(null);
+            if (target == Numbers.LONG_NULL || target < 2) {
+                throw SqlException.$(targetPosition, "target points must be at least 2");
+            }
+            if (target > Integer.MAX_VALUE) {
+                throw SqlException.$(targetPosition, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+            }
+            return target;
         }
 
         @Override
@@ -279,18 +315,22 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             super.init(symbolTableSource, executionContext);
             tsArg.init(symbolTableSource, executionContext);
             valueArg.init(symbolTableSource, executionContext);
-            // Resolve target for THIS execution. Mirrors SubsampleRecordCursorFactory.getCursor's
-            // targetFunc.init()+getTargetPoints(): a bind-variable target is re-read (and range-checked)
-            // every run, so re-binding between executions takes effect; a constant reads the same value.
             targetArg.init(symbolTableSource, executionContext);
-            long t = targetArg.getLong(null);
-            if (t == Numbers.LONG_NULL || t < 2) {
-                throw SqlException.$(targetPosition, "target points must be at least 2");
+            if (!targetArg.isConstant()) {
+                // Resolve target for THIS execution. Mirrors SubsampleRecordCursorFactory.getCursor's
+                // targetFunc.init()+getTargetPoints(): a bind-variable target is re-read (and
+                // range-checked) every run, so re-binding between executions takes effect.
+                long t = targetArg.getLong(null);
+                if (t == Numbers.LONG_NULL || t < 2) {
+                    throw SqlException.$(targetPosition, "target points must be at least 2");
+                }
+                if (t > Integer.MAX_VALUE) {
+                    throw SqlException.$(targetPosition, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+                }
+                target = t;
             }
-            if (t > Integer.MAX_VALUE) {
-                throw SqlException.$(targetPosition, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
-            }
-            target = t;
+            // A constant target was already resolved and range-validated at newInstance (compile
+            // time); it reads the same value every execution, so there is nothing to redo here.
             this.circuitBreaker = executionContext.getCircuitBreaker();
         }
 

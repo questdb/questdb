@@ -117,15 +117,36 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             throw SqlException.$(position, "cadence() does not support PARTITION BY");
         }
 
-        // stride is read PER-EXECUTION (see CadenceFunction.init) rather than frozen here, so a
-        // bind-variable stride that is unset at compile - and may be re-bound between executions -
-        // resolves against its current value. A plain constant reads to the same value at open, so
-        // constant behavior is unchanged.
+        // A bind-variable stride that is unset at compile - and may be re-bound between executions -
+        // is read PER-EXECUTION (see CadenceFunction.init) rather than frozen here. A constant stride
+        // is range-validated right below (compile time, matching the pre-bind-var-support factory and
+        // the legacy SUBSAMPLE cursor's own constant handling); a constant otherwise reads to the same
+        // value at every open, so constant behavior is unchanged.
         Function strideArg = args.getQuick(0);
-        if (!strideArg.isConstant() && !strideArg.isRuntimeConstant()) {
-            throw SqlException.$(argPositions.getQuick(0), "stride must be a constant or bind variable");
-        }
         int stridePosition = argPositions.getQuick(0);
+        if (!strideArg.isConstant() && !strideArg.isRuntimeConstant()) {
+            throw SqlException.$(stridePosition, "stride must be a constant or bind variable");
+        }
+        // Mirrors SqlCodeGenerator.generateSubsample's target/stride handling: resolve an UNDEFINED
+        // bind variable to LONG, and reject anything not convertible to LONG (e.g. a bind variable
+        // already bound to a non-numeric type).
+        coerceRuntimeConstantType(strideArg, ColumnType.LONG, sqlExecutionContext, "stride must be an integer", stridePosition);
+        final short strideTypeTag = ColumnType.tagOf(strideArg.getType());
+        if (strideTypeTag != ColumnType.INT && strideTypeTag != ColumnType.LONG
+                && strideTypeTag != ColumnType.SHORT && strideTypeTag != ColumnType.BYTE) {
+            throw SqlException.$(stridePosition, "integer expected for stride");
+        }
+
+        // A constant stride's range is validated HERE, at compile time - byte-identical (message and
+        // position) to the pre-bind-var-support factory. A bind-variable stride is range-validated
+        // per-execution in CadenceFunction.init(); see there.
+        long resolvedStride = 0;
+        if (strideArg.isConstant()) {
+            resolvedStride = strideArg.getLong(null);
+            if (resolvedStride == Numbers.LONG_NULL || resolvedStride < 1) {
+                throw SqlException.$(stridePosition, "stride must be a positive constant");
+            }
+        }
 
         Function seedFunc = null;
         int seedMode = SEED_MODE_NONE;
@@ -145,7 +166,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             }
         }
 
-        return new CadenceFunction(strideArg, stridePosition, seedFunc, seedMode, seedPosition);
+        return new CadenceFunction(strideArg, stridePosition, resolvedStride, seedFunc, seedMode, seedPosition);
     }
 
     // cadence(stride[, seed]) over (order by xxx) - no partition by, no framing.
@@ -178,10 +199,14 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         private long pass2Ordinal;   // running row counter during pass2 (same traversal order as pass1)
         private long selIdx;         // monotonic cursor into `selected` during pass2
 
-        CadenceFunction(Function strideFunc, int stridePosition, Function seedFunc, int seedMode, int seedPosition) {
+        CadenceFunction(Function strideFunc, int stridePosition, long resolvedStride, Function seedFunc, int seedMode, int seedPosition) {
             super(null);
             this.strideFunc = strideFunc;
             this.stridePosition = stridePosition;
+            // For a constant stride, already range-validated at newInstance (compile time); for a
+            // bind-variable stride this is an unused placeholder, overwritten every execution in
+            // init() below.
+            this.stride = resolvedStride;
             this.seedFunc = seedFunc;
             this.seedMode = seedMode;
             this.seedPosition = seedPosition;
@@ -242,15 +267,19 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            // Resolve stride for THIS execution. Mirrors SubsampleRecordCursorFactory.getCursor's
-            // targetFunc.init()+getStride(): a bind-variable stride is re-read (and range-checked)
-            // every run, so re-binding between executions takes effect; a constant reads the same value.
             strideFunc.init(symbolTableSource, executionContext);
-            long s = strideFunc.getLong(null);
-            if (s == Numbers.LONG_NULL || s < 1) {
-                throw SqlException.$(stridePosition, "stride must be a positive constant");
+            if (!strideFunc.isConstant()) {
+                // Resolve stride for THIS execution. Mirrors SubsampleRecordCursorFactory.getCursor's
+                // targetFunc.init()+getStride(): a bind-variable stride is re-read (and range-checked)
+                // every run, so re-binding between executions takes effect.
+                long s = strideFunc.getLong(null);
+                if (s == Numbers.LONG_NULL || s < 1) {
+                    throw SqlException.$(stridePosition, "stride must be a positive constant");
+                }
+                stride = s;
             }
-            stride = s;
+            // A constant stride was already resolved and range-validated at newInstance (compile
+            // time); it reads the same value every execution, so there is nothing to redo here.
             if (seedFunc != null) {
                 seedFunc.init(symbolTableSource, executionContext);
             }

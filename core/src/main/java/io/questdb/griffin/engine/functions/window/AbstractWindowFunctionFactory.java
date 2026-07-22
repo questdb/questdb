@@ -34,6 +34,8 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -58,6 +60,20 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
             copy.add(keyTypes.getColumnType(i));
         }
         return copy;
+    }
+
+    // Mirrors SqlCodeGenerator's private coerceRuntimeConstantType, which the legacy SUBSAMPLE cursor's
+    // generateSubsample uses to validate its target/stride Function: resolve a still-UNDEFINED
+    // bind-variable arg to `type`, otherwise require the arg to already be a constant/runtime-constant
+    // whose type is convertible to `type` (message/pos on mismatch). Shared by the keep-flag window
+    // factories (uniform/cadence/m4/minmax/lttb/lttb-gap) so their target/stride handling stays in
+    // lockstep with the cursor they replace.
+    static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
+        if (ColumnType.isUndefined(func.getType())) {
+            func.assignType(type, context.getBindVariableService());
+        } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !ColumnType.isConvertibleFrom(func.getType(), type)) {
+            throw SqlException.$(pos, message);
+        }
     }
 
     static void expandRingBuffer(MemoryARW memory, RingBufferDesc desc, int recordSize) {

@@ -94,14 +94,18 @@ public class MinMaxFunctionFactory extends AbstractWindowFunctionFactory {
                     .put(ColumnType.nameOf(valueArg.getType()));
         }
 
-        // target is read PER-EXECUTION (see BucketSelectWindowFunction.init) rather than frozen here,
-        // so a bind-variable target that is unset at compile - and may be re-bound between executions -
-        // resolves against its current value. A plain constant reads to the same value at open, so
-        // constant behavior is unchanged.
+        // A bind-variable target that is unset at compile - and may be re-bound between executions -
+        // is read PER-EXECUTION (see BucketSelectWindowFunction.init) rather than frozen here. A
+        // constant target is range-validated right below (compile time, matching the
+        // pre-bind-var-support factory and the legacy SUBSAMPLE cursor's own constant handling); a
+        // constant otherwise reads to the same value at every open, so constant behavior is unchanged.
+        final int targetPosition = argPositions.getQuick(2);
         if (!targetArg.isConstant() && !targetArg.isRuntimeConstant()) {
-            throw SqlException.$(argPositions.getQuick(2), "target must be a constant or bind variable");
+            throw SqlException.$(targetPosition, "target must be a constant or bind variable");
         }
+        final long resolvedTarget = M4FunctionFactory.BucketSelectWindowFunction.coerceAndValidateConstantTarget(
+                targetArg, targetPosition, sqlExecutionContext);
 
-        return new M4FunctionFactory.BucketSelectWindowFunction(tsArg, valueArg, targetArg, argPositions.getQuick(2), MinMaxAlgorithm.INSTANCE, NAME);
+        return new M4FunctionFactory.BucketSelectWindowFunction(tsArg, valueArg, targetArg, targetPosition, resolvedTarget, MinMaxAlgorithm.INSTANCE, NAME);
     }
 }

@@ -119,20 +119,24 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
                     .put(ColumnType.nameOf(valueArg.getType()));
         }
 
-        // target is read PER-EXECUTION (see BucketSelectWindowFunction.init) rather than frozen here,
-        // so a bind-variable target that is unset at compile - and may be re-bound between executions -
-        // resolves against its current value. A plain constant reads to the same value at open, so
-        // constant behavior is unchanged.
+        // A bind-variable target that is unset at compile - and may be re-bound between executions -
+        // is read PER-EXECUTION (see BucketSelectWindowFunction.init) rather than frozen here. A
+        // constant target is range-validated right below (compile time, matching the
+        // pre-bind-var-support factory and the legacy SUBSAMPLE cursor's own constant handling); a
+        // constant otherwise reads to the same value at every open, so constant behavior is unchanged.
+        final int targetPosition = argPositions.getQuick(2);
         if (!targetArg.isConstant() && !targetArg.isRuntimeConstant()) {
-            throw SqlException.$(argPositions.getQuick(2), "target must be a constant or bind variable");
+            throw SqlException.$(targetPosition, "target must be a constant or bind variable");
         }
+        final long resolvedTarget = M4FunctionFactory.BucketSelectWindowFunction.coerceAndValidateConstantTarget(
+                targetArg, targetPosition, sqlExecutionContext);
 
         long gapThresholdMicros = 0;
         if (hasGap) {
             gapThresholdMicros = parseGapThreshold(args.getQuick(3), argPositions.getQuick(3));
         }
 
-        return new LttbBucketSelectWindowFunction(tsArg, valueArg, targetArg, argPositions.getQuick(2), new LttbAlgorithm(gapThresholdMicros), NAME);
+        return new LttbBucketSelectWindowFunction(tsArg, valueArg, targetArg, targetPosition, resolvedTarget, new LttbAlgorithm(gapThresholdMicros), NAME);
     }
 
     // Reproduces SqlCodeGenerator.generateSubsample's gap-threshold parse (~line 7157): same
@@ -179,8 +183,8 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
     static class LttbBucketSelectWindowFunction extends M4FunctionFactory.BucketSelectWindowFunction {
         private final LttbAlgorithm lttbAlgorithm;
 
-        LttbBucketSelectWindowFunction(Function tsArg, Function valueArg, Function targetArg, int targetPosition, LttbAlgorithm algorithm, String name) {
-            super(tsArg, valueArg, targetArg, targetPosition, algorithm, name);
+        LttbBucketSelectWindowFunction(Function tsArg, Function valueArg, Function targetArg, int targetPosition, long resolvedTarget, LttbAlgorithm algorithm, String name) {
+            super(tsArg, valueArg, targetArg, targetPosition, resolvedTarget, algorithm, name);
             this.lttbAlgorithm = algorithm;
         }
 
