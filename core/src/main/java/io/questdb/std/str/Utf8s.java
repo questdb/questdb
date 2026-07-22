@@ -824,13 +824,39 @@ public final class Utf8s {
         return -1;
     }
 
-    @TestOnly
+    /**
+     * Returns whether the sequence is ASCII. A {@code true} hint is trusted;
+     * bytes are scanned only when the hint is conservatively {@code false}.
+     */
     public static boolean isAscii(Utf8Sequence utf8) {
-        if (utf8 != null) {
-            for (int k = 0, kl = utf8.size(); k < kl; k++) {
-                if (utf8.byteAt(k) < 0) {
+        return utf8 == null || utf8.isAscii() || isAsciiBytes0(utf8);
+    }
+
+    /**
+     * Checks the actual bytes without trusting {@link Utf8Sequence#isAscii()}.
+     * This is used to validate producers that report an ASCII value.
+     */
+    @TestOnly
+    public static boolean isAsciiBytes(Utf8Sequence utf8) {
+        return utf8 == null || isAsciiBytes0(utf8);
+    }
+
+    private static boolean isAsciiBytes0(@NotNull Utf8Sequence utf8) {
+        final int size = utf8.size();
+        if (size >= Long.BYTES) {
+            int i = 0;
+            for (int longLimit = size - Long.BYTES; i <= longLimit; i += Long.BYTES) {
+                if (!isAscii(utf8.longAt(i))) {
                     return false;
                 }
+            }
+            // Check a trailing partial word with one overlapping load instead
+            // of up to seven individual byteAt() calls.
+            return i >= size || isAscii(utf8.longAt(size - Long.BYTES));
+        }
+        for (int i = 0; i < size; i++) {
+            if (utf8.byteAt(i) < 0) {
+                return false;
             }
         }
         return true;

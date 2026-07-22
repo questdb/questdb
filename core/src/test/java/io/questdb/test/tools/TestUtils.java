@@ -175,7 +175,7 @@ public final class TestUtils {
     }
 
     public static void assertAsciiCompliance(@Nullable Utf8Sequence utf8Sequence) {
-        if (utf8Sequence != null && utf8Sequence.isAscii() && !Utf8s.isAscii(utf8Sequence)) {
+        if (utf8Sequence != null && utf8Sequence.isAscii() && !Utf8s.isAsciiBytes(utf8Sequence)) {
             // isAscii()=true but value is not actually ASCII — this is always wrong.
             // isAscii()=false is conservatively valid even for ASCII values (e.g. Parquet
             // VarcharSlice uses column-level metadata and may not know per-value).

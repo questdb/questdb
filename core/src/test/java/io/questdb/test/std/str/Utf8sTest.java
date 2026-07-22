@@ -982,6 +982,24 @@ public class Utf8sTest {
 
     @Test
     public void testIsAscii() {
+        for (int size = 0; size < 32; size++) {
+            final byte[] bytes = new byte[size];
+            Arrays.fill(bytes, (byte) 'a');
+            Assert.assertTrue(Utf8s.isAscii(new Utf8String(bytes, false)));
+            for (int nonAsciiIndex = 0; nonAsciiIndex < size; nonAsciiIndex++) {
+                bytes[nonAsciiIndex] = (byte) 0x80;
+                Assert.assertFalse(Utf8s.isAscii(new Utf8String(bytes, false)));
+                bytes[nonAsciiIndex] = (byte) 'a';
+            }
+        }
+
+        Utf8String conservativeAscii = new Utf8String("123456789abcdefghi".getBytes(StandardCharsets.UTF_8), false);
+        Assert.assertFalse(conservativeAscii.isAscii());
+        Assert.assertTrue(Utf8s.isAscii(conservativeAscii));
+
+        Utf8String nonAsciiTail = new Utf8String("12345678é".getBytes(StandardCharsets.UTF_8), false);
+        Assert.assertFalse(Utf8s.isAscii(nonAsciiTail));
+
         try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
             sink.put("foobar");
             Assert.assertTrue(Utf8s.isAscii(sink));

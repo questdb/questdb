@@ -40,7 +40,9 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 public class VarcharToDateFunctionFactory implements FunctionFactory {
 
@@ -57,18 +59,19 @@ public class VarcharToDateFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "pattern is required");
         }
         DateLocale defaultDateLocale = configuration.getDefaultDateLocale();
-        if ("en".equals(defaultDateLocale.getName()) || (defaultDateLocale.getName() != null && defaultDateLocale.getName().startsWith("en-"))) {
-            return new ToAsciiDateFunction(arg, DateFormatFactory.INSTANCE.get(pattern), defaultDateLocale, pattern);
+        final DateFormat dateFormat = DateFormatFactory.INSTANCE.get(pattern);
+        if (VarcharDateFunctionUtils.isAsciiOnlyPattern(pattern)) {
+            return new ToAsciiDateFunction(arg, dateFormat, defaultDateLocale, pattern);
         }
-        return new ToDateFunction(arg, DateFormatFactory.INSTANCE.get(pattern), defaultDateLocale, pattern);
+        return new ToUtf8DateFunction(arg, dateFormat, defaultDateLocale, pattern);
     }
 
-    private static final class ToAsciiDateFunction extends DateFunction implements UnaryFunction {
+    private static class ToAsciiDateFunction extends DateFunction implements UnaryFunction {
 
-        private final Function arg;
-        private final DateFormat dateFormat;
-        private final DateLocale locale;
-        private final CharSequence pattern;
+        protected final Function arg;
+        protected final DateFormat dateFormat;
+        protected final DateLocale locale;
+        protected final CharSequence pattern;
 
         public ToAsciiDateFunction(Function arg, DateFormat dateFormat, DateLocale locale, CharSequence pattern) {
             this.arg = arg;
@@ -86,7 +89,7 @@ public class VarcharToDateFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             Utf8Sequence value = arg.getVarcharA(rec);
             try {
-                if (value != null && value.isAscii()) {
+                if (value != null) {
                     return dateFormat.parse(value.asAsciiCharSequence(), locale);
                 }
             } catch (NumericException ignore) {
@@ -100,38 +103,38 @@ public class VarcharToDateFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static final class ToDateFunction extends DateFunction implements UnaryFunction {
+    private static final class ToUtf8DateFunction extends ToAsciiDateFunction {
+        private StringSink utf16Sink;
 
-        private final Function arg;
-        private final DateFormat dateFormat;
-        private final DateLocale locale;
-        private final CharSequence pattern;
-
-        public ToDateFunction(Function arg, DateFormat dateFormat, DateLocale locale, CharSequence pattern) {
-            this.arg = arg;
-            this.dateFormat = dateFormat;
-            this.locale = locale;
-            this.pattern = pattern;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+        private ToUtf8DateFunction(Function arg, DateFormat dateFormat, DateLocale locale, CharSequence pattern) {
+            super(arg, dateFormat, locale, pattern);
         }
 
         @Override
         public long getDate(Record rec) {
-            CharSequence value = arg.getStrA(rec);
+            final Utf8Sequence value = arg.getVarcharA(rec);
             try {
-                return dateFormat.parse(value, locale);
+                if (value != null) {
+                    if (Utf8s.isAscii(value)) {
+                        return dateFormat.parse(value.asAsciiCharSequence(), locale);
+                    }
+                    if (utf16Sink == null) {
+                        utf16Sink = new StringSink();
+                    } else {
+                        utf16Sink.clear();
+                    }
+                    if (Utf8s.utf8ToUtf16(value, utf16Sink)) {
+                        return dateFormat.parse(utf16Sink, locale);
+                    }
+                }
             } catch (NumericException ignore) {
             }
             return Numbers.LONG_NULL;
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("to_date(").val(arg).val(',').val(pattern).val(')');
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 }

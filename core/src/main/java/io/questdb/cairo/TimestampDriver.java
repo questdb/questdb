@@ -544,11 +544,7 @@ public interface TimestampDriver {
             } catch (NumericException ignore) {
             }
 
-            // all formats are ascii
-            if (value.isAscii()) {
-                return castPGDates(value.asAsciiCharSequence(), ColumnType.VARCHAR, this);
-            }
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, getTimestampType());
+            return castPGDates(value, ColumnType.VARCHAR, this);
         }
         return Numbers.LONG_NULL;
     }

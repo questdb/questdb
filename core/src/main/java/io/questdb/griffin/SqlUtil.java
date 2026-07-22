@@ -71,6 +71,7 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
@@ -85,6 +86,7 @@ public class SqlUtil {
     static final LowerCaseCharSequenceHashSet disallowedAliases = new LowerCaseCharSequenceHashSet();
     private static final DateFormat[] IMPLICIT_CAST_FORMATS;
     private static final int IMPLICIT_CAST_FORMATS_SIZE;
+    private static final CarrierLocal<StringSink> IMPLICIT_CAST_VARCHAR_SINK = new CarrierLocal<>(StringSink::new);
     private static final CarrierLocal<Long256ConstantFactory> LONG256_FACTORY = new CarrierLocal<>(Long256ConstantFactory::new);
 
     public static void addSelectStar(
@@ -105,6 +107,27 @@ public class SqlUtil {
             }
         }
         throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
+    }
+
+    public static long castPGDates(Utf8Sequence value, int fromColumnType, TimestampDriver driver) {
+        try {
+            // The common case needs neither an ASCII scan nor UTF-16 decoding.
+            return castPGDates(value.asAsciiCharSequence(), fromColumnType, driver);
+        } catch (ImplicitCastException ignore) {
+            // A failed parse may still be a valid localized time-zone name.
+            // Avoid decoding when the false ASCII hint was merely conservative.
+            if (!Utf8s.isAscii(value)) {
+                final StringSink utf16Sink = IMPLICIT_CAST_VARCHAR_SINK.get();
+                utf16Sink.clear();
+                if (Utf8s.utf8ToUtf16(value, utf16Sink)) {
+                    try {
+                        return castPGDates(utf16Sink, fromColumnType, driver);
+                    } catch (ImplicitCastException ignored) {
+                    }
+                }
+            }
+            throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
+        }
     }
 
     public static void collectAllTableAndViewNames(
