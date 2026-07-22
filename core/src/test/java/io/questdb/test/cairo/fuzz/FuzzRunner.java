@@ -252,6 +252,15 @@ public class FuzzRunner {
             Rnd rnd = new Rnd();
             int failuresObserved = 0;
             for (int i = 0; i < transactionSize; i++) {
+                if (writer == null) {
+                    // A prior transaction's IO-failure recovery could not re-acquire the writer: a re-armed
+                    // one-shot fault fired DURING that recovery's getWriter(), and the catch below handles
+                    // only the drop/recreate case, so writer was left null. Re-acquire here (the one-shot
+                    // fault has since cleared) so no operation dereferences a null writer — the source of a
+                    // rare timing-dependent NPE in FuzzChangeColumnTypeOperation.apply(). A genuinely
+                    // persistent failure rethrows loudly from here rather than surfacing as a stale NPE later.
+                    writer = TestUtils.getWriter(engine, tableName);
+                }
                 if (ioFailureCreatedCount < ioFailureCount && failuresObserved == ff.failureGenerated()) {
                     // Maybe it's time to plant an IO failure
                     int nextFailureInTransactions = (transactions.size() - i) / (ioFailureCount - ioFailureCreatedCount);
