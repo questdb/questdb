@@ -72,7 +72,7 @@ import static io.questdb.cairo.lv.LiveViewCheckpointLayout.SEG_PAGE_COUNT_OFFSET
  *   payload.putLong(...); payload.putInt(...);   // page body
  *   writer.endPage(ref);                          // ref now locates the page
  *   ... more pages ...
- *   long bytes = writer.commit();                 // publish m.<segmentId>
+ *   long bytes = writer.commit();                 // publish m.&lt;segmentId&gt;
  * </pre>
  * The instance is reusable across segments; {@link #close()} releases the
  * mapping and paths.
