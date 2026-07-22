@@ -10527,10 +10527,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // (reads o3Columns + o3Lo + timestampAddr), so it is shared.
                     o3ApplyLo = tryFastAppendSortedBlock(o3Lo, o3LoHi, blockTransactionCount, timestampAddr);
                 }
-                if (o3ApplyLo < o3LoHi) {
-                    // Either the whole block (o3ApplyLo == o3Lo) or, on a
-                    // partition-boundary straddle, only the OVERFLOW range
-                    // [o3ApplyLo, o3LoHi) whose prefix was already fast-committed.
+                // Skip the O3 finish ONLY when the fast path fired and consumed
+                // the ENTIRE block (o3ApplyLo advanced from o3Lo all the way to
+                // o3LoHi -- the fast-lag tail already committed the rows AND did
+                // the lag-min/max reset + setLagOrdered/RowCount bookkeeping).
+                // Otherwise run it: o3ApplyLo == o3Lo means the fast path did NOT
+                // fire, so the whole block goes through O3 exactly as before --
+                // INCLUDING a zero-row block (o3Lo == o3LoHi, where the fast path
+                // cannot fire), whose bookkeeping processWalCommitFinishApply
+                // performs unconditionally. Skipping that on an empty block left a
+                // stale lag timestamp that mis-scoped a dependent materialized
+                // view's incremental refresh range.
+                if (o3ApplyLo == o3Lo || o3ApplyLo < o3LoHi) {
+                    // Either the whole block (o3ApplyLo == o3Lo, fast path did not
+                    // fire) or, on a partition-boundary straddle, only the OVERFLOW
+                    // range [o3ApplyLo, o3LoHi) whose prefix was already fast-committed.
                     processWalCommitFinishApply(
                             0,
                             timestampAddr,
