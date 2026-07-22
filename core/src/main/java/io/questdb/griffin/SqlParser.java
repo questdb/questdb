@@ -107,6 +107,11 @@ public class SqlParser {
     public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
+    // Every window function whose state accumulates over the frame it is given,
+    // so an unbounded frame start leaves it with no finite out-of-order
+    // influence boundary. Mirrors the aggregate half of the window function
+    // factory registry; ema()/vwema() register under avg().
+    private static final LowerCaseAsciiCharSequenceHashSet cumulativeAggregates = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final LowerCaseAsciiCharSequenceHashSet pivotForStop = new LowerCaseAsciiCharSequenceHashSet();
@@ -1882,21 +1887,38 @@ public class SqlParser {
      * {@code io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind}).
      * The localized out-of-order repair the checkpoint timeline relies on can
      * only bound its work when every window function has a finite forward
-     * influence boundary {@code H}. Ranking functions - {@code row_number()},
-     * {@code rank()}, {@code dense_rank()} - have no finite {@code H} when they
-     * run unanchored: an out-of-order row shifts every following row's rank
-     * without bound. Reject them at CREATE, naming the function.
-     * <p>
+     * influence boundary {@code H}. Two shapes have none, and both are rejected
+     * at CREATE, naming the function:
+     * <ul>
+     *     <li>Ranking functions - {@code row_number()}, {@code rank()},
+     *     {@code dense_rank()} - running unanchored: an out-of-order row shifts
+     *     every following row's rank without bound.</li>
+     *     <li>Window aggregates over a frame starting at UNBOUNDED PRECEDING:
+     *     an out-of-order row joins the frame of every following row, so it
+     *     moves every later value of the accumulator without bound.</li>
+     * </ul>
      * The anchored, per-segment-reset forms have a finite {@code H} (the
      * segment end) and stay eligible; they route through the fixed-anchor
-     * dependency kind, whose full O3 repair is not wired yet.
+     * dependency kind.
      * <p>
      * Partitioned-but-unanchored ranking (e.g. {@code row_number() OVER
      * (PARTITION BY sym ORDER BY ts)}) is already turned away by
      * {@link #validateLiveViewAnchors}' bare-unbounded reject; this closes the
      * remaining single-partition {@code OVER ()} / {@code OVER (ORDER BY ts)}
      * hole, which {@code validateLiveViewAnchors} deliberately leaves open for
-     * O(1)-state single-partition windows.
+     * O(1)-state single-partition windows. The aggregate reject closes that
+     * same hole plus the one an explicit frame opens: a window declaring
+     * {@code ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} is a non-default
+     * frame, so the bare-unbounded rule skips it however it is partitioned.
+     * <p>
+     * Value functions - {@code first_value()}, {@code last_value()},
+     * {@code nth_value()} - are deliberately left standing over an unbounded
+     * frame start. They are not accumulators, and their influence is decided
+     * per function rather than by frame shape: an out-of-order row changes
+     * {@code last_value} only until the next existing row supersedes it, which
+     * is finite. Proving that bound belongs to the dependency descriptor, not
+     * to a parser-side name list, so those shapes keep compiling and simply
+     * carry no repair plan.
      */
     private static void validateLiveViewFiniteInfluence(IQueryModel queryModel) throws SqlException {
         LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
@@ -1904,20 +1926,20 @@ public class SqlParser {
         for (int i = 0, n = columns.size(); i < n; i++) {
             QueryColumn qc = columns.getQuick(i);
             if (qc.isWindowExpression()) {
-                rejectUnanchoredRanking(qc.getAst(), (WindowExpression) qc, named);
+                rejectUnboundedInfluence(qc.getAst(), (WindowExpression) qc, named);
             }
-            // Ranking calls nested in an arithmetic / function tree carry their
+            // Window calls nested in an arithmetic / function tree carry their
             // OVER clause on the function node itself; walk for those too.
-            walkForUnanchoredRanking(qc.getAst(), named);
+            walkForUnboundedInfluence(qc.getAst(), named);
         }
     }
 
     /**
      * Recursive AST walk for the nested case of {@link #validateLiveViewFiniteInfluence}:
-     * a ranking function with an inline {@code OVER (...)} embedded inside a larger
+     * a window function with an inline {@code OVER (...)} embedded inside a larger
      * expression carries its window on {@code node.windowExpression}.
      */
-    private static void walkForUnanchoredRanking(
+    private static void walkForUnboundedInfluence(
             ExpressionNode node,
             LowerCaseCharSequenceObjHashMap<WindowExpression> named
     ) throws SqlException {
@@ -1925,16 +1947,98 @@ public class SqlParser {
             return;
         }
         if (node.windowExpression != null) {
-            rejectUnanchoredRanking(node, node.windowExpression, named);
+            rejectUnboundedInfluence(node, node.windowExpression, named);
         }
         if (node.paramCount < 3) {
-            walkForUnanchoredRanking(node.lhs, named);
-            walkForUnanchoredRanking(node.rhs, named);
+            walkForUnboundedInfluence(node.lhs, named);
+            walkForUnboundedInfluence(node.rhs, named);
         } else if (node.args != null) {
             for (int i = 0, n = node.paramCount; i < n; i++) {
-                walkForUnanchoredRanking(node.args.getQuick(i), named);
+                walkForUnboundedInfluence(node.args.getQuick(i), named);
             }
         }
+    }
+
+    /**
+     * Applies both finite-influence rejects to one window call. See
+     * {@link #validateLiveViewFiniteInfluence}.
+     */
+    private static void rejectUnboundedInfluence(
+            ExpressionNode fn,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) throws SqlException {
+        if (fn == null || fn.type != ExpressionNode.FUNCTION || fn.token == null) {
+            return;
+        }
+        rejectUnanchoredRanking(fn, window, named);
+        rejectUnboundedCumulative(fn, window, named);
+    }
+
+    /**
+     * Throws when {@code fn} is a window aggregate accumulating from an
+     * unbounded frame start over a window no anchor resets. See
+     * {@link #validateLiveViewFiniteInfluence}.
+     */
+    private static void rejectUnboundedCumulative(
+            ExpressionNode fn,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) throws SqlException {
+        if (!cumulativeAggregates.contains(fn.token)) {
+            return;
+        }
+        if (isAnchoredWindow(window, named) || !hasUnboundedFrameStart(window, named)) {
+            return;
+        }
+        throw SqlException.$(fn.position, "live view select cannot use ")
+                .put(fn.token)
+                .put("() over a frame starting at UNBOUNDED PRECEDING; it has no finite out-of-order influence boundary. ")
+                .put("Bound the frame, e.g. ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW, or add an ANCHOR to reset per segment, ")
+                .put("e.g. WINDOW w AS (PARTITION BY <key> ORDER BY <ts> ANCHOR EXPRESSION timestamp_floor('1d', <ts>))");
+    }
+
+    /**
+     * Reports whether the frame governing {@code window} starts at UNBOUNDED
+     * PRECEDING. A frame start is bounded only when it names a row or time
+     * offset ({@code N PRECEDING}) or the current row; the parser leaves that
+     * offset in {@code rowsLoExpr}, so a PRECEDING start with no expression is
+     * the unbounded one. This is also the shape a window declaring no frame
+     * carries, since the SQL default is RANGE BETWEEN UNBOUNDED PRECEDING AND
+     * CURRENT ROW, and the shape {@code CUMULATIVE} desugars to.
+     */
+    private static boolean hasUnboundedFrameStart(
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) {
+        final WindowExpression frame = resolveFrameWindow(window, named);
+        if (frame == null) {
+            // An unresolvable reference carries no frame this parse can read;
+            // the default it would inherit is unbounded, so treat it as such.
+            return true;
+        }
+        return frame.getRowsLoKind() == WindowExpression.PRECEDING && frame.getRowsLoExpr() == null;
+    }
+
+    /**
+     * Resolves the window whose frame governs {@code window}: an {@code OVER w}
+     * reference carries no frame of its own and takes the named definition's.
+     * <p>
+     * Base-window inheritance ({@code WINDOW w2 AS (w1 ...)}) is not followed,
+     * because a live view cannot reach it: the optimizer expands an inherited
+     * window into a cached, multi-pass factory, which the live-view eligibility
+     * gate turns away before this frame ever matters. Were that to change, an
+     * inheriting window would read as its own default frame - unbounded - and
+     * be rejected, which is the conservative direction.
+     */
+    private static WindowExpression resolveFrameWindow(
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) {
+        if (window == null) {
+            return null;
+        }
+        return window.isNamedWindowReference() ? named.get(window.getWindowName()) : window;
     }
 
     /**
@@ -1947,7 +2051,7 @@ public class SqlParser {
             WindowExpression window,
             LowerCaseCharSequenceObjHashMap<WindowExpression> named
     ) throws SqlException {
-        if (fn == null || fn.type != ExpressionNode.FUNCTION || !isRankingFunctionToken(fn.token)) {
+        if (!isRankingFunctionToken(fn.token)) {
             return;
         }
         if (isAnchoredWindow(window, named)) {
@@ -6614,6 +6718,22 @@ public class SqlParser {
         columnAliasStop.add(")");
         columnAliasStop.add(";");
         columnAliasStop.add("FOR");
+        //
+        cumulativeAggregates.add("avg");
+        cumulativeAggregates.add("corr");
+        cumulativeAggregates.add("count");
+        cumulativeAggregates.add("covar_pop");
+        cumulativeAggregates.add("covar_samp");
+        cumulativeAggregates.add("ksum");
+        cumulativeAggregates.add("max");
+        cumulativeAggregates.add("min");
+        cumulativeAggregates.add("stddev");
+        cumulativeAggregates.add("stddev_pop");
+        cumulativeAggregates.add("stddev_samp");
+        cumulativeAggregates.add("sum");
+        cumulativeAggregates.add("var_pop");
+        cumulativeAggregates.add("var_samp");
+        cumulativeAggregates.add("variance");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");

@@ -180,6 +180,83 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectUnboundedCumulativeAggregate() throws Exception {
+        // The second half of the finite-influence scope cut. A window aggregate
+        // reading from UNBOUNDED PRECEDING folds an out-of-order row into the
+        // frame of every following row, so the correction's influence reaches
+        // the end of the view and the localized O3 repair cannot bound its
+        // work. Reject at CREATE rather than accept and fall back to replaying
+        // the whole history on the first late row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // The single-partition hole validateLiveViewAnchors leaves open for
+            // O(1)-state windows: no PARTITION BY, so its bare-unbounded rule
+            // never fires, and the frame is the unbounded default.
+            assertUnboundedCumulativeRejected("SELECT ts, x, sum(x) OVER () AS s FROM base", "sum");
+            assertUnboundedCumulativeRejected("SELECT ts, x, avg(x) OVER (ORDER BY ts) AS a FROM base", "avg");
+            // Case-insensitive token match.
+            assertUnboundedCumulativeRejected("SELECT ts, x, COUNT(*) OVER () AS c FROM base", "COUNT");
+            // The hole an explicit frame opens: a declared UNBOUNDED PRECEDING
+            // frame is a non-default frame, so the bare-unbounded rule skips it
+            // however the window is partitioned.
+            assertUnboundedCumulativeRejected(
+                    "SELECT ts, x, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s FROM base",
+                    "sum"
+            );
+            assertUnboundedCumulativeRejected(
+                    "SELECT ts, x, max(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '1' HOUR PRECEDING) AS m FROM base",
+                    "max"
+            );
+            // CUMULATIVE desugars to ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
+            assertUnboundedCumulativeRejected(
+                    "SELECT ts, x, min(x) OVER (PARTITION BY sym ORDER BY ts CUMULATIVE) AS m FROM base",
+                    "min"
+            );
+            // An aggregate nested in an arithmetic tree still carries its OVER clause.
+            assertUnboundedCumulativeRejected("SELECT ts, x, sum(x) OVER () + 1 AS s FROM base", "sum");
+            // Referencing an unbounded named WINDOW is rejected on the definition's frame.
+            assertUnboundedCumulativeRejected(
+                    "SELECT ts, x, sum(x) OVER w AS s FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS UNBOUNDED PRECEDING)",
+                    "sum"
+            );
+            // The bivariate and dispersion aggregates accumulate the same way.
+            assertUnboundedCumulativeRejected("SELECT ts, x, stddev_samp(y) OVER () AS d FROM base", "stddev_samp");
+            assertUnboundedCumulativeRejected("SELECT ts, x, covar_pop(y, y) OVER () AS c FROM base", "covar_pop");
+
+            // Positive control: a bounded frame keeps the influence finite and
+            // stays eligible, whether the bound is a row count or a time width.
+            execute("CREATE LIVE VIEW lv_rows FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM base");
+            execute("DROP LIVE VIEW lv_rows");
+            execute("CREATE LIVE VIEW lv_range FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, avg(x) OVER w AS a FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN 30 SECONDS PRECEDING AND CURRENT ROW)");
+            execute("DROP LIVE VIEW lv_range");
+
+            // Positive control: the anchored form resets at every segment start,
+            // so its H is the segment end even though its frame is the
+            // unbounded default. Phase 7 depends on this staying eligible.
+            execute("CREATE LIVE VIEW lv_anchor FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, sum(x) OVER w AS s FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            execute("DROP LIVE VIEW lv_anchor");
+
+            // Positive control: the value functions are not accumulators, so an
+            // unbounded frame start does not make their influence unbounded by
+            // frame shape alone. They keep compiling and carry no repair plan.
+            execute("CREATE LIVE VIEW lv_first FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, first_value(x) IGNORE NULLS OVER w AS f FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '2' SECOND PRECEDING)");
+            execute("DROP LIVE VIEW lv_first");
+            execute("CREATE LIVE VIEW lv_nth FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, nth_value(x, 2) OVER w AS n FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)");
+            execute("DROP LIVE VIEW lv_nth");
+        });
+    }
+
+    @Test
     public void testCreateNameCollisionMessage() throws Exception {
         // A name already taken by a non-live-view (here a plain table) is rejected up
         // front, mirroring CREATE MATERIALIZED VIEW. Crucially, IF NOT EXISTS does NOT
@@ -1072,6 +1149,32 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + selectSql,
                     Chars.contains(e.getFlyweightMessage(), expectedMessage)
+            );
+        }
+    }
+
+    private void assertUnboundedCumulativeRejected(String selectSql, String offendingToken) throws Exception {
+        // The finite-influence gate runs during the CREATE statement parse, so its
+        // position is relative to the whole statement, not the SELECT substring.
+        final String fullSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + selectSql;
+        try {
+            execute(fullSql);
+            // Should not reach here; drop defensively so a spurious success does not
+            // leave a view that trips the next assertion on the same name.
+            execute("DROP LIVE VIEW lv");
+            Assert.fail("expected unbounded-cumulative reject for: " + selectSql);
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + selectSql,
+                    Chars.contains(e.getFlyweightMessage(), "cannot use " + offendingToken)
+                            && Chars.contains(e.getFlyweightMessage(), "UNBOUNDED PRECEDING")
+                            && Chars.contains(e.getFlyweightMessage(), "no finite out-of-order influence boundary")
+            );
+            // Error Position Convention: point at the offending function token.
+            final int pos = e.getPosition();
+            Assert.assertTrue(
+                    "position " + pos + " must point at '" + offendingToken + "' in: " + fullSql,
+                    pos >= 0 && fullSql.startsWith(offendingToken, pos)
             );
         }
     }

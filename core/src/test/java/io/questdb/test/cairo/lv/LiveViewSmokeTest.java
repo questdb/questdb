@@ -129,12 +129,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // The two framings assertMaxMinBoundedRestoresDequeAcrossRestart drives. Over the hourly rows it
     // ingests they select exactly the same rows, so both share one expected result - but they compile
     // to different production functions with their own snapshot/restore paths.
+    // w2's look-behind is wide rather than UNBOUNDED: an aggregate reading from UNBOUNDED PRECEDING
+    // has no finite out-of-order influence boundary and the finite-influence gate turns it away at
+    // CREATE. Over three hourly rows a 24-hour / 1,000,000-row look-behind selects the same rows the
+    // unbounded one did, so every expected value below is unchanged; what w2 still contributes is a
+    // high bound that lags the current row.
     private static final String RANGE_FRAME_WINDOW = "WINDOW " +
             "  w1 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW), " +
-            "  w2 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '1' HOUR PRECEDING)";
+            "  w2 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '24' HOUR PRECEDING AND '1' HOUR PRECEDING)";
     private static final String ROWS_FRAME_WINDOW = "WINDOW " +
             "  w1 AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), " +
-            "  w2 AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)";
+            "  w2 AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND 1 PRECEDING)";
 
     // Pin the test clock below all test data before each test. A non-SEED
     // view's lower bound is the CREATE wall-clock moment, and the forward-append
@@ -1018,8 +1023,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // both from the restored deque. sym=2 new row (5): w1 frame
             // {2, 8, 5} -> 2/8 - the max is 8 only if the restored deque
             // expired the pre-restart head (10) as the frame slid past 00:00.
-            // w2 cells at 03:00 cover the unbounded-lower scalar shape: all
-            // three pre-restart rows, none of them the new row.
+            // w2 cells at 03:00 cover a frame whose high bound lags the current
+            // row: all three pre-restart rows, none of them the new row.
             setCurrentMicros(200_000L);
             execute("INSERT INTO base (ts, sym, x) VALUES " +
                     "('2026-10-01T03:00:00.000000Z', 1, 4), " +
@@ -1737,7 +1742,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testRejectLiveViewOverMissingBase() throws Exception {
         assertMemoryLeak(() -> {
             final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER () AS rn FROM does_not_exist";
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM does_not_exist";
             try {
                 execute(sql);
                 Assert.fail("expected missing-base reject");
@@ -1780,7 +1785,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv1 FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             final String sql = "CREATE LIVE VIEW lv2 FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER () AS rn FROM lv1";
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM lv1";
             try {
                 execute(sql);
                 Assert.fail("expected live-on-live reject");
@@ -12790,7 +12795,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, side, px, " +
                     "sum(CASE WHEN side = 'BUY' THEN px ELSE 0.0 END) OVER (PARTITION BY sym ORDER BY ts " +
-                    "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS buy_vol FROM base");
+                    "ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS buy_vol FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Cycle 1: SELL only, so this commit's symbol table has no key for 'BUY'.
@@ -16694,17 +16699,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testRestartRestoresBoundedRowsMinMaxFromHeadCheckpoint() throws Exception {
         // min/max over (PARTITION BY ... ROWS N PRECEDING ...) are
-        // now snapshot-capable. The single MaxMinOverPartitionRowsFrameFunction
-        // class carries two state shapes:
-        //   - frameLoBounded == true:  ring + monotonic deque (5 LONG slots)
-        //   - frameLoBounded == false: ring + scalar max/min   (3 slots, last
-        //                              one typed DOUBLE/LONG/TIMESTAMP)
-        // Both flavours need to round-trip through the checkpoint. The LV below exercises
-        // both: w1 uses ROWS 2 PRECEDING (bounded lower) and w2 uses ROWS
-        // BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING (unbounded lower).
-        // min() and max() share the implementation class via a comparator
-        // parameter, so covering both functions also covers Min* and Max*
-        // factories at once.
+        // now snapshot-capable. MaxMinOverPartitionRowsFrameFunction carries
+        // the ring + monotonic deque state (5 LONG slots) that a bounded lower
+        // frame needs, and it has to round-trip through the checkpoint. The LV
+        // below drives it under two high bounds: w1 ends at the current row,
+        // w2 ends one row behind it. min() and max() share the implementation
+        // class via a comparator parameter, so covering both functions also
+        // covers Min* and Max* factories at once.
+        // The class's other state shape - frameLoBounded == false, a ring plus
+        // a scalar max/min - is no longer reachable from a live view: the
+        // finite-influence gate rejects an aggregate reading from UNBOUNDED
+        // PRECEDING at CREATE, so nothing here can exercise it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
@@ -16716,7 +16721,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "FROM base " +
                     "WINDOW " +
                     "  w1 AS (PARTITION BY sym ORDER BY ts ROWS 2 PRECEDING), " +
-                    "  w2 AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)");
+                    "  w2 AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND 1 PRECEDING)");
 
             final long preHeadLvSeqTxn;
             final long preLastProcessed;
@@ -16897,17 +16902,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testRestartRestoresBoundedRangeMinMaxFromHeadCheckpoint() throws Exception {
         // min/max over (PARTITION BY ... RANGE BETWEEN ...) are
-        // now snapshot-capable. The MaxMinOverPartitionRangeFrameFunction
-        // class carries two state shapes:
-        //   - frameLoBounded == true:  ring + monotonic deque (9 LONG slots)
-        //   - frameLoBounded == false: ring + scalar max/min (5 LONGs + 1
-        //                              typed DOUBLE/LONG/TIMESTAMP)
-        // Both flavours need to round-trip through the checkpoint. The LV below exercises
-        // both: w1 uses RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW
-        // (bounded lower) and w2 uses RANGE BETWEEN UNBOUNDED PRECEDING AND
-        // '1' HOUR PRECEDING (unbounded lower). min() and max() share the
-        // implementation class via a comparator parameter, so covering both
-        // functions also covers Min* and Max* factories at once.
+        // now snapshot-capable. MaxMinOverPartitionRangeFrameFunction carries
+        // the ring + monotonic deque state (9 LONG slots) that a bounded lower
+        // frame needs, and it has to round-trip through the checkpoint. The LV
+        // below drives it under two high bounds: w1 ends at the current row, w2
+        // ends an hour behind it. min() and max() share the implementation
+        // class via a comparator parameter, so covering both functions also
+        // covers Min* and Max* factories at once.
+        // The class's other state shape - frameLoBounded == false, a ring plus
+        // a scalar max/min - is no longer reachable from a live view: the
+        // finite-influence gate rejects an aggregate reading from UNBOUNDED
+        // PRECEDING at CREATE, so nothing here can exercise it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
@@ -16919,7 +16924,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "FROM base " +
                     "WINDOW " +
                     "  w1 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW), " +
-                    "  w2 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '1' HOUR PRECEDING)");
+                    "  w2 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '24' HOUR PRECEDING AND '1' HOUR PRECEDING)");
 
             final long preHeadLvSeqTxn;
             final long preLastProcessed;

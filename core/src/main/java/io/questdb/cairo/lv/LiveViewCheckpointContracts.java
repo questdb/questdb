@@ -222,8 +222,12 @@ public final class LiveViewCheckpointContracts {
                 Disposition.ELIGIBLE
         ),
         /**
-         * Unbounded cumulative aggregate without a fixed reset. No finite
-         * influence boundary; rejected at CREATE.
+         * Unbounded cumulative aggregate without a fixed reset. An out-of-order
+         * row joins the frame of every following row, so there is no finite
+         * influence boundary. {@code SqlParser.validateLiveViewFiniteInfluence}
+         * rejects it at CREATE, naming the aggregate. The anchored form resets
+         * at every segment start and remains eligible via
+         * {@link #FIXED_ANCHOR_SEGMENT}.
          */
         UNBOUNDED_CUMULATIVE_NO_RESET(
                 "no finite bound",
