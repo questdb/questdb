@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -50,6 +52,10 @@ import org.jetbrains.annotations.Nullable;
  * cursor, computing {@code masterTimestamp}/{@code minSlaveTimestamp}, and resolving the sought key.
  */
 public abstract class AbstractDenseScanAsOfJoinRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
+
+    // Map layout for the dense-scan hashmaps: INT join key -> LONG slave row id.
+    public static final ArrayColumnTypes DENSE_SCAN_TYPES_KEY = new ArrayColumnTypes();
+    public static final ArrayColumnTypes DENSE_SCAN_TYPES_VALUE = new ArrayColumnTypes();
 
     private final Map bwdScanKeyToRowId;
     private final Map fwdScanKeyToRowId;
@@ -253,5 +259,10 @@ public abstract class AbstractDenseScanAsOfJoinRecordCursor extends AbstractKeye
         long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
         record.hasSlave(slaveTimestamp >= minSlaveTimestamp);
         return true;
+    }
+
+    static {
+        DENSE_SCAN_TYPES_KEY.add(ColumnType.INT);
+        DENSE_SCAN_TYPES_VALUE.add(ColumnType.LONG);
     }
 }

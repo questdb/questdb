@@ -6374,4 +6374,35 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertSqlCursors(dense, auto); // identical results
         });
     }
+
+    @Test
+    public void testMemoizedFallbackMatchesDenseOnDenseTimestamps() throws Exception {
+        // Low threshold so the dense-timestamp guard trips on modest data; results must equal the Dense oracle.
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_MEMOIZED_DENSE_RUN_THRESHOLD, 8);
+        assertMemoryLeak(() -> {
+            execute("create table md (sym symbol, ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("insert into md select ('s'||(x%100))::symbol, ((x/50))::timestamp, x::double from long_sequence(20000)");
+            execute("create table ord (sym symbol, ts timestamp, o double) timestamp(ts) partition by day bypass wal");
+            execute("insert into ord select ('s'||(x%100))::symbol, (x*7)::timestamp, x::double from long_sequence(300)");
+            String memo = "SELECT /*+ asof_memoized(o md) */ o.ts, o.sym, md.v FROM ord o ASOF JOIN md ON (sym)";
+            String dense = "SELECT /*+ asof_dense(o md) */ o.ts, o.sym, md.v FROM ord o ASOF JOIN md ON (sym)";
+            assertSqlCursors(dense, memo);
+        });
+    }
+
+    @Test
+    public void testMemoizedForwardFallbackCorrectAtThresholdOne() throws Exception {
+        // Threshold 1 forces the Dense fallback from the very first equal-timestamp pair -> exercises
+        // resolveViaDenseScan on its own; results must still equal the Dense oracle.
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_MEMOIZED_DENSE_RUN_THRESHOLD, 1);
+        assertMemoryLeak(() -> {
+            execute("create table md (sym symbol, ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("insert into md select ('s'||(x%40))::symbol, ((x/8))::timestamp, x::double from long_sequence(16000)");
+            execute("create table ord (sym symbol, ts timestamp, o double) timestamp(ts) partition by day bypass wal");
+            execute("insert into ord select ('s'||(x%40))::symbol, (x*11)::timestamp, x::double from long_sequence(400)");
+            String memo = "SELECT /*+ asof_memoized(o md) */ o.ts, o.sym, md.v FROM ord o ASOF JOIN md ON (sym)";
+            String dense = "SELECT /*+ asof_dense(o md) */ o.ts, o.sym, md.v FROM ord o ASOF JOIN md ON (sym)";
+            assertSqlCursors(dense, memo);
+        });
+    }
 }
