@@ -771,7 +771,14 @@ public class RecordToRowCopierUtils {
                 // Generate type-specific copy bytecode
                 switch (fromColumnTypeTag) {
                     case ColumnType.INT:
-                        asm.invokeInterface(rGetInt);
+                        // An INT source whose value only exists at long width - overflowing INT
+                        // arithmetic, see Function#isIntWidthStable - reaches a 64-bit column
+                        // through getLong(), so the row keeps what an explicit ::LONG/::TIMESTAMP
+                        // cast of the same expression reads. Everything else stays on getInt():
+                        // a stored INT column has no wider bytes to read, and the narrowing,
+                        // FLOAT/DOUBLE and DECIMAL casts wrap at INT width themselves.
+                        final boolean widenIntSource = widensIntSource(fromTypes, i, toColumnTypeTag);
+                        asm.invokeInterface(widenIntSource ? rGetLong : rGetInt);
                         switch (toColumnTypeTag) {
                             case ColumnType.BYTE:
                                 asm.invokeStatic(implicitCastIntAsByte);
@@ -785,7 +792,9 @@ public class RecordToRowCopierUtils {
                                 asm.invokeInterface(wPutInt, 2);
                                 break;
                             case ColumnType.LONG:
-                                asm.invokeStatic(implicitCastIntAsLong);
+                                if (!widenIntSource) {
+                                    asm.invokeStatic(implicitCastIntAsLong);
+                                }
                                 asm.invokeInterface(wPutLong, 3);
                                 break;
                             case ColumnType.DATE:
@@ -793,7 +802,9 @@ public class RecordToRowCopierUtils {
                                 asm.invokeInterface(wPutDate, 3);
                                 break;
                             case ColumnType.TIMESTAMP:
-                                asm.invokeStatic(implicitCastIntAsLong);
+                                if (!widenIntSource) {
+                                    asm.invokeStatic(implicitCastIntAsLong);
+                                }
                                 asm.invokeInterface(wPutTimestamp, 3);
                                 break;
                             case ColumnType.FLOAT:
@@ -1922,8 +1933,11 @@ public class RecordToRowCopierUtils {
             switch (fromColumnTypeTag) {
                 case ColumnType.INT: // from
                     // stack: [rowWriter, toColumnIndex, record, fromColumnIndex]
-                    asm.invokeInterface(rGetInt);
-                    // stack: [rowWriter, toColumnIndex, int]
+                    // See the same branch in generateChunkedCopier for why an INT source can
+                    // have to be read at long width.
+                    final boolean widenIntSource = widensIntSource(fromTypes, i, toColumnTypeTag);
+                    asm.invokeInterface(widenIntSource ? rGetLong : rGetInt);
+                    // stack: [rowWriter, toColumnIndex, int|long]
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
                             asm.invokeStatic(implicitCastIntAsByte);
@@ -1937,7 +1951,9 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            asm.invokeStatic(implicitCastIntAsLong);
+                            if (!widenIntSource) {
+                                asm.invokeStatic(implicitCastIntAsLong);
+                            }
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
@@ -1945,7 +1961,9 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.invokeStatic(implicitCastIntAsLong);
+                            if (!widenIntSource) {
+                                asm.invokeStatic(implicitCastIntAsLong);
+                            }
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.FLOAT:
@@ -2953,5 +2971,23 @@ public class RecordToRowCopierUtils {
             }
         }
         return true;
+    }
+
+    /**
+     * Returns true when INT source column {@code fromIndex} must reach {@code toColumnTypeTag}
+     * through {@link Record#getLong(int)} rather than {@link Record#getInt(int)}.
+     * <p>
+     * Only an expression that computes at long width answers true - overflowing INT arithmetic,
+     * which wraps mod 2^32 under getInt() but keeps its full result under getLong(). A stored
+     * INT column always reports width stability, so it keeps its 4-byte read: taking it at long
+     * width would read past the value.
+     * <p>
+     * Only LONG and TIMESTAMP targets widen. The INT-to-DATE, -FLOAT, -DOUBLE and -DECIMAL casts
+     * all read their argument at INT width, so widening here would make the stored value
+     * disagree with the explicit cast instead of agreeing with it.
+     */
+    private static boolean widensIntSource(ColumnTypes fromTypes, int fromIndex, int toColumnTypeTag) {
+        return (toColumnTypeTag == ColumnType.LONG || toColumnTypeTag == ColumnType.TIMESTAMP)
+                && !fromTypes.isColumnIntWidthStable(fromIndex);
     }
 }

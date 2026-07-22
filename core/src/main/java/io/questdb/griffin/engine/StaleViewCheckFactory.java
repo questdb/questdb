@@ -131,6 +131,12 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     }
 
     @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // The staleness check wraps the cursor without touching its records.
+        return base.isColumnIntWidthStable(columnIndex);
+    }
+
+    @Override
     public boolean producesMaterializedPageFrames() {
         // Must delegate to the immediate base like supportsPageFrameCursor() /
         // getPageFrameCursor() do: getBaseFactory() here returns base.getBaseFactory()

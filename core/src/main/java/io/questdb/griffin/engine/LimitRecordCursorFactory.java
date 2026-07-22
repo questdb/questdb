@@ -83,6 +83,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // LimitRecordCursor hands the base record straight through, so the base's answer holds.
+        return base.isColumnIntWidthStable(columnIndex);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }

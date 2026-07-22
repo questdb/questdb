@@ -373,6 +373,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // RegisteredRecordCursor hands the base record straight through.
+        return base.isColumnIntWidthStable(columnIndex);
+    }
+
+    @Override
     public ConcurrentTimeFrameCursor newTimeFrameCursor() {
         return base.newTimeFrameCursor();
     }

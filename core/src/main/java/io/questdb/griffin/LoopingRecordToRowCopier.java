@@ -36,6 +36,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.BitSet;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Transient;
@@ -52,6 +53,10 @@ import io.questdb.std.str.Utf8Sequence;
 public class LoopingRecordToRowCopier implements RecordToRowCopier {
     private final DoubleArrayParser arrayParser; // null if not needed
     private final ColumnTypes fromTypes;
+    // Source columns that carry a different value at INT and at LONG width, i.e. overflowing INT
+    // arithmetic. ArrayColumnTypes models type tags only, so the deep copy above cannot keep the
+    // flags and they are snapshotted here alongside it. See ColumnTypes#isColumnIntWidthStable.
+    private final BitSet intWidthUnstableColumns = new BitSet();
     private final int timestampIndex;
     private final ColumnFilter toColumnFilter;
     private final RecordMetadata toMetadata;
@@ -63,6 +68,11 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
     ) {
         // Deep copy all mutable objects to avoid retaining references
         this.fromTypes = copyColumnTypes(fromTypes);
+        for (int i = 0, n = fromTypes.getColumnCount(); i < n; i++) {
+            if (!fromTypes.isColumnIntWidthStable(i)) {
+                intWidthUnstableColumns.set(i);
+            }
+        }
         this.toMetadata = GenericRecordMetadata.copyOfNew(toMetadata);
         this.toColumnFilter = copyColumnFilter(toColumnFilter);
         this.timestampIndex = toMetadata.getTimestampIndex();
@@ -405,6 +415,18 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
     }
 
     private void copyFromInt(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType, Decimal256 decimal256) {
+        // An INT source whose value only exists at long width reaches a 64-bit column through
+        // getLong(). See RecordToRowCopierUtils#widensIntSource for the rule and its boundaries.
+        if (intWidthUnstableColumns.get(fromIndex)) {
+            if (toTypeTag == ColumnType.LONG) {
+                row.putLong(toIndex, record.getLong(fromIndex));
+                return;
+            }
+            if (toTypeTag == ColumnType.TIMESTAMP) {
+                row.putTimestamp(toIndex, record.getLong(fromIndex));
+                return;
+            }
+        }
         int value = record.getInt(fromIndex);
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastIntAsByte(value));

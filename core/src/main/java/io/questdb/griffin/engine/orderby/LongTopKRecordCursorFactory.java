@@ -89,6 +89,12 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // The top-K cursor stores row ids and re-positions the base record, so the base's answer holds.
+        return base.isColumnIntWidthStable(columnIndex);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

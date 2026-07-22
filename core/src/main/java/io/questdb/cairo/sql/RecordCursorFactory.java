@@ -288,6 +288,36 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true when this cursor's column {@code columnIndex} carries the same value at INT and
+     * at LONG width, so reading it at INT width and widening loses nothing. Only meaningful for a
+     * BYTE / SHORT / INT typed column.
+     * <p>
+     * A projection answers false for an overflowing INT expression, whose {@code getInt()} wraps
+     * mod 2^32 while {@code getLong()} keeps the full result - see
+     * {@link Function#isIntWidthStable()}. {@link io.questdb.griffin.RecordToRowCopierUtils} reads
+     * this so INSERT ... SELECT stores what an explicit cast of the same expression reads.
+     * <p>
+     * The rule is about the RECORD, not the operator: only a factory whose cursor hands the base
+     * record through - re-positioning it by row id counts - may delegate to its base. A factory
+     * that copies the value into its own storage must keep the default, because that storage gives
+     * an INT column 4 bytes, so the wrap has already happened and reading at long width would
+     * over-read. Hence delegating is opt-in rather than a {@link #getBaseFactory()} walk.
+     * <p>
+     * Delegating today: limit, filter, column selection, light sort / top-K, latest by, and the
+     * query-progress and stale-view wrappers. Keeping the default: full sort, group by,
+     * distinct-over-map, joins, unions, window - all map- or chain-backed. A record that is
+     * per-column hybrid must also keep the default unless it answers per column: a materialized
+     * sort key and a cached window column live in 4-byte-strided buffers while the rest of the
+     * record still comes from the base.
+     *
+     * @param columnIndex column index
+     * @return true if reading the column at INT width and widening equals reading it at LONG width
+     */
+    default boolean isColumnIntWidthStable(int columnIndex) {
+        return true;
+    }
+
+    /**
      * Returns true if the factory stands for nothing more but a projection, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the projection.
      * <p>

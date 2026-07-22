@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
+
 public interface ColumnTypes {
 
     /**
@@ -50,4 +52,26 @@ public interface ColumnTypes {
     int getColumnCount();
 
     int getColumnType(int columnIndex);
+
+    /**
+     * Returns true when column {@code columnIndex} carries the same value at INT and at LONG
+     * width, i.e. reading it at INT width and widening loses nothing. Only meaningful for a
+     * BYTE / SHORT / INT typed column.
+     * <p>
+     * A stored column always answers true: its bytes are exactly as wide as its type, and a
+     * reader that took them at LONG width would read past the value. An expression does not
+     * have to - overflowing INT arithmetic wraps mod 2^32 under {@code getInt()} while
+     * {@code getLong()} keeps the full result (see {@link Function#isIntWidthStable}).
+     * <p>
+     * {@link io.questdb.griffin.RecordToRowCopierUtils} consults this to decide whether an
+     * INT source feeding a 64-bit column reads {@code getInt()} or {@code getLong()}, so that
+     * the value a row keeps matches the value an explicit cast of the same expression reads.
+     * The conservative default is true, which reproduces the INT-width read.
+     *
+     * @param columnIndex column index
+     * @return true if reading the column at INT width and widening equals reading it at LONG width
+     */
+    default boolean isColumnIntWidthStable(int columnIndex) {
+        return true;
+    }
 }

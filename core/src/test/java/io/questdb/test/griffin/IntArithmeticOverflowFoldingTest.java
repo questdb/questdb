@@ -24,6 +24,8 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
+import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -127,6 +129,125 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             assertQuery("SELECT (2_147_483_647 + 3) + 0L AS v").noLeakCheck().expectSize().returns("v\n2147483650\n");
             assertQuery("SELECT (y + 3) + 0L AS v FROM u").noLeakCheck().expectSize().returns("v\n2147483650\n");
         });
+    }
+
+    @Test
+    public void testInsertIntoWiderColumnWidensAcrossChunkedCopier() throws Exception {
+        // generateChunkedCopier hands back to the single-method generator whenever the estimated
+        // bytecode fits one chunk (CHUNK_TARGET_SIZE), so a one- or two-column table never reaches
+        // its own INT branch however the copier type is forced. This table is wide enough to split.
+        final int columnCount = 500;
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, RecordToRowCopierUtils.COPIER_TYPE_CHUNKED);
+        assertMemoryLeak(() -> {
+            final StringBuilder columns = new StringBuilder();
+            final StringBuilder projection = new StringBuilder();
+            for (int i = 0; i < columnCount; i++) {
+                if (i > 0) {
+                    columns.append(", ");
+                    projection.append(", ");
+                }
+                columns.append('c').append(i).append(" LONG");
+                projection.append("abs(a + b) AS c").append(i);
+            }
+            execute("CREATE TABLE wsrc (a INT, b INT)");
+            execute("INSERT INTO wsrc VALUES (2_000_000_000, 2_000_000_000)");
+            execute("CREATE TABLE wide (" + columns + ")");
+            execute("INSERT INTO wide SELECT " + projection + " FROM wsrc");
+            assertQuery("SELECT c0, c" + (columnCount / 2) + ", c" + (columnCount - 1) + " FROM wide")
+                    .noLeakCheck().expectSize()
+                    .returns("c0\tc250\tc499\n4000000000\t4000000000\t4000000000\n");
+        });
+    }
+
+    @Test
+    public void testInsertIntoWiderColumnWidensLikeExplicitCast() throws Exception {
+        // An overflowing INT expression stored into a LONG or TIMESTAMP column must persist the
+        // same value that an explicit cast of the same expression reads. The row copier reads the
+        // source column at its declared INT width, so an INT-typed expression whose getLong()
+        // carries the un-wrapped result used to be truncated on the way into the column while
+        // ::LONG over the identical expression returned the wide value - the stored row could
+        // then no longer be found by the predicate that produced it.
+        //
+        // The single-method and looping copiers carry the rule and are both exercised here; the
+        // chunked one needs a wide table and has its own test above.
+        final int[] copierTypes = {
+                RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD,
+                RecordToRowCopierUtils.COPIER_TYPE_CHUNKED,
+                RecordToRowCopierUtils.COPIER_TYPE_LOOPING
+        };
+        for (int c = 0; c < copierTypes.length; c++) {
+            setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierTypes[c]);
+            final String s = "_" + c; // tables outlive the block, so each copier gets its own
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE lt" + s + " (v LONG)");
+                execute("INSERT INTO lt" + s + " VALUES (1_000_000 * 1_000_000)");
+                assertQuery("SELECT v FROM lt" + s).noLeakCheck().expectSize().returns("v\n1000000000000\n");
+                assertQuery("SELECT (1_000_000 * 1_000_000)::LONG AS v").noLeakCheck().expectSize().returns("v\n1000000000000\n");
+                assertQuery("SELECT count() AS c FROM lt" + s + " WHERE v = 1_000_000 * 1_000_000")
+                        .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+
+                // a TIMESTAMP target widens too, matching ::TIMESTAMP
+                execute("CREATE TABLE tt" + s + " (v TIMESTAMP)");
+                execute("INSERT INTO tt" + s + " VALUES (2_000_000 * 2_000)");
+                assertQuery("SELECT v FROM tt" + s).noLeakCheck().expectSize().returns("v\n1970-01-01T01:06:40.000000Z\n");
+                assertQuery("SELECT (2_000_000 * 2_000)::TIMESTAMP AS v").noLeakCheck().expectSize().returns("v\n1970-01-01T01:06:40.000000Z\n");
+
+                // a plain INT column keeps its INT-width read - it has no wider value to give
+                execute("CREATE TABLE ic" + s + " (i INT)");
+                execute("INSERT INTO ic" + s + " VALUES (-2_147_483_648), (7)");
+                execute("CREATE TABLE il" + s + " (l LONG)");
+                execute("INSERT INTO il" + s + " SELECT i FROM ic" + s);
+                assertQuery("SELECT l FROM il" + s).noLeakCheck().expectSize().returns("l\nnull\n7\n");
+
+                // INSERT ... SELECT over a column expression widens the same way
+                execute("CREATE TABLE src" + s + " (a INT, b INT)");
+                execute("INSERT INTO src" + s + " VALUES (2_000_000_000, 2_000_000_000)");
+                execute("CREATE TABLE dst" + s + " (l LONG)");
+                execute("INSERT INTO dst" + s + " SELECT abs(a + b) FROM src" + s);
+                assertQuery("SELECT l FROM dst" + s).noLeakCheck().expectSize().returns("l\n4000000000\n");
+                assertQuery("SELECT abs(a + b)::LONG AS v FROM src" + s).noLeakCheck().expectSize().returns("v\n4000000000\n");
+
+                // a transparent wrapper over the projection must not change what is stored: LIMIT
+                // and column selection hand the projection's own record straight through
+                execute("CREATE TABLE lim" + s + " (l LONG)");
+                execute("INSERT INTO lim" + s + " SELECT abs(a + b) FROM src" + s + " LIMIT 1");
+                assertQuery("SELECT l FROM lim" + s).noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+                // reordering shape, so the cross index is not the identity and SelectedRecord
+                // really remaps
+                execute("CREATE TABLE sel" + s + " (l LONG)");
+                execute("INSERT INTO sel" + s + " SELECT v FROM (SELECT a AS x, abs(a + b) AS v FROM src" + s + ")");
+                assertQuery("SELECT l FROM sel" + s).noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+                // a residual filter and a light sort both re-read the projection's own record
+                execute("CREATE TABLE flt" + s + " (l LONG)");
+                execute("INSERT INTO flt" + s + " SELECT v FROM (SELECT abs(a + b) AS v FROM src" + s + ") WHERE v > 0");
+                assertQuery("SELECT l FROM flt" + s).noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+                execute("CREATE TABLE ord" + s + " (l LONG)");
+                execute("INSERT INTO ord" + s + " SELECT abs(a + b) FROM src" + s + " ORDER BY 1");
+                assertQuery("SELECT l FROM ord" + s).noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+                // CREATE TABLE ... AS SELECT with an explicit widening CAST takes the same route
+                execute("CREATE TABLE ctas" + s + " AS (SELECT abs(a + b) AS v FROM src" + s + "), CAST(v AS LONG)");
+                assertQuery("SELECT v FROM ctas" + s).noLeakCheck().expectSize().returns("v\n4000000000\n");
+
+                // an INT expression landing exactly on INT_NULL is not null at long width: the
+                // projection prints null while the stored LONG keeps -2147483648, matching ::LONG
+                assertQuery("SELECT -1_073_741_824 * 2 AS v").noLeakCheck().expectSize().returns("v\nnull\n");
+                assertQuery("SELECT (-1_073_741_824 * 2)::LONG AS v").noLeakCheck().expectSize().returns("v\n-2147483648\n");
+                execute("CREATE TABLE sent" + s + " (l LONG)");
+                execute("INSERT INTO sent" + s + " VALUES (-1_073_741_824 * 2)");
+                assertQuery("SELECT l FROM sent" + s).noLeakCheck().expectSize().returns("l\n-2147483648\n");
+
+                // NULL propagates as NULL at both widths
+                execute("CREATE TABLE ns" + s + " (a INT, b INT)");
+                execute("INSERT INTO ns" + s + " VALUES (NULL, 1)");
+                execute("CREATE TABLE nd" + s + " (l LONG)");
+                execute("INSERT INTO nd" + s + " SELECT a + b FROM ns" + s);
+                assertQuery("SELECT l FROM nd" + s).noLeakCheck().expectSize().returns("l\nnull\n");
+            });
+        }
     }
 
     @Test

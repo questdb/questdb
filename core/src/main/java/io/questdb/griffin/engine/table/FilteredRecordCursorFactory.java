@@ -94,6 +94,12 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // FilteredRecordCursor reuses the base record, so the base's answer holds.
+        return base.isColumnIntWidthStable(columnIndex);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }

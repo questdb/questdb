@@ -158,6 +158,17 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // functions is at least as long as the metadata (the timestamp-restore blocks can append a
+        // function without a metadata column), but ObjList.getQuick only asserts, so guard the read
+        // and take the conservative INT-width answer outside the range.
+        if (columnIndex < 0 || columnIndex >= functions.size()) {
+            return true;
+        }
+        return functions.getQuick(columnIndex).isIntWidthStable();
+    }
+
+    @Override
     public boolean recordCursorSupportsLongTopK(int columnIndex) {
         final int baseColumnIndex = cursor.getLongTopKColumnIndex(columnIndex);
         if (baseColumnIndex != -1) {

@@ -119,6 +119,12 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
     }
 
     @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // A light sort stores row ids and re-positions the base record, so the base's answer holds.
+        return base.isColumnIntWidthStable(columnIndex);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
