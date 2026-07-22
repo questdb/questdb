@@ -1953,7 +1953,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // the lead by draining the retained base WAL forward. The restored instance's
     // flush clock is pinned so drain-forward rebuilds the lead without re-flushing
     // it (lvConsumedSeqTxn == applied retained the lead's base rows). One drain pass
-    // restores the head .cp, replays to the applied point, and rebuilds the lead.
+    // restores the head checkpoint, replays to the applied point, and rebuilds the lead.
     private void restartAndRecoverLead() {
         engine.getLiveViewRegistry().clear();
         engine.buildViewGraphs();
@@ -4068,7 +4068,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // whole days of emitted rows; the walk-past refresh must keep the view
     // ACTIVE and its output byte-identical. Phase 2 ingests the remaining rows
     // STRICTLY IN ORDER - an O3 replay after the removal re-reads the physical
-    // base and picks head-hit (logical, carried .cp state) or head-miss (frozen
+    // base and picks head-hit (logical, carried checkpoint state) or head-miss (frozen
     // prefix + physical recompute) depending on checkpoint cadence, which is
     // deliberately path-dependent behaviour an exact-equality oracle cannot
     // pin; the head-miss half has deterministic coverage in LiveViewSmokeTest's

@@ -880,7 +880,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
             final long size = source.getLong(offset);
@@ -935,11 +935,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -1321,7 +1316,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long ringBytes = (long) bufferSize * Double.BYTES;
             final long dequeBytes = (long) dequeBufferSize * Double.BYTES;
             final long loIdx = source.getLong(offset);
@@ -1374,11 +1369,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -2094,7 +2084,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putDouble(0, source.getDouble(offset));
             offset += Double.BYTES;
             value.putByte(1, source.getByte(offset));
@@ -2107,11 +2097,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 

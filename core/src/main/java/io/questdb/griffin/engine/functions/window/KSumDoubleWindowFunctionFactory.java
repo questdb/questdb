@@ -948,7 +948,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long ringBytes = (long) bufferSize * Double.BYTES;
             final double partitionSum = source.getDouble(offset);
             offset += Double.BYTES;
@@ -982,11 +982,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -1597,7 +1592,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putDouble(0, source.getDouble(offset));
             offset += Double.BYTES;
             value.putDouble(1, source.getDouble(offset));
@@ -1612,11 +1607,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 

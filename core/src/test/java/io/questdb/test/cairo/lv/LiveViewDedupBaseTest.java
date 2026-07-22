@@ -880,7 +880,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
 
     @Test
     public void testRestartWithDedupCollapseInCheckpointGap() throws Exception {
-        // The head .cp is written on a cadence, so it can lag the applied point. When
+        // The head checkpoint is written on a cadence, so it can lag the applied point. When
         // the gap holds an intra-commit equal-ts collapse (Gap B), a raw-WAL
         // replay-to-applied would advance the restored accumulators over BOTH pre-dedup
         // rows, diverging from the post-dedup disk. The dedup restart path must instead
@@ -894,7 +894,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                     "sum(val) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 100 PRECEDING AND CURRENT ROW) AS cum FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // Batch 1 -> applied + first head .cp (at the applied point).
+                // Batch 1 -> applied + first head checkpoint (at the applied point).
                 execute("INSERT INTO base (sym, val, ts) VALUES " +
                         "('a', 10.0, '2026-01-01T00:00:01.000000Z'), " +
                         "('a', 20.0, '2026-01-01T00:00:02.000000Z')");
@@ -903,7 +903,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                 drainWalQueue();
 
                 // Batch 2 (the gap): a single commit with two equal-ts rows above the
-                // frontier collapses to one (val 40). Applied advances; the .cp does
+                // frontier collapses to one (val 40). Applied advances; the checkpoint does
                 // not (neither row nor duration cadence is met), so head < applied.
                 setCurrentMicros(200_000L);
                 execute("INSERT INTO base (sym, val, ts) VALUES " +
@@ -928,7 +928,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
             Assert.assertNotNull(restored);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // Restore closes the .cp-to-applied gap over the applied base, then a
+                // Restore closes the checkpoint-to-applied gap over the applied base, then a
                 // forward row at ts=04 appends. cum(04) = 10 + 20 + 40 + 50 = 120.
                 setCurrentMicros(1_000_000L);
                 drainJob(job); // restore-from-head (dedup gap) rebuild

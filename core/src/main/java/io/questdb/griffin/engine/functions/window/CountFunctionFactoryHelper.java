@@ -687,7 +687,7 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
             final long size = source.getLong(offset);
@@ -711,11 +711,6 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -996,7 +991,7 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long partitionCountVal = source.getLong(offset);
             offset += Long.BYTES;
             final long loIdx = source.getLong(offset);
@@ -1023,11 +1018,6 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -1572,7 +1562,7 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putLong(0, source.getLong(offset));
             offset += Long.BYTES;
             if (tombstoneValueIndex >= 0) {
@@ -1583,11 +1573,6 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 

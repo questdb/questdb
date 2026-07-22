@@ -70,8 +70,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * {@code engine.checkpointRecover()} + re-hydration, then drive the refresh worker and assert
  * the restored view converges to a from-scratch recompute over the (restored) base table.
  * <p>
- * It is deliberately distinct from {@link LiveViewCheckpointTest}, which is a pure unit test of
- * the internal per-view head {@code .cp} file format and never runs a SQL statement or the
+ * It is deliberately distinct from the checkpoint timeline suites, which unit-test the
+ * internal per-view {@code _checkpoints/} format and never run a SQL statement or the
  * checkpoint agent.
  */
 public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
@@ -607,7 +607,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         // first_value(DOUBLE) IGNORE NULLS over a RANGE frame with an UNBOUNDED PRECEDING lower bound
         // and a non-current-row upper bound (frameLoBounded == false) captures the first non-null value
         // at physical ring index 0 and then uses firstIdx as a 0/1 capture flag. The window function
-        // accumulator is snapshotted into the head .cp; restore must reload it so post-restore rows
+        // accumulator is snapshotted into the head checkpoint; restore must reload it so post-restore rows
         // still report the captured value. Regression for the snapshot that serialized in logical
         // (firstIdx + i) order and so read a never-written slot once the flag flipped.
         assertFirstValueIgnoreNullsUnboundedRestore("DOUBLE", "1.0", "2.0", "3.0");
@@ -886,8 +886,8 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     public void testCheckpointWithUnflushedLeadRebuildsAfterRestore() throws Exception {
         // At checkpoint time the newest rows sit in the non-durable in-mem tier (the lead), not on
         // disk. startCheckpoint freezes the view without flushing, so CHECKPOINT CREATE captures only
-        // the flushed disk prefix, the head .cp accumulator snapshot, and the base data. Restore must
-        // therefore rebuild the lead by replaying the retained base forward from the head .cp, landing
+        // the flushed disk prefix, the head checkpoint accumulator snapshot, and the base data. Restore must
+        // therefore rebuild the lead by replaying the retained base forward from the head checkpoint, landing
         // exactly the rows the lead held. The recompute oracle confirms the rebuilt lead is correct.
         final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
                 "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
@@ -926,7 +926,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
             restoreFromCheckpoint();
 
-            // Rebuild the lead from the checkpoint's head .cp + base data, then assert convergence.
+            // Rebuild the lead from the checkpoint's head checkpoint + base data, then assert convergence.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull("view must be restored", restored);

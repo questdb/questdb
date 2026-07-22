@@ -480,7 +480,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putDouble(0, source.getDouble(offset));
             offset += Double.BYTES;
             value.putDouble(1, source.getDouble(offset));
@@ -497,11 +497,6 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -896,7 +891,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putDouble(0, source.getDouble(offset));
             offset += Double.BYTES;
             value.putDouble(1, source.getDouble(offset));
@@ -913,11 +908,6 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 

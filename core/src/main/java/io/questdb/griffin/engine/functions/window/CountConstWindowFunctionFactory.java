@@ -442,7 +442,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putLong(0, source.getLong(offset));
             offset += Long.BYTES;
             if (tombstoneValueIndex >= 0) {
@@ -453,11 +453,6 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 

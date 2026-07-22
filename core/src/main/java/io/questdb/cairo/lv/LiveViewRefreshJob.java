@@ -125,8 +125,8 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  *     {@link ApplyWal2TableJob} — the global apply job's {@code doRun} skips LV
  *     tokens so it never races the inline apply. Once apply commits,
  *     {@code lvConsumedSeqTxn} advances and {@code _lv.s} persists through
- *     {@code engine.advanceLiveViewConsumedSeqTxn}, and the worker writes a
- *     rolling head checkpoint under {@code _checkpoints/}.</li>
+ *     {@code engine.advanceLiveViewConsumedSeqTxn}, and the worker seals a
+ *     checkpoint root into the timeline under {@code _checkpoints/}.</li>
  * </ul>
  * The in-RAM lead carries no durability of its own: the base WAL purge floor
  * stays at the applied point, so a crash before flush recovers the lead by
@@ -5679,8 +5679,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * timeline is gone or unreadable rather than merely re-versioned.
      *
      * @return the root's effective {@code lvRowPosition}, or
-     * {@link Numbers#LONG_NULL} when the root could not be restored - a version
-     * break additionally stashes a pending invalidation reason
+     * {@link Numbers#LONG_NULL} when the root could not be restored
      */
     private long restoreAnchorRoot(
             LiveViewInstance instance,
@@ -5705,17 +5704,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     instance.getAnchorWindow()
             ).effectiveLvRowPosition;
         } catch (CairoException ce) {
-            final int errno = ce.getErrno();
-            if (errno == CairoException.LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH
-                    || errno == CairoException.LV_CHECKPOINT_FILE_VERSION_MISMATCH) {
-                // A real compatibility break, not corruption. Stash the reason on
-                // the instance so the caller drives invalidation outside the
-                // refresh latch (engine.invalidateLiveView parks on the instance
-                // monitor when a checkpoint freeze is active, and the agent's
-                // startCheckpoint cannot complete its latch handshake while the
-                // worker still holds the refresh latch).
-                instance.setPendingInvalidationReason(Chars.toString(ce.getFlyweightMessage()));
-            }
             LOG.critical().$("could not restore live view O3 resume anchor [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", anchorMaxTs=").$ts(anchorMaxTs)
@@ -5797,24 +5785,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             out.lvRowsTotal = restored.effectiveLvRowPosition;
             out.stateBytes = restored.logicalStateBytes;
             return true;
-        } catch (CairoException ce) {
-            final int errno = ce.getErrno();
-            if (errno == CairoException.LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH
-                    || errno == CairoException.LV_CHECKPOINT_FILE_VERSION_MISMATCH) {
-                // Version mismatch is a real compatibility break, not
-                // corruption. Stash the reason on the instance so the caller
-                // drives invalidation outside the refresh latch
-                // (engine.invalidateLiveView parks on the instance monitor
-                // when a checkpoint freeze is active, and the agent's
-                // startCheckpoint cannot complete its latch handshake while
-                // the worker still holds the refresh latch).
-                LOG.critical().$("live view seed checkpoint version mismatch [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", error=").$safe(ce.getFlyweightMessage()).I$();
-                instance.setPendingInvalidationReason(Chars.toString(ce.getFlyweightMessage()));
-                return false;
-            }
-            return handleCorruptSeedTimeline(instance, ce);
         } catch (Throwable t) {
             return handleCorruptSeedTimeline(instance, t);
         }
@@ -5822,12 +5792,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Best-effort cleanup after a seed resume fails on structural corruption
-     * (page checksum, truncation, missing function root, anchor shape mismatch -
-     * all distinct from a version mismatch, which
-     * {@link #restoreSeedFromTimeline} handles separately by stashing a pending
-     * invalidation reason). Retires the unreadable timeline so the next sweep
-     * turn cannot re-select it, and so the from-zero re-sweep starts against an
-     * empty one. Always returns {@code false} so the caller abandons the resume.
+     * (page checksum, truncation, missing function root, anchor shape mismatch).
+     * Retires the unreadable timeline so the next sweep turn cannot re-select it,
+     * and so the from-zero re-sweep starts against an empty one. Always returns
+     * {@code false} so the caller abandons the resume.
      */
     private boolean handleCorruptSeedTimeline(LiveViewInstance instance, Throwable t) {
         LOG.critical().$("could not restore live view from seed checkpoint [view=")

@@ -56,7 +56,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -98,16 +97,6 @@ import java.util.function.IntFunction;
  * legacy fixture.
  */
 public class LiveViewSmokeTest extends AbstractLiveViewTest {
-
-    // The large-table shape behind
-    // testCheckpointRingRestartResumeCostBoundedByCheckpointSpacing. Ten commits
-    // of 200 rows seal one .cp each, so the ring's spacing is exactly the
-    // checkpoint cadence and the resume count reads as a row distance from a
-    // known anchor. 2000 rows keeps the run cheap while leaving an order of
-    // magnitude between a bounded resume (201 rows) and a whole-view rebuild
-    // (2001) - the separation the 4-row ring tests cannot produce.
-    private static final int CHECKPOINT_SPACING_COMMITS = 10;
-    private static final int CHECKPOINT_SPACING_ROWS = 200;
 
     // The canonical data behind every max/min bounded-frame snapshot round-trip: five rows per
     // partition against a three-row frame.
@@ -285,24 +274,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
     }
 
-    // Flips a single byte in an on-disk file (used to corrupt a head .cp payload
-    // so a restore trips the CRC check). Mirrors the helper in
-    // LiveViewCheckpointTest.
-    private static void overwriteByteInFile(CairoConfiguration configuration, Path path, long offset, byte value) {
-        try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-            mem.of(
-                    configuration.getFilesFacade(),
-                    path.$(),
-                    configuration.getFilesFacade().getPageSize(),
-                    offset + Byte.BYTES,
-                    MemoryTag.MMAP_DEFAULT,
-                    CairoConfiguration.O_NONE
-            );
-            mem.putByte(offset, value);
-            mem.sync(false);
-        }
-    }
-
     // Drives a partitioned bounded-frame avg(DECIMAL) live view: asserts the
     // windowed average is correct (also proving CREATE-accept), then performs a
     // byte-exact snapshot/restore round-trip of the function's partition state
@@ -342,7 +313,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset() - payloadStart;
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, payloadStart, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, payloadStart, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -398,7 +369,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -452,7 +423,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -504,7 +475,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -526,7 +497,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // (firstIdx + i) order over size elements, so once the flag flipped to 1 it read a never-written
     // slot instead of index 0, losing the captured value on restore. This drives (null, v, w) so v is
     // captured and the flag flips (w lands more than the '2' SECOND upper offset past v), restarts
-    // in-process (which rehydrates the accumulator from the head .cp), then appends a fourth row (x).
+    // in-process (which rehydrates the accumulator from the head checkpoint), then appends a fourth row (x).
     // The restored accumulator - not a fresh one - decides x's first_value, so a lost captured value
     // diverges from the recompute over the base.
     private void assertFirstValueIgnoreNullsUnboundedRestartThenAppend(
@@ -558,7 +529,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
 
             // Simulated restart: rebuild the registry from on-disk state, then drive one refresh so the
-            // head .cp rehydrates the accumulator (firstIdx capture flag + captured value at index 0).
+            // head checkpoint rehydrates the accumulator (firstIdx capture flag + captured value at index 0).
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -669,7 +640,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -721,7 +692,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -771,7 +742,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -827,7 +798,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -842,7 +813,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     // Drives last_value(DECIMAL) over ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
-    // (the bounded-rows value ring) across a simulated restart: the head .cp
+    // (the bounded-rows value ring) across a simulated restart: the head checkpoint
     // must round-trip the ring so the first post-restart row still reports the
     // newest pre-restart value. The restore-succeeded + seqTxn asserts prove
     // the asserted cells flow from the restored ring, not from a head-miss
@@ -874,7 +845,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(instance);
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp written before restart",
+                        "head checkpoint written before restart",
                         Numbers.LONG_NULL,
                         instance.getHeadCheckpointLvSeqTxn()
                 );
@@ -884,14 +855,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
 
-            // Pure-restore tick (no new commits) fires tryRestoreFromHead.
+            // Pure-restore tick (no new commits) fires tryRestoreFromTimeline.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
             Assert.assertTrue(
-                    "head .cp restore must rehydrate the last_value ring, not fall back to a head-miss replay",
+                    "head checkpoint restore must rehydrate the last_value ring, not fall back to a head-miss replay",
                     reloaded.isCheckpointRestoreSucceeded()
             );
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
@@ -958,7 +929,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -973,7 +944,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     // Drives min/max over bounded and unbounded-lower frames (the deque and scalar
-    // shapes) across a simulated restart: the head .cp must round-trip the monotonic
+    // shapes) across a simulated restart: the head checkpoint must round-trip the monotonic
     // deque so the first post-restart row still reports pre-restart extrema, including
     // one cell (sym=2 max) that requires the restored deque to expire its head
     // as the frame slides. The restore-succeeded + seqTxn asserts prove the
@@ -1021,7 +992,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(instance);
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp written before restart",
+                        "head checkpoint written before restart",
                         Numbers.LONG_NULL,
                         instance.getHeadCheckpointLvSeqTxn()
                 );
@@ -1031,14 +1002,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
 
-            // Pure-restore tick (no new commits) fires tryRestoreFromHead.
+            // Pure-restore tick (no new commits) fires tryRestoreFromTimeline.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
             Assert.assertTrue(
-                    "head .cp restore must rehydrate the MaxMin RANGE state, not fall back to a head-miss replay",
+                    "head checkpoint restore must rehydrate the MaxMin RANGE state, not fall back to a head-miss replay",
                     reloaded.isCheckpointRestoreSucceeded()
             );
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
@@ -1126,7 +1097,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1178,7 +1149,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1230,7 +1201,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1277,7 +1248,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1301,7 +1272,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // bit-exact oracle - no hand-computed Welford/EMA expectations needed.
     // Drives nth_value(v, 2) over ROWS BETWEEN UNBOUNDED PRECEDING AND
     // 1 PRECEDING (the O(1) [count, lockedValue] shape) across a simulated
-    // restart: the head .cp must round-trip the position bookkeeping so the
+    // restart: the head checkpoint must round-trip the position bookkeeping so the
     // first post-restart row still reports the value locked by the 2nd
     // pre-restart row. The restore-succeeded + seqTxn asserts prove the
     // asserted cells flow from the restored state, not from a head-miss replay
@@ -1337,7 +1308,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(instance);
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp written before restart",
+                        "head checkpoint written before restart",
                         Numbers.LONG_NULL,
                         instance.getHeadCheckpointLvSeqTxn()
                 );
@@ -1347,14 +1318,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
 
-            // Pure-restore tick (no new commits) fires tryRestoreFromHead.
+            // Pure-restore tick (no new commits) fires tryRestoreFromTimeline.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
             Assert.assertTrue(
-                    "head .cp restore must rehydrate the nth_value state, not fall back to a head-miss replay",
+                    "head checkpoint restore must rehydrate the nth_value state, not fall back to a head-miss replay",
                     reloaded.isCheckpointRestoreSucceeded()
             );
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
@@ -1423,7 +1394,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1450,7 +1421,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // (a differential oracle that also compares the passthrough v column cell by
     // cell) after three phases: in-order ingestion, an O3 head-miss replay that
     // re-materializes the affected rows via REPLACE_RANGE, and a simulated restart
-    // that rehydrates the window state from the head .cp. The window function (sum
+    // that rehydrates the window state from the head checkpoint. The window function (sum
     // over an anchored unbounded frame) only makes the query a valid LV; the v
     // column is the subject under test.
     private void assertVarLengthOutputRoundTrip(String colTypeDdl, String vExpr, boolean tierSupported) throws Exception {
@@ -1520,7 +1491,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
 
             // Phase 3: simulated restart. Rebuild the registry from on-disk state,
-            // then drive one refresh so the head .cp rehydrates the window state.
+            // then drive one refresh so the head checkpoint rehydrates the window state.
             // The materialized var-length rows live in the LV table on disk, so
             // the re-read must still match the recompute.
             engine.getLiveViewRegistry().clear();
@@ -2259,8 +2230,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // A backup captures the applied base TABLE, not its WAL segments, so a restored view that
         // still owes itself base commits cannot drain the WAL they live in. refreshInstance recovers
         // by re-deriving the view from the applied base (o3HeadMissReplay) - but it used to arm that
-        // fallback only for a view that came back with NO head .cp. A restored .cp is not evidence
-        // that the base WAL came back too: the .cp rides in the view's own directory, so a backup
+        // fallback only for a view that came back with NO head checkpoint. A restored checkpoint is not evidence
+        // that the base WAL came back too: the checkpoint rides in the view's own directory, so a backup
         // that captured one restores a view that skips the arm and invalidates on the first drain.
         // The arm now keys on what actually matters - the view has not read base WAL since it booted
         // - and the first successful drain disarms it, so a live primary never keeps it.
@@ -2273,7 +2244,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
-            // Seed + flush: the first flush writes the head .cp the backup would capture.
+            // Seed + flush: the first flush writes the head checkpoint the backup would capture.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -2281,7 +2252,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance seeded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(seeded);
             Assert.assertNotEquals(
-                    "the view must hold a head .cp for this to be the restored-checkpoint case",
+                    "the view must hold a head checkpoint for this to be the restored-checkpoint case",
                     Numbers.LONG_NULL,
                     seeded.getHeadCheckpointLvSeqTxn()
             );
@@ -2545,7 +2516,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testSeedRestartRestoresO3DetectionWatermark() throws Exception {
         // Finding 2b regression: row_number() OVER () under SEED + O3 + restart.
         // A restart resets the in-memory O3 detection watermark (latestSeenTs) to
-        // null, so tryRestoreFromHead must re-seed it from the head .cp's
+        // null, so tryRestoreFromTimeline must re-seed it from the head checkpoint's
         // maxTimestamp. Without that, the first post-restart commit - here a
         // back-dated (O3) row - slips past O3 detection and gets forward-appended
         // in arrival order, so the late row keeps too high a row number instead of
@@ -2566,7 +2537,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
 
-                // In-order forward-append row; the head .cp records maxTs=00:00:10.
+                // In-order forward-append row; the head checkpoint records maxTs=00:00:10.
                 setCurrentMicros(currentMicros + 250_000L);
                 execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:10.000000Z', 3)");
                 drainWalQueue();
@@ -4800,7 +4771,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testWalPurgeHoldsBaseWalAtHeadCheckpointForRestartReplay() throws Exception {
         // Regression: a live view must not go permanently INVALID after a restart
         // when the durable head checkpoint lags the applied watermark. The head
-        // .cp advances only on its own cadence, while the applied watermark
+        // checkpoint advances only on its own cadence, while the applied watermark
         // advances every FLUSH, so restart recovery replays the
         // (headBaseSeqTxn, applied] base WAL to re-seed the accumulator gap.
         // WalPurgeJob must hold the base WAL purge floor at the durable head's
@@ -4830,7 +4801,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final long t0 = MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z");
 
             // Batch A -> base seqTxn 1 (WAL segment wal1/0). The first flush
-            // writes the first head .cp (covers base seqTxn 1) and advances the
+            // writes the first head checkpoint (covers base seqTxn 1) and advances the
             // applied watermark to 1.
             execute("INSERT INTO base (ts, sym, x) VALUES " +
                     "('2026-06-01T00:00:00.000000Z', 'a', 1.0), " +
@@ -4844,7 +4815,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             final long headLvSeqTxnAfterA = instance.getHeadCheckpointLvSeqTxn();
-            Assert.assertNotEquals("head .cp written for batch A", Numbers.LONG_NULL, headLvSeqTxnAfterA);
+            Assert.assertNotEquals("head checkpoint written for batch A", Numbers.LONG_NULL, headLvSeqTxnAfterA);
             final long headBaseAfterA = instance.getHeadCheckpointBaseSeqTxn();
 
             // Batch B -> base seqTxn 2 (WAL segment wal1/1). It flushes
@@ -4862,7 +4833,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainWalQueue();
             }
 
-            Assert.assertEquals("head .cp must not advance for batch B",
+            Assert.assertEquals("head checkpoint must not advance for batch B",
                     headLvSeqTxnAfterA, instance.getHeadCheckpointLvSeqTxn());
             Assert.assertEquals("head base seqTxn must not advance for batch B",
                     headBaseAfterA, instance.getHeadCheckpointBaseSeqTxn());
@@ -4894,8 +4865,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             assertSegmentExistence(true, "base", 1, 1);  // seqTxn 2: the gap segment the fix must retain
             assertSegmentExistence(true, "base", 1, 2);  // seqTxn 3: still to apply, retained
 
-            // Restart: the startup sweep re-stamps the head from the .cp, then the
-            // first refresh runs tryRestoreFromHead -> replayToApplied(1, 2) over
+            // Restart: startup publishes the head from the timeline, then the
+            // first refresh runs tryRestoreFromTimeline -> replayToApplied(1, 2) over
             // the retained gap WAL, then drains forward to base seqTxn 3. The view
             // must recover ACTIVE, not invalidate on a purged _event file.
             engine.getLiveViewRegistry().clear();
@@ -4998,7 +4969,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             final long t0 = MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z");
 
-            // Batch A -> base seqTxn 1 (wal1/0). The first flush writes the head .cp
+            // Batch A -> base seqTxn 1 (wal1/0). The first flush writes the head checkpoint
             // (covers base seqTxn 1) and advances the applied watermark to 1.
             execute("INSERT INTO base (ts, sym, x) VALUES " +
                     "('2026-06-01T00:00:00.000000Z', 'a', 1.0), " +
@@ -5121,7 +5092,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testFailedRestartReplayDoesNotCorruptInvalidView() throws Exception {
         // Regression (handoff item 0b): when a restart's replay-to-applied fails
-        // mid-gap, tryRestoreFromHead stashes a deferred invalidation but leaves
+        // mid-gap, tryRestoreFromTimeline stashes a deferred invalidation but leaves
         // the window accumulators a PARTIAL advance over disk (advanced over the
         // gap seqTxns it did read, stuck short of the applied point). The refresh
         // worker must NOT run the incremental refresh + flush for that turn: doing
@@ -5151,7 +5122,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final long t0 = MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z");
 
             // Batch A -> base seqTxn 1 (wal1/0). The first flush writes the head
-            // .cp (covers base seqTxn 1, accumulator sum = 1) and advances the
+            // checkpoint (covers base seqTxn 1, accumulator sum = 1) and advances the
             // applied watermark to 1.
             execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:00.000000Z', 'a', 1.0)");
             drainWalQueue();
@@ -5162,7 +5133,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
-            Assert.assertEquals("head .cp covers base seqTxn 1", 1L, instance.getHeadCheckpointBaseSeqTxn());
+            Assert.assertEquals("head checkpoint covers base seqTxn 1", 1L, instance.getHeadCheckpointBaseSeqTxn());
 
             // Batch B -> base seqTxn 2 (wal1/1). Flushes (applied -> 2) but the
             // head cadence does not fire (clock advanced only 100ms), so the head
@@ -5212,7 +5183,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
 
             // Restart: rebuild the registry and drive one refresh. The first cycle
-            // runs tryRestoreFromHead -> replayToApplied(1, 3), which fails on the
+            // runs tryRestoreFromTimeline -> replayToApplied(1, 3), which fails on the
             // deleted seqTxn 3 segment. The view must invalidate WITHOUT flushing a
             // partial advance to disk.
             engine.getLiveViewRegistry().clear();
@@ -5824,7 +5795,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Baseline: one clean flush establishes lastFlushTimeUs and the
-                // head .cp the O3 replay later rebuilds against. All test rows sit
+                // head checkpoint the O3 replay later rebuilds against. All test rows sit
                 // within one day, so the daily-anchored running sum equals the
                 // plain unbounded recompute the oracle uses.
                 execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
@@ -6261,14 +6232,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testRestartWithTornStateButValidHeadCheckpoint() throws Exception {
-        // Torn-_lv.s recovery (the "head .cp valid but _lv.s write was torn" durability
+        // Torn-_lv.s recovery (the "head checkpoint valid but _lv.s write was torn" durability
         // case). A torn _lv.s throws a CairoException whose errno is NOT
         // LV_FILE_VERSION_UNSUPPORTED. Rather than silently skip the view (which stranded
         // it as an invisible, frozen, undroppable zombie), buildViewGraphs reconstructs
         // the lost durable watermarks from the last applied LIVE_VIEW_DATA block in the
-        // LV's own WAL sequencer log and resumes the view ACTIVE: the head .cp restores
+        // LV's own WAL sequencer log and resumes the view ACTIVE: the head checkpoint restores
         // the window accumulators and the forward drain catches up. This test truncates
-        // _lv.s while leaving the head .cp and the _lv table data intact, then asserts the
+        // _lv.s while leaving the head checkpoint and the _lv table data intact, then asserts the
         // view recovers, converges to a from-scratch recompute (the accumulator for the
         // partition that spans the fault must survive), rewrites a valid _lv.s (a second
         // restart takes the normal path), and stays droppable.
@@ -6295,11 +6266,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             final FilesFacade ff = configuration.getFilesFacade();
 
-            // The head .cp survives untouched (the "valid checkpoint" half of the asymmetry):
+            // The head checkpoint survives untouched (the "valid checkpoint" half of the asymmetry):
             // it carries the window accumulators as of the flush point, incl. sum(x)=1 for 'a'.
             try (Path cpDir = new Path()) {
                 cpDir.of(configuration.getDbRoot()).concat(lvToken).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-                Assert.assertTrue("head .cp dir must survive the fault", ff.exists(cpDir.$()));
+                Assert.assertTrue("head checkpoint dir must survive the fault", ff.exists(cpDir.$()));
             }
 
             // Inject the torn write: truncate _lv.s below HEADER_SIZE so BlockFileReader.of
@@ -6321,7 +6292,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
 
             // The base advances; the recovered view refreshes forward and converges. The new
-            // 'a' row must read s=4 (1+3), proving the head .cp restored the 'a' accumulator
+            // 'a' row must read s=4 (1+3), proving the head checkpoint restored the 'a' accumulator
             // across the fault - a lost accumulator would restart the running sum at 3.
             execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 3)");
             drainWalQueue();
@@ -7545,7 +7516,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testAnchorAvgDecimalRestoresRunningStateAcrossRestart() throws Exception {
         // The migrated avg(DECIMAL) unbounded-partition-rows variant must write
-        // its [acc, count] accumulator into the head .cp via
+        // its [acc, count] accumulator into the head checkpoint via
         // freezeCheckpointState and rehydrate it via restoreCheckpointState on
         // restart, so the running average continues across a restart instead of
         // restarting from the post-restart rows. Uses an INT partition key to
@@ -7568,7 +7539,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(instance);
                 Assert.assertNotEquals(
-                        "head .cp written before restart",
+                        "head checkpoint written before restart",
                         Numbers.LONG_NULL,
                         instance.getHeadCheckpointLvSeqTxn()
                 );
@@ -7578,7 +7549,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
 
-            // Pure-restore tick (no new commits) fires tryRestoreFromHead, which
+            // Pure-restore tick (no new commits) fires tryRestoreFromTimeline, which
             // must rehydrate the function accumulator through restoreCheckpointState.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
@@ -8718,7 +8689,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -8781,7 +8752,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -12378,7 +12349,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp was written before restart",
+                        "head checkpoint was written before restart",
                         Numbers.LONG_NULL,
                         preHeadLvSeqTxn
                 );
@@ -13110,7 +13081,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -13128,7 +13099,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testKsumBoundedRowsRestoresRingAcrossRestart() throws Exception {
         // KSumOverPartitionRowsFrameFunction (ROWS 2 PRECEDING) must write its
         // [sum, compensation, count, loIdx] slots plus the value ring into the
-        // head .cp and rehydrate them on restart, so the first post-restart row
+        // head checkpoint and rehydrate them on restart, so the first post-restart row
         // still sums the two pre-restart ring values. Uses an INT partition key
         // to side-step the per-WAL-segment SYMBOL index collision.
         assertMemoryLeak(() -> {
@@ -13158,7 +13129,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(instance);
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp written before restart",
+                        "head checkpoint written before restart",
                         Numbers.LONG_NULL,
                         instance.getHeadCheckpointLvSeqTxn()
                 );
@@ -13168,7 +13139,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
 
-            // Pure-restore tick (no new commits) fires tryRestoreFromHead. The
+            // Pure-restore tick (no new commits) fires tryRestoreFromTimeline. The
             // success + seqTxn asserts prove the values below flow from the
             // restored ring, not from a head-miss replay recompute.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -13177,7 +13148,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
             Assert.assertTrue(
-                    "head .cp restore must rehydrate the ksum ring, not fall back to a head-miss replay",
+                    "head checkpoint restore must rehydrate the ksum ring, not fall back to a head-miss replay",
                     reloaded.isCheckpointRestoreSucceeded()
             );
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
@@ -14074,7 +14045,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // 'a' nth_value(x, 2) is 50.0, 'b' is 11.0. Sum 61.0.
@@ -14124,7 +14095,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // 'a' nth_value(x, 2) is 50, 'b' is 11. Sum 61.
@@ -14616,7 +14587,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // 'a' nth_value(ts, 2) is 2026-08-01T01:00:00 (3_600_000_000us),
@@ -14670,7 +14641,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // lockedValue is the value at count == n == 2: 'a' -> 50.0, 'b' -> 11.0. Sum 61.0.
@@ -14722,7 +14693,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // lockedValue is the value at count == n == 2: 'a' -> 50, 'b' -> 11. Sum 61.
@@ -14774,7 +14745,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // lockedValue is ts at count == 2 = '2026-08-01T01:00:00' for both partitions.
@@ -14828,7 +14799,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // After 3 rows per partition, both rings hold (val_0, val_1, val_2) with count=3.
@@ -14883,7 +14854,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -14935,7 +14906,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -14988,7 +14959,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // All 3 rows per partition land inside the 5-hour window, so
@@ -15044,7 +15015,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -15098,7 +15069,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -15452,9 +15423,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testRestartRestoresFromCheckpointTimeline() throws Exception {
-        // A simulated restart must ignore the legacy head .cp, then the first
-        // refresh-worker tick selects a bounded-valid timeline generation and
-        // rehydrates the LV's window-function state from its newest compatible root.
+        // A simulated restart's first refresh-worker tick selects a bounded-valid
+        // timeline generation and rehydrates the LV's window-function state from its
+        // newest compatible root.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
@@ -15477,20 +15448,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 preFunctionMapSize = instance.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size();
-                Assert.assertNotEquals("head .cp was written before restart", Numbers.LONG_NULL, preHeadLvSeqTxn);
+                Assert.assertNotEquals("head checkpoint was written before restart", Numbers.LONG_NULL, preHeadLvSeqTxn);
                 Assert.assertEquals("two partitions seeded pre-restart", 2L, preFunctionMapSize);
             }
 
             // Simulate restart: clear the in-memory registry and rebuild from
-            // on-disk _lv + _lv.s. ACTIVE startup does not enumerate .cp files.
+            // on-disk _lv + _lv.s.
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
 
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
             // Startup publishes the head from the timeline generation's base
-            // coordinate, never from the still-present legacy .cp - it does not
-            // enumerate them. maxTs/stateBytes stay placeholders until the first
+            // coordinate alone. maxTs/stateBytes stay placeholders until the first
             // tick reads the selected root, which is what the restore assertions
             // below pin.
             Assert.assertEquals(
@@ -15549,7 +15519,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // First commit: the head .cp is written because none exists yet (firstCp),
+                // First commit: the head checkpoint is written because none exists yet (firstCp),
                 // not because of either cadence.
                 execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:00.000000Z', 'a', 1.0)");
                 drainWalQueue();
@@ -15921,7 +15891,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testRestartRestoresRankFromHeadCheckpoint() throws Exception {
         // rank() is now snapshot-capable. End-to-end check that a
-        // refresh cycle writes a head .cp, a simulated restart re-discovers
+        // refresh cycle writes a head checkpoint, a simulated restart re-discovers
         // it, and the first post-restart refresh tick rehydrates the rank
         // function's partition map. Mirrors testRestartRestoresFromHeadCheckpoint
         // for sum() but covers the rank chain-prefix path the 2b.1a codec
@@ -15958,7 +15928,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 preFunctionMapSize = instance.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size();
                 Assert.assertNotEquals(
-                        "head .cp must be written for an LV with rank() now that 2b.1b makes it snapshot-capable",
+                        "head checkpoint must be written for an LV with rank() now that 2b.1b makes it snapshot-capable",
                         Numbers.LONG_NULL,
                         preHeadLvSeqTxn
                 );
@@ -15991,7 +15961,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testRankSnapshotRestoreRoundTripsState() throws Exception {
         // snapshot() / restore() round-trip the rank function's
         // per-partition rank, count, and chain-prefix bytes through a MemoryCARW
-        // buffer. The end-to-end LV head .cp path is exercised by
+        // buffer. The end-to-end LV head checkpoint path is exercised by
         // testRestartRestoresRankFromHeadCheckpoint; this case isolates the codec
         // round-trip on the function level so a regression in the chain-prefix
         // serializer surfaces here before the integration test sees it.
@@ -16033,7 +16003,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 // rebuild the rank, count, and chain-prefix bytes from the image.
                 rankFn.toTop();
                 Assert.assertEquals(0L, rankFn.getPartitionMap().size());
-                LiveViewFunctionSnapshot.restore(s1, 0L, snapshotBytes, rankFn, rankFn.checkpointStateFormatVersion());
+                LiveViewFunctionSnapshot.restore(s1, 0L, snapshotBytes, rankFn);
                 Assert.assertEquals(
                         "restore rehydrates the same partition count snapshot captured",
                         2L,
@@ -16098,7 +16068,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LiveViewFunctionSnapshot.write(sink, rnFunc);
                     rnFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), rnFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), rnFunc);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // Sum the restored per-partition counters: 3 ('a') + 2 ('b').
@@ -16119,11 +16089,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testRestartRestoresRowNumberFromHeadCheckpoint() throws Exception {
         // End-to-end counterpart to testRowNumberOverPartitionSnapshotRoundTrip:
-        // a refresh cycle writes a head .cp, a simulated restart re-discovers it,
+        // a refresh cycle writes a head checkpoint, a simulated restart re-discovers it,
         // and the first post-restart refresh tick rehydrates row_number's
         // partition map. Mirrors testRestartRestoresRankFromHeadCheckpoint, but
         // reads the restored per-partition counters back out of the map so a
-        // value-mapping regression in the .cp restore path - not just a
+        // value-mapping regression in the checkpoint restore path - not just a
         // partition-count drift - fails the assertion.
         //
         // The post-restart-then-new-commit scenario is intentionally NOT covered:
@@ -16156,7 +16126,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp must be written for a snapshot-capable row_number LV",
+                        "head checkpoint must be written for a snapshot-capable row_number LV",
                         Numbers.LONG_NULL,
                         preHeadLvSeqTxn
                 );
@@ -16180,7 +16150,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // The success + unchanged-seqTxn asserts prove the counters below flow
             // from the restored map, not from a head-miss replay recompute.
             Assert.assertTrue(
-                    "head .cp restore must rehydrate row_number, not fall back to a head-miss replay",
+                    "head checkpoint restore must rehydrate row_number, not fall back to a head-miss replay",
                     reloaded.isCheckpointRestoreSucceeded()
             );
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
@@ -16204,7 +16174,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // snapshot() / restore() round-trip the lag function's
         // per-partition firstIdx + count and the raw ring buffer contents
         // through a MemoryCARW buffer. Isolates the codec round-trip from the
-        // end-to-end .cp path so a regression in the ring-blob serializer
+        // end-to-end checkpoint path so a regression in the ring-blob serializer
         // surfaces here before the integration test sees it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -16237,7 +16207,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertTrue("snapshot wrote some bytes", snapshotBytes > 0);
                 lagFn.getPartitionMap().clear();
                 Assert.assertEquals(0L, lagFn.getPartitionMap().size());
-                LiveViewFunctionSnapshot.restore(s1, 0L, snapshotBytes, lagFn, lagFn.checkpointStateFormatVersion());
+                LiveViewFunctionSnapshot.restore(s1, 0L, snapshotBytes, lagFn);
                 Assert.assertEquals(
                         "restore rehydrates the same partition count snapshot captured",
                         2L,
@@ -16267,7 +16237,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testRestartRestoresBoundedRowsAggregatesFromHeadCheckpoint() throws Exception {
         // avg, sum, count(*), count(arg), and ksum over
         // (PARTITION BY ... ROWS N PRECEDING ...) are now snapshot-capable.
-        // End-to-end check that an LV combining all of them writes a head .cp
+        // End-to-end check that an LV combining all of them writes a head checkpoint
         // and the first post-restart refresh tick rehydrates the partition
         // maps. No ANCHOR is involved - the validator rejects ANCHOR over
         // bounded frames, so this exercises the no-anchor snapshot path.
@@ -16301,7 +16271,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp must be written for an LV with bounded ROWS aggregates now that 2b.3a/b/c makes them snapshot-capable",
+                        "head checkpoint must be written for an LV with bounded ROWS aggregates now that 2b.3a/b/c makes them snapshot-capable",
                         Numbers.LONG_NULL,
                         preHeadLvSeqTxn
                 );
@@ -16374,7 +16344,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp must be written for an LV with stddev/corr/ema/vwema now that 2b.5 makes them snapshot-capable",
+                        "head checkpoint must be written for an LV with stddev/corr/ema/vwema now that 2b.5 makes them snapshot-capable",
                         Numbers.LONG_NULL,
                         preHeadLvSeqTxn
                 );
@@ -16405,7 +16375,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testWelfordFamilyRestoresRunningStateAcrossRestart() throws Exception {
         // stddev_samp/var_samp share the univariate Welford accumulator
         // [mean, m2, count]; covar_samp/corr share the bivariate one. The
-        // head .cp must round-trip every slot bit-exactly: a symmetric
+        // head checkpoint must round-trip every slot bit-exactly: a symmetric
         // snapshot/restore defect (e.g. count truncated on both sides)
         // survives a byte round-trip yet skews the first post-restart cell, so
         // the oracle below recomputes each cell from scratch over the base.
@@ -16444,7 +16414,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(instance);
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp written before restart",
+                        "head checkpoint written before restart",
                         Numbers.LONG_NULL,
                         instance.getHeadCheckpointLvSeqTxn()
                 );
@@ -16454,7 +16424,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
 
-            // Pure-restore tick (no new commits) fires tryRestoreFromHead. The
+            // Pure-restore tick (no new commits) fires tryRestoreFromTimeline. The
             // success + seqTxn asserts prove the cells below flow from the
             // restored accumulators, not from a head-miss replay recompute.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -16463,7 +16433,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
             Assert.assertTrue(
-                    "head .cp restore must rehydrate the Welford accumulators, not fall back to a head-miss replay",
+                    "head checkpoint restore must rehydrate the Welford accumulators, not fall back to a head-miss replay",
                     reloaded.isCheckpointRestoreSucceeded()
             );
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
@@ -16509,7 +16479,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // [ema, prevTimestamp, hasValue]; the vwema variants keep the
         // [numerator, denominator] pair plus [prevTimestamp, hasValue] - the
         // exact symmetric-drop shape a byte round-trip cannot catch. The
-        // head .cp must round-trip all of it so the first post-restart cell
+        // head checkpoint must round-trip all of it so the first post-restart cell
         // continues the decay from the pre-restart state; the oracle below
         // recomputes each cell from scratch over the base. All rows sit in one
         // day, so the anchor never fires and the oracle is a plain PARTITION BY
@@ -16547,7 +16517,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(instance);
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp written before restart",
+                        "head checkpoint written before restart",
                         Numbers.LONG_NULL,
                         instance.getHeadCheckpointLvSeqTxn()
                 );
@@ -16557,7 +16527,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
 
-            // Pure-restore tick (no new commits) fires tryRestoreFromHead. The
+            // Pure-restore tick (no new commits) fires tryRestoreFromTimeline. The
             // success + seqTxn asserts prove the cells below flow from the
             // restored state, not from a head-miss replay recompute.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -16566,7 +16536,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
             Assert.assertTrue(
-                    "head .cp restore must rehydrate the ema/vwema state, not fall back to a head-miss replay",
+                    "head checkpoint restore must rehydrate the ema/vwema state, not fall back to a head-miss replay",
                     reloaded.isCheckpointRestoreSucceeded()
             );
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
@@ -16614,7 +16584,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         //   - frameLoBounded == true:  ring + monotonic deque (5 LONG slots)
         //   - frameLoBounded == false: ring + scalar max/min   (3 slots, last
         //                              one typed DOUBLE/LONG/TIMESTAMP)
-        // Both flavours need to round-trip through .cp. The LV below exercises
+        // Both flavours need to round-trip through the checkpoint. The LV below exercises
         // both: w1 uses ROWS 2 PRECEDING (bounded lower) and w2 uses ROWS
         // BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING (unbounded lower).
         // min() and max() share the implementation class via a comparator
@@ -16651,7 +16621,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp must be written for an LV with min/max bounded ROWS now that 2b.4 makes them snapshot-capable",
+                        "head checkpoint must be written for an LV with min/max bounded ROWS now that 2b.4 makes them snapshot-capable",
                         Numbers.LONG_NULL,
                         preHeadLvSeqTxn
                 );
@@ -16683,7 +16653,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // avg/sum/count(*)/count(arg) over (PARTITION BY ...
         // RANGE BETWEEN '<n>' <unit> PRECEDING AND ...) are now snapshot-
         // capable. End-to-end check that an LV combining all of them writes a
-        // head .cp and the first post-restart refresh tick rehydrates the
+        // head checkpoint and the first post-restart refresh tick rehydrates the
         // partition maps. Variable-length deque serialisation: snapshot writes
         // size + size * (LONG ts, DOUBLE/LONG value); restore re-allocates the
         // ring at capacity = max(size, initialBufferSize).
@@ -16716,7 +16686,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp must be written for an LV with bounded RANGE aggregates now that 2b.6a/b makes them snapshot-capable",
+                        "head checkpoint must be written for an LV with bounded RANGE aggregates now that 2b.6a/b makes them snapshot-capable",
                         Numbers.LONG_NULL,
                         preHeadLvSeqTxn
                 );
@@ -16782,7 +16752,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp must be written for an LV with first_value/last_value bounded RANGE now that 2b.6d/e makes them snapshot-capable",
+                        "head checkpoint must be written for an LV with first_value/last_value bounded RANGE now that 2b.6d/e makes them snapshot-capable",
                         Numbers.LONG_NULL,
                         preHeadLvSeqTxn
                 );
@@ -16817,7 +16787,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         //   - frameLoBounded == true:  ring + monotonic deque (9 LONG slots)
         //   - frameLoBounded == false: ring + scalar max/min (5 LONGs + 1
         //                              typed DOUBLE/LONG/TIMESTAMP)
-        // Both flavours need to round-trip through .cp. The LV below exercises
+        // Both flavours need to round-trip through the checkpoint. The LV below exercises
         // both: w1 uses RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW
         // (bounded lower) and w2 uses RANGE BETWEEN UNBOUNDED PRECEDING AND
         // '1' HOUR PRECEDING (unbounded lower). min() and max() share the
@@ -16854,7 +16824,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp must be written for an LV with min/max bounded RANGE now that 2b.6c makes them snapshot-capable",
+                        "head checkpoint must be written for an LV with min/max bounded RANGE now that 2b.6c makes them snapshot-capable",
                         Numbers.LONG_NULL,
                         preHeadLvSeqTxn
                 );
@@ -16882,9 +16852,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // match routes every block to the first MaxMin function, restoring an
             // unbounded payload into the bounded layout (a runaway dequeSize that
             // overflowed appendAddressFor) and failing into a head-miss replay.
-            // Assert the restore genuinely rehydrated from the head .cp.
+            // Assert the restore genuinely rehydrated from the head checkpoint.
             Assert.assertTrue(
-                    "head .cp restore must rehydrate the MaxMin RANGE state, not fall back to a head-miss replay",
+                    "head checkpoint restore must rehydrate the MaxMin RANGE state, not fall back to a head-miss replay",
                     reloaded.isCheckpointRestoreSucceeded()
             );
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
@@ -16959,7 +16929,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 preLastProcessed = instance.getLastProcessedSeqTxn();
                 Assert.assertNotEquals(
-                        "head .cp must be written for an LV with first_value/last_value bounded ROWS now that 2b.3d/e makes them snapshot-capable",
+                        "head checkpoint must be written for an LV with first_value/last_value bounded ROWS now that 2b.3d/e makes them snapshot-capable",
                         Numbers.LONG_NULL,
                         preHeadLvSeqTxn
                 );
@@ -16989,7 +16959,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testRestartRestoresLagFromHeadCheckpoint() throws Exception {
         // lag() is now snapshot-capable. End-to-end check that a
-        // refresh cycle writes a head .cp, a simulated restart re-discovers
+        // refresh cycle writes a head checkpoint, a simulated restart re-discovers
         // it, and the first post-restart refresh tick rehydrates the lag
         // function's partition map. Mirrors testRestartRestoresRankFromHead
         // Checkpoint for the lag ring-blob path.
@@ -17027,7 +16997,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     WindowFunction lagFn = instance.getAnchorWindow().getFunctions().getQuick(0);
                     preFunctionMapSize = lagFn.getPartitionMap().size();
                     Assert.assertNotEquals(
-                            "head .cp must be written for an LV with lag() now that 2b.2a makes it snapshot-capable",
+                            "head checkpoint must be written for an LV with lag() now that 2b.2a makes it snapshot-capable",
                             Numbers.LONG_NULL,
                             preHeadLvSeqTxn
                     );
@@ -17049,9 +17019,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 }
                 // isCheckpointRestoreAttempted() is also satisfied by a restore that FAILED and fell
                 // back to a head-miss replay recompute, which would leave everything below passing for
-                // the wrong reason. Only "succeeded" proves the state came off the head .cp.
+                // the wrong reason. Only "succeeded" proves the state came off the head checkpoint.
                 Assert.assertTrue(
-                        "head .cp restore must rehydrate lag's state, not fall back to a head-miss replay",
+                        "head checkpoint restore must rehydrate lag's state, not fall back to a head-miss replay",
                         reloaded.isCheckpointRestoreSucceeded()
                 );
                 Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
@@ -17494,9 +17464,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
 
             // Remove the timeline so the restart has no root to restore from and
-            // falls back to a full boundary rebuild from the lower bound. The head
-            // .cp is deliberately left intact: recovery does not consult it, so
-            // corrupting it would no longer force the rebuild this measures.
+            // falls back to a full boundary rebuild from the lower bound.
             try (Path timelinePath = new Path()) {
                 final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 timelinePath.of(engine.getConfiguration().getDbRoot())

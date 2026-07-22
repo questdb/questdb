@@ -424,13 +424,12 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
 
     private void restoreFunction(WindowFunction function, LiveViewCheckpointPageRef functionRootRef) {
         functionRoot.of(checkpointsDir, functionRootRef);
-        final int formatVersion = functionRoot.getStateFormatVersion();
         function.onCheckpointRestoreBegin();
         final LiveViewCheckpointStatePageRef scalarRef = new LiveViewCheckpointStatePageRef();
         functionRoot.getScalarStateRef(scalarRef);
         if (!scalarRef.isNull()) {
             final LiveViewCheckpointDataSegmentReader reader = openStatePage(scalarRef);
-            final long consumed = function.restoreCheckpointState(statePageReader, 0, null, formatVersion);
+            final long consumed = function.restoreCheckpointState(statePageReader, 0, null);
             reader.assertFullyConsumed(scalarRef.getStoredLength(), consumed, 1);
             return;
         }
@@ -455,7 +454,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             }
             final LiveViewCheckpointStatePageRef ref = entry.getStatePageRef(0);
             final LiveViewCheckpointDataSegmentReader reader = openStatePage(ref);
-            final long consumed = function.restoreCheckpointState(statePageReader, 0, value, formatVersion);
+            final long consumed = function.restoreCheckpointState(statePageReader, 0, value);
             reader.assertFullyConsumed(ref.getStoredLength(), consumed, 1);
         });
     }
@@ -531,10 +530,14 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         )) {
             throw invalid("function key schema does not match the compiled runtime");
         }
+        // The identity above already carries the state layout version, so a root written
+        // under a different layout cannot reach here. Checking the root's own copy keeps
+        // the two agreeing: a root whose identity and version disagree is malformed, and
+        // decoding it with the running layout would read foreign bytes.
         final int formatVersion = functionRoot.getStateFormatVersion();
-        if (formatVersion < function.checkpointStateMinSupportedVersion()
-                || formatVersion > function.checkpointStateFormatVersion()) {
-            throw invalid("function state format version unsupported, version=").put(formatVersion);
+        if (formatVersion != function.checkpointStateFormatVersion()) {
+            throw invalid("function state format version does not match the compiled runtime, version=")
+                    .put(formatVersion);
         }
         for (int i = 0, n = functionRoot.getSegmentUseCountSize(); i < n; i++) {
             final long segmentId = functionRoot.getSegmentId(i);

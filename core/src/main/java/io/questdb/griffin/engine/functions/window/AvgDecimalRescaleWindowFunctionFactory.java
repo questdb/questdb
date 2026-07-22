@@ -1463,7 +1463,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -1499,11 +1499,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -1830,7 +1825,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -1862,11 +1857,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -2542,7 +2532,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -2556,11 +2546,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -3347,7 +3332,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -3376,11 +3361,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -3726,7 +3706,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -3756,11 +3736,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -4513,7 +4488,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -4527,11 +4502,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -5271,7 +5241,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -5306,11 +5276,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -5645,7 +5610,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -5681,11 +5646,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -6338,7 +6298,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -6352,11 +6312,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -7109,7 +7064,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -7138,11 +7093,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -7477,7 +7427,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -7507,11 +7457,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -8231,7 +8176,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -8245,11 +8190,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -9010,7 +8950,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -9039,11 +8979,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -9370,7 +9305,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -9400,11 +9335,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -10087,7 +10017,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -10101,11 +10031,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -10936,7 +10861,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -10965,11 +10890,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -11326,7 +11246,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -11356,11 +11276,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -12146,7 +12061,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
             offset += 4 * Long.BYTES;
@@ -12160,11 +12075,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 

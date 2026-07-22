@@ -280,7 +280,7 @@ public interface WindowFunction extends Function {
 
     /**
      * @return the partition-key {@link ColumnTypes} the live-view checkpoint framework
-     * writes into the FUNCTION_SNAPSHOT key-shape header and validates on restore.
+     * writes into the state payload's key-shape header and validates on restore.
      * Returns {@code null} for scalar (no-map) functions, which the framework treats
      * as a single keyless partition. Partitioned functions override to return their
      * own partition-key types.
@@ -452,7 +452,7 @@ public interface WindowFunction extends Function {
     /**
      * Resets this function's per-partition state to empty before the live-view
      * snapshot framework rehydrates partitions via
-     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue, int)}. Partitioned
+     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue)}. Partitioned
      * functions clear their {@link Map} and zero the tombstone counter here;
      * native-memory-backed ring/deque functions also truncate their backing
      * arena and clear their free list. Default no-op (scalar functions hold a
@@ -531,7 +531,7 @@ public interface WindowFunction extends Function {
      *
      * @return the offset just past this partition's consumed state bytes
      */
-    default long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+    default long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
         throw new UnsupportedOperationException(
                 "restoreCheckpointState not implemented for " + getClass().getName()
         );
@@ -595,35 +595,20 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * @return the checkpoint state layout version this build writes. The framework records this in the
-     * FUNCTION_SNAPSHOT block header so future builds can dispatch through
-     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue, int)} to the correct decoder. Bump
-     * on any state-layout change.
-     * <p>
-     * This doubles as the highest version this build can <em>read</em>: a build that could decode
-     * a layout would also write it. The live view layer rejects a recorded version above this
-     * value rather than decoding foreign bytes with the current layout - the case a downgraded
-     * binary hits when a newer binary left a CRC-valid head checkpoint behind.
+     * @return the checkpoint state layout version this build writes. The compiler folds it into
+     * the function's state codec identity, and the checkpoint timeline records it in the function
+     * root. Bump on any state-layout change: the bump changes the identity, so a root written under
+     * the old layout no longer resolves to this function and the timeline rejects it wholesale
+     * instead of decoding foreign bytes.
      */
     default int checkpointStateFormatVersion() {
         return 0;
     }
 
     /**
-     * @return the lowest checkpoint state {@code formatVersion} this build can
-     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue, int)}.
-     * A head checkpoint whose recorded version is strictly less than this value cannot be replayed;
-     * the live view layer surfaces it as {@code "checkpoint format version unsupported"} via the
-     * unified invalidation path.
-     */
-    default int checkpointStateMinSupportedVersion() {
-        return 0;
-    }
-
-    /**
      * Serialises ONE partition's accumulator state into {@code sink} for later
-     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue, int)}. The live-view
-     * snapshot framework owns iteration and the FUNCTION_SNAPSHOT key-shape header:
+     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue)}. The live-view
+     * snapshot framework owns iteration and the key-shape header:
      * it has already written this partition's key, so the function writes only its
      * own value bytes from {@code value} (the partition's {@link MapValue}; for
      * scalar no-map functions {@code value} is {@code null} and the function reads
@@ -640,7 +625,7 @@ public interface WindowFunction extends Function {
 
     /**
      * Reports whether {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)} /
-     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue, int)} are implemented.
+     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue)} are implemented.
      * The live view refresh worker ANDs this across every window function in the compiled SELECT
      * at first refresh; the LV's per-instance {@code snapshotCapability} flag is the result.
      * Default {@code false} keeps unmigrated functions out of the checkpoint pipeline without

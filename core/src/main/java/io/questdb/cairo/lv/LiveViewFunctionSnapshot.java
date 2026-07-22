@@ -37,17 +37,18 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.window.WindowFunction;
 
 /**
- * Framework-owned read/write of a window function's FUNCTION_SNAPSHOT payload.
- * The block prelude ({@code windowName}, {@code factoryName}, {@code formatVersion})
- * is written/consumed by the caller in {@link LiveViewRefreshJob}; this class owns
- * everything after it: the key-shape header, the partition count, and the
+ * Framework-owned read/write of a window function's whole-state payload. The
+ * caller frames the payload - {@link LiveViewCheckpointScratchOverlay} records its
+ * {@code (offset, length)} and the function it belongs to - and this class owns
+ * everything inside it: the key-shape header, the partition count, and the
  * per-partition key + state iteration. Each window function contributes only ONE
  * partition's state via
  * {@link WindowFunction#freezeCheckpointState(LiveViewStatePageWriter, MapValue)} /
- * {@link WindowFunction#restoreCheckpointState(LiveViewStatePageReader, long, MapValue, int)}.
+ * {@link WindowFunction#restoreCheckpointState(LiveViewStatePageReader, long, MapValue)}.
  * <p>
- * Payload layout (mirrors the WINDOW_ANCHOR block's self-describing header so a
- * stored-vs-running key-shape mismatch is caught before any state byte is decoded):
+ * Payload layout (mirrors the anchor payload's self-describing header - see
+ * {@link LiveViewWindow#snapshot} - so a stored-vs-running key-shape mismatch is
+ * caught before any state byte is decoded):
  * <pre>
  *   partitionKeyColumnCount: INT
  *   per key column: columnType: INT
@@ -68,27 +69,24 @@ public final class LiveViewFunctionSnapshot {
 
     /**
      * Reads the key-shape header (validating it against the running function), then
-     * rehydrates each partition. A header mismatch throws {@link CairoException}
-     * with errno 0 (structural corruption that passed CRC) so the caller unlinks the
-     * head checkpoint and head-miss-replays rather than invalidating the view -
-     * distinct from a version break (a recorded version outside the function's
-     * supported range, in either direction), which invalidates.
+     * rehydrates each partition. A header mismatch throws {@link CairoException} with
+     * errno 0: the payload and the function it is restored into come from the same
+     * compiled factory, so a disagreement is a bug rather than a compatibility break.
      * <p>
      * After the last partition the consumed byte count must reconcile with
      * {@code payloadLength} - the restore-side mirror of the writer's
      * emitted-vs-live-count check. A function-level offset drift (a
      * restoreCheckpointState that reads more or fewer bytes than its writer
-     * emitted) would otherwise silently decode the next partition or block
-     * from the wrong offset.
+     * emitted) would otherwise silently decode the next partition from the wrong
+     * offset.
      *
      * @param source        read-only memory containing the payload
      * @param offset        byte offset within {@code source} of the payload start
      * @param payloadLength exact byte length of the payload; restore must consume
      *                      all of it
-     * @param f             the running function the stored block resolved to
-     * @param formatVersion the per-function snapshot version recorded in the prelude
+     * @param f             the running function the payload was written from
      */
-    public static void restore(MemoryR source, long offset, long payloadLength, WindowFunction f, int formatVersion) {
+    public static void restore(MemoryR source, long offset, long payloadLength, WindowFunction f) {
         if (offset < 0 || payloadLength < 0 || offset > source.size() || payloadLength > source.size() - offset) {
             throw CairoException.critical(0)
                     .put("live view function checkpoint payload out of bounds")
@@ -175,13 +173,13 @@ public final class LiveViewFunctionSnapshot {
         final LiveViewStatePageReader pageReader = new LiveViewStatePageReader();
         f.onCheckpointRestoreBegin();
         if (map == null) {
-            offset = restoreStatePage(pageReader, source, offset, payloadEnd, f, null, formatVersion);
+            offset = restoreStatePage(pageReader, source, offset, payloadEnd, f, null);
         } else {
             for (long p = 0; p < partitionCount; p++) {
                 final MapKey key = map.withKey();
                 offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyTypes);
                 final MapValue value = key.createValue();
-                offset = restoreStatePage(pageReader, source, offset, payloadEnd, f, value, formatVersion);
+                offset = restoreStatePage(pageReader, source, offset, payloadEnd, f, value);
             }
         }
         final long consumed = offset - payloadStart;
@@ -243,8 +241,7 @@ public final class LiveViewFunctionSnapshot {
             long offset,
             long payloadEnd,
             WindowFunction function,
-            MapValue value,
-            int formatVersion
+            MapValue value
     ) {
         ensureAvailable(offset, Long.BYTES, payloadEnd, "state page length");
         final long pageLength = source.getLong(offset);
@@ -256,7 +253,7 @@ public final class LiveViewFunctionSnapshot {
         }
         ensureAvailable(offset, pageLength, payloadEnd, "state page");
         pageReader.of(source, offset, pageLength);
-        final long consumed = function.restoreCheckpointState(pageReader, 0, value, formatVersion);
+        final long consumed = function.restoreCheckpointState(pageReader, 0, value);
         if (consumed != pageLength) {
             throw CairoException.critical(0)
                     .put("live view function checkpoint state page length mismatch")
@@ -319,9 +316,9 @@ public final class LiveViewFunctionSnapshot {
     /**
      * Writes the key-shape header, the live partition count, and each live
      * partition's key + state. Tombstoned partitions are skipped. A live-count vs
-     * emit-count disagreement throws errno 0 (mirrors the WINDOW_ANCHOR writer).
+     * emit-count disagreement throws errno 0 (mirrors the anchor writer).
      *
-     * @param sink the FUNCTION_SNAPSHOT block sink, positioned just past the prelude
+     * @param sink the sink to append this function's payload to
      * @param f    the function whose per-partition state to serialise
      */
     public static void write(MemoryA sink, WindowFunction f) {

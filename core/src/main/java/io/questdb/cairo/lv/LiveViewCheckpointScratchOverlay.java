@@ -150,7 +150,7 @@ public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
 
     /**
      * Puts the captured state back into the same functions and anchor window it came
-     * from. Those objects are the compiled factory's, so their format versions and key
+     * from. Those objects are the compiled factory's, so their state layouts and key
      * shapes are the ones the capture wrote with; a disagreement here is a bug
      * rather than corruption, and {@link LiveViewFunctionSnapshot} throws on it.
      */
@@ -182,8 +182,7 @@ public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
                     mem,
                     frames.getQuick(frame),
                     frames.getQuick(frame + 1),
-                    f,
-                    f.checkpointStateFormatVersion()
+                    f
             );
             frame += 2;
         }

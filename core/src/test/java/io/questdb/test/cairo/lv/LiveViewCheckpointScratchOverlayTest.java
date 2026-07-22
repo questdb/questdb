@@ -451,7 +451,7 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             state = source.getLong(offset);
             return offset + Long.BYTES;
         }

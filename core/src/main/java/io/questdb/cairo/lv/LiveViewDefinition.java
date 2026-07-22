@@ -587,9 +587,8 @@ public class LiveViewDefinition {
      */
     private static void requireSupportedFormatVersion(int onDiskVersion, @NotNull TableToken liveViewToken) {
         // Reject both a too-new version (this build cannot read it) and a below-floor one
-        // (version 1 is the first; 0 / negative is corruption, not a legacy v1). Aligns with
-        // the .cp reader's SUPPORTED_VERSION_MIN=1 floor so the first version bump cannot make
-        // a zeroed / torn header silently parse as v1.
+        // (version 1 is the first; 0 / negative is corruption, not a legacy v1), so the first
+        // version bump cannot make a zeroed / torn header silently parse as v1.
         if (onDiskVersion < 1 || onDiskVersion > LIVE_VIEW_DEFINITION_FORMAT_VERSION) {
             throw CairoException.critical(CairoException.LV_FILE_VERSION_UNSUPPORTED)
                     .put("live view definition format version not supported [view=")

@@ -320,7 +320,7 @@ public class LiveViewInstance implements QuietCloseable {
     // reader off the worker thread sees a current value. In-memory only - resets to 0 on restart.
     private volatile long lowerBoundRowsScanned;
     // Cumulative count of live-view rows produced over the LV's lifetime,
-    // matching the MANIFEST.lvRowPosition field on every head checkpoint.
+    // matching the effective lvRowPosition of the newest logical checkpoint.
     // Initialised to 0 on construction. The restart restore and the O3 resume
     // replay stamp this from the restored root after a successful restore;
     // every subsequent {@link #addRowsSinceLastCheckpointWritten(long)} bumps
@@ -999,8 +999,8 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * @return cumulative LV row count, matching the value persisted as
-     * {@code MANIFEST.lvRowPosition} on the most recent head checkpoint.
+     * @return cumulative LV row count, matching the effective
+     * {@code lvRowPosition} of the newest logical checkpoint.
      */
     public long getLvRowsTotal() {
         return lvRowsTotal;
@@ -1367,7 +1367,7 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * Stamps the elapsed micros of the restart restore-from-head that just ran.
      * Single-shot per LV lifetime, called by the refresh worker after
-     * {@code tryRestoreFromHead} returns (regardless of outcome). See
+     * {@code tryRestoreFromTimeline} returns (regardless of outcome). See
      * {@link #headCheckpointRestoreMicros}.
      */
     public void recordCheckpointRestoreMicros(long durationUs) {

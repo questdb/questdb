@@ -1019,7 +1019,7 @@ public class FirstValueWindowFunctionFactoryHelper {
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
             // firstIdx as a 0/1 capture flag (the captured value lives at physical
             // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
@@ -1245,7 +1245,7 @@ public class FirstValueWindowFunctionFactoryHelper {
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
@@ -2242,7 +2242,7 @@ public class FirstValueWindowFunctionFactoryHelper {
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
             final long size = source.getLong(offset);
@@ -2275,11 +2275,6 @@ public class FirstValueWindowFunctionFactoryHelper {
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -2644,7 +2639,7 @@ public class FirstValueWindowFunctionFactoryHelper {
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long count = source.getLong(offset);
@@ -2671,11 +2666,6 @@ public class FirstValueWindowFunctionFactoryHelper {
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -3419,7 +3409,7 @@ public class FirstValueWindowFunctionFactoryHelper {
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putLong(0, source.getLong(offset));
             offset += Long.BYTES;
             value.putByte(1, source.getByte(offset));
@@ -3432,11 +3422,6 @@ public class FirstValueWindowFunctionFactoryHelper {
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 

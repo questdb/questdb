@@ -1299,7 +1299,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long ringBytes = (long) bufferSize * Long.BYTES;
             final long partitionLastValue = source.getLong(offset);
             offset += Long.BYTES;
@@ -1327,11 +1327,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -2595,7 +2590,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long size = source.getLong(offset);
             offset += Long.BYTES;
             final long capacity = Math.max(size, initialBufferSize);
@@ -2618,11 +2613,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -2858,7 +2848,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long ringBytes = (long) bufferSize * Long.BYTES;
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
@@ -2883,11 +2873,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 

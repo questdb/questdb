@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
@@ -44,15 +45,19 @@ import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -438,6 +443,57 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRestoreRejectsRootWhoseStateVersionDisagreesWithItsIdentity() throws Exception {
+        assertMemoryLeak(() -> {
+            createView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final ObjList<WindowFunction> compiled = unwrapWindowFunctions(instance);
+                Assert.assertEquals(1, compiled.size());
+
+                // A build that bumps a function's state layout also changes its codec
+                // identity, so its roots no longer resolve and the directory lookup turns
+                // them away first. Keeping the identity and moving only the recorded
+                // version is the malformed root the version check is left to catch.
+                final ObjList<WindowFunction> drifted = new ObjList<>();
+                final VersionDriftStub stub = new VersionDriftStub(compiled.getQuick(0));
+                drifted.add(stub);
+                try (
+                        Path checkpointsDir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreReader reader =
+                                new LiveViewCheckpointTimelineStoreReader(configuration)
+                ) {
+                    reader.of(checkpointsDir);
+                    try {
+                        reader.restore(
+                                ts(timestamp(10)),
+                                0,
+                                instance.getLiveViewToken().getTableId(),
+                                drifted,
+                                null
+                        );
+                        Assert.fail("expected function state format version rejection");
+                    } catch (CairoException e) {
+                        Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "function state format version does not match the compiled runtime"
+                        );
+                    }
+                } finally {
+                    Misc.free(stub);
+                }
+                Assert.assertFalse(
+                        "validation must reject before the restore clears any function state",
+                        stub.restoreBegun
+                );
+            }
+        });
+    }
+
+    @Test
     public void testRestoreRejectsTruncatedOldRootBeforeMutatingRuntime() throws Exception {
         assertMemoryLeak(() -> {
             createView(false);
@@ -674,13 +730,12 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
 
             final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
-            // Startup publishes the head from the timeline generation, never from
-            // the still-present legacy .cp - it does not enumerate them. The root's
-            // own maxTs is still a placeholder here; only the first refresh tick
-            // pins the generation and reads it.
+            // Startup publishes the head from the timeline generation alone. The
+            // root's own maxTs is still a placeholder here; only the first refresh
+            // tick pins the generation and reads it.
             Assert.assertNotEquals(Numbers.LONG_NULL, reloaded.getHeadCheckpointLvSeqTxn());
             Assert.assertEquals(
-                    "ACTIVE startup must not rediscover the still-present legacy .cp",
+                    "ACTIVE startup must not read a root before the worker pins the generation",
                     Numbers.LONG_NULL,
                     reloaded.getHeadCheckpointMaxTs()
             );
@@ -765,6 +820,58 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         private RuntimeSnapshot(byte[] anchor, byte[][] functions) {
             this.anchor = anchor;
             this.functions = functions;
+        }
+    }
+
+    /**
+     * Wears a compiled function's checkpoint identity and key schema but reports the
+     * next state layout version, which is the one shape that reaches the function
+     * root's version check with everything ahead of it agreeing.
+     */
+    private static final class VersionDriftStub extends BaseWindowFunction {
+        private final ColumnTypes keyColumnTypes;
+        private final int stateFormatVersion;
+        private boolean restoreBegun;
+
+        private VersionDriftStub(WindowFunction compiled) {
+            super(null);
+            this.keyColumnTypes = compiled.getCheckpointKeyColumnTypes();
+            this.stateFormatVersion = compiled.checkpointStateFormatVersion() + 1;
+            setCheckpointCompilerMetadata(compiled.checkpointFunctionIdentity(), compiled.checkpointDependency());
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return stateFormatVersion;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public String getName() {
+            return "version-drift";
+        }
+
+        @Override
+        public int getType() {
+            return ColumnType.LONG;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            restoreBegun = true;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return true;
         }
     }
 }

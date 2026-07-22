@@ -890,15 +890,15 @@ public class CairoEngine implements Closeable, WriterSource {
                                     // catch surface it as version_unsupported.
                                     throw ce;
                                 }
-                                // The _lv.s is torn / corrupt, but the _lv table data and any head
-                                // .cp accumulators are intact. The read fails in two shapes: a
+                                // The _lv.s is torn / corrupt, but the _lv table data and the
+                                // checkpoint timeline are intact. The read fails in two shapes: a
                                 // CairoException (a non-version read error), or a plain runtime
                                 // exception thrown while decoding garbage bytes at a bad offset
                                 // (e.g. IndexOutOfBounds). Both mean the same thing here, so catch
                                 // Exception and treat any non-version failure as torn. (Errors such
                                 // as OOM still propagate.) Every lost durable watermark is a base
                                 // seqTxn, and they track the applied point together (see
-                                // LiveViewRefreshJob.finishLeadRefresh / tryRestoreFromHead), so
+                                // LiveViewRefreshJob.finishLeadRefresh / tryRestoreFromTimeline), so
                                 // reconstruct them from the last applied LIVE_VIEW_DATA block
                                 // recorded in the LV's own WAL sequencer log. If that is gone too
                                 // (purged / unreadable), there is no safe resume floor - registering
@@ -1548,7 +1548,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 // The seq-dir _lv (written above by SequencerMetadata.create) is a separate copy
                 // for replication and is rolled back with the table on failure.
 
-                // _checkpoints/ subdirectory holds the rolling head checkpoint.
+                // _checkpoints/ subdirectory holds the checkpoint timeline.
                 // Created before _lv.s so the rollback
                 // path in dropTableOrViewOrMatView below covers it; _lv stays the
                 // atomic CREATE commit marker. mkdirs() is used (not mkdir()) so
@@ -4683,7 +4683,7 @@ public class CairoEngine implements Closeable, WriterSource {
     // path; the caller's DROP aborts before any teardown so the LV remains
     // queryable.
     //
-    // Unlike the .cp writer, this deliberately does NOT tmp+rename. Recovery
+    // Unlike the checkpoint segment writers, this deliberately does NOT tmp+rename. Recovery
     // keys off existence alone, so a zero-byte or partially written _lv.drop
     // still correctly triggers the reap branch; a tmp+rename scheme would
     // instead lose a crash-before-rename drop intent. Existence-only is the

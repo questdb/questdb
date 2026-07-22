@@ -472,7 +472,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long ringBytes = this.offset * RING_SLOT_BYTES;
             final long firstIdx = source.getLong(offset);
             offset += Long.BYTES;
@@ -500,11 +500,6 @@ public class LeadLagWindowFunctionFactoryHelper {
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 

@@ -59,31 +59,19 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int METADATA_VERSION_MISMATCH = TXN_BLOCK_APPLY_FAILED - 1;
     public static final int FILE_TOO_SMALL = METADATA_VERSION_MISMATCH - 1;
     public static final int SEQUENCER_METADATA_OPEN_FAILED = FILE_TOO_SMALL - 1;
-    // A live-view checkpoint restore observed a function snapshot whose
-    // formatVersion falls outside the function's supported range
-    // [checkpointStateMinSupportedVersion(), checkpointStateFormatVersion()]. Signals a real
-    // compatibility break (not a structural corruption); the caller invalidates
-    // the LV instead of falling into a rebuild.
-    public static final int LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH = SEQUENCER_METADATA_OPEN_FAILED - 1;
-    // A live-view checkpoint open found a file-level formatVersion outside the
-    // reader's supported range. Like LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH, this
-    // signals a real compatibility break; the caller invalidates the LV rather
-    // than retiring the timeline and rebuilding.
-    public static final int LV_CHECKPOINT_FILE_VERSION_MISMATCH = LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH - 1;
     // The on-disk _lv / _lv.s carry a format version newer than this build
     // supports. The catalogue load path catches this and surfaces the view as
     // version_unsupported rather than hiding it; distinct from structural
     // corruption so the two map to different operator-visible outcomes.
-    public static final int LV_FILE_VERSION_UNSUPPORTED = LV_CHECKPOINT_FILE_VERSION_MISMATCH - 1;
+    public static final int LV_FILE_VERSION_UNSUPPORTED = SEQUENCER_METADATA_OPEN_FAILED - 1;
     // A live-view versioned checkpoint timeline artifact failed structural
     // validation: a torn/foreign _timeline superblock slot, or a metadata page
     // whose framing, bounds, or per-page checksum did not hold. Timeline state is
     // derived and rebuildable, so this is a recovery-quality signal rather than a
     // compatibility break: a bad superblock slot falls back to the other slot, and
     // a bad metadata page invalidates only that one root version and schedules its
-    // reconstruction. Distinct from LV_FILE_VERSION_UNSUPPORTED and
-    // LV_CHECKPOINT_FILE_VERSION_MISMATCH, which cover required state and do
-    // surface to the operator.
+    // reconstruction. Distinct from LV_FILE_VERSION_UNSUPPORTED, which covers
+    // required state and does surface to the operator.
     public static final int LV_CHECKPOINT_TIMELINE_INVALID = LV_FILE_VERSION_UNSUPPORTED - 1;
     private static final int TABLE_SUSPENDED = LV_CHECKPOINT_TIMELINE_INVALID - 1;
     public static final int NON_CRITICAL = -1;

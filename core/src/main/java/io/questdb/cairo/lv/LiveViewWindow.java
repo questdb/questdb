@@ -545,7 +545,7 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Rehydrates the anchor map from a checkpoint block written by
+     * Rehydrates the anchor map from a payload written by
      * {@link #snapshot(MemoryA)}. Clears the existing map, then walks the
      * serialised partition list and reinserts each entry with
      * {@code initialized=1, tombstone=0}.
@@ -553,9 +553,9 @@ public class LiveViewWindow implements QuietCloseable {
      * Validates the recorded {@code windowName}, partition-key column count,
      * per-column types, and anchor value type against this window's static
      * shape; any mismatch throws {@link CairoException}, which the caller
-     * (the checkpoint restore path) treats as corruption -- the head
-     * {@code .cp} is unlinked and the LV falls through to the head-miss
-     * replay path. Same disposition as a CRC failure on the file as a whole.
+     * (the checkpoint restore path) treats as corruption -- it retires the
+     * unreadable timeline and the LV falls through to the head-miss replay
+     * path. Same disposition as a failed metadata page checksum.
      */
     public void restore(MemoryR source) {
         restore(source, 0, Long.MAX_VALUE);

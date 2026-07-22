@@ -110,13 +110,13 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
                 // write() emits: keyColumnCount(int)=0, partitionCount(long)=1, then one state long.
                 LiveViewFunctionSnapshot.write(buf, f);
                 final long len = buf.getAppendOffset();
-                LiveViewFunctionSnapshot.restore(buf, 0, len, f, 0); // sanity: count=1 restores cleanly
+                LiveViewFunctionSnapshot.restore(buf, 0, len, f); // sanity: count=1 restores cleanly
 
                 // The partition count is the long immediately after the 4-byte key-column count.
                 buf.jumpTo(Integer.BYTES);
                 buf.putLong(-1L);
                 try {
-                    LiveViewFunctionSnapshot.restore(buf, 0, len, f, 0);
+                    LiveViewFunctionSnapshot.restore(buf, 0, len, f);
                     Assert.fail("negative function-snapshot partition count must be rejected");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "negative partition count");
@@ -127,7 +127,7 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
                 buf.jumpTo(Integer.BYTES);
                 buf.putLong(2L);
                 try {
-                    LiveViewFunctionSnapshot.restore(buf, 0, len, f, 0);
+                    LiveViewFunctionSnapshot.restore(buf, 0, len, f);
                     Assert.fail("scalar function-snapshot count != 1 must be rejected");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "scalar partition count must be 1");
@@ -182,13 +182,13 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
                 final ScalarStub f = new ScalarStub();
                 LiveViewFunctionSnapshot.write(buf, f);
                 final long len = buf.getAppendOffset();
-                LiveViewFunctionSnapshot.restore(buf, 0, len, f, 0); // sanity: count=1 restores cleanly
+                LiveViewFunctionSnapshot.restore(buf, 0, len, f); // sanity: count=1 restores cleanly
 
                 // The partition count is the long immediately after the 4-byte key-column count.
                 buf.jumpTo(Integer.BYTES);
                 buf.putLong(Long.MAX_VALUE);
                 try {
-                    LiveViewFunctionSnapshot.restore(buf, 0, len, f, 0);
+                    LiveViewFunctionSnapshot.restore(buf, 0, len, f);
                     Assert.fail("oversized function-snapshot partition count must be rejected");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "partition count exceeds payload");
@@ -211,7 +211,7 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
                 buf.jumpTo(pageLengthOffset);
                 buf.putLong(Long.BYTES + 1L);
                 try {
-                    LiveViewFunctionSnapshot.restore(buf, 0, payloadLength, f, 0);
+                    LiveViewFunctionSnapshot.restore(buf, 0, payloadLength, f);
                     Assert.fail("state page extending past the function payload must be rejected");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "state page exceeds payload");
@@ -226,7 +226,7 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
                 buf.jumpTo(payloadLength);
                 buf.putLong(0x1122_3344_5566_7788L);
                 try {
-                    LiveViewFunctionSnapshot.restore(buf, 0, payloadLength, f, 0);
+                    LiveViewFunctionSnapshot.restore(buf, 0, payloadLength, f);
                     Assert.fail("function decoder must not read past its state page");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "state page read out of bounds");
@@ -266,7 +266,7 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getLong(offset);
             if (overread) {
                 source.getByte(offset + Long.BYTES);

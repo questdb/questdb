@@ -2683,7 +2683,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             engine.buildViewGraphs();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Settle the restored view (rehydrate window state from the head
-                // .cp), then ingest one in-order row so the fresh tier repopulates
+                // checkpoint), then ingest one in-order row so the fresh tier repopulates
                 // through the normal publish path post-restart.
                 setCurrentMicros(750_000L);
                 drainJob(job);
@@ -3919,7 +3919,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             // Simulated crash + restart: drop the in-memory registry (and its tier,
             // so the RAM lead is gone) and rebuild from on-disk state. Disk holds
-            // only the 3 flushed rows; the .cp sits at the applied point (no gap).
+            // only the 3 flushed rows; the checkpoint sits at the applied point (no gap).
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
             LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -3930,7 +3930,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             restored.setLastFlushTimeUs(0L);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job); // restore from .cp, then drain the base WAL forward to rebuild the lead
+                drainJob(job); // restore from the checkpoint, then drain the base WAL forward to rebuild the lead
             }
 
             // The lead is back in RAM (2 rows) and the read equals the recompute.
@@ -4036,9 +4036,9 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
     @Test
     public void testRestartReplaysCheckpointCadenceGap() throws Exception {
-        // The head .cp is written on a cadence (rows / duration), not every flush,
+        // The head checkpoint is written on a cadence (rows / duration), not every flush,
         // so its base seqTxn can lag the applied point: the on-disk LV table holds
-        // rows the .cp's accumulators do not. On restart the restore must replay the
+        // rows the checkpoint's accumulators do not. On restart the restore must replay the
         // base WAL over (head, applied] WITHOUT re-emitting to advance the
         // accumulators to the disk state, then resume at the applied point so
         // drain-forward only rebuilds the un-flushed lead. Without replay-to-applied
@@ -4051,16 +4051,16 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // Batch 1 -> flush 1. The first flush always writes a head .cp
+                // Batch 1 -> flush 1. The first flush always writes a head checkpoint
                 // (firstCp), stamped at the applied point.
                 execute("INSERT INTO base (ts, x) VALUES " +
                         "('2026-05-12T00:00:01.000000Z', 1), ('2026-05-12T00:00:02.000000Z', 2)");
                 drainWalQueue();
-                drainJob(job); // clock 0: refresh batch 1 then flush (firstCp -> .cp written)
+                drainJob(job); // clock 0: refresh batch 1 then flush (firstCp -> checkpoint written)
 
                 // Batch 2 -> flush 2. Past FLUSH EVERY so it flushes, but neither the
                 // row cadence (default 1M) nor the duration cadence (default 5m) is
-                // met, so flush 2 does NOT write a fresh .cp. The .cp now lags applied.
+                // met, so flush 2 does NOT write a fresh checkpoint. The checkpoint now lags applied.
                 setCurrentMicros(200_000L);
                 execute("INSERT INTO base (ts, x) VALUES " +
                         "('2026-05-12T00:00:03.000000Z', 3), ('2026-05-12T00:00:04.000000Z', 4)");
@@ -4078,7 +4078,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
-            // The cadence gap exists: head .cp base seqTxn < applied watermark.
+            // The cadence gap exists: head checkpoint base seqTxn < applied watermark.
             Assert.assertTrue(
                     "test must create a checkpoint-cadence gap (head < applied)",
                     instance.getHeadCheckpointLvSeqTxn() < instance.getAppliedWatermark()
@@ -4087,7 +4087,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             Assert.assertEquals("two un-flushed lead rows before restart", 2, before.leadRowsServed);
 
             // Simulated restart: the RAM lead (batch 3) is lost; disk holds batches
-            // 1 + 2 at the applied point; the .cp sits at batch 1.
+            // 1 + 2 at the applied point; the checkpoint sits at batch 1.
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
             LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -4096,7 +4096,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 setCurrentMicros(250_000L);
-                drainJob(job); // restore .cp@batch1 -> replay-to-applied (batch 2) -> drain forward (batch 3)
+                drainJob(job); // restore checkpoint@batch1 -> replay-to-applied (batch 2) -> drain forward (batch 3)
             }
 
             // The rebuilt view matches the recompute, and the disk-only (applied)
@@ -4392,7 +4392,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     @Test
     public void testLeadO3HeadHitReplaysAboveHead() throws Exception {
         // O3 detected with a non-empty un-flushed lead, routed to the head-hit
-        // branch. A first flush writes a head .cp at maxTs=03; a lead (ts 10,11)
+        // branch. A first flush writes a head checkpoint at maxTs=03; a lead (ts 10,11)
         // is then refreshed above it without flushing, so headMaxTs stays at 03
         // while the lead leads disk in RAM. A back-dated row at ts=05 sits
         // strictly above headMaxTs (03) and below latestSeenTs (11): it is O3 and
@@ -4410,17 +4410,17 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Cycle 1: flush three in-order rows. The first flush always writes
-                // a head .cp; its maxTs is the batch maximum (03).
+                // a head checkpoint; its maxTs is the batch maximum (03).
                 execute("INSERT INTO base (ts, x) VALUES " +
                         "('2026-05-12T00:00:01.000000Z', 1), " +
                         "('2026-05-12T00:00:02.000000Z', 2), " +
                         "('2026-05-12T00:00:03.000000Z', 3)");
                 drainWalQueue();
-                drainJob(job); // clock 0: refresh + first flush -> disk holds 3 rows, head .cp maxTs=03
+                drainJob(job); // clock 0: refresh + first flush -> disk holds 3 rows, head checkpoint maxTs=03
                 drainWalQueue();
-                Assert.assertNotEquals("first flush must write a head .cp",
+                Assert.assertNotEquals("first flush must write a head checkpoint",
                         Numbers.LONG_NULL, instance.getHeadCheckpointLvSeqTxn());
-                Assert.assertEquals("head .cp sits at the flushed batch max",
+                Assert.assertEquals("head checkpoint sits at the flushed batch max",
                         MicrosFormatUtils.parseUTCTimestamp("2026-05-12T00:00:03.000000Z"),
                         instance.getHeadCheckpointMaxTs());
 
@@ -4431,7 +4431,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 drainJob(job); // clock still 0: within FLUSH EVERY 1s -> refresh only, lead in RAM
 
-                // Precondition: the lead is resident (2 rows) and the head .cp
+                // Precondition: the lead is resident (2 rows) and the head checkpoint
                 // still sits at 03, so the next O3 row at 05 routes head-hit.
                 InnerRead beforeO3 = readInner("SELECT * FROM lv");
                 Assert.assertEquals("two un-flushed lead rows before O3", 2, beforeO3.leadRowsServed);
@@ -4536,7 +4536,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     public void testLeadO3OracleSurvivesRestart() throws Exception {
         // O3 with a non-empty lead, then a simulated restart. The O3 replay folded
         // the RAM-only lead onto disk (REPLACE_RANGE) and wrote a fresh post-O3
-        // head .cp, so after a restart that drops the in-memory tier the on-disk
+        // head checkpoint, so after a restart that drops the in-memory tier the on-disk
         // LV table still holds every row and the re-read matches a from-scratch
         // recompute across the restart boundary.
         assertMemoryLeak(() -> {
@@ -4578,7 +4578,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // Settle the restored view (rehydrate from the post-O3 head .cp),
+                // Settle the restored view (rehydrate from the post-O3 head checkpoint),
                 // then ingest one in-order row so the fresh tier repopulates
                 // through the normal publish path post-restart.
                 drainJob(job);

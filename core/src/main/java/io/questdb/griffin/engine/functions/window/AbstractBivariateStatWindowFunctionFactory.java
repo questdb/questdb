@@ -1806,7 +1806,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             for (int i = 0; i < 5; i++) {
                 value.putDouble(i, source.getDouble(offset));
                 offset += Double.BYTES;
@@ -1821,11 +1821,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 

@@ -262,7 +262,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 // 10s and 20s as the reused prefix, and 60s as the converged suffix.
                 // L saturates at the view boundary here (R - W is below it), so this
                 // history is short enough that only H bounds the scan; the two-sided
-                // bound is measured in LiveViewCheckpointRingBoundaryFixtureTest.
+                // bound is measured in LiveViewCheckpointBoundaryFixtureTest.
                 appendAndRefresh(job, 25, 100);
 
                 Assert.assertEquals("no anchor survives below the change", 0, instance.getO3ResumeReplayRows());

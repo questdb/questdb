@@ -775,7 +775,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             offset = LiveViewSnapshotKeyCodec.readValueSlots(value, 0, source, offset, chainColumnTypes);
             value.putLong(chainTypeIndex, source.getLong(offset));
             offset += Long.BYTES;
@@ -817,11 +817,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 

@@ -1996,7 +1996,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
             // firstIdx as a 0/1 capture flag (the captured value lives at physical
             // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
@@ -2177,7 +2177,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
@@ -2871,7 +2871,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
             final long size = source.getLong(offset);
@@ -2905,11 +2905,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -3163,7 +3158,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long count = source.getLong(offset);
@@ -3191,11 +3186,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -3742,7 +3732,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal128(offset, scratch);
             value.putDecimal128(0, scratch);
             offset += 2 * Long.BYTES;
@@ -3756,11 +3746,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -4037,7 +4022,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
             // firstIdx as a 0/1 capture flag (the captured value lives at physical
             // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
@@ -4205,7 +4190,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
@@ -4873,7 +4858,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
             final long size = source.getLong(offset);
@@ -4906,11 +4891,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -5162,7 +5142,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long count = source.getLong(offset);
@@ -5189,11 +5169,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -5728,7 +5703,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putShort(0, source.getShort(offset));
             offset += Short.BYTES;
             value.putByte(1, source.getByte(offset));
@@ -5741,11 +5716,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -6037,7 +6007,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
             // firstIdx as a 0/1 capture flag (the captured value lives at physical
             // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
@@ -6221,7 +6191,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
@@ -6923,7 +6893,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
             final long size = source.getLong(offset);
@@ -6957,11 +6927,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -7221,7 +7186,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long count = source.getLong(offset);
@@ -7249,11 +7214,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -7808,7 +7768,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, scratch);
             value.putDecimal256(0, scratch);
             offset += 4 * Long.BYTES;
@@ -7822,11 +7782,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -8105,7 +8060,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
             // firstIdx as a 0/1 capture flag (the captured value lives at physical
             // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
@@ -8273,7 +8228,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
@@ -8941,7 +8896,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
             final long size = source.getLong(offset);
@@ -8974,11 +8929,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -9230,7 +9180,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long count = source.getLong(offset);
@@ -9257,11 +9207,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -9796,7 +9741,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putInt(0, source.getInt(offset));
             offset += Integer.BYTES;
             value.putByte(1, source.getByte(offset));
@@ -9809,11 +9754,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -10086,7 +10026,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
             // firstIdx as a 0/1 capture flag (the captured value lives at physical
             // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
@@ -10254,7 +10194,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
@@ -10922,7 +10862,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
             final long size = source.getLong(offset);
@@ -10955,11 +10895,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -11211,7 +11146,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long count = source.getLong(offset);
@@ -11238,11 +11173,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -11777,7 +11707,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putLong(0, source.getLong(offset));
             offset += Long.BYTES;
             value.putByte(1, source.getByte(offset));
@@ -11790,11 +11720,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -12067,7 +11992,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
             // firstIdx as a 0/1 capture flag (the captured value lives at physical
             // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
@@ -12235,7 +12160,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
@@ -12903,7 +12828,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
             final long size = source.getLong(offset);
@@ -12936,11 +12861,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -13192,7 +13112,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long count = source.getLong(offset);
@@ -13219,11 +13139,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
@@ -13758,7 +13673,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putByte(0, source.getByte(offset));
             offset += Byte.BYTES;
             value.putByte(1, source.getByte(offset));
@@ -13771,11 +13686,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
