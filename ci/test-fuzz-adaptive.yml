@@ -1,3 +1,21 @@
+# Temporary soak-fuzz pipeline for the nw_adaptive_commit branch (PR #7411).
+#
+# This file backs its own ADO definition, separate from Fuzz Tests
+# (definition 25, ci/test-fuzz.yml), so the soak runs register under a
+# different pipeline name and stay out of the builds channel subscription.
+# One-time setup in ADO: create a new pipeline from this file (suggested
+# name: Adaptive Commit Fuzz) with default branch nw_adaptive_commit, and
+# do not subscribe it to the builds channel.
+#
+# Failures alert through the Slack webhook in the
+# TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK secret variable instead. Set it in the
+# pipeline settings UI; it is deliberately not defined in YAML because
+# YAML-defined variables cannot be overridden from the UI. Until it is set,
+# the NotifyOnFailure job skips cleanly.
+#
+# Delete this file after the squash-merge; the branch deletion leaves the
+# definition with nothing to schedule.
+
 trigger: none
 
 pr: none
@@ -7,7 +25,7 @@ schedules:
     displayName: Run every 15 minutes
     branches:
       include:
-        - master
+        - nw_adaptive_commit
     always: true
 
 variables:
@@ -48,7 +66,9 @@ stages:
               javadoc_step: ""
               javadoc_profile: ""
         pool:
-          name: hetzner-incus
+          # The soak fuzzes on its own pool so the 15-minute cadence does
+          # not take agents away from PR builds.
+          name: hetzner-adaptive-commit-fuzz
         timeoutInMinutes: 60
         variables:
           SOURCE_CODE_CHANGED: true
@@ -66,3 +86,32 @@ stages:
             parameters:
               isCheckoutEnabled: false
               isHetznerAptMirrorEnabled: false
+
+      - job: NotifyOnFailure
+        displayName: "Notify Slack on failure"
+        # The notify job stays on the soak pool too; RunOn has released its
+        # agent by the time this job queues.
+        pool: hetzner-adaptive-commit-fuzz
+        dependsOn: RunOn
+        condition: failed()
+        steps:
+          - checkout: none
+
+          - task: CmdLine@2
+            displayName: Notify Slack on Failure
+            inputs:
+              script: |
+                # While the secret variable is missing from the pipeline
+                # settings, the env mapping below passes the macro through
+                # unexpanded; skip instead of curl-ing a literal "$(...)".
+                case "$TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK" in
+                  '' | '$('*)
+                    echo "TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK is not configured; skipping Slack alert"
+                    exit 0
+                    ;;
+                esac
+                curl -X POST -H 'Content-type: application/json' \
+                  --data '{"text":"🚨 *Adaptive Commit Fuzz Failed (OSS)*\n\nBranch: `$(Build.SourceBranchName)`\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)>\nCommit: `$(Build.SourceVersion)`"}' \
+                  "$TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK"
+            env:
+              TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK: $(TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK)
