@@ -187,10 +187,11 @@ public final class LiveViewCheckpointContracts {
      * <p>
      * An eligible kind is necessary but not sufficient for a localized repair.
      * The kind describes the frame; the repair reconstructs state by replaying
-     * that frame's own extent, so the function must additionally hold
+     * the {@link LiveViewCheckpointDependency#getStateExtentLo() state extent}
+     * the descriptor declares, so the function must additionally hold
      * {@link LiveViewCheckpointDependency#hasFrameLocalState() frame-local
-     * state}. One that reaches outside the frame it declares keeps its eligible
-     * kind and declines the repair plan.
+     * state}. One that reaches further back than the extent it declares keeps
+     * its eligible kind and declines the repair plan.
      */
     public enum DependencyKind {
         /**

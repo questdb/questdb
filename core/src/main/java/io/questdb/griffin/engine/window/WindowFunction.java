@@ -371,12 +371,17 @@ public interface WindowFunction extends Function {
 
     /**
      * Reports whether this function's checkpoint state is <b>frame-local</b>: every value
-     * it produces from a given row onward is determined by the rows its declared frame
-     * admits, so a replay warmed up over the frame's own extent reproduces them.
+     * it produces from a given row onward is determined by the rows within the look-behind
+     * its descriptor declares - the
+     * {@link LiveViewCheckpointDependency#getStateExtentLo() state extent} - so a replay
+     * warmed up over that extent reproduces them. The extent is the declared frame's own
+     * look-behind for every function that answers true today, which is where the name comes
+     * from; a function whose state needs less than its frame says so by carrying a narrower
+     * extent in the descriptor, not by answering differently here.
      * <p>
      * The live-view localized out-of-order repair rebuilds state from the dependency floor
-     * {@code L} - the frame's lower edge at the output floor - and reads nothing below it.
-     * A function whose value depends on rows outside the frame it declares would be
+     * {@code L} - the extent's lower edge at the output floor - and reads nothing below it.
+     * A function whose value depends on rows outside the extent it declares would be
      * replayed against a warm-up that never fed those rows and would emit wrong output:
      * {@code lag(x, 5) OVER (... ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)} reaches five
      * rows back through a frame that promises three. Declaring {@code false} costs the

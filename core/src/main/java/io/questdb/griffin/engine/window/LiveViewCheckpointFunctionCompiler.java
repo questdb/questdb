@@ -190,12 +190,20 @@ public final class LiveViewCheckpointFunctionCompiler {
         final long frameHi = isRange
                 ? rangeFrameHi(function.getName(), window, timestampType)
                 : effectiveRowsHi(window);
+        // Every function admitted today accumulates over the rows its frame holds, so the
+        // look-behind that feeds the frame is also the one a warm-up replays to rebuild the
+        // state, and the descriptor's state extent is the frame's low bound. The two are
+        // recorded apart because the coincidence is a property of the function rather than of
+        // the frame: a function reading one row the high bound names needs a narrower extent,
+        // and a floor derived from the frame would have no way to carry it.
+        final long stateExtentLo = frameLo;
         final LiveViewCheckpointDependency dependency = new LiveViewCheckpointDependency(
                 kind,
                 partitionSignature,
                 orderSignature,
                 frameLo,
                 frameHi,
+                stateExtentLo,
                 timestampType,
                 function.hasFrameLocalCheckpointState(),
                 keyed,
@@ -281,9 +289,9 @@ public final class LiveViewCheckpointFunctionCompiler {
      * <p>
      * The frame shape is necessary but not sufficient: every RANGE function must also hold
      * {@link LiveViewCheckpointDependency#hasFrameLocalState() frame-local state}, since a
-     * repair warms up over the frame's extent and nothing below it. The domain check still
-     * runs for a factory a non-frame-local function declines, so an incompatible pair is
-     * named at CREATE either way.
+     * repair warms up over the declared state extent and nothing below it. The domain check
+     * still runs for a factory a non-frame-local function declines, so an incompatible pair
+     * is named at CREATE either way.
      */
     @Nullable
     public static LiveViewCheckpointRangePlan rangePlan(

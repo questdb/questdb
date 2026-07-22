@@ -854,6 +854,65 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The descriptor carries the look-behind a warm-up replays - the state extent - in its
+     * own right instead of reading it back off the frame's low bound. For every shape the
+     * compiler builds today the two are equal, which is what makes the split a refactor: the
+     * dependency floor {@code L} is derived from the extent and lands where the frame's own
+     * bound put it.
+     * <p>
+     * They are separate claims all the same. The frame says what a function's values are
+     * computed over; the extent says how far back a replay must start for its state to be
+     * right, and the two part company for a function reading a single row the frame's high
+     * bound names. Pinning the equality here is what fixes the population rule for the kinds
+     * that have it, so a later step narrowing one function's extent has to say so at the
+     * compiler rather than silently move every other function's floor.
+     */
+    @Test
+    public void testStateExtentTracksTheFrameLookBehind() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+
+            // The two eligible kinds, over every high bound they admit: at the current row,
+            // lagging, and the -1 an EXCLUDE CURRENT ROW frame evaluates. The extent follows
+            // the look-behind in each, so where the frame ends never moves the floor.
+            assertStateExtentMatchesFrameLo("select ts, sym, avg(x) over (partition by sym order by ts "
+                    + "range between '3' hour preceding and current row) a from base");
+            assertStateExtentMatchesFrameLo("select ts, sym, avg(x) over (partition by sym order by ts "
+                    + "range between '3' hour preceding and '1' hour preceding) a from base");
+            assertStateExtentMatchesFrameLo("select ts, sym, avg(x) over (partition by sym order by ts "
+                    + "range between '3' hour preceding and current row exclude current row) a from base");
+            assertStateExtentMatchesFrameLo("select ts, sym, sum(x) over (partition by sym order by ts "
+                    + "rows between 10 preceding and current row) s from base");
+            assertStateExtentMatchesFrameLo("select ts, sym, sum(x) over (partition by sym order by ts "
+                    + "rows between 10 preceding and 2 preceding) s from base");
+            assertStateExtentMatchesFrameLo("select ts, sym, sum(x) over (partition by sym order by ts "
+                    + "rows between 10 preceding and current row exclude current row) s from base");
+
+            // An anchored window, whose floor is the segment's rather than the frame's, and a
+            // function that declines the plan outright: both still carry the extent the
+            // compiler populated, because the field is the descriptor's and not the plan's.
+            assertStateExtentMatchesFrameLo("select ts, sym, avg(x) over (partition by sym order by ts "
+                    + "anchor expression timestamp_floor('1d', ts)) a from base");
+            assertStateExtentMatchesFrameLo("select ts, sym, lag(x, 5) over (partition by sym order by ts "
+                    + "rows between 3 preceding and current row) l from base");
+
+            // An unbounded look-behind reaches the descriptor as Long.MIN_VALUE, which the
+            // extent carries verbatim: no bound reads it, and negating it would overflow, so
+            // the finite-frame gates in front of the two magnitude readers are what keep the
+            // negation in range.
+            final Metadata unbounded = compileMetadata(
+                    "select ts, sym, first_value(x) ignore nulls over (partition by sym order by ts "
+                            + "range between unbounded preceding and '2' second preceding) a from base",
+                    0
+            );
+            Assert.assertEquals(Long.MIN_VALUE, unbounded.dependency.getFrameLo());
+            Assert.assertEquals(Long.MIN_VALUE, unbounded.dependency.getStateExtentLo());
+            Assert.assertFalse(unbounded.dependency.isFiniteRange());
+            Assert.assertFalse(unbounded.dependency.isFiniteRows());
+        });
+    }
+
     private static void assertExclusionRejected(String sql) throws Exception {
         try {
             compileMetadata(sql, 0);
@@ -937,6 +996,24 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.fail(sql);
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        }
+    }
+
+    /**
+     * Asserts that the descriptor's state extent is the frame's own look-behind and that
+     * both magnitude readers agree with it. The two bounds hold the same number for every
+     * shape the compiler builds, so this cannot tell which of them a reader points at; what
+     * it pins is the population rule, so a later step giving one function a narrower extent
+     * has to come back here and say which shapes it moved.
+     */
+    private static void assertStateExtentMatchesFrameLo(String sql) throws Exception {
+        final Metadata metadata = compileMetadata(sql, 0);
+        Assert.assertEquals(sql, metadata.dependency.getFrameLo(), metadata.dependency.getStateExtentLo());
+        if (metadata.dependency.isFiniteRange()) {
+            Assert.assertEquals(sql, -metadata.dependency.getStateExtentLo(), metadata.dependency.getRangeFrameWidth());
+        }
+        if (metadata.dependency.isFiniteRows()) {
+            Assert.assertEquals(sql, -metadata.dependency.getStateExtentLo(), metadata.dependency.getRowsPrecedingCount());
         }
     }
 
