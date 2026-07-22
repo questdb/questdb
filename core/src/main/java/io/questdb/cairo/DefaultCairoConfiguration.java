@@ -866,6 +866,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlAsOfAutoAlgoEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getSqlAsOfIndexMaxMasterBp() {
+        return 200; // 2.00% — index wins below ~2% master/slave ratio (crossover ~1-2.5%, see bench)
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return 8;
     }

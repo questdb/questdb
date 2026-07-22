@@ -864,6 +864,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlAsOfAutoAlgoEnabled() {
+        return getDelegate().isSqlAsOfAutoAlgoEnabled();
+    }
+
+    @Override
+    public int getSqlAsOfIndexMaxMasterBp() {
+        return getDelegate().getSqlAsOfIndexMaxMasterBp();
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return getDelegate().getQueryRegistryPoolSize();
     }

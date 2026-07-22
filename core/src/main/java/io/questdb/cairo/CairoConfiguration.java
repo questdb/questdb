@@ -589,6 +589,12 @@ public interface CairoConfiguration {
      */
     long getSqlAsOfAdaptiveBackScanBudget();
 
+    /** When true, the optimiser may auto-select asof_index / asof_memoized for single-symbol ASOF. */
+    boolean isSqlAsOfAutoAlgoEnabled();
+
+    /** Max master/slave row ratio (in basis points, /10000) below which asof_index is auto-selected. */
+    int getSqlAsOfIndexMaxMasterBp();
+
     int getQueryRegistryPoolSize();
 
     /**
