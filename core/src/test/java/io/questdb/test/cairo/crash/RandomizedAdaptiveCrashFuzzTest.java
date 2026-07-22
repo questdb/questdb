@@ -29,11 +29,14 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.WriterPool;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.FuzzRunner;
 import io.questdb.test.fuzz.FuzzTransaction;
@@ -171,6 +174,10 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         @Override
         public TableToken[] setup(int iteration) throws Exception {
             execute("drop table if exists " + WAL_TABLE);
+            // Every crash point recreates cf_wal with a new physical token. Purge the dropped token now so
+            // the crash facade does not retain and re-snapshot hundreds of obsolete, preallocated column
+            // files on every later syncfs (quadratic work and multi-GB heap growth in the nightly sweep).
+            forceWalPurge();
             txns = generateTxns(new Rnd(s0, s1), WAL_TABLE);          // recreates cf_wal (0 rows), same txns
             walToken = engine.verifyTableName(WAL_TABLE);
             // createInitialTableWal QUEUES its unconditional "column top" ALTERs in cf_wal's WAL but does not
@@ -185,6 +192,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             if (fp == null) {
                 fp = buildTwinFingerprints(TWIN_TABLE, txns, new Rnd(s0, s1)); // once; drops the twin
             }
+            expectedFullCommitIndex = fp.size() - 1;
             return new TableToken[]{walToken};
         }
 
@@ -205,6 +213,35 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         }
     }
 
+    /**
+     * Force a WAL broad sweep independently of the engine clock. The W&gt;0 tests deliberately pin that clock
+     * below the normal purge interval, where TestUtils.drainPurgeJob() only sweeps the group-commit queue and
+     * never enters WalPurgeJob.broadSweep(). Two increasing ticks cross the cadence gate deterministically.
+     */
+    private void forceWalPurge() {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseAllWalWriters();
+        engine.releaseInactiveTableSequencers();
+        final long step = engine.getConfiguration().getWalPurgeInterval() * 1000L + 1_000_000L;
+        final long[] tick = {1L};
+        final MicrosecondClock incClock = () -> (tick[0] += step);
+        try (WalPurgeJob job = new WalPurgeJob(engine, engine.getConfiguration().getFilesFacade(), incClock)) {
+            // First broad sweep removes WAL dirs and pings ApplyWal2TableJob to finish a dropped table.
+            job.run();
+            job.run();
+            drainWalQueue();
+            // The apply pass can hold the table writer while finalizing the drop. Release it, then sweep once
+            // more so both the physical table tree and the facade's path-keyed snapshots are reclaimed.
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseAllWalWriters();
+            engine.releaseInactiveTableSequencers();
+            job.run();
+            job.run();
+        }
+    }
+
     private SweepResult runSeedSweep(long s0, long s1, int windowUs) throws Exception {
         return runSeedSweep(s0, s1, windowUs, DEFAULT_ADAPTIVE_CRASH_POINT_CAP);
     }
@@ -219,17 +256,56 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         return forEachAdaptiveCrashPoint(new FuzzCrashWorkload(s0, s1), cap);
     }
 
-    // W=0 exact RPO: monotone staircase over all swept points + full recovery at k=N.
-    private void assertW0Bars(SweepResult r) {
-        Assert.assertFalse("sweep truncated (N=" + r.n + " > cap): size counts so N <= cap, else full-at-N "
-                + "is never checked", r.truncated);
+    private void assertW0MonotonePrefix(SweepResult r) {
         int[] p = r.recoveredByK();
         int prev = -1;
         for (int k = 1; k <= r.sweptPoints; k++) {
             Assert.assertTrue("staircase non-monotone at k=" + k + " (" + p[k] + " < " + prev + ")", p[k] >= prev);
             prev = p[k];
         }
-        Assert.assertEquals("k=N must recover the full committed history", r.n, p[r.sweptPoints]);
+    }
+
+    // W=0 exact RPO: monotone staircase over all swept points + full recovery at the last atomic point.
+    private void assertW0Bars(SweepResult r) {
+        Assert.assertFalse("sweep truncated (N=" + r.n + " > cap): size counts so N <= cap, else full history "
+                + "is never checked", r.truncated);
+        assertW0MonotonePrefix(r);
+        // r.n is the number of durability operations, not the number of logical fuzz transactions.
+        // The oracle returns an index into fp[], whose final committed state is fp.size()-1.
+        Assert.assertEquals("last atomic crash point must recover the full committed history",
+                expectedFullCommitIndex, r.recoveredByK()[r.sweptPoints]);
+    }
+
+    @Test
+    public void testForceWalPurgeRemovesDroppedTableSnapshots() throws Exception {
+        // Match the W>0 nightly clock: it is intentionally below the normal WAL-purge cadence gate.
+        setCurrentMicros(1_000_000L);
+        try {
+            runWithCrashFacade(() -> {
+                final int baselineTracked = crashFf.trackedFileCount();
+                for (int i = 0; i < 3; i++) {
+                    execute("create table cf_purge (ts timestamp, v long) timestamp(ts) partition by day wal");
+                    execute("insert into cf_purge values ('2024-01-01T00:00:00.000000Z', " + i + ")");
+                    drainWalQueue();
+                    final TableToken token = engine.verifyTableName("cf_purge");
+
+                    try (Path tablePath = new Path().of(engine.getConfiguration().getDbRoot()).concat(token)) {
+                        Assert.assertTrue(crashFf.exists(tablePath.$()));
+                        Assert.assertTrue("table creation must populate the crash content model",
+                                crashFf.trackedFileCountUnder(tablePath.toString()) > 0);
+                        execute("drop table cf_purge");
+                        forceWalPurge();
+                        Assert.assertFalse("forced purge must remove the dropped physical token", crashFf.exists(tablePath.$()));
+                        Assert.assertEquals("forced purge must evict every dropped-token crash snapshot",
+                                0, crashFf.trackedFileCountUnder(tablePath.toString()));
+                    }
+                }
+                Assert.assertEquals("repeated drop/purge must keep retained crash state bounded",
+                        baselineTracked, crashFf.trackedFileCount());
+            });
+        } finally {
+            setCurrentMicros(-1);
+        }
     }
 
     @Test
@@ -280,9 +356,9 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         return buildTwinFingerprints(twinName, txns, new Rnd(s0, s1));
     }
 
-    // NIGHTLY-only: even the minimal (inserts + O3) profile writes the full ~14-column fuzz schema, so N
-    // exceeds the 200 crash-point cap and a full untruncated sweep (assertW0Bars) is a nightly-scale run. CI
-    // validates the sweep machinery with the fast deterministic testConvertPartitionCrashSafeW0 instead.
+    // NIGHTLY-only: even the minimal (inserts + O3) profile writes the full ~14-column fuzz schema. Sweep a
+    // large prefix to validate the machinery and W=0 monotonicity without duplicating the full-history bar
+    // covered by testFullLibraryW0. CI validates the machinery with testConvertPartitionCrashSafeW0 instead.
     @Test
     public void testSelfCheckW0MinimalProfile() throws Exception {
         Assume.assumeTrue("minimal-profile crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
@@ -290,26 +366,28 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         runWithCrashFacade(() -> {
             fuzzOverrideMinimal = true;               // inserts + O3 only, to validate the sweep machinery
             try {
-                assertW0Bars(runSeedSweep(1234L, 5678L, 0, 800));
+                assertW0MonotonePrefix(runSeedSweep(1234L, 5678L, 0, 800));
             } finally {
                 fuzzOverrideMinimal = false;
             }
         });
     }
 
+    private int expectedFullCommitIndex;
+
     private static final long[] FIXED_SEEDS0 = {1234L, 22L, 8080L};
     private static final long[] FIXED_SEEDS1 = {5678L, 33L, 9090L};
 
-    // NIGHTLY-only (run with -Dquestdb.fuzz.nightly=true): the full op library gives N≈648 durability ops and
-    // assertW0Bars requires a FULL untruncated sweep (cap≥N), so this is ~85 min for one seed — far past the
-    // 20-min CI ceiling (the @Rule Timeout above lifts to 3h under the nightly flag). One representative seed;
-    // cap 700 > N avoids truncation. CI covers the applyNonStructural ordering fix quickly via the deterministic
+    // NIGHTLY-only (run with -Dquestdb.fuzz.nightly=true): the full op library currently gives N≈764
+    // durability ops and assertW0Bars requires a FULL untruncated sweep (cap≥N), so this is ~85 min for one
+    // seed — far past the regular CI ceiling (the @Rule Timeout above lifts to 3h under the nightly flag).
+    // One representative seed; cap 800 avoids truncation. CI covers the ordering fix via the deterministic
     // testConvertPartitionCrashSafeW0.
     @Test
     public void testFullLibraryW0() throws Exception {
         Assume.assumeTrue("full-library crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
                 Boolean.getBoolean(NIGHTLY_PROP));
-        runWithCrashFacade(() -> assertW0Bars(runSeedSweep(FIXED_SEEDS0[0], FIXED_SEEDS1[0], 0, 700)));
+        runWithCrashFacade(() -> assertW0Bars(runSeedSweep(FIXED_SEEDS0[0], FIXED_SEEDS1[0], 0, 800)));
     }
 
     // CI-fast regression guard for the applyNonStructural events-before-sequencer ordering fix. Deterministic

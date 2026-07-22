@@ -70,7 +70,9 @@ import java.util.stream.Stream;
  *       {@code write}/{@code append} (real writes), by {@code msync} (the mmap'd range — translated to
  *       file-absolute via the mapping's file offset, since paged {@code MemoryPMARImpl} msyncs a
  *       page-relative length at a non-zero page offset), and by {@code sync_file_range} (already fd-relative,
- *       i.e. file-absolute). This is the written-data-END proxy that keeps a flush from pretending a file's
+ *       i.e. file-absolute). A whole-filesystem {@code syncfs} conservatively advances it to the current file
+ *       length because it must also capture dirty mmap stores made invisible to the facade by {@code munmap}.
+ *       Otherwise this is the written-data-END proxy that keeps a per-file flush from pretending a file's
  *       fallocate-inflated (zero) tail is durable: a freshly fallocate'd-to-16MiB column with only a few KB
  *       written has {@code writtenDataEnd} of those few KB, not 16 MiB.</li>
  *   <li>{@code syncedDataEnd[F]} — the written-data end that has reached the device cache
@@ -123,7 +125,8 @@ import java.util.stream.Stream;
  *       mapping un-flushed. This is acceptable for the target optimization, which never writes between its
  *       msync and its {@code sync_file_range}; the self-tests exercise the un-msync'd path on FRESH files
  *       only. mmap STORES (the tests' {@code Unsafe.setMemory}) are not visible as {@code write} calls, so a
- *       mapping's written end is instead declared by the msync that flushes those pages.</li>
+ *       mapping's written end is normally declared by msync; syncfs is the exception and snapshots the full
+ *       current image because it writes dirty pages back even after their mapping has been removed.</li>
  *   <li>The device-cache/durable snapshots are full-file byte copies taken at sync points. Files are small
  *       in these tests, so this is cheap; if it ever became hot it could be narrowed to a dirty range.</li>
  *   <li>{@code syncedDataEnd} is a written-data-END proxy (the max synced range end), not a precise set of
@@ -365,15 +368,18 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         // syncfs(2) is a WHOLE-FILESYSTEM operation: it writes back ALL dirty data of the filesystem AND
         // performs ONE journal commit that journals EVERY inode's pending extent conversions (independent of
         // modelSharedJournal -- syncfs ALWAYS journals everyone, that is the salvage property), then issues a
-        // single device flush. So for EVERY tracked file F: snapshot its current bytes into the device cache
-        // (syncfs writes back all dirty page-cache data even WITHOUT a prior sync_file_range), advance its
-        // at-device end to its written-data end, journal F's extent metadata, then one doFlush() promotes
-        // every file's journaled extent to durable. Net: all tracked files become fully durable (data +
-        // metadata) regardless of which fd was passed or whether the journal is shared.
+        // single device flush. Snapshot every tracked file's COMPLETE current image. Unlike per-file sync
+        // operations, syncfs must not cap durability at writtenDataEnd: mmap stores are otherwise invisible
+        // after an ADAPTIVE writer unmaps a lazily-written partition without calling msync, even though real
+        // syncfs still writes those dirty page-cache pages back. The current file length may include a
+        // fallocate'd zero tail; retaining that tail is both harmless (_txn owns the logical row count) and
+        // faithful to a whole-filesystem sync that also persists the inode size and unwritten extents.
         for (String f : trackedFiles) {
-            deviceCacheContent.put(f, readCurrent(f));
-            advanceSyncedDataEnd(f, writtenDataEnd.getOrDefault(f, 0L));
-            journaledDataEnd.put(f, syncedDataEnd.getOrDefault(f, 0L));
+            final byte[] current = readCurrent(f);
+            deviceCacheContent.put(f, current);
+            advanceWrittenDataEnd(f, current.length);
+            advanceSyncedDataEnd(f, current.length);
+            journaledDataEnd.put(f, (long) current.length);
         }
         doFlush();
         recordDurable(fd);
@@ -422,6 +428,34 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     @Override
+    public boolean removeQuiet(LPSZ name) {
+        final String removedPath = toAbsPath(name);
+        final boolean removed = super.removeQuiet(name);
+        if (removed) {
+            evictDurability(removedPath, false);
+        }
+        return removed;
+    }
+
+    @Override
+    public boolean rmdir(io.questdb.std.str.Path name, boolean haltOnError) {
+        final String removedRoot = toAbsPath(name.$());
+        final boolean removed = super.rmdir(name, haltOnError);
+        if (removed) {
+            // FilesFacadeImpl's recursive rmdir bypasses removeQuiet for the children, so evict the entire
+            // subtree here. Without this, long crash sweeps retain full byte[] snapshots for every dropped
+            // physical table token (cf_wal~1, cf_wal~2, ...), making syncfs scan/copy stale tables until OOM.
+            evictDurability(removedRoot, true);
+        } else {
+            // Best-effort recursive removal may delete some children before another child fails. Reconcile
+            // those successfully removed paths even though the root still exists, but retain snapshots for
+            // files that remain on disk.
+            evictMissingDurability(removedRoot);
+        }
+        return removed;
+    }
+
+    @Override
     public int rename(LPSZ from, LPSZ to) {
         final int res = super.rename(from, to);
         if (res == io.questdb.std.Files.FILES_RENAME_OK) {
@@ -455,6 +489,35 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             trackedFiles.clear();
             trackedFiles.addAll(rebuilt);
         }
+    }
+
+    private void evictDurability(String path, boolean includeDescendants) {
+        evictMap(durableContent, path, includeDescendants);
+        evictMap(deviceCacheContent, path, includeDescendants);
+        evictMap(durableSize, path, includeDescendants);
+        evictMap(writtenDataEnd, path, includeDescendants);
+        evictMap(syncedDataEnd, path, includeDescendants);
+        evictMap(journaledDataEnd, path, includeDescendants);
+        evictMap(pteFlushed, path, includeDescendants);
+        evictMap(tornTails, path, includeDescendants);
+        trackedFiles.removeIf(key -> matchesRemovedPath(key, path, includeDescendants));
+    }
+
+    private void evictMissingDurability(String root) {
+        final String prefix = root + File.separator;
+        for (String key : new ArrayList<>(trackedFiles)) {
+            if ((key.equals(root) || key.startsWith(prefix)) && !Files.exists(Paths.get(key))) {
+                evictDurability(key, false);
+            }
+        }
+    }
+
+    private static <V> void evictMap(Map<String, V> map, String path, boolean includeDescendants) {
+        map.keySet().removeIf(key -> matchesRemovedPath(key, path, includeDescendants));
+    }
+
+    private static boolean matchesRemovedPath(String key, String path, boolean includeDescendants) {
+        return key.equals(path) || includeDescendants && key.startsWith(path + File.separator);
     }
 
     private static <V> void rekeyMap(Map<String, V> map, String fromPath, String toPath) {
@@ -549,6 +612,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         pteFlushed.clear();
         deviceCacheContent.clear();
         durableContent.clear();
+        writtenDataEnd.clear();
         syncedDataEnd.clear();
         journaledDataEnd.clear();
         durabilityOps = 0;
@@ -722,6 +786,28 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      */
     public byte[] durableContentOf(CharSequence absPath) {
         return durableContent.get(Paths.get(absPath.toString()).toAbsolutePath().toString());
+    }
+
+    /**
+     * Number of files currently retained by the durability content model.
+     */
+    public int trackedFileCount() {
+        return trackedFiles.size();
+    }
+
+    /**
+     * Number of retained files at or below the given path.
+     */
+    public int trackedFileCountUnder(CharSequence root) {
+        final String path = Paths.get(root.toString()).toAbsolutePath().toString();
+        final String prefix = path + File.separator;
+        int count = 0;
+        for (String key : trackedFiles) {
+            if (key.equals(path) || key.startsWith(prefix)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**

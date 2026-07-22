@@ -307,6 +307,31 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         }
     }
 
+    /**
+     * Test 10 — syncfs also persists dirty pages after their mapping and fd are closed.
+     * A is mmap-written and then unmapped WITHOUT msync/sync_file_range, so the facade's ordinary
+     * written-data watermark remains unaware of the store. syncfs(B) must still persist A's complete
+     * current image: the kernel keeps dirty MAP_SHARED pages in the page cache after munmap, and syncfs
+     * writes them back filesystem-wide. This is the all-columns-closed epoch case.
+     */
+    @Test
+    public void test10_syncfsPersistsUnmappedDirtyPages() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        ff.modelSharedJournal = false;
+        final String dir = temp.newFolder("model10").getAbsolutePath();
+        try (Path a = new Path().of(dir).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
+            Mapped ma = mapAndFill(ff, a, NEW);
+            unmapAndClose(ff, ma); // deliberately no msync/sync_file_range
+
+            Mapped mb = mapAndFill(ff, b, PRIOR);
+            ff.syncfs(mb.fd); // any fd on the filesystem flushes A as well
+            unmapAndClose(ff, mb);
+
+            ff.crash(dir);
+            assertAllBytes("test10: syncfs must persist mmap-dirty A after munmap/close", ff, a, NEW);
+        }
+    }
+
     // === helpers ===
 
     private static final class Mapped {

@@ -55,6 +55,53 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
     }
 
     @Test
+    public void testDroppedTreeEvictsDurabilitySnapshots() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("tracked-tree").getAbsolutePath();
+        try (Path file = new Path().of(dir).concat("tracked.d"); Path root = new Path().of(dir)) {
+            final long fd = ff.openRW(file.$(), CairoConfiguration.O_NONE);
+            Assert.assertTrue(fd > -1);
+            final long buf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().setMemory(buf, 8, (byte) 1);
+                Assert.assertEquals(8, ff.write(fd, buf, 8, 0));
+                ff.fsync(fd);
+            } finally {
+                Unsafe.free(buf, 8, MemoryTag.NATIVE_DEFAULT);
+                ff.close(fd);
+            }
+            Assert.assertEquals(1, ff.trackedFileCount());
+            Assert.assertNotNull(ff.durableContentOf(file.toString()));
+            Assert.assertTrue(ff.rmdir(root));
+            Assert.assertEquals("dropped table trees must not retain crash snapshots", 0, ff.trackedFileCount());
+            Assert.assertNull("dropped trees must evict retained byte[] snapshots", ff.durableContentOf(file.toString()));
+        }
+    }
+
+    @Test
+    public void testRemovedFileEvictsDurabilitySnapshot() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("tracked-file").getAbsolutePath();
+        try (Path file = new Path().of(dir).concat("tracked.d")) {
+            final long fd = ff.openRW(file.$(), CairoConfiguration.O_NONE);
+            Assert.assertTrue(fd > -1);
+            final long buf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().setMemory(buf, 8, (byte) 2);
+                Assert.assertEquals(8, ff.write(fd, buf, 8, 0));
+                ff.fsync(fd);
+            } finally {
+                Unsafe.free(buf, 8, MemoryTag.NATIVE_DEFAULT);
+                ff.close(fd);
+            }
+            Assert.assertNotNull(ff.durableContentOf(file.toString()));
+            ff.remove(file.$()); // FilesFacade.remove delegates through the overridden removeQuiet path.
+            Assert.assertEquals(0, ff.trackedFileCount());
+            Assert.assertNull("removed files must evict retained byte[] snapshots", ff.durableContentOf(file.toString()));
+        }
+    }
+
+    @Test
     public void testOpenAppendIsTrackedForDurability() throws Exception {
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
         final String dir = temp.newFolder("crashroot4").getAbsolutePath();
