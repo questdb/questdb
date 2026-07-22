@@ -156,11 +156,9 @@ public class NthValueDateWindowFunctionFactory extends AbstractWindowFunctionFac
                 RecordSink partitionBySink,
                 long rowsHi,
                 Function arg,
-                int n,
-                ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                int n
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsHi, arg, n, partitionByKeyTypes, liveView);
+            super(map, partitionByRecord, partitionBySink, rowsHi, arg, n);
         }
 
         @Override

@@ -81,7 +81,6 @@ public class NthValueWindowFunctionFactoryHelper {
     private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES;
     private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
     private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES;
-    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV;
 
     static Function newInstance(
             int position,
@@ -293,13 +292,12 @@ public class NthValueWindowFunctionFactoryHelper {
                 }
                 // unbounded preceding and K preceding (K > 0) -- no per-partition buffer needed.
                 else if (rowsLo == Long.MIN_VALUE) {
-                    final boolean liveView = windowContext.isLiveView();
+                    // An unbounded frame start carries no live-view layout: the parser
+                    // turns the shape away at CREATE, so this arm never checkpoints.
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            liveView
-                                    ? NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV
-                                    : NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES
+                            NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES
                     );
                     try {
                         return partitionRowsUnboundedConstructor.newFunction(
@@ -308,9 +306,7 @@ public class NthValueWindowFunctionFactoryHelper {
                                 partitionBySink,
                                 rowsHi,
                                 args.get(0),
-                                n,
-                                partitionByKeyTypes,
-                                liveView
+                                n
                         );
                     } catch (Throwable t) {
                         Misc.free(map);
@@ -480,9 +476,7 @@ public class NthValueWindowFunctionFactoryHelper {
                 RecordSink partitionBySink,
                 long rowsHi,
                 Function arg,
-                int n,
-                ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                int n
         );
     }
 
@@ -1275,14 +1269,11 @@ public class NthValueWindowFunctionFactoryHelper {
     // and K preceding), K > 0. Once each partition has seen n rows, the n-th value is locked
     // and emitted whenever the frame first contains at least n rows (count >= n + bufferSize).
     // No per-partition buffer -- O(1) state per partition (count + lockedValue).
+    // The frame starts at UNBOUNDED PRECEDING, which the parser turns away at CREATE, so a
+    // live view never compiles this shape: it carries no checkpoint state and no anchor reset.
     abstract static class NthValueOverPartitionRowsFrameUnboundedBase extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
-        protected final ArrayColumnTypes keyColumnTypes;
-        protected final boolean liveView;
-        // Full value layout (including tombstone slot) for the snapshot codec.
-        // Null outside live-view mode.
-        protected final ArrayColumnTypes mapValueTypes;
         protected final int n;
         protected long nthValue;
 
@@ -1292,30 +1283,12 @@ public class NthValueWindowFunctionFactoryHelper {
                 RecordSink partitionBySink,
                 long rowsHi,
                 Function arg,
-                int n,
-                ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                int n
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             assert rowsHi < 0 && rowsHi != Long.MIN_VALUE; // K preceding with K > 0; (int) Math.abs would overflow at MIN_VALUE
             this.bufferSize = (int) Math.abs(rowsHi);
             this.n = n;
-            this.liveView = liveView;
-            this.keyColumnTypes = new ArrayColumnTypes();
-            for (int i = 0, len = partitionByKeyTypes.getColumnCount(); i < len; i++) {
-                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
-            }
-            if (liveView) {
-                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, len = NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV.getColumnCount(); i < len; i++) {
-                    valueTypesCopy.add(NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV.getColumnType(i));
-                }
-                this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = 2;
-            } else {
-                this.mapValueTypes = null;
-                this.tombstoneValueIndex = -1;
-            }
         }
 
         @Override
@@ -1330,9 +1303,6 @@ public class NthValueWindowFunctionFactoryHelper {
             if (mapValue.isNew()) {
                 count = 0;
                 mapValue.putLong(1, Numbers.LONG_NULL);
-                if (tombstoneValueIndex >= 0) {
-                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
-                }
             } else {
                 count = mapValue.getLong(0);
             }
@@ -1354,79 +1324,14 @@ public class NthValueWindowFunctionFactoryHelper {
         }
 
         @Override
-        public Map getPartitionMap() {
-            return map;
-        }
-
-        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public ColumnTypes getCheckpointKeyColumnTypes() {
-            return keyColumnTypes;
-        }
-
-        @Override
-        public int getCheckpointKeyStartIndex() {
-            return mapValueTypes != null
-                    ? mapValueTypes.getColumnCount()
-                    : NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES.getColumnCount();
         }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), nthValue);
-        }
-
-        @Override
-        public void resetPartition(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.createValue();
-            mapValue.putLong(0, 0L);
-            mapValue.putLong(1, Numbers.LONG_NULL);
-            if (mapValue.isNew()) {
-                if (tombstoneValueIndex >= 0) {
-                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
-                }
-            } else if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
-                mapValue.putByte(tombstoneValueIndex, (byte) 1);
-                tombstoneCount++;
-            }
-        }
-
-        @Override
-        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
-            value.putLong(0, source.getLong(offset));
-            offset += Long.BYTES;
-            value.putLong(1, source.getLong(offset));
-            offset += Long.BYTES;
-            if (tombstoneValueIndex >= 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-            }
-            return offset;
-        }
-
-        @Override
-        public int checkpointStateFormatVersion() {
-            return 1;
-        }
-
-        @Override
-        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
-            sink.putLong(value.getLong(0));
-            sink.putLong(value.getLong(1));
-        }
-
-        @Override
-        public boolean supportsCheckpointState() {
-            return liveView
-                    && keyColumnTypes != null
-                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -2232,10 +2137,5 @@ public class NthValueWindowFunctionFactoryHelper {
         NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
         NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // count
         NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // lockedValue
-
-        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV = new ArrayColumnTypes();
-        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // count
-        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // lockedValue
-        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
     }
 }

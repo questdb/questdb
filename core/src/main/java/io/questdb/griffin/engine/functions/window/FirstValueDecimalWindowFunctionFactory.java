@@ -1997,18 +1997,13 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
-            // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
-            // firstIdx as a 0/1 capture flag (the captured value lives at physical
-            // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
-            // preserve capacity, size and firstIdx verbatim and copy every slot.
+            // Logical-ring image: only the bounded-lo frame reaches a live view, so
+            // firstIdx carries no capture flag and the ring rebases onto index 0.
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = source.getLong(offset);
-            offset += Long.BYTES;
-            final long firstIdx = source.getLong(offset);
-            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            for (long i = 0; i < capacity; i++) {
+            for (long i = 0; i < size; i++) {
                 final long rec = newStartOffset + i * RECORD_SIZE;
                 memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
@@ -2019,7 +2014,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             value.putLong(0, newStartOffset);
             value.putLong(1, size);
             value.putLong(2, capacity);
-            value.putLong(3, firstIdx);
+            value.putLong(3, 0L);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -2033,10 +2028,8 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             final long capacity = value.getLong(2);
             final long firstIdx = value.getLong(3);
             sink.putLong(size);
-            sink.putLong(capacity);
-            sink.putLong(firstIdx);
-            for (long i = 0; i < capacity; i++) {
-                final long rec = startOffset + i * RECORD_SIZE;
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
                 sink.putLong(memory.getLong(rec));
                 memory.getDecimal128(rec + Long.BYTES, scratch);
                 sink.putDecimal128(scratch.getHigh(), scratch.getLow());
@@ -2182,8 +2175,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
             offset += Long.BYTES;
-            final long count = source.getLong(offset);
-            offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor((long) bufferSize * Decimal128.BYTES) - memory.getPageAddress(0);
             for (int i = 0; i < bufferSize; i++) {
                 source.getDecimal128(offset, scratch);
@@ -2193,7 +2184,9 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             value.putLong(0, loIdx);
             value.putLong(1, newStartOffset);
             value.putLong(2, firstNotNullIdx);
-            value.putLong(3, count);
+            // Slot 3 counts appends for the unbounded-lo frame alone, and an
+            // unbounded start never reaches a live view, so it restores as zero.
+            value.putLong(3, 0L);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -2204,7 +2197,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(0));
             sink.putLong(value.getLong(2));
-            sink.putLong(value.getLong(3));
             final long startOffset = value.getLong(1);
             for (int i = 0; i < bufferSize; i++) {
                 memory.getDecimal128(startOffset + (long) i * Decimal128.BYTES, scratch);
@@ -4023,18 +4015,13 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
-            // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
-            // firstIdx as a 0/1 capture flag (the captured value lives at physical
-            // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
-            // preserve capacity, size and firstIdx verbatim and copy every slot.
+            // Logical-ring image: only the bounded-lo frame reaches a live view, so
+            // firstIdx carries no capture flag and the ring rebases onto index 0.
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = source.getLong(offset);
-            offset += Long.BYTES;
-            final long firstIdx = source.getLong(offset);
-            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            for (long i = 0; i < capacity; i++) {
+            for (long i = 0; i < size; i++) {
                 final long rec = newStartOffset + i * RECORD_SIZE;
                 memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
@@ -4044,7 +4031,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             value.putLong(0, newStartOffset);
             value.putLong(1, size);
             value.putLong(2, capacity);
-            value.putLong(3, firstIdx);
+            value.putLong(3, 0L);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -4058,10 +4045,8 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             final long capacity = value.getLong(2);
             final long firstIdx = value.getLong(3);
             sink.putLong(size);
-            sink.putLong(capacity);
-            sink.putLong(firstIdx);
-            for (long i = 0; i < capacity; i++) {
-                final long rec = startOffset + i * RECORD_SIZE;
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
                 sink.putLong(memory.getLong(rec));
                 sink.putShort(memory.getShort(rec + Long.BYTES));
             }
@@ -4195,8 +4180,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
             offset += Long.BYTES;
-            final long count = source.getLong(offset);
-            offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor((long) bufferSize * Short.BYTES) - memory.getPageAddress(0);
             for (int i = 0; i < bufferSize; i++) {
                 memory.putShort(newStartOffset + (long) i * Short.BYTES, source.getShort(offset));
@@ -4205,7 +4188,9 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             value.putLong(0, loIdx);
             value.putLong(1, newStartOffset);
             value.putLong(2, firstNotNullIdx);
-            value.putLong(3, count);
+            // Slot 3 counts appends for the unbounded-lo frame alone, and an
+            // unbounded start never reaches a live view, so it restores as zero.
+            value.putLong(3, 0L);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -4216,7 +4201,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(0));
             sink.putLong(value.getLong(2));
-            sink.putLong(value.getLong(3));
             final long startOffset = value.getLong(1);
             for (int i = 0; i < bufferSize; i++) {
                 sink.putShort(memory.getShort(startOffset + (long) i * Short.BYTES));
@@ -6008,18 +5992,13 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
-            // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
-            // firstIdx as a 0/1 capture flag (the captured value lives at physical
-            // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
-            // preserve capacity, size and firstIdx verbatim and copy every slot.
+            // Logical-ring image: only the bounded-lo frame reaches a live view, so
+            // firstIdx carries no capture flag and the ring rebases onto index 0.
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = source.getLong(offset);
-            offset += Long.BYTES;
-            final long firstIdx = source.getLong(offset);
-            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            for (long i = 0; i < capacity; i++) {
+            for (long i = 0; i < size; i++) {
                 final long rec = newStartOffset + i * RECORD_SIZE;
                 memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
@@ -6030,7 +6009,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             value.putLong(0, newStartOffset);
             value.putLong(1, size);
             value.putLong(2, capacity);
-            value.putLong(3, firstIdx);
+            value.putLong(3, 0L);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -6044,10 +6023,8 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             final long capacity = value.getLong(2);
             final long firstIdx = value.getLong(3);
             sink.putLong(size);
-            sink.putLong(capacity);
-            sink.putLong(firstIdx);
-            for (long i = 0; i < capacity; i++) {
-                final long rec = startOffset + i * RECORD_SIZE;
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
                 sink.putLong(memory.getLong(rec));
                 memory.getDecimal256(rec + Long.BYTES, scratch);
                 sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
@@ -6196,8 +6173,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
             offset += Long.BYTES;
-            final long count = source.getLong(offset);
-            offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor((long) bufferSize * Decimal256.BYTES) - memory.getPageAddress(0);
             for (int i = 0; i < bufferSize; i++) {
                 source.getDecimal256(offset, scratch);
@@ -6207,7 +6182,9 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             value.putLong(0, loIdx);
             value.putLong(1, newStartOffset);
             value.putLong(2, firstNotNullIdx);
-            value.putLong(3, count);
+            // Slot 3 counts appends for the unbounded-lo frame alone, and an
+            // unbounded start never reaches a live view, so it restores as zero.
+            value.putLong(3, 0L);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -6218,7 +6195,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(0));
             sink.putLong(value.getLong(2));
-            sink.putLong(value.getLong(3));
             final long startOffset = value.getLong(1);
             for (int i = 0; i < bufferSize; i++) {
                 memory.getDecimal256(startOffset + (long) i * Decimal256.BYTES, scratch);
@@ -8061,18 +8037,13 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
-            // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
-            // firstIdx as a 0/1 capture flag (the captured value lives at physical
-            // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
-            // preserve capacity, size and firstIdx verbatim and copy every slot.
+            // Logical-ring image: only the bounded-lo frame reaches a live view, so
+            // firstIdx carries no capture flag and the ring rebases onto index 0.
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = source.getLong(offset);
-            offset += Long.BYTES;
-            final long firstIdx = source.getLong(offset);
-            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            for (long i = 0; i < capacity; i++) {
+            for (long i = 0; i < size; i++) {
                 final long rec = newStartOffset + i * RECORD_SIZE;
                 memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
@@ -8082,7 +8053,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             value.putLong(0, newStartOffset);
             value.putLong(1, size);
             value.putLong(2, capacity);
-            value.putLong(3, firstIdx);
+            value.putLong(3, 0L);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -8096,10 +8067,8 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             final long capacity = value.getLong(2);
             final long firstIdx = value.getLong(3);
             sink.putLong(size);
-            sink.putLong(capacity);
-            sink.putLong(firstIdx);
-            for (long i = 0; i < capacity; i++) {
-                final long rec = startOffset + i * RECORD_SIZE;
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
                 sink.putLong(memory.getLong(rec));
                 sink.putInt(memory.getInt(rec + Long.BYTES));
             }
@@ -8233,8 +8202,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
             offset += Long.BYTES;
-            final long count = source.getLong(offset);
-            offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor((long) bufferSize * Integer.BYTES) - memory.getPageAddress(0);
             for (int i = 0; i < bufferSize; i++) {
                 memory.putInt(newStartOffset + (long) i * Integer.BYTES, source.getInt(offset));
@@ -8243,7 +8210,9 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             value.putLong(0, loIdx);
             value.putLong(1, newStartOffset);
             value.putLong(2, firstNotNullIdx);
-            value.putLong(3, count);
+            // Slot 3 counts appends for the unbounded-lo frame alone, and an
+            // unbounded start never reaches a live view, so it restores as zero.
+            value.putLong(3, 0L);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -8254,7 +8223,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(0));
             sink.putLong(value.getLong(2));
-            sink.putLong(value.getLong(3));
             final long startOffset = value.getLong(1);
             for (int i = 0; i < bufferSize; i++) {
                 sink.putInt(memory.getInt(startOffset + (long) i * Integer.BYTES));
@@ -10027,18 +9995,13 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
-            // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
-            // firstIdx as a 0/1 capture flag (the captured value lives at physical
-            // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
-            // preserve capacity, size and firstIdx verbatim and copy every slot.
+            // Logical-ring image: only the bounded-lo frame reaches a live view, so
+            // firstIdx carries no capture flag and the ring rebases onto index 0.
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = source.getLong(offset);
-            offset += Long.BYTES;
-            final long firstIdx = source.getLong(offset);
-            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            for (long i = 0; i < capacity; i++) {
+            for (long i = 0; i < size; i++) {
                 final long rec = newStartOffset + i * RECORD_SIZE;
                 memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
@@ -10048,7 +10011,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             value.putLong(0, newStartOffset);
             value.putLong(1, size);
             value.putLong(2, capacity);
-            value.putLong(3, firstIdx);
+            value.putLong(3, 0L);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -10062,10 +10025,8 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             final long capacity = value.getLong(2);
             final long firstIdx = value.getLong(3);
             sink.putLong(size);
-            sink.putLong(capacity);
-            sink.putLong(firstIdx);
-            for (long i = 0; i < capacity; i++) {
-                final long rec = startOffset + i * RECORD_SIZE;
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
                 sink.putLong(memory.getLong(rec));
                 sink.putLong(memory.getLong(rec + Long.BYTES));
             }
@@ -10199,8 +10160,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
             offset += Long.BYTES;
-            final long count = source.getLong(offset);
-            offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
             for (int i = 0; i < bufferSize; i++) {
                 memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
@@ -10209,7 +10168,9 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             value.putLong(0, loIdx);
             value.putLong(1, newStartOffset);
             value.putLong(2, firstNotNullIdx);
-            value.putLong(3, count);
+            // Slot 3 counts appends for the unbounded-lo frame alone, and an
+            // unbounded start never reaches a live view, so it restores as zero.
+            value.putLong(3, 0L);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -10220,7 +10181,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(0));
             sink.putLong(value.getLong(2));
-            sink.putLong(value.getLong(3));
             final long startOffset = value.getLong(1);
             for (int i = 0; i < bufferSize; i++) {
                 sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
@@ -11993,18 +11953,13 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
-            // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
-            // firstIdx as a 0/1 capture flag (the captured value lives at physical
-            // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
-            // preserve capacity, size and firstIdx verbatim and copy every slot.
+            // Logical-ring image: only the bounded-lo frame reaches a live view, so
+            // firstIdx carries no capture flag and the ring rebases onto index 0.
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = source.getLong(offset);
-            offset += Long.BYTES;
-            final long firstIdx = source.getLong(offset);
-            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            for (long i = 0; i < capacity; i++) {
+            for (long i = 0; i < size; i++) {
                 final long rec = newStartOffset + i * RECORD_SIZE;
                 memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
@@ -12014,7 +11969,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             value.putLong(0, newStartOffset);
             value.putLong(1, size);
             value.putLong(2, capacity);
-            value.putLong(3, firstIdx);
+            value.putLong(3, 0L);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -12028,10 +11983,8 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             final long capacity = value.getLong(2);
             final long firstIdx = value.getLong(3);
             sink.putLong(size);
-            sink.putLong(capacity);
-            sink.putLong(firstIdx);
-            for (long i = 0; i < capacity; i++) {
-                final long rec = startOffset + i * RECORD_SIZE;
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
                 sink.putLong(memory.getLong(rec));
                 sink.putByte(memory.getByte(rec + Long.BYTES));
             }
@@ -12165,8 +12118,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             offset += Long.BYTES;
             final long firstNotNullIdx = source.getLong(offset);
             offset += Long.BYTES;
-            final long count = source.getLong(offset);
-            offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor((long) bufferSize * Byte.BYTES) - memory.getPageAddress(0);
             for (int i = 0; i < bufferSize; i++) {
                 memory.putByte(newStartOffset + (long) i * Byte.BYTES, source.getByte(offset));
@@ -12175,7 +12126,9 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             value.putLong(0, loIdx);
             value.putLong(1, newStartOffset);
             value.putLong(2, firstNotNullIdx);
-            value.putLong(3, count);
+            // Slot 3 counts appends for the unbounded-lo frame alone, and an
+            // unbounded start never reaches a live view, so it restores as zero.
+            value.putLong(3, 0L);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -12186,7 +12139,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(0));
             sink.putLong(value.getLong(2));
-            sink.putLong(value.getLong(3));
             final long startOffset = value.getLong(1);
             for (int i = 0; i < bufferSize; i++) {
                 sink.putByte(memory.getByte(startOffset + (long) i * Byte.BYTES));

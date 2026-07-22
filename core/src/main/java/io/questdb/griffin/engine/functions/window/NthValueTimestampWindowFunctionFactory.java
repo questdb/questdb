@@ -187,11 +187,9 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
                 RecordSink partitionBySink,
                 long rowsHi,
                 Function arg,
-                int n,
-                ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                int n
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsHi, arg, n, partitionByKeyTypes, liveView);
+            super(map, partitionByRecord, partitionBySink, rowsHi, arg, n);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
         }
 

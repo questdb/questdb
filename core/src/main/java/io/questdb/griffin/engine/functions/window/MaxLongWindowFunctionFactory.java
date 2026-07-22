@@ -68,11 +68,9 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
     public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
-    public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
-    public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
     public static final String NAME = "max";
     private static final String SIGNATURE = NAME + "(L)";
 
@@ -184,7 +182,9 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     try {
                         final ArrayColumnTypes valueTypes;
                         if (rowsLo == Long.MIN_VALUE) {
-                            valueTypes = liveView ? MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV : MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
+                            // An unbounded frame start carries no live-view layout: the parser
+                            // turns the shape away at CREATE, so this arm never checkpoints.
+                            valueTypes = MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
                         } else {
                             valueTypes = liveView ? MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV : MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES;
                         }
@@ -280,7 +280,9 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     try {
                         final ArrayColumnTypes valueTypes;
                         if (rowsLo == Long.MIN_VALUE) {
-                            valueTypes = liveView ? MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV : MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
+                            // An unbounded frame start carries no live-view layout: the parser
+                            // turns the shape away at CREATE, so this arm never checkpoints.
+                            valueTypes = MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
                         } else {
                             valueTypes = liveView ? MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV : MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES;
                         }
@@ -686,21 +688,21 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             this.comparator = comparator;
             this.name = name;
             this.liveView = liveView;
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV
-                        : MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+                this.tombstoneValueIndex = 9;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -1069,46 +1071,29 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             offset += Long.BYTES;
             final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeSize = source.getLong(offset);
+            final long dequeSize = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long i = 0; i < size; i++) {
+                memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
                 offset += Long.BYTES;
-                for (long i = 0; i < size; i++) {
-                    memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
-                    offset += Long.BYTES;
-                    memory.putLong(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
-                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
-                for (long i = 0; i < dequeSize; i++) {
-                    dequeMemory.putLong(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                value.putLong(0, frameSize);
-                value.putLong(1, newStartOffset);
-                value.putLong(2, size);
-                value.putLong(3, capacity);
-                value.putLong(4, 0L);
-                value.putLong(5, newDequeStartOffset);
-                value.putLong(6, dequeCapacity);
-                value.putLong(7, 0L);
-                value.putLong(8, dequeSize);
-            } else {
-                final long maxMinVal = source.getLong(offset);
+                memory.putLong(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getLong(offset));
                 offset += Long.BYTES;
-                for (long i = 0; i < size; i++) {
-                    memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
-                    offset += Long.BYTES;
-                    memory.putLong(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                value.putLong(0, frameSize);
-                value.putLong(1, newStartOffset);
-                value.putLong(2, size);
-                value.putLong(3, capacity);
-                value.putLong(4, 0L);
-                value.putLong(5, maxMinVal);
             }
+            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+            for (long i = 0; i < dequeSize; i++) {
+                dequeMemory.putLong(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(0, frameSize);
+            value.putLong(1, newStartOffset);
+            value.putLong(2, size);
+            value.putLong(3, capacity);
+            value.putLong(4, 0L);
+            value.putLong(5, newDequeStartOffset);
+            value.putLong(6, dequeCapacity);
+            value.putLong(7, 0L);
+            value.putLong(8, dequeSize);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -1128,29 +1113,20 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             final long capacity = value.getLong(3);
             final long firstIdx = value.getLong(4);
             sink.putLong(size);
-            if (frameLoBounded) {
-                final long dequeStartOffset = value.getLong(5);
-                final long dequeCapacity = value.getLong(6);
-                final long dequeStartIndex = value.getLong(7);
-                final long dequeEndIndex = value.getLong(8);
-                final long dequeSize = dequeEndIndex - dequeStartIndex;
-                sink.putLong(dequeSize);
-                for (long i = 0; i < size; i++) {
-                    final long idx = (firstIdx + i) % capacity;
-                    sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
-                    sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES));
-                }
-                for (long i = 0; i < dequeSize; i++) {
-                    final long idx = (dequeStartIndex + i) % dequeCapacity;
-                    sink.putLong(dequeMemory.getLong(dequeStartOffset + idx * DEQUE_RECORD_SIZE));
-                }
-            } else {
-                sink.putLong(value.getLong(5));
-                for (long i = 0; i < size; i++) {
-                    final long idx = (firstIdx + i) % capacity;
-                    sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
-                    sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES));
-                }
+            final long dequeStartOffset = value.getLong(5);
+            final long dequeCapacity = value.getLong(6);
+            final long dequeStartIndex = value.getLong(7);
+            final long dequeEndIndex = value.getLong(8);
+            final long dequeSize = dequeEndIndex - dequeStartIndex;
+            sink.putLong(dequeSize);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
+                sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES));
+            }
+            for (long i = 0; i < dequeSize; i++) {
+                final long idx = (dequeStartIndex + i) % dequeCapacity;
+                sink.putLong(dequeMemory.getLong(dequeStartOffset + idx * DEQUE_RECORD_SIZE));
             }
         }
 
@@ -1275,21 +1251,21 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             this.comparator = comparator;
             this.name = name;
             this.liveView = liveView;
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV
-                        : MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+                this.tombstoneValueIndex = 5;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -1533,36 +1509,24 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor(ringBytes) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeStartIndex = source.getLong(offset);
+            final long dequeStartIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            final long dequeEndIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
                 offset += Long.BYTES;
-                final long dequeEndIndex = source.getLong(offset);
-                offset += Long.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeBytes) - dequeMemory.getPageAddress(0);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    dequeMemory.putLong(newDequeStartOffset + (long) i * Long.BYTES, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                value.putLong(0, loIdx);
-                value.putLong(1, newStartOffset);
-                value.putLong(2, newDequeStartOffset);
-                value.putLong(3, dequeStartIndex);
-                value.putLong(4, dequeEndIndex);
-            } else {
-                final long maxMinVal = source.getLong(offset);
-                offset += Long.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                value.putLong(0, loIdx);
-                value.putLong(1, newStartOffset);
-                value.putLong(2, maxMinVal);
             }
+            final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeBytes) - dequeMemory.getPageAddress(0);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                dequeMemory.putLong(newDequeStartOffset + (long) i * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(0, loIdx);
+            value.putLong(1, newStartOffset);
+            value.putLong(2, newDequeStartOffset);
+            value.putLong(3, dequeStartIndex);
+            value.putLong(4, dequeEndIndex);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -1587,21 +1551,14 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(0));
             final long startOffset = value.getLong(1);
-            if (frameLoBounded) {
-                sink.putLong(value.getLong(3));
-                sink.putLong(value.getLong(4));
-                for (int i = 0; i < bufferSize; i++) {
-                    sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
-                }
-                final long dequeStartOffset = value.getLong(2);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    sink.putLong(dequeMemory.getLong(dequeStartOffset + (long) i * Long.BYTES));
-                }
-            } else {
-                sink.putLong(value.getLong(2));
-                for (int i = 0; i < bufferSize; i++) {
-                    sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
-                }
+            sink.putLong(value.getLong(3));
+            sink.putLong(value.getLong(4));
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
+            }
+            final long dequeStartOffset = value.getLong(2);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                sink.putLong(dequeMemory.getLong(dequeStartOffset + (long) i * Long.BYTES));
             }
         }
 
@@ -2831,15 +2788,6 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory firstIdx
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // max value case when unbounded preceding
 
-        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV = new ArrayColumnTypes();
-        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // frame size
-        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory startOffset
-        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory size
-        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory capacity
-        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory firstIdx
-        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // max value case when unbounded preceding
-        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
-
         MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // frame size
         MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // memory startOffset
@@ -2867,12 +2815,6 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // memory startIndex
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // memory startOffset
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // max value case when unbounded preceding
-
-        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
-        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory startIndex
-        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory startOffset
-        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // max value case when unbounded preceding
-        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
 
         MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // memory startIndex

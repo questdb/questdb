@@ -73,25 +73,19 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     static final Decimal256Comparator LESS_THAN_256 = (a, b) -> a.compareTo(b) < 0;
     static final Decimal64Comparator LESS_THAN_64 = (a, b) -> a < b;
     static final ArrayColumnTypes MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES;
-    static final ArrayColumnTypes MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES;
-    static final ArrayColumnTypes MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL128_TYPES;
     static final ArrayColumnTypes MAX_DECIMAL128_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES;
-    static final ArrayColumnTypes MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES;
-    static final ArrayColumnTypes MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL256_TYPES;
     static final ArrayColumnTypes MAX_DECIMAL256_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES;
     static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES;
-    static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES;
     static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES;
-    static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL64_TYPES;
     static final ArrayColumnTypes MAX_DECIMAL64_TYPES_LV;
     private static final String SIGNATURE = NAME + "(Ξ)";
@@ -152,7 +146,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        ? (liveView ? MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV : MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES)
+                                        // An unbounded frame start carries no live-view layout: the parser
+                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        ? MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -188,7 +184,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        ? (liveView ? MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV : MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES)
+                                        // An unbounded frame start carries no live-view layout: the parser
+                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        ? MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -302,7 +300,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES)
+                                        // An unbounded frame start carries no live-view layout: the parser
+                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -338,7 +338,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES)
+                                        // An unbounded frame start carries no live-view layout: the parser
+                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -452,7 +454,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        ? (liveView ? MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV : MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES)
+                                        // An unbounded frame start carries no live-view layout: the parser
+                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        ? MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -488,7 +492,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        ? (liveView ? MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV : MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES)
+                                        // An unbounded frame start carries no live-view layout: the parser
+                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        ? MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -602,7 +608,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES)
+                                        // An unbounded frame start carries no live-view layout: the parser
+                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -638,7 +646,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES)
+                                        // An unbounded frame start carries no live-view layout: the parser
+                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -752,7 +762,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES)
+                                        // An unbounded frame start carries no live-view layout: the parser
+                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -788,7 +800,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES)
+                                        // An unbounded frame start carries no live-view layout: the parser
+                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -902,7 +916,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES)
+                                        // An unbounded frame start carries no live-view layout: the parser
+                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -938,7 +954,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
                                 rowsLo == Long.MIN_VALUE
-                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES)
+                                        // An unbounded frame start carries no live-view layout: the parser
+                                        // turns the shape away at CREATE, so this arm never checkpoints.
+                                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES
                                         : (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -1151,7 +1169,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
@@ -1266,21 +1283,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.liveView = liveView;
             maxMin.ofRawNull();
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV
-                        : MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+                this.tombstoneValueIndex = 9;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -1590,51 +1607,32 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             offset += Long.BYTES;
             final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeSize = source.getLong(offset);
+            final long dequeSize = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long i = 0; i < size; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
-                for (long i = 0; i < size; i++) {
-                    final long rec = newStartOffset + i * RECORD_SIZE;
-                    memory.putLong(rec, source.getLong(offset));
-                    offset += Long.BYTES;
-                    source.getDecimal128(offset, scratch);
-                    memory.putDecimal128(rec + Long.BYTES, scratch.getHigh(), scratch.getLow());
-                    offset += Decimal128.BYTES;
-                }
-                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
-                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
-                for (long i = 0; i < dequeSize; i++) {
-                    source.getDecimal128(offset, scratch);
-                    dequeMemory.putDecimal128(newDequeStartOffset + i * DEQUE_RECORD_SIZE, scratch.getHigh(), scratch.getLow());
-                    offset += Decimal128.BYTES;
-                }
-                mv.putLong(0, frameSize);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, size);
-                mv.putLong(3, capacity);
-                mv.putLong(4, 0L);
-                mv.putLong(5, newDequeStartOffset);
-                mv.putLong(6, dequeCapacity);
-                mv.putLong(7, 0L);
-                mv.putLong(8, dequeSize);
-            } else {
                 source.getDecimal128(offset, scratch);
-                mv.putDecimal128(5, scratch);
+                memory.putDecimal128(rec + Long.BYTES, scratch.getHigh(), scratch.getLow());
                 offset += Decimal128.BYTES;
-                for (long i = 0; i < size; i++) {
-                    final long rec = newStartOffset + i * RECORD_SIZE;
-                    memory.putLong(rec, source.getLong(offset));
-                    offset += Long.BYTES;
-                    source.getDecimal128(offset, scratch);
-                    memory.putDecimal128(rec + Long.BYTES, scratch.getHigh(), scratch.getLow());
-                    offset += Decimal128.BYTES;
-                }
-                mv.putLong(0, frameSize);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, size);
-                mv.putLong(3, capacity);
-                mv.putLong(4, 0L);
             }
+            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+            for (long i = 0; i < dequeSize; i++) {
+                source.getDecimal128(offset, scratch);
+                dequeMemory.putDecimal128(newDequeStartOffset + i * DEQUE_RECORD_SIZE, scratch.getHigh(), scratch.getLow());
+                offset += Decimal128.BYTES;
+            }
+            mv.putLong(0, frameSize);
+            mv.putLong(1, newStartOffset);
+            mv.putLong(2, size);
+            mv.putLong(3, capacity);
+            mv.putLong(4, 0L);
+            mv.putLong(5, newDequeStartOffset);
+            mv.putLong(6, dequeCapacity);
+            mv.putLong(7, 0L);
+            mv.putLong(8, dequeSize);
             if (tombstoneValueIndex >= 0) {
                 mv.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -1663,32 +1661,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             final long capacity = mv.getLong(3);
             final long firstIdx = mv.getLong(4);
             sink.putLong(size);
-            if (frameLoBounded) {
-                final long dequeStartOffset = mv.getLong(5);
-                final long dequeCapacity = mv.getLong(6);
-                final long dequeStartIndex = mv.getLong(7);
-                final long dequeEndIndex = mv.getLong(8);
-                final long dequeSize = dequeEndIndex - dequeStartIndex;
-                sink.putLong(dequeSize);
-                for (long i = 0; i < size; i++) {
-                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
-                    sink.putLong(memory.getLong(rec));
-                    memory.getDecimal128(rec + Long.BYTES, scratch);
-                    sink.putDecimal128(scratch.getHigh(), scratch.getLow());
-                }
-                for (long i = 0; i < dequeSize; i++) {
-                    dequeMemory.getDecimal128(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE, scratch);
-                    sink.putDecimal128(scratch.getHigh(), scratch.getLow());
-                }
-            } else {
-                mv.getDecimal128(5, scratch);
+            final long dequeStartOffset = mv.getLong(5);
+            final long dequeCapacity = mv.getLong(6);
+            final long dequeStartIndex = mv.getLong(7);
+            final long dequeEndIndex = mv.getLong(8);
+            final long dequeSize = dequeEndIndex - dequeStartIndex;
+            sink.putLong(dequeSize);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                memory.getDecimal128(rec + Long.BYTES, scratch);
                 sink.putDecimal128(scratch.getHigh(), scratch.getLow());
-                for (long i = 0; i < size; i++) {
-                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
-                    sink.putLong(memory.getLong(rec));
-                    memory.getDecimal128(rec + Long.BYTES, scratch);
-                    sink.putDecimal128(scratch.getHigh(), scratch.getLow());
-                }
+            }
+            for (long i = 0; i < dequeSize; i++) {
+                dequeMemory.getDecimal128(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE, scratch);
+                sink.putDecimal128(scratch.getHigh(), scratch.getLow());
             }
         }
 
@@ -1792,21 +1779,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV
-                        : MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+                this.tombstoneValueIndex = 5;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -2037,39 +2024,26 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor((long) bufferSize * Decimal128.BYTES) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeStartIndex = source.getLong(offset);
-                offset += Long.BYTES;
-                final long dequeEndIndex = source.getLong(offset);
-                offset += Long.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    source.getDecimal128(offset, scratch);
-                    memory.putDecimal128(newStartOffset + (long) i * Decimal128.BYTES, scratch.getHigh(), scratch.getLow());
-                    offset += Decimal128.BYTES;
-                }
-                final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Decimal128.BYTES) - dequeMemory.getPageAddress(0);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    source.getDecimal128(offset, scratch);
-                    dequeMemory.putDecimal128(newDequeStartOffset + (long) i * Decimal128.BYTES, scratch.getHigh(), scratch.getLow());
-                    offset += Decimal128.BYTES;
-                }
-                mv.putLong(0, loIdx);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, newDequeStartOffset);
-                mv.putLong(3, dequeStartIndex);
-                mv.putLong(4, dequeEndIndex);
-            } else {
+            final long dequeStartIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            final long dequeEndIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            for (int i = 0; i < bufferSize; i++) {
                 source.getDecimal128(offset, scratch);
-                mv.putDecimal128(2, scratch);
+                memory.putDecimal128(newStartOffset + (long) i * Decimal128.BYTES, scratch.getHigh(), scratch.getLow());
                 offset += Decimal128.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    source.getDecimal128(offset, scratch);
-                    memory.putDecimal128(newStartOffset + (long) i * Decimal128.BYTES, scratch.getHigh(), scratch.getLow());
-                    offset += Decimal128.BYTES;
-                }
-                mv.putLong(0, loIdx);
-                mv.putLong(1, newStartOffset);
             }
+            final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Decimal128.BYTES) - dequeMemory.getPageAddress(0);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                source.getDecimal128(offset, scratch);
+                dequeMemory.putDecimal128(newDequeStartOffset + (long) i * Decimal128.BYTES, scratch.getHigh(), scratch.getLow());
+                offset += Decimal128.BYTES;
+            }
+            mv.putLong(0, loIdx);
+            mv.putLong(1, newStartOffset);
+            mv.putLong(2, newDequeStartOffset);
+            mv.putLong(3, dequeStartIndex);
+            mv.putLong(4, dequeEndIndex);
             if (tombstoneValueIndex >= 0) {
                 mv.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -2094,25 +2068,16 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue mv) {
             sink.putLong(mv.getLong(0)); // loIdx
             final long startOffset = mv.getLong(1);
-            if (frameLoBounded) {
-                sink.putLong(mv.getLong(3)); // dequeStartIndex
-                sink.putLong(mv.getLong(4)); // dequeEndIndex
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.getDecimal128(startOffset + (long) i * Decimal128.BYTES, scratch);
-                    sink.putDecimal128(scratch.getHigh(), scratch.getLow());
-                }
-                final long dequeStartOffset = mv.getLong(2);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    dequeMemory.getDecimal128(dequeStartOffset + (long) i * Decimal128.BYTES, scratch);
-                    sink.putDecimal128(scratch.getHigh(), scratch.getLow());
-                }
-            } else {
-                mv.getDecimal128(2, scratch);
+            sink.putLong(mv.getLong(3)); // dequeStartIndex
+            sink.putLong(mv.getLong(4)); // dequeEndIndex
+            for (int i = 0; i < bufferSize; i++) {
+                memory.getDecimal128(startOffset + (long) i * Decimal128.BYTES, scratch);
                 sink.putDecimal128(scratch.getHigh(), scratch.getLow());
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.getDecimal128(startOffset + (long) i * Decimal128.BYTES, scratch);
-                    sink.putDecimal128(scratch.getHigh(), scratch.getLow());
-                }
+            }
+            final long dequeStartOffset = mv.getLong(2);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                dequeMemory.getDecimal128(dequeStartOffset + (long) i * Decimal128.BYTES, scratch);
+                sink.putDecimal128(scratch.getHigh(), scratch.getLow());
             }
         }
 
@@ -2957,7 +2922,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-
         @Override
         public int getPassCount() {
             return TWO_PASS;
@@ -3062,7 +3026,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
@@ -3159,21 +3122,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV
-                        : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+                this.tombstoneValueIndex = 9;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -3474,47 +3437,30 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             offset += Long.BYTES;
             final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeSize = source.getLong(offset);
+            final long dequeSize = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long i = 0; i < size; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
-                for (long i = 0; i < size; i++) {
-                    final long rec = newStartOffset + i * RECORD_SIZE;
-                    memory.putLong(rec, source.getLong(offset));
-                    offset += Long.BYTES;
-                    memory.putShort(rec + Long.BYTES, source.getShort(offset));
-                    offset += Short.BYTES;
-                }
-                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
-                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
-                for (long i = 0; i < dequeSize; i++) {
-                    dequeMemory.putShort(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getShort(offset));
-                    offset += Short.BYTES;
-                }
-                mv.putLong(0, frameSize);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, size);
-                mv.putLong(3, capacity);
-                mv.putLong(4, 0L);
-                mv.putLong(5, newDequeStartOffset);
-                mv.putLong(6, dequeCapacity);
-                mv.putLong(7, 0L);
-                mv.putLong(8, dequeSize);
-            } else {
-                mv.putLong(5, source.getShort(offset));
+                memory.putShort(rec + Long.BYTES, source.getShort(offset));
                 offset += Short.BYTES;
-                for (long i = 0; i < size; i++) {
-                    final long rec = newStartOffset + i * RECORD_SIZE;
-                    memory.putLong(rec, source.getLong(offset));
-                    offset += Long.BYTES;
-                    memory.putShort(rec + Long.BYTES, source.getShort(offset));
-                    offset += Short.BYTES;
-                }
-                mv.putLong(0, frameSize);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, size);
-                mv.putLong(3, capacity);
-                mv.putLong(4, 0L);
             }
+            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+            for (long i = 0; i < dequeSize; i++) {
+                dequeMemory.putShort(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getShort(offset));
+                offset += Short.BYTES;
+            }
+            mv.putLong(0, frameSize);
+            mv.putLong(1, newStartOffset);
+            mv.putLong(2, size);
+            mv.putLong(3, capacity);
+            mv.putLong(4, 0L);
+            mv.putLong(5, newDequeStartOffset);
+            mv.putLong(6, dequeCapacity);
+            mv.putLong(7, 0L);
+            mv.putLong(8, dequeSize);
             if (tombstoneValueIndex >= 0) {
                 mv.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -3543,28 +3489,19 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             final long capacity = mv.getLong(3);
             final long firstIdx = mv.getLong(4);
             sink.putLong(size);
-            if (frameLoBounded) {
-                final long dequeStartOffset = mv.getLong(5);
-                final long dequeCapacity = mv.getLong(6);
-                final long dequeStartIndex = mv.getLong(7);
-                final long dequeEndIndex = mv.getLong(8);
-                final long dequeSize = dequeEndIndex - dequeStartIndex;
-                sink.putLong(dequeSize);
-                for (long i = 0; i < size; i++) {
-                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
-                    sink.putLong(memory.getLong(rec));
-                    sink.putShort(memory.getShort(rec + Long.BYTES));
-                }
-                for (long i = 0; i < dequeSize; i++) {
-                    sink.putShort(dequeMemory.getShort(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE));
-                }
-            } else {
-                sink.putShort((short) mv.getLong(5));
-                for (long i = 0; i < size; i++) {
-                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
-                    sink.putLong(memory.getLong(rec));
-                    sink.putShort(memory.getShort(rec + Long.BYTES));
-                }
+            final long dequeStartOffset = mv.getLong(5);
+            final long dequeCapacity = mv.getLong(6);
+            final long dequeStartIndex = mv.getLong(7);
+            final long dequeEndIndex = mv.getLong(8);
+            final long dequeSize = dequeEndIndex - dequeStartIndex;
+            sink.putLong(dequeSize);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putShort(memory.getShort(rec + Long.BYTES));
+            }
+            for (long i = 0; i < dequeSize; i++) {
+                sink.putShort(dequeMemory.getShort(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE));
             }
         }
 
@@ -3657,21 +3594,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV
-                        : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+                this.tombstoneValueIndex = 5;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -3887,35 +3824,24 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor((long) bufferSize * Short.BYTES) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeStartIndex = source.getLong(offset);
-                offset += Long.BYTES;
-                final long dequeEndIndex = source.getLong(offset);
-                offset += Long.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putShort(newStartOffset + (long) i * Short.BYTES, source.getShort(offset));
-                    offset += Short.BYTES;
-                }
-                final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Short.BYTES) - dequeMemory.getPageAddress(0);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    dequeMemory.putShort(newDequeStartOffset + (long) i * Short.BYTES, source.getShort(offset));
-                    offset += Short.BYTES;
-                }
-                mv.putLong(0, loIdx);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, newDequeStartOffset);
-                mv.putLong(3, dequeStartIndex);
-                mv.putLong(4, dequeEndIndex);
-            } else {
-                mv.putLong(2, source.getShort(offset));
+            final long dequeStartIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            final long dequeEndIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putShort(newStartOffset + (long) i * Short.BYTES, source.getShort(offset));
                 offset += Short.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putShort(newStartOffset + (long) i * Short.BYTES, source.getShort(offset));
-                    offset += Short.BYTES;
-                }
-                mv.putLong(0, loIdx);
-                mv.putLong(1, newStartOffset);
             }
+            final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Short.BYTES) - dequeMemory.getPageAddress(0);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                dequeMemory.putShort(newDequeStartOffset + (long) i * Short.BYTES, source.getShort(offset));
+                offset += Short.BYTES;
+            }
+            mv.putLong(0, loIdx);
+            mv.putLong(1, newStartOffset);
+            mv.putLong(2, newDequeStartOffset);
+            mv.putLong(3, dequeStartIndex);
+            mv.putLong(4, dequeEndIndex);
             if (tombstoneValueIndex >= 0) {
                 mv.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -3940,21 +3866,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue mv) {
             sink.putLong(mv.getLong(0)); // loIdx
             final long startOffset = mv.getLong(1);
-            if (frameLoBounded) {
-                sink.putLong(mv.getLong(3)); // dequeStartIndex
-                sink.putLong(mv.getLong(4)); // dequeEndIndex
-                for (int i = 0; i < bufferSize; i++) {
-                    sink.putShort(memory.getShort(startOffset + (long) i * Short.BYTES));
-                }
-                final long dequeStartOffset = mv.getLong(2);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    sink.putShort(dequeMemory.getShort(dequeStartOffset + (long) i * Short.BYTES));
-                }
-            } else {
-                sink.putShort((short) mv.getLong(2));
-                for (int i = 0; i < bufferSize; i++) {
-                    sink.putShort(memory.getShort(startOffset + (long) i * Short.BYTES));
-                }
+            sink.putLong(mv.getLong(3)); // dequeStartIndex
+            sink.putLong(mv.getLong(4)); // dequeEndIndex
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putShort(memory.getShort(startOffset + (long) i * Short.BYTES));
+            }
+            final long dequeStartOffset = mv.getLong(2);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                sink.putShort(dequeMemory.getShort(dequeStartOffset + (long) i * Short.BYTES));
             }
         }
 
@@ -4733,7 +4652,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-
         @Override
         public int getPassCount() {
             return TWO_PASS;
@@ -4837,7 +4755,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public String getName() {
             return name;
         }
-
 
         @Override
         public int getPassCount() {
@@ -4957,21 +4874,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             this.liveView = liveView;
             maxMin.ofRawNull();
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV
-                        : MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+                this.tombstoneValueIndex = 9;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -5283,51 +5200,32 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             offset += Long.BYTES;
             final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeSize = source.getLong(offset);
+            final long dequeSize = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long i = 0; i < size; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
-                for (long i = 0; i < size; i++) {
-                    final long rec = newStartOffset + i * RECORD_SIZE;
-                    memory.putLong(rec, source.getLong(offset));
-                    offset += Long.BYTES;
-                    source.getDecimal256(offset, scratch);
-                    memory.putDecimal256(rec + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                    offset += Decimal256.BYTES;
-                }
-                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
-                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
-                for (long i = 0; i < dequeSize; i++) {
-                    source.getDecimal256(offset, scratch);
-                    dequeMemory.putDecimal256(newDequeStartOffset + i * DEQUE_RECORD_SIZE, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                    offset += Decimal256.BYTES;
-                }
-                mv.putLong(0, frameSize);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, size);
-                mv.putLong(3, capacity);
-                mv.putLong(4, 0L);
-                mv.putLong(5, newDequeStartOffset);
-                mv.putLong(6, dequeCapacity);
-                mv.putLong(7, 0L);
-                mv.putLong(8, dequeSize);
-            } else {
                 source.getDecimal256(offset, scratch);
-                mv.putDecimal256(5, scratch);
+                memory.putDecimal256(rec + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                 offset += Decimal256.BYTES;
-                for (long i = 0; i < size; i++) {
-                    final long rec = newStartOffset + i * RECORD_SIZE;
-                    memory.putLong(rec, source.getLong(offset));
-                    offset += Long.BYTES;
-                    source.getDecimal256(offset, scratch);
-                    memory.putDecimal256(rec + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                    offset += Decimal256.BYTES;
-                }
-                mv.putLong(0, frameSize);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, size);
-                mv.putLong(3, capacity);
-                mv.putLong(4, 0L);
             }
+            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+            for (long i = 0; i < dequeSize; i++) {
+                source.getDecimal256(offset, scratch);
+                dequeMemory.putDecimal256(newDequeStartOffset + i * DEQUE_RECORD_SIZE, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                offset += Decimal256.BYTES;
+            }
+            mv.putLong(0, frameSize);
+            mv.putLong(1, newStartOffset);
+            mv.putLong(2, size);
+            mv.putLong(3, capacity);
+            mv.putLong(4, 0L);
+            mv.putLong(5, newDequeStartOffset);
+            mv.putLong(6, dequeCapacity);
+            mv.putLong(7, 0L);
+            mv.putLong(8, dequeSize);
             if (tombstoneValueIndex >= 0) {
                 mv.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -5356,32 +5254,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             final long capacity = mv.getLong(3);
             final long firstIdx = mv.getLong(4);
             sink.putLong(size);
-            if (frameLoBounded) {
-                final long dequeStartOffset = mv.getLong(5);
-                final long dequeCapacity = mv.getLong(6);
-                final long dequeStartIndex = mv.getLong(7);
-                final long dequeEndIndex = mv.getLong(8);
-                final long dequeSize = dequeEndIndex - dequeStartIndex;
-                sink.putLong(dequeSize);
-                for (long i = 0; i < size; i++) {
-                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
-                    sink.putLong(memory.getLong(rec));
-                    memory.getDecimal256(rec + Long.BYTES, scratch);
-                    sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                }
-                for (long i = 0; i < dequeSize; i++) {
-                    dequeMemory.getDecimal256(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE, scratch);
-                    sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                }
-            } else {
-                mv.getDecimal256(5, scratch);
+            final long dequeStartOffset = mv.getLong(5);
+            final long dequeCapacity = mv.getLong(6);
+            final long dequeStartIndex = mv.getLong(7);
+            final long dequeEndIndex = mv.getLong(8);
+            final long dequeSize = dequeEndIndex - dequeStartIndex;
+            sink.putLong(dequeSize);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                memory.getDecimal256(rec + Long.BYTES, scratch);
                 sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                for (long i = 0; i < size; i++) {
-                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
-                    sink.putLong(memory.getLong(rec));
-                    memory.getDecimal256(rec + Long.BYTES, scratch);
-                    sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                }
+            }
+            for (long i = 0; i < dequeSize; i++) {
+                dequeMemory.getDecimal256(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE, scratch);
+                sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
             }
         }
 
@@ -5485,21 +5372,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV
-                        : MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+                this.tombstoneValueIndex = 5;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -5732,39 +5619,26 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor((long) bufferSize * Decimal256.BYTES) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeStartIndex = source.getLong(offset);
-                offset += Long.BYTES;
-                final long dequeEndIndex = source.getLong(offset);
-                offset += Long.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    source.getDecimal256(offset, scratch);
-                    memory.putDecimal256(newStartOffset + (long) i * Decimal256.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                    offset += Decimal256.BYTES;
-                }
-                final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Decimal256.BYTES) - dequeMemory.getPageAddress(0);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    source.getDecimal256(offset, scratch);
-                    dequeMemory.putDecimal256(newDequeStartOffset + (long) i * Decimal256.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                    offset += Decimal256.BYTES;
-                }
-                mv.putLong(0, loIdx);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, newDequeStartOffset);
-                mv.putLong(3, dequeStartIndex);
-                mv.putLong(4, dequeEndIndex);
-            } else {
+            final long dequeStartIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            final long dequeEndIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            for (int i = 0; i < bufferSize; i++) {
                 source.getDecimal256(offset, scratch);
-                mv.putDecimal256(2, scratch);
+                memory.putDecimal256(newStartOffset + (long) i * Decimal256.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                 offset += Decimal256.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    source.getDecimal256(offset, scratch);
-                    memory.putDecimal256(newStartOffset + (long) i * Decimal256.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                    offset += Decimal256.BYTES;
-                }
-                mv.putLong(0, loIdx);
-                mv.putLong(1, newStartOffset);
             }
+            final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Decimal256.BYTES) - dequeMemory.getPageAddress(0);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                source.getDecimal256(offset, scratch);
+                dequeMemory.putDecimal256(newDequeStartOffset + (long) i * Decimal256.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                offset += Decimal256.BYTES;
+            }
+            mv.putLong(0, loIdx);
+            mv.putLong(1, newStartOffset);
+            mv.putLong(2, newDequeStartOffset);
+            mv.putLong(3, dequeStartIndex);
+            mv.putLong(4, dequeEndIndex);
             if (tombstoneValueIndex >= 0) {
                 mv.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -5789,25 +5663,16 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue mv) {
             sink.putLong(mv.getLong(0)); // loIdx
             final long startOffset = mv.getLong(1);
-            if (frameLoBounded) {
-                sink.putLong(mv.getLong(3)); // dequeStartIndex
-                sink.putLong(mv.getLong(4)); // dequeEndIndex
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.getDecimal256(startOffset + (long) i * Decimal256.BYTES, scratch);
-                    sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                }
-                final long dequeStartOffset = mv.getLong(2);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    dequeMemory.getDecimal256(dequeStartOffset + (long) i * Decimal256.BYTES, scratch);
-                    sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                }
-            } else {
-                mv.getDecimal256(2, scratch);
+            sink.putLong(mv.getLong(3)); // dequeStartIndex
+            sink.putLong(mv.getLong(4)); // dequeEndIndex
+            for (int i = 0; i < bufferSize; i++) {
+                memory.getDecimal256(startOffset + (long) i * Decimal256.BYTES, scratch);
                 sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.getDecimal256(startOffset + (long) i * Decimal256.BYTES, scratch);
-                    sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
-                }
+            }
+            final long dequeStartOffset = mv.getLong(2);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                dequeMemory.getDecimal256(dequeStartOffset + (long) i * Decimal256.BYTES, scratch);
+                sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
             }
         }
 
@@ -6660,7 +6525,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-
         @Override
         public int getPassCount() {
             return TWO_PASS;
@@ -6767,7 +6631,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
@@ -6864,21 +6727,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV
-                        : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+                this.tombstoneValueIndex = 9;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -7179,47 +7042,30 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             offset += Long.BYTES;
             final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeSize = source.getLong(offset);
+            final long dequeSize = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long i = 0; i < size; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
-                for (long i = 0; i < size; i++) {
-                    final long rec = newStartOffset + i * RECORD_SIZE;
-                    memory.putLong(rec, source.getLong(offset));
-                    offset += Long.BYTES;
-                    memory.putInt(rec + Long.BYTES, source.getInt(offset));
-                    offset += Integer.BYTES;
-                }
-                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
-                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
-                for (long i = 0; i < dequeSize; i++) {
-                    dequeMemory.putInt(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getInt(offset));
-                    offset += Integer.BYTES;
-                }
-                mv.putLong(0, frameSize);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, size);
-                mv.putLong(3, capacity);
-                mv.putLong(4, 0L);
-                mv.putLong(5, newDequeStartOffset);
-                mv.putLong(6, dequeCapacity);
-                mv.putLong(7, 0L);
-                mv.putLong(8, dequeSize);
-            } else {
-                mv.putLong(5, source.getInt(offset));
+                memory.putInt(rec + Long.BYTES, source.getInt(offset));
                 offset += Integer.BYTES;
-                for (long i = 0; i < size; i++) {
-                    final long rec = newStartOffset + i * RECORD_SIZE;
-                    memory.putLong(rec, source.getLong(offset));
-                    offset += Long.BYTES;
-                    memory.putInt(rec + Long.BYTES, source.getInt(offset));
-                    offset += Integer.BYTES;
-                }
-                mv.putLong(0, frameSize);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, size);
-                mv.putLong(3, capacity);
-                mv.putLong(4, 0L);
             }
+            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+            for (long i = 0; i < dequeSize; i++) {
+                dequeMemory.putInt(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getInt(offset));
+                offset += Integer.BYTES;
+            }
+            mv.putLong(0, frameSize);
+            mv.putLong(1, newStartOffset);
+            mv.putLong(2, size);
+            mv.putLong(3, capacity);
+            mv.putLong(4, 0L);
+            mv.putLong(5, newDequeStartOffset);
+            mv.putLong(6, dequeCapacity);
+            mv.putLong(7, 0L);
+            mv.putLong(8, dequeSize);
             if (tombstoneValueIndex >= 0) {
                 mv.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -7248,28 +7094,19 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             final long capacity = mv.getLong(3);
             final long firstIdx = mv.getLong(4);
             sink.putLong(size);
-            if (frameLoBounded) {
-                final long dequeStartOffset = mv.getLong(5);
-                final long dequeCapacity = mv.getLong(6);
-                final long dequeStartIndex = mv.getLong(7);
-                final long dequeEndIndex = mv.getLong(8);
-                final long dequeSize = dequeEndIndex - dequeStartIndex;
-                sink.putLong(dequeSize);
-                for (long i = 0; i < size; i++) {
-                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
-                    sink.putLong(memory.getLong(rec));
-                    sink.putInt(memory.getInt(rec + Long.BYTES));
-                }
-                for (long i = 0; i < dequeSize; i++) {
-                    sink.putInt(dequeMemory.getInt(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE));
-                }
-            } else {
-                sink.putInt((int) mv.getLong(5));
-                for (long i = 0; i < size; i++) {
-                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
-                    sink.putLong(memory.getLong(rec));
-                    sink.putInt(memory.getInt(rec + Long.BYTES));
-                }
+            final long dequeStartOffset = mv.getLong(5);
+            final long dequeCapacity = mv.getLong(6);
+            final long dequeStartIndex = mv.getLong(7);
+            final long dequeEndIndex = mv.getLong(8);
+            final long dequeSize = dequeEndIndex - dequeStartIndex;
+            sink.putLong(dequeSize);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putInt(memory.getInt(rec + Long.BYTES));
+            }
+            for (long i = 0; i < dequeSize; i++) {
+                sink.putInt(dequeMemory.getInt(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE));
             }
         }
 
@@ -7362,21 +7199,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV
-                        : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+                this.tombstoneValueIndex = 5;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -7592,35 +7429,24 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor((long) bufferSize * Integer.BYTES) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeStartIndex = source.getLong(offset);
-                offset += Long.BYTES;
-                final long dequeEndIndex = source.getLong(offset);
-                offset += Long.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putInt(newStartOffset + (long) i * Integer.BYTES, source.getInt(offset));
-                    offset += Integer.BYTES;
-                }
-                final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Integer.BYTES) - dequeMemory.getPageAddress(0);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    dequeMemory.putInt(newDequeStartOffset + (long) i * Integer.BYTES, source.getInt(offset));
-                    offset += Integer.BYTES;
-                }
-                mv.putLong(0, loIdx);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, newDequeStartOffset);
-                mv.putLong(3, dequeStartIndex);
-                mv.putLong(4, dequeEndIndex);
-            } else {
-                mv.putLong(2, source.getInt(offset));
+            final long dequeStartIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            final long dequeEndIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putInt(newStartOffset + (long) i * Integer.BYTES, source.getInt(offset));
                 offset += Integer.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putInt(newStartOffset + (long) i * Integer.BYTES, source.getInt(offset));
-                    offset += Integer.BYTES;
-                }
-                mv.putLong(0, loIdx);
-                mv.putLong(1, newStartOffset);
             }
+            final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Integer.BYTES) - dequeMemory.getPageAddress(0);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                dequeMemory.putInt(newDequeStartOffset + (long) i * Integer.BYTES, source.getInt(offset));
+                offset += Integer.BYTES;
+            }
+            mv.putLong(0, loIdx);
+            mv.putLong(1, newStartOffset);
+            mv.putLong(2, newDequeStartOffset);
+            mv.putLong(3, dequeStartIndex);
+            mv.putLong(4, dequeEndIndex);
             if (tombstoneValueIndex >= 0) {
                 mv.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -7645,21 +7471,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue mv) {
             sink.putLong(mv.getLong(0)); // loIdx
             final long startOffset = mv.getLong(1);
-            if (frameLoBounded) {
-                sink.putLong(mv.getLong(3)); // dequeStartIndex
-                sink.putLong(mv.getLong(4)); // dequeEndIndex
-                for (int i = 0; i < bufferSize; i++) {
-                    sink.putInt(memory.getInt(startOffset + (long) i * Integer.BYTES));
-                }
-                final long dequeStartOffset = mv.getLong(2);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    sink.putInt(dequeMemory.getInt(dequeStartOffset + (long) i * Integer.BYTES));
-                }
-            } else {
-                sink.putInt((int) mv.getLong(2));
-                for (int i = 0; i < bufferSize; i++) {
-                    sink.putInt(memory.getInt(startOffset + (long) i * Integer.BYTES));
-                }
+            sink.putLong(mv.getLong(3)); // dequeStartIndex
+            sink.putLong(mv.getLong(4)); // dequeEndIndex
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putInt(memory.getInt(startOffset + (long) i * Integer.BYTES));
+            }
+            final long dequeStartOffset = mv.getLong(2);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                sink.putInt(dequeMemory.getInt(dequeStartOffset + (long) i * Integer.BYTES));
             }
         }
 
@@ -8438,7 +8257,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-
         @Override
         public int getPassCount() {
             return TWO_PASS;
@@ -8537,7 +8355,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
@@ -8634,21 +8451,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV
-                        : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+                this.tombstoneValueIndex = 9;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -8949,47 +8766,30 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             offset += Long.BYTES;
             final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeSize = source.getLong(offset);
+            final long dequeSize = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long i = 0; i < size; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
-                for (long i = 0; i < size; i++) {
-                    final long rec = newStartOffset + i * RECORD_SIZE;
-                    memory.putLong(rec, source.getLong(offset));
-                    offset += Long.BYTES;
-                    memory.putLong(rec + Long.BYTES, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
-                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
-                for (long i = 0; i < dequeSize; i++) {
-                    dequeMemory.putLong(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                mv.putLong(0, frameSize);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, size);
-                mv.putLong(3, capacity);
-                mv.putLong(4, 0L);
-                mv.putLong(5, newDequeStartOffset);
-                mv.putLong(6, dequeCapacity);
-                mv.putLong(7, 0L);
-                mv.putLong(8, dequeSize);
-            } else {
-                mv.putLong(5, source.getLong(offset));
+                memory.putLong(rec + Long.BYTES, source.getLong(offset));
                 offset += Long.BYTES;
-                for (long i = 0; i < size; i++) {
-                    final long rec = newStartOffset + i * RECORD_SIZE;
-                    memory.putLong(rec, source.getLong(offset));
-                    offset += Long.BYTES;
-                    memory.putLong(rec + Long.BYTES, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                mv.putLong(0, frameSize);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, size);
-                mv.putLong(3, capacity);
-                mv.putLong(4, 0L);
             }
+            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+            for (long i = 0; i < dequeSize; i++) {
+                dequeMemory.putLong(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            mv.putLong(0, frameSize);
+            mv.putLong(1, newStartOffset);
+            mv.putLong(2, size);
+            mv.putLong(3, capacity);
+            mv.putLong(4, 0L);
+            mv.putLong(5, newDequeStartOffset);
+            mv.putLong(6, dequeCapacity);
+            mv.putLong(7, 0L);
+            mv.putLong(8, dequeSize);
             if (tombstoneValueIndex >= 0) {
                 mv.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -9018,28 +8818,19 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             final long capacity = mv.getLong(3);
             final long firstIdx = mv.getLong(4);
             sink.putLong(size);
-            if (frameLoBounded) {
-                final long dequeStartOffset = mv.getLong(5);
-                final long dequeCapacity = mv.getLong(6);
-                final long dequeStartIndex = mv.getLong(7);
-                final long dequeEndIndex = mv.getLong(8);
-                final long dequeSize = dequeEndIndex - dequeStartIndex;
-                sink.putLong(dequeSize);
-                for (long i = 0; i < size; i++) {
-                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
-                    sink.putLong(memory.getLong(rec));
-                    sink.putLong(memory.getLong(rec + Long.BYTES));
-                }
-                for (long i = 0; i < dequeSize; i++) {
-                    sink.putLong(dequeMemory.getLong(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE));
-                }
-            } else {
-                sink.putLong((long) mv.getLong(5));
-                for (long i = 0; i < size; i++) {
-                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
-                    sink.putLong(memory.getLong(rec));
-                    sink.putLong(memory.getLong(rec + Long.BYTES));
-                }
+            final long dequeStartOffset = mv.getLong(5);
+            final long dequeCapacity = mv.getLong(6);
+            final long dequeStartIndex = mv.getLong(7);
+            final long dequeEndIndex = mv.getLong(8);
+            final long dequeSize = dequeEndIndex - dequeStartIndex;
+            sink.putLong(dequeSize);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putLong(memory.getLong(rec + Long.BYTES));
+            }
+            for (long i = 0; i < dequeSize; i++) {
+                sink.putLong(dequeMemory.getLong(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE));
             }
         }
 
@@ -9133,21 +8924,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV
-                        : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+                this.tombstoneValueIndex = 5;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -9363,35 +9154,24 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeStartIndex = source.getLong(offset);
+            final long dequeStartIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            final long dequeEndIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
                 offset += Long.BYTES;
-                final long dequeEndIndex = source.getLong(offset);
-                offset += Long.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Long.BYTES) - dequeMemory.getPageAddress(0);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    dequeMemory.putLong(newDequeStartOffset + (long) i * Long.BYTES, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                mv.putLong(0, loIdx);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, newDequeStartOffset);
-                mv.putLong(3, dequeStartIndex);
-                mv.putLong(4, dequeEndIndex);
-            } else {
-                mv.putLong(2, source.getLong(offset));
-                offset += Long.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                mv.putLong(0, loIdx);
-                mv.putLong(1, newStartOffset);
             }
+            final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Long.BYTES) - dequeMemory.getPageAddress(0);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                dequeMemory.putLong(newDequeStartOffset + (long) i * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            mv.putLong(0, loIdx);
+            mv.putLong(1, newStartOffset);
+            mv.putLong(2, newDequeStartOffset);
+            mv.putLong(3, dequeStartIndex);
+            mv.putLong(4, dequeEndIndex);
             if (tombstoneValueIndex >= 0) {
                 mv.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -9416,21 +9196,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue mv) {
             sink.putLong(mv.getLong(0)); // loIdx
             final long startOffset = mv.getLong(1);
-            if (frameLoBounded) {
-                sink.putLong(mv.getLong(3)); // dequeStartIndex
-                sink.putLong(mv.getLong(4)); // dequeEndIndex
-                for (int i = 0; i < bufferSize; i++) {
-                    sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
-                }
-                final long dequeStartOffset = mv.getLong(2);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    sink.putLong(dequeMemory.getLong(dequeStartOffset + (long) i * Long.BYTES));
-                }
-            } else {
-                sink.putLong((long) mv.getLong(2));
-                for (int i = 0; i < bufferSize; i++) {
-                    sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
-                }
+            sink.putLong(mv.getLong(3)); // dequeStartIndex
+            sink.putLong(mv.getLong(4)); // dequeEndIndex
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
+            }
+            final long dequeStartOffset = mv.getLong(2);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                sink.putLong(dequeMemory.getLong(dequeStartOffset + (long) i * Long.BYTES));
             }
         }
 
@@ -10212,7 +9985,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-
         @Override
         public int getPassCount() {
             return TWO_PASS;
@@ -10311,7 +10083,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
@@ -10408,21 +10179,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV
-                        : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+                this.tombstoneValueIndex = 9;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -10723,47 +10494,30 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             offset += Long.BYTES;
             final long capacity = Math.max(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeSize = source.getLong(offset);
+            final long dequeSize = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long i = 0; i < size; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
-                for (long i = 0; i < size; i++) {
-                    final long rec = newStartOffset + i * RECORD_SIZE;
-                    memory.putLong(rec, source.getLong(offset));
-                    offset += Long.BYTES;
-                    memory.putByte(rec + Long.BYTES, source.getByte(offset));
-                    offset += Byte.BYTES;
-                }
-                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
-                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
-                for (long i = 0; i < dequeSize; i++) {
-                    dequeMemory.putByte(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getByte(offset));
-                    offset += Byte.BYTES;
-                }
-                mv.putLong(0, frameSize);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, size);
-                mv.putLong(3, capacity);
-                mv.putLong(4, 0L);
-                mv.putLong(5, newDequeStartOffset);
-                mv.putLong(6, dequeCapacity);
-                mv.putLong(7, 0L);
-                mv.putLong(8, dequeSize);
-            } else {
-                mv.putLong(5, source.getByte(offset));
+                memory.putByte(rec + Long.BYTES, source.getByte(offset));
                 offset += Byte.BYTES;
-                for (long i = 0; i < size; i++) {
-                    final long rec = newStartOffset + i * RECORD_SIZE;
-                    memory.putLong(rec, source.getLong(offset));
-                    offset += Long.BYTES;
-                    memory.putByte(rec + Long.BYTES, source.getByte(offset));
-                    offset += Byte.BYTES;
-                }
-                mv.putLong(0, frameSize);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, size);
-                mv.putLong(3, capacity);
-                mv.putLong(4, 0L);
             }
+            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+            for (long i = 0; i < dequeSize; i++) {
+                dequeMemory.putByte(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getByte(offset));
+                offset += Byte.BYTES;
+            }
+            mv.putLong(0, frameSize);
+            mv.putLong(1, newStartOffset);
+            mv.putLong(2, size);
+            mv.putLong(3, capacity);
+            mv.putLong(4, 0L);
+            mv.putLong(5, newDequeStartOffset);
+            mv.putLong(6, dequeCapacity);
+            mv.putLong(7, 0L);
+            mv.putLong(8, dequeSize);
             if (tombstoneValueIndex >= 0) {
                 mv.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -10792,28 +10546,19 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             final long capacity = mv.getLong(3);
             final long firstIdx = mv.getLong(4);
             sink.putLong(size);
-            if (frameLoBounded) {
-                final long dequeStartOffset = mv.getLong(5);
-                final long dequeCapacity = mv.getLong(6);
-                final long dequeStartIndex = mv.getLong(7);
-                final long dequeEndIndex = mv.getLong(8);
-                final long dequeSize = dequeEndIndex - dequeStartIndex;
-                sink.putLong(dequeSize);
-                for (long i = 0; i < size; i++) {
-                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
-                    sink.putLong(memory.getLong(rec));
-                    sink.putByte(memory.getByte(rec + Long.BYTES));
-                }
-                for (long i = 0; i < dequeSize; i++) {
-                    sink.putByte(dequeMemory.getByte(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE));
-                }
-            } else {
-                sink.putByte((byte) mv.getLong(5));
-                for (long i = 0; i < size; i++) {
-                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
-                    sink.putLong(memory.getLong(rec));
-                    sink.putByte(memory.getByte(rec + Long.BYTES));
-                }
+            final long dequeStartOffset = mv.getLong(5);
+            final long dequeCapacity = mv.getLong(6);
+            final long dequeStartIndex = mv.getLong(7);
+            final long dequeEndIndex = mv.getLong(8);
+            final long dequeSize = dequeEndIndex - dequeStartIndex;
+            sink.putLong(dequeSize);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putByte(memory.getByte(rec + Long.BYTES));
+            }
+            for (long i = 0; i < dequeSize; i++) {
+                sink.putByte(dequeMemory.getByte(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE));
             }
         }
 
@@ -10907,21 +10652,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.name = name;
             this.type = type;
             this.liveView = liveView;
-            if (liveView) {
+            // Only the bounded-lo frame reaches a live view; an unbounded start is
+            // rejected at CREATE, so that arm keeps the plain layout and reports no
+            // checkpoint support.
+            if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                     keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
                 }
                 this.keyColumnTypes = keyTypesCopy;
-                final ArrayColumnTypes srcValueTypes = frameLoBounded
-                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV
-                        : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV;
                 ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
-                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
-                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                for (int i = 0, n = MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+                this.tombstoneValueIndex = 5;
             } else {
                 this.keyColumnTypes = null;
                 this.mapValueTypes = null;
@@ -11137,35 +10882,24 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             final long loIdx = source.getLong(offset);
             offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor((long) bufferSize * Byte.BYTES) - memory.getPageAddress(0);
-            if (frameLoBounded) {
-                final long dequeStartIndex = source.getLong(offset);
-                offset += Long.BYTES;
-                final long dequeEndIndex = source.getLong(offset);
-                offset += Long.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putByte(newStartOffset + (long) i * Byte.BYTES, source.getByte(offset));
-                    offset += Byte.BYTES;
-                }
-                final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Byte.BYTES) - dequeMemory.getPageAddress(0);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    dequeMemory.putByte(newDequeStartOffset + (long) i * Byte.BYTES, source.getByte(offset));
-                    offset += Byte.BYTES;
-                }
-                mv.putLong(0, loIdx);
-                mv.putLong(1, newStartOffset);
-                mv.putLong(2, newDequeStartOffset);
-                mv.putLong(3, dequeStartIndex);
-                mv.putLong(4, dequeEndIndex);
-            } else {
-                mv.putLong(2, source.getByte(offset));
+            final long dequeStartIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            final long dequeEndIndex = source.getLong(offset);
+            offset += Long.BYTES;
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putByte(newStartOffset + (long) i * Byte.BYTES, source.getByte(offset));
                 offset += Byte.BYTES;
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putByte(newStartOffset + (long) i * Byte.BYTES, source.getByte(offset));
-                    offset += Byte.BYTES;
-                }
-                mv.putLong(0, loIdx);
-                mv.putLong(1, newStartOffset);
             }
+            final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Byte.BYTES) - dequeMemory.getPageAddress(0);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                dequeMemory.putByte(newDequeStartOffset + (long) i * Byte.BYTES, source.getByte(offset));
+                offset += Byte.BYTES;
+            }
+            mv.putLong(0, loIdx);
+            mv.putLong(1, newStartOffset);
+            mv.putLong(2, newDequeStartOffset);
+            mv.putLong(3, dequeStartIndex);
+            mv.putLong(4, dequeEndIndex);
             if (tombstoneValueIndex >= 0) {
                 mv.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -11190,21 +10924,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue mv) {
             sink.putLong(mv.getLong(0)); // loIdx
             final long startOffset = mv.getLong(1);
-            if (frameLoBounded) {
-                sink.putLong(mv.getLong(3)); // dequeStartIndex
-                sink.putLong(mv.getLong(4)); // dequeEndIndex
-                for (int i = 0; i < bufferSize; i++) {
-                    sink.putByte(memory.getByte(startOffset + (long) i * Byte.BYTES));
-                }
-                final long dequeStartOffset = mv.getLong(2);
-                for (int i = 0; i < dequeBufferSize; i++) {
-                    sink.putByte(dequeMemory.getByte(dequeStartOffset + (long) i * Byte.BYTES));
-                }
-            } else {
-                sink.putByte((byte) mv.getLong(2));
-                for (int i = 0; i < bufferSize; i++) {
-                    sink.putByte(memory.getByte(startOffset + (long) i * Byte.BYTES));
-                }
+            sink.putLong(mv.getLong(3)); // dequeStartIndex
+            sink.putLong(mv.getLong(4)); // dequeEndIndex
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putByte(memory.getByte(startOffset + (long) i * Byte.BYTES));
+            }
+            final long dequeStartOffset = mv.getLong(2);
+            for (int i = 0; i < dequeBufferSize; i++) {
+                sink.putByte(dequeMemory.getByte(dequeStartOffset + (long) i * Byte.BYTES));
             }
         }
 
@@ -11986,7 +11713,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-
         @Override
         public int getPassCount() {
             return TWO_PASS;
@@ -12041,16 +11767,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
 
-        // Live-view unbounded-preceding RANGE layout for Decimal8/16/32/64. Slots
-        // 0-4 are frame bookkeeping; slot 5 keeps the running max/min in a LONG
-        // (the narrow widths store the raw decimal bits there). Slot 6 is the
-        // anchor-driven tombstone.
-        MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV = new ArrayColumnTypes();
-        for (int i = 0; i < 6; i++) {
-            MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);
-        }
-        MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.BYTE); // slot 6: tombstone
-
         MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES = new ArrayColumnTypes();
         for (int i = 0; i < 9; i++) {
             MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES.add(ColumnType.LONG);
@@ -12068,15 +11784,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
-
-        // Live-view unbounded-preceding ROWS layout for Decimal8/16/32/64. Slot 0
-        // is loIdx, slot 1 startOffset, slot 2 the running max/min in a LONG, slot
-        // 3 the tombstone.
-        MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV = new ArrayColumnTypes();
-        MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
-        MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
-        MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
-        MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.BYTE); // slot 3: tombstone
 
         MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES = new ArrayColumnTypes();
         for (int i = 0; i < 5; i++) {
@@ -12107,29 +11814,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES.add(ColumnType.DECIMAL128);
 
-        // Live-view unbounded-preceding RANGE layout for Decimal128. Slots 0-4 are
-        // frame bookkeeping, slot 5 the running max/min (DECIMAL128), slot 6 the
-        // tombstone.
-        MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV = new ArrayColumnTypes();
-        for (int i = 0; i < 5; i++) {
-            MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);
-        }
-        MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.DECIMAL128); // slot 5: max/min value
-        MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.BYTE);       // slot 6: tombstone
-
         MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES = new ArrayColumnTypes();
         MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES.add(ColumnType.DECIMAL128);
-
-        // Live-view unbounded-preceding ROWS layout for Decimal128. Slot 0 loIdx,
-        // slot 1 startOffset, slot 2 the running max/min (DECIMAL128), slot 3 the
-        // tombstone.
-        MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV = new ArrayColumnTypes();
-        MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
-        MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
-        MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.DECIMAL128); // slot 2: max/min value
-        MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.BYTE);       // slot 3: tombstone
 
         MAX_DECIMAL256_TYPES = new ArrayColumnTypes();
         MAX_DECIMAL256_TYPES.add(ColumnType.DECIMAL256);
@@ -12146,28 +11834,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES.add(ColumnType.DECIMAL256);
 
-        // Live-view unbounded-preceding RANGE layout for Decimal256. Slots 0-4 are
-        // frame bookkeeping, slot 5 the running max/min (DECIMAL256), slot 6 the
-        // tombstone.
-        MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV = new ArrayColumnTypes();
-        for (int i = 0; i < 5; i++) {
-            MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);
-        }
-        MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.DECIMAL256); // slot 5: max/min value
-        MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.BYTE);       // slot 6: tombstone
-
         MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES = new ArrayColumnTypes();
         MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES.add(ColumnType.DECIMAL256);
-
-        // Live-view unbounded-preceding ROWS layout for Decimal256. Slot 0 loIdx,
-        // slot 1 startOffset, slot 2 the running max/min (DECIMAL256), slot 3 the
-        // tombstone.
-        MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV = new ArrayColumnTypes();
-        MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
-        MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
-        MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.DECIMAL256); // slot 2: max/min value
-        MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.BYTE);       // slot 3: tombstone
     }
 }

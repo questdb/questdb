@@ -1550,6 +1550,22 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertNoRefreshFaults("lv");
     }
 
+    // Differential oracle for the first_value IGNORE NULLS wrapped-ring restart test: the LV must
+    // equal the same windowed first_value recomputed straight over the base with the identical
+    // frame. ORDER BY sym, ts is a total order (timestamps are unique per sym).
+    private void assertFirstValueWrappedRangeLvMatchesRecompute() throws SqlException {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(SELECT ts, sym, first_value(val) IGNORE NULLS OVER (PARTITION BY sym ORDER BY ts " +
+                        "RANGE BETWEEN '10' SECOND PRECEDING AND '1' SECOND PRECEDING) AS a FROM base) ORDER BY 2, 1",
+                "(SELECT ts, sym, a FROM lv) ORDER BY 2, 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
+    }
+
     // Differential oracle for the throw-then-retry idempotency test: the LV must
     // equal its running-sum window recomputed straight over the base table.
     // A persist failure mid-flush that neither dropped nor duplicated a row keeps
@@ -4432,6 +4448,67 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testFirstValueIgnoreNullsLaggingRangeRestartThenAppendLong() throws Exception {
         assertFirstValueIgnoreNullsLaggingRangeRestartThenAppend("LONG", "15", "25", "35");
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsWrappedRangeRingSurvivesRestart() throws Exception {
+        // The IGNORE NULLS RANGE accumulator writes its ring in logical order - from firstIdx
+        // forward, size entries - and reloads it rebased onto physical index 0. Only a wrapped ring
+        // tells that apart from a verbatim physical copy, and the fixtures beside this one leave
+        // firstIdx at 0. A sixteen-slot buffer plus a ten-second look-behind over one-second rows
+        // evicts on nearly every row, so by the checkpoint firstIdx sits several slots past the
+        // start and the frame's entries straddle the end of the buffer. Restart rehydrates the
+        // accumulator from that checkpoint; the appended rows below still read frame entries the
+        // restore laid down, so a rotation lost in the round trip diverges from the recompute.
+        setProperty(PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 16);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, sym, first_value(val) IGNORE NULLS OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' SECOND PRECEDING AND '1' SECOND PRECEDING)");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // 60 rows per symbol one second apart, every seventh value NULL so IGNORE NULLS
+                // actually skips entries and the ring holds fewer rows than the frame spans.
+                execute("""
+                        INSERT INTO base
+                        SELECT dateadd('s', ((x - 1) / 2)::int, '2026-01-01T00:00:00.000000Z'::timestamp),
+                               CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END,
+                               CASE WHEN x % 7 = 0 THEN NULL ELSE x::double END
+                        FROM long_sequence(120)""");
+                drainWalQueue();
+                setCurrentMicros(250_000L);
+                drainJob(job);
+                drainWalQueue();
+                assertFirstValueWrappedRangeLvMatchesRecompute();
+            }
+
+            // Simulated restart: rebuild the registry from on-disk state, then drive one refresh so
+            // the head checkpoint rehydrates the wrapped ring.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(500_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                // Each appended row's frame still holds entries the restore laid down, so the
+                // restored ring - not a fresh one - decides its first_value.
+                execute("INSERT INTO base (ts, sym, val) VALUES " +
+                        "('2026-01-01T00:01:00.000000Z', 'a', 101.0), " +
+                        "('2026-01-01T00:01:00.000000Z', 'b', 102.0), " +
+                        "('2026-01-01T00:01:01.000000Z', 'a', 103.0), " +
+                        "('2026-01-01T00:01:01.000000Z', 'b', 104.0)");
+                drainWalQueue();
+                setCurrentMicros(750_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+            assertFirstValueWrappedRangeLvMatchesRecompute();
+
+            execute("DROP LIVE VIEW lv");
+        });
     }
 
     @Test

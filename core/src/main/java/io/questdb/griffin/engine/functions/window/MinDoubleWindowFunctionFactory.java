@@ -133,9 +133,9 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     try {
                         final ArrayColumnTypes valueTypes;
                         if (rowsLo == Long.MIN_VALUE) {
-                            valueTypes = liveView
-                                    ? MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
-                                    : MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
+                            // An unbounded frame start carries no live-view layout: the parser
+                            // turns the shape away at CREATE, so this arm never checkpoints.
+                            valueTypes = MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
                         } else {
                             valueTypes = liveView
                                     ? MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV
@@ -234,9 +234,9 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     try {
                         final ArrayColumnTypes valueTypes;
                         if (rowsLo == Long.MIN_VALUE) {
-                            valueTypes = liveView
-                                    ? MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
-                                    : MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
+                            // An unbounded frame start carries no live-view layout: the parser
+                            // turns the shape away at CREATE, so this arm never checkpoints.
+                            valueTypes = MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
                         } else {
                             valueTypes = liveView
                                     ? MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV
