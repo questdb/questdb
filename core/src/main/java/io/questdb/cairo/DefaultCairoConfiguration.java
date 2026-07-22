@@ -877,7 +877,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlAsOfMemoizedDenseRunThreshold() {
-        return 4096; // provisional; finalized by the K sweep (Task 11)
+        // From the K sweep: fallback eliminates the dense_sym cliff (6250ms -> 11.7ms, ~530x, matches
+        // Dense) for any K below the rows-per-timestamp; sparse-ts (runs of length 1) never trips, so a
+        // low K is costless there. 1024 sits an order of magnitude below observed cliffs and above
+        // incidental small ts clusters, so it won't prematurely abandon memoization on sparse-illiquid data.
+        return 1024;
     }
 
     @Override

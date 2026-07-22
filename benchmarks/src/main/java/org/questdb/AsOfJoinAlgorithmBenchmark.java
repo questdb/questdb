@@ -94,12 +94,19 @@ public class AsOfJoinAlgorithmBenchmark {
     private static final long RIGHT_ROWS = Long.getLong("asof.bench.right.rows", 2_000_000L);
     private static final String ROOT = System.getProperty("java.io.tmpdir") + java.io.File.separator + "asof-adaptive-bench";
     private static final long ROWS = Long.getLong("asof.bench.rows", 300_000L);
+    // memoized dense-timestamp fallback threshold (-1 or huge = effectively disabled).
+    private static final int MEMOIZED_K = Integer.getInteger("asof.bench.memoized.k", Integer.MAX_VALUE);
     // Read by the config below at factory-construction time; setUp() flips it per @Param.
     private static volatile long adaptiveBudget = -1;
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(ROOT) {
         @Override
         public long getSqlAsOfAdaptiveBackScanBudget() {
             return adaptiveBudget;
+        }
+
+        @Override
+        public int getSqlAsOfMemoizedDenseRunThreshold() {
+            return MEMOIZED_K;
         }
     };
     private static CairoEngine engine;
