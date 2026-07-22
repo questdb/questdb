@@ -179,7 +179,7 @@ public final class LiveViewCheckpointFunctionCompiler {
         // current row, and SqlCodeGenerator has already run validateRange() over every
         // live-view window expression, so such a frame is known to be ordered by the
         // designated timestamp ascending and its width is safe to read as a timestamp offset.
-        final boolean isRange = kind == DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW;
+        final boolean isRange = kind == DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI;
         final long frameLo = isRange
                 ? rangeFrameLo(function.getName(), window, timestampType)
                 : window.getRowsLo();
@@ -501,7 +501,7 @@ public final class LiveViewCheckpointFunctionCompiler {
             @NotNull CharSequence functionName,
             @NotNull RecordMetadata baseMetadata
     ) throws SqlException {
-        if (dependencyKind(functionName, window) == DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW) {
+        if (dependencyKind(functionName, window) == DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI) {
             validateRangeOrder(functionName, window, baseMetadata);
         }
     }
@@ -545,13 +545,13 @@ public final class LiveViewCheckpointFunctionCompiler {
                 && rowsHi != Long.MIN_VALUE && rowsHi <= 0
                 && hasSupportedExclusion(window)) {
             if (window.getFramingMode() == WindowExpression.FRAMING_ROWS) {
-                return DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW;
+                return DependencyKind.ROWS_N_PRECEDING_BOUNDED_HI;
             }
             if (window.getFramingMode() == WindowExpression.FRAMING_RANGE
                     && window.getRowsLoKind() == WindowExpression.PRECEDING
                     && (window.getRowsHiKind() == WindowExpression.CURRENT
                     || window.getRowsHiKind() == WindowExpression.PRECEDING)) {
-                return DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW;
+                return DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI;
             }
         }
         if (window.getRowsLo() == Long.MIN_VALUE && rowsHi == 0) {

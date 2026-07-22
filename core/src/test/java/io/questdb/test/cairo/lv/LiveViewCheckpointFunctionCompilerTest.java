@@ -114,7 +114,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                             + "range between 10 preceding and current row) as a from base",
                     0
             );
-            Assert.assertEquals(DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW, range.dependency.getKind());
+            Assert.assertEquals(DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI, range.dependency.getKind());
             Assert.assertEquals(-10, range.dependency.getFrameLo());
             Assert.assertEquals(0, range.dependency.getFrameHi());
             Assert.assertEquals(10, range.dependency.getRangeFrameWidth());
@@ -132,7 +132,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                             + "rows between 3 preceding and current row) as c from base",
                     0
             );
-            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW, rows.dependency.getKind());
+            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_BOUNDED_HI, rows.dependency.getKind());
             Assert.assertEquals(-3, rows.dependency.getFrameLo());
             Assert.assertEquals(0, rows.dependency.getFrameHi());
             Assert.assertEquals(NumericConvergence.EXACT, rows.dependency.getNumericConvergence());
@@ -549,7 +549,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                             + "range between '3' hour preceding and '1' hour preceding) a from base",
                     0
             );
-            Assert.assertEquals(DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW, range.dependency.getKind());
+            Assert.assertEquals(DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI, range.dependency.getKind());
             Assert.assertEquals(-10_800_000_000L, range.dependency.getFrameLo());
             Assert.assertEquals(-3_600_000_000L, range.dependency.getFrameHi());
             Assert.assertTrue(range.dependency.isFiniteRange());
@@ -565,7 +565,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                             + "rows between 10 preceding and 2 preceding) s from base",
                     0
             );
-            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW, rows.dependency.getKind());
+            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_BOUNDED_HI, rows.dependency.getKind());
             Assert.assertEquals(-10, rows.dependency.getFrameLo());
             Assert.assertEquals(-2, rows.dependency.getFrameHi());
             Assert.assertTrue(rows.dependency.isFiniteRows());
@@ -664,7 +664,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             );
             Assert.assertEquals(-3, rows.dependency.getFrameLo());
             Assert.assertEquals(-1, rows.dependency.getFrameHi());
-            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW, rows.dependency.getKind());
+            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_BOUNDED_HI, rows.dependency.getKind());
             Assert.assertTrue(rows.dependency.isFiniteRows());
             Assert.assertEquals(3, rows.dependency.getRowsPrecedingCount());
             Assert.assertNotNull(rows.rowsPlan);
@@ -679,7 +679,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                     0
             );
             Assert.assertEquals(-1, range.dependency.getFrameHi());
-            Assert.assertEquals(DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW, range.dependency.getKind());
+            Assert.assertEquals(DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI, range.dependency.getKind());
             Assert.assertTrue(range.dependency.isFiniteRange());
             Assert.assertEquals(2_000_000L, range.dependency.getRangeFrameWidth());
             Assert.assertNotNull(range.rangePlan);
@@ -693,7 +693,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                     0
             );
             Assert.assertEquals(0, unexcluded.dependency.getFrameHi());
-            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW, unexcluded.dependency.getKind());
+            Assert.assertEquals(DependencyKind.ROWS_N_PRECEDING_BOUNDED_HI, unexcluded.dependency.getKind());
             Assert.assertTrue(unexcluded.dependency.isFiniteRows());
             Assert.assertNotNull(unexcluded.rowsPlan);
         });

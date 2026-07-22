@@ -190,8 +190,8 @@ public class LiveViewCheckpointContractsTest {
         // Every row of the supported-window matrix, pinned exactly. A change to
         // any disposition must be a deliberate edit to this map.
         final Map<DependencyKind, Disposition> expected = new EnumMap<>(DependencyKind.class);
-        expected.put(DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW, Disposition.ELIGIBLE);
-        expected.put(DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW, Disposition.ELIGIBLE);
+        expected.put(DependencyKind.ROWS_N_PRECEDING_BOUNDED_HI, Disposition.ELIGIBLE);
+        expected.put(DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI, Disposition.ELIGIBLE);
         expected.put(DependencyKind.FIXED_ANCHOR_SEGMENT, Disposition.ELIGIBLE);
         expected.put(DependencyKind.UNBOUNDED_CUMULATIVE_NO_RESET, Disposition.REJECT);
         expected.put(DependencyKind.UNANCHORED_RANK, Disposition.REJECT);

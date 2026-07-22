@@ -206,7 +206,7 @@ public final class LiveViewCheckpointDependency {
      * {@code Long.MAX_VALUE PRECEDING} is what gets there.
      */
     public boolean isFiniteRange() {
-        return kind == DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW
+        return kind == DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI
                 && frameLo != Long.MIN_VALUE
                 && frameLo <= 0
                 && frameHi != Long.MIN_VALUE
@@ -235,7 +235,7 @@ public final class LiveViewCheckpointDependency {
      * is turned away for the reason {@link #isFiniteRange()} gives.
      */
     public boolean isFiniteRows() {
-        return kind == DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW
+        return kind == DependencyKind.ROWS_N_PRECEDING_BOUNDED_HI
                 && frameLo != Long.MIN_VALUE
                 && frameLo <= 0
                 && frameHi != Long.MIN_VALUE

@@ -194,19 +194,39 @@ public final class LiveViewCheckpointContracts {
      */
     public enum DependencyKind {
         /**
-         * {@code ROWS N PRECEDING ... CURRENT ROW}. Finite look-behind and a
+         * {@code ROWS N PRECEDING} ending at or below the current row - at
+         * {@code CURRENT ROW}, at {@code M PRECEDING}, or at the {@code -1} an
+         * {@code EXCLUDE CURRENT ROW} frame evaluates. Finite look-behind and a
          * finite following-row count give both bounds.
+         * <p>
+         * A lagging high bound rides on the same look-behind {@code Nmax}. The
+         * frame at a key's {@code i}-th row above the change spans
+         * {@code [f_i - Nmax, f_i - M]}, so it holds the change exactly while
+         * {@code M <= i <= Nmax}: the forward scan converges on the upper end,
+         * which the lag does not move, and the lower end only removes rows from
+         * the affected set. Both strategies below therefore stay valid, and both
+         * are looser than a lagging frame needs.
          */
-        ROWS_N_PRECEDING_CURRENT_ROW(
+        ROWS_N_PRECEDING_BOUNDED_HI(
                 "at most Nmax qualifying predecessors for every key in Q",
                 "Nmax qualifying following rows for every key in A, through the final timestamp tie",
                 Disposition.ELIGIBLE
         ),
         /**
-         * {@code RANGE W PRECEDING ... CURRENT ROW} with a constant finite
-         * {@code W}. Timestamp arithmetic derives both bounds directly.
+         * {@code RANGE W PRECEDING} with a constant finite {@code W}, ending at
+         * or below the current row - at {@code CURRENT ROW}, at {@code V
+         * PRECEDING}, or at the one tick below an {@code EXCLUDE CURRENT ROW}
+         * frame evaluates. Timestamp arithmetic derives both bounds directly.
+         * <p>
+         * A lagging high bound rides on the same width {@code W}. Output at
+         * {@code t} reads {@code [t - W, t - V]}, a subset of the
+         * {@code [t - W, t]} the same-width frame ending at the current row
+         * reads, so a replay from {@code R - W} still feeds every row the frame
+         * admits; and a base row at {@code m} joins the frame of output in
+         * {@code [m + V, m + W]} only, so nothing at or above
+         * {@code maxChangedTimestamp + W} can have moved.
          */
-        RANGE_W_PRECEDING_CURRENT_ROW(
+        RANGE_W_PRECEDING_BOUNDED_HI(
                 "saturating R - W, clamped to S",
                 "after maxChangedTimestamp + W, including the complete upper tie",
                 Disposition.ELIGIBLE
@@ -252,6 +272,14 @@ public final class LiveViewCheckpointContracts {
          * {@code FOLLOWING} frames, arbitrary anchors, and data-dependent frames.
          * Bounds are function-specific or unknown; rejected in the first
          * implementation and revisited later.
+         * <p>
+         * A {@code FOLLOWING} high bound is what keeps this kind rejected, and it
+         * is why the two eligible kinds test the high bound's sign rather than
+         * ignoring it: a base row at {@code m} then joins the frame of output
+         * below {@code m}, so neither {@code R - W} nor
+         * {@code maxChangedTimestamp + W} bounds the repair. A high bound that
+         * merely lags the current row does not land here - the two eligible kinds
+         * admit it on the look-behind they already carry.
          */
         FOLLOWING_OR_DATA_DEPENDENT(
                 "function-specific or unknown",
