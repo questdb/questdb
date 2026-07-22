@@ -2186,7 +2186,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 addI64WidenLeaf(node.rhs);
             }
         }
-        if (isFloatActive && node.paramCount == 2 && isComparisonToken(node.token)) {
+        // Not gated on isFloatActive: an out-of-INT-range constant compared against a narrow
+        // arithmetic subtree has to widen whatever else the predicate contains. markNarrowConstCmp-
+        // WidenPair covers only a bare LITERAL / BIND_VARIABLE leaf, so a unary-minus-wrapped column
+        // (-i < 2147483649) fell through both and the constant was emitted as a lossy F4 immediate.
+        // The scalar and vectorized backends then disagreed with each other, which made the answer
+        // depend on whether the host has AVX2. maybeWidenCmpConstOperand carries its own predicate -
+        // an integer CONSTANT of I8 type against an OPERATION with a narrow genuineArithType - so it
+        // is safe to ask unconditionally.
+        if (node.paramCount == 2 && isComparisonToken(node.token)) {
             maybeWidenCmpConstOperand(node.lhs, node.rhs);
             maybeWidenCmpConstOperand(node.rhs, node.lhs);
         }
