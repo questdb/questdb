@@ -1594,6 +1594,39 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(varchar_header avarchar)(i64 4L)(<>)(ret)");
     }
 
+    @Test
+    public void testWideLanePredictionMissKeepsShortCircuit() throws Exception {
+        // A wide-lane prediction that emits no conversion must not cost AND_SC short-circuiting
+        // and predicate reordering: the backend runs the same scalar loop either way (compiler.cpp
+        // takes avx2_loop only for the single-size and wide-lane hints), so suppressing the
+        // short-circuit buys nothing and costs an evaluation of every conjunct on every row.
+        int options = serialize("adouble > 1.1 and anint = 5", false, false, false);
+        assertIR("(i32 5L)(i32 anint)(=)(&&_sc)(f64 1.1D)(f64 adouble)(>)(ret)");
+        assertOptionsHint("DOUBLE column vs inexact constant", options, OptionsHint.MIXED_SIZES);
+
+        // Same shape without a float in sight: the fold is read at I8 by the wide-lane trigger and
+        // at I4 by the width marker, so nothing widens here either.
+        options = serialize("anint = (2_000_000_000 + 2_000_000_000) and along = 7", false, false, false);
+        assertIR("(i64 7L)(i64 along)(=)(&&_sc)(i32 -294967296L)(i32 anint)(=)(ret)");
+        assertOptionsHint("cancelling INT fold", options, OptionsHint.MIXED_SIZES);
+
+        // OR chains ride the same gate, so pin OR_SC too.
+        options = serialize("adouble > 1.1 or anint = 5", false, false, false);
+        assertIR("(f64 1.1D)(f64 adouble)(>)(||_sc)(i32 5L)(i32 anint)(=)(ret)");
+        assertOptionsHint("OR chain", options, OptionsHint.MIXED_SIZES);
+
+        // Control: an F4 leaf against a constant that no float reproduces DOES widen, so this one
+        // must keep the four-lane path and its lane-wise boolean operators. The second conjunct is
+        // 8 bytes wide on purpose - against a 4-byte one the sizes match, the mixed-size detector
+        // could not fire whatever the gate answered, and the case would pass even with the gate
+        // wired shut. Mixed widths make it bite: were the gate to under-report here, the
+        // short-circuit path would run, markFloatCmpConst would still widen, and the wide-lane
+        // guard in serializePredicatesAndSc would throw.
+        options = serialize("afloat < 1.00000003 and along = 5", false, false, false);
+        assertIR("(i64 5L)(i64 along)(=)(f64 1.00000003D)(f32 afloat)(<)(&&)(ret)");
+        assertOptionsHint("genuine wide-lane conversion", options, OptionsHint.WIDE_LANE);
+    }
+
     private void assertIR(String message, String expectedIR) {
         TestIRSerializer ser = new TestIRSerializer(irMemory, metadata);
         String actualIR = ser.serialize();

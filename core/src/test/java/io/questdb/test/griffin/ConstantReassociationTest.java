@@ -254,6 +254,36 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongNullOperandUnderUnmodeledOperatorIsNotReassociated() throws Exception {
+        // CHARACTERIZATION, not pinned semantics. applyLongFold returns LONG_NULL for a LONG_NULL
+        // operand BEFORE it inspects the operator, so a constant subtree rooted at an operator the
+        // fold does not model still counts as a valid long-width fold once either side has folded
+        // to the sentinel. isReassociationSafe then stays closed over the pair. The contrast case
+        // below shows the same shape WITHOUT a sentinel does regroup, so what these assert is a
+        // conservative accident of the sentinel short-circuit rather than a required outcome -
+        // these are boolean subtrees, outside the integer-wrap hazard the guard exists for.
+        //
+        // They are here because collapsing isConstFoldLongValid to "both children valid AND the
+        // operator is modeled" looks equivalent and is not: it drops the sentinel short-circuit,
+        // both operands stop counting as folds, and the guard opens. Nothing else in this class
+        // covers that, so such a change would otherwise land green.
+
+        // Zero-divisor arm: 1 / 0 folds to LONG_NULL, then '=' is unmodeled but the sentinel arm
+        // returns through it anyway.
+        assertReassociationNoOp("b and 1 / 0 = 5 and 1 / 0 = 6");
+        // '%' by zero reaches the sentinel the same way, under a length-2 unmodeled operator.
+        assertReassociationNoOp("b and 1 % 0 <> 5 and 1 % 0 <> 6");
+        // Overflow arm: 2^63-1 + 1 wraps onto the sentinel through a modeled operator, which the
+        // unmodeled '=' above it then returns through. No LEAF can carry LONG_NULL - the parser
+        // emits a prefix '-' as a unary operation, so a negative literal never reaches the fold as
+        // one token - which is why the sentinel has to be manufactured by a fold here.
+        assertReassociationNoOp("b and 9_223_372_036_854_775_807 + 1 = 5 and 9_223_372_036_854_775_807 + 1 = 6");
+
+        // Contrast: drop the sentinel and the identical shape regroups today.
+        assertReassociation("b and 1 = 5 and 1 = 6", "b and (1 = 5 and 1 = 6)");
+    }
+
+    @Test
     public void testMismatchedOperatorsAreNotReassociated() throws Exception {
         // Inner operator differs from outer — lhs.token != token, no reassociation
         assertReassociation("d * 2 + 3", "d * 2 + 3");

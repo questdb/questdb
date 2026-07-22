@@ -55,10 +55,6 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static final int SET_OPERATION = QUERY + 1;
     public static final ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
     public static final int UNKNOWN = 0;
-    // Out-of-INT-range sentinel stored in constFoldIntValue by cacheConstantFold for a
-    // subtree that does not fold to a plain INT constant. A genuine INT fold always lands
-    // in the INT range, so this LONG value can never collide with one.
-    private static final long NOT_INT_CONSTANT = Long.MIN_VALUE;
     public final ObjList<ExpressionNode> args = new ObjList<>(4);
     public boolean implemented;
     public boolean innerPredicate = false;
@@ -84,7 +80,6 @@ public class ExpressionNode implements Mutable, Sinkable {
     // moment a node is marked constant, so isReassociationSafe reads a subtree's fold
     // in O(1) instead of re-walking the accumulating constant chain at every level
     // (which is O(n^2) overall).
-    private long constFoldIntValue = NOT_INT_CONSTANT;   // INT-width fold, or NOT_INT_CONSTANT
     private long constFoldLongValue;  // LONG-width fold, meaningful iff isConstFoldLongValid
     private boolean isConstFoldLongValid;
     private boolean isConstFoldWidening;
@@ -218,7 +213,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         copy.implemented = node.implemented;
         copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
         copy.lateralDepth = node.lateralDepth;
-        copy.constFoldIntValue = node.constFoldIntValue;
         copy.constFoldLongValue = node.constFoldLongValue;
         copy.isConstFoldLongValid = node.isConstFoldLongValid;
         copy.isConstFoldWidening = node.isConstFoldWidening;
@@ -308,7 +302,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         implemented = false;
         windowExpression = null;
         lateralDepth = 0;
-        constFoldIntValue = NOT_INT_CONSTANT;
         constFoldLongValue = 0;
         isConstFoldLongValid = false;
         isConstFoldWidening = false;
@@ -332,7 +325,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.innerPredicate = other.innerPredicate;
         this.windowExpression = other.windowExpression;
         this.lateralDepth = other.lateralDepth;
-        this.constFoldIntValue = other.constFoldIntValue;
         this.constFoldLongValue = other.constFoldLongValue;
         this.isConstFoldLongValid = other.isConstFoldLongValid;
         this.isConstFoldWidening = other.isConstFoldWidening;
@@ -659,42 +651,6 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     /**
-     * Applies one INT arithmetic operator at INT width, wrapping mod 2^32 and
-     * propagating the INT_NULL sentinel exactly as the runtime AddInt / SubInt /
-     * MulInt / DivInt / RemInt / Bitwise{And,Or,Xor}Int functions do. A zero
-     * divisor folds to INT_NULL, matching DivInt / RemInt getInt(). Returns
-     * {@link #NOT_INT_CONSTANT} for an operator outside that set.
-     */
-    private static long applyIntFold(CharSequence opToken, int a, int b) {
-        if (a == Numbers.INT_NULL || b == Numbers.INT_NULL) {
-            return Numbers.INT_NULL;
-        }
-        if (opToken.length() != 1) {
-            return NOT_INT_CONSTANT;
-        }
-        switch (opToken.charAt(0)) {
-            case '+':
-                return a + b;
-            case '-':
-                return a - b;
-            case '*':
-                return a * b;
-            case '/':
-                return b == 0 ? Numbers.INT_NULL : a / b;
-            case '%':
-                return b == 0 ? Numbers.INT_NULL : a % b;
-            case '&':
-                return a & b;
-            case '|':
-                return a | b;
-            case '^':
-                return a ^ b;
-            default:
-                return NOT_INT_CONSTANT;
-        }
-    }
-
-    /**
      * Applies one LONG arithmetic operator at LONG width, wrapping mod 2^64 and
      * propagating the LONG_NULL sentinel exactly as the runtime AddLong / SubLong /
      * MulLong / DivLong / RemLong / Bitwise{And,Or,Xor}Long functions do. A zero
@@ -835,10 +791,6 @@ public class ExpressionNode implements Mutable, Sinkable {
      * cached values mirror the runtime function semantics that the deleted recursive folds
      * modeled:
      * <ul>
-     *   <li>{@code constFoldIntValue} - the INT-width fold (wrapping mod 2^32, as
-     *   IntFunction getInt()) when every leaf is an INT-range integer literal and every
-     *   interior operator is modeled; {@link #NOT_INT_CONSTANT} for anything wider-typed,
-     *   non-numeric, or not foldable at INT width.</li>
      *   <li>{@code constFoldLongValue} / {@code isConstFoldLongValid} - the LONG-width fold
      *   (wrapping mod 2^64, as LongFunction getLong()) for an INT / LONG integer subtree;
      *   invalid for a floating-point / DECIMAL / non-numeric leaf or an unmodeled
@@ -853,24 +805,25 @@ public class ExpressionNode implements Mutable, Sinkable {
     private void cacheConstantFold() {
         if (type == CONSTANT) {
             if (!isNumericConstantToken(token)) {
-                constFoldIntValue = NOT_INT_CONSTANT;
                 isConstFoldLongValid = false;
                 isConstFoldWidening = false;
                 return;
             }
             try {
                 // parseInt rejects an 'L' suffix, a decimal/exponent, and out-of-INT-range
-                // literals, so only genuine INT constants fold here; wider types fall through.
-                constFoldIntValue = Numbers.parseInt(token);
-                // parseLong accepts every token parseInt does and yields the same value, so an
-                // INT literal is trivially a LONG one: don't parse the token a second time.
-                constFoldLongValue = constFoldIntValue;
+                // literals, so only genuine INT constants land here; wider ones fall through to
+                // the parseLong below. The two accept overlapping but INCOMPARABLE token sets -
+                // parseInt takes a leading '+' that parseLong rejects, parseLong takes an 'L'
+                // suffix and the out-of-INT-range literals that parseInt rejects - so a token is
+                // an integer literal when EITHER accepts it, and both are asked. An INT literal
+                // is trivially a LONG one, so this value is already the long-width fold.
+                constFoldLongValue = Numbers.parseInt(token);
                 isConstFoldLongValid = true;
                 // An integer literal never widens; integer pairs are excluded from reassociation.
                 isConstFoldWidening = false;
                 return;
             } catch (NumericException notIntLiteral) {
-                constFoldIntValue = NOT_INT_CONSTANT;
+                // not an INT literal; the long-width parse below may still take it
             }
             try {
                 // parseLong rejects a decimal/exponent and a DECIMAL 'm' suffix, so only
@@ -896,11 +849,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         // children are already constant (their isConstantExpression is set), so their
         // caches are populated. A widening leaf anywhere makes the pair widening.
         isConstFoldWidening = lhs.isConstFoldWidening || rhs.isConstFoldWidening;
-        if (token != null && lhs.constFoldIntValue != NOT_INT_CONSTANT && rhs.constFoldIntValue != NOT_INT_CONSTANT) {
-            constFoldIntValue = applyIntFold(token, (int) lhs.constFoldIntValue, (int) rhs.constFoldIntValue);
-        } else {
-            constFoldIntValue = NOT_INT_CONSTANT;
-        }
         if (token != null && lhs.isConstFoldLongValid && rhs.isConstFoldLongValid) {
             try {
                 constFoldLongValue = applyLongFold(token, lhs.constFoldLongValue, rhs.constFoldLongValue);

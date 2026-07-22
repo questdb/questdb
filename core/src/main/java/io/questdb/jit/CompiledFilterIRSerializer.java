@@ -146,11 +146,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int PRIORITY_OTHER_NEQ = 6;
     private static final int PRIORITY_SYM_EQ = 3;
     private static final int PRIORITY_SYM_NEQ = 7;
+    // Node kinds hasWideLaneConversionSource() looks for. See hasWideLaneSourceNode().
+    private static final int WIDE_LANE_SOURCE_FLOAT_LEAF = 0;
+    private static final int WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST = 1;
+    private static final int WIDE_LANE_SOURCE_LONG_WIDTH_OPERAND = 3;
+    private static final int WIDE_LANE_SOURCE_NARROW_INT_LEAF = 2;
     // Memoizes arithExprType() for the current predicate, keyed by node identity. The classification
     // walks the whole subtree (and folds pure-constant arithmetic), and the marker passes ask for it
     // repeatedly at every level, so without the cache a deep chain costs O(depth^2) subtree walks and
     // re-parses the same constant tokens. The tree does not mutate during serialize(), so the answer
-    // is stable; onNodeDescended() clears the cache when it enters the next predicate.
+    // is stable, and the entry stays valid for every predicate of the same filter, so clear() is the
+    // only reset point - onNodeDescended() deliberately does NOT clear it (see both).
     private final ObjIntHashMap<ExpressionNode> arithExprTypeCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // Memoizes pure-constant long arithmetic folds for the current predicate. Zero records a failed
     // fold; positive values are one-based indexes into constantArithFoldValues.
@@ -624,9 +630,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private boolean requiresWideLanePair(ExpressionNode lhs, ExpressionNode rhs) {
         // NOTE: this accepts F8 as well as F4, while the widening is only ever EMITTED for F4
-        // (isFloatLeaf). That asymmetry costs AND_SC short-circuiting and predicate reordering on a
-        // filter such as "d > 1.1 AND i32 = 5": wide-lane mode is entered, the mixed-size detector is
-        // skipped, no conversion is emitted, and the same scalar loop runs without early exit.
+        // (isFloatLeaf). The asymmetry used to cost two separate things, and only the first of them
+        // is settled here. It no longer costs AND_SC / OR_SC short-circuiting or predicate
+        // reordering: serialize() runs the mixed-size detector whenever hasWideLaneConversionSource()
+        // proves no conversion can be emitted, and that predicate reads the F4 rule this method
+        // deliberately does not. It DOES still demote a filter such as
+        // "adouble > 1.1 AND along > (2000000000 + 2000000000)" out of SINGLE_SIZE, which is the
+        // cost the rest of this comment is about and which needs the visit() terms fixed first.
         //
         // Do NOT "fix" this by narrowing the clause to isFloatLeaf. Measured, that turns
         // "adouble > 1.1 AND along > (2000000000 + 2000000000)" from SINGLE_SIZE into SCALAR with
@@ -702,7 +712,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Short-circuit optimizations (including IN() short-circuit) only work correctly
         // in scalar mode, so we only enable them when scalar mode is certain.
         boolean scalarModeDetected = forceScalar;
-        if (!scalarModeDetected && !isWideLaneMode) {
+        // Wide-lane mode suppresses the short-circuit path because AND_SC / OR_SC cannot branch per
+        // SIMD lane. Entering the mode is not the same as emitting a conversion, though, and
+        // requiresWideLane() deliberately over-accepts: when the prediction misses, getExecHint()
+        // falls back to a mixed / single size hint and the backend runs the very same scalar loop
+        // (compiler.cpp takes avx2_loop only for the single-size and wide-lane hints). Suppressing
+        // the short-circuit there buys nothing and costs an evaluation of every conjunct on every
+        // row, so only suppress it once a conversion is actually possible.
+        if (!scalarModeDetected && (!isWideLaneMode || !hasWideLaneConversionSource(node))) {
             scalarModeDetector.clear();
             traverseAlgo.traverse(node, scalarModeDetector);
             scalarModeDetected = scalarModeDetector.hasMixedSizes();
@@ -1647,6 +1664,89 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.SYMBOL -> prioritySymNeq;
             default -> priorityOtherNeq;
         };
+    }
+
+    /**
+     * Reports whether the tree carries the ingredients a wide-lane conversion is built from, so
+     * {@code false} proves that serializing it cannot set {@link #hasEmittedWideLaneConversion}.
+     * <p>
+     * {@link #requiresWideLane} answers a deliberately broader question - whether to ENTER wide-lane
+     * mode - and over-accepts in two places the emission rules do not follow: it takes any operand
+     * {@link #containsFloatExpression} admits, F8 included, where only an F4 leaf is ever widened
+     * ({@link #isFloatLeaf} excludes F8 because DOUBLE already compares exactly), and it reads an
+     * overflowing constant fold through {@link #arithExprType} where {@link #markWidthSemantics}
+     * reads it through {@link #genuineArithType}. A filter that enters the mode and then emits
+     * nothing still gets a correct hint - {@link #getExecHint} needs both the mode and the emission
+     * to return {@link #EXEC_HINT_WIDE_LANE} - but it used to lose the whole short-circuit path,
+     * because {@link #serialize} suppressed the scalar-mode detector on the mode alone.
+     * <p>
+     * Answering per predicate matches the granularity the width machinery works at: AND / OR delimit
+     * predicates ({@link #isTopLevelOperation} accepts NOT, IN and the comparison operators, never
+     * AND / OR), and {@code needsNarrowI64Widening} and every mark set are recomputed per predicate.
+     * A NOT subtree is one predicate, so this does not recurse into it.
+     * <p>
+     * Erring towards {@code true} only preserves the previous behaviour, so anything uncertain
+     * belongs on the {@code true} side. Should this ever answer {@code false} for a filter that does
+     * emit a conversion, the wide-lane guard in {@link #serializePredicatesAndSc} /
+     * {@link #serializePredicatesOrSc} declines JIT compilation rather than letting a short-circuit
+     * opcode reach the four-lane backend, which cannot branch per lane.
+     */
+    private boolean hasWideLaneConversionSource(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION
+                && (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token))) {
+            return hasWideLaneConversionSource(node.lhs) || hasWideLaneConversionSource(node.rhs);
+        }
+        // Within one predicate a conversion has exactly two sources. markFloatCmpConst fires for an
+        // F4 leaf against a constant that no 32-bit float reproduces, and maybeEmitI64Widening
+        // sign-extends a leaf but returns early unless that leaf is emitted at I1 / I2 / I4 width -
+        // so it needs both a narrow leaf to widen and an I8 operand to widen it towards. Its two
+        // remaining triggers stay inside those bounds: the IN key override only reaches I8 through
+        // an I8 element, and NarrowI64WidenDetector only reports shouldWiden() having observed a
+        // narrow int alongside a long.
+        return (hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_FLOAT_LEAF)
+                && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST))
+                || (hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_NARROW_INT_LEAF)
+                && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_LONG_WIDTH_OPERAND));
+    }
+
+    /**
+     * Reports whether a subtree holds a node of the given {@code WIDE_LANE_SOURCE_*} kind, walking
+     * both operands and the {@code args} of an n-ary node such as IN.
+     */
+    private boolean hasWideLaneSourceNode(ExpressionNode node, int kind) {
+        if (node == null) {
+            return false;
+        }
+        final boolean isMatch = switch (kind) {
+            case WIDE_LANE_SOURCE_FLOAT_LEAF -> isFloatLeaf(node);
+            case WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST -> isFloatWideningConst(node);
+            case WIDE_LANE_SOURCE_NARROW_INT_LEAF -> isNarrowIntLeaf(node);
+            case WIDE_LANE_SOURCE_LONG_WIDTH_OPERAND -> genuineArithType(node) == I8_TYPE;
+            default -> {
+                // Unreachable: kind is always one of the four constants above. Answer true rather
+                // than throwing, because true is the conservative side - it only keeps the
+                // short-circuit suppression this method exists to lift - whereas an error raised
+                // here would reach SqlCodeGenerator's catch (Throwable) and fail the query outright,
+                // instead of declining JIT the way every other failure in this serializer does.
+                assert false : "unexpected wide-lane source kind: " + kind;
+                yield true;
+            }
+        };
+        if (isMatch) {
+            return true;
+        }
+        if (hasWideLaneSourceNode(node.lhs, kind) || hasWideLaneSourceNode(node.rhs, kind)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasWideLaneSourceNode(node.args.getQuick(i), kind)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -3032,10 +3132,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
             // Check if the backend is going to use SIMD, although we expected scalar mode.
             final int execHint = getExecHint(forceScalar);
-            if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
+            if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE || execHint == EXEC_HINT_WIDE_LANE) {
                 // We could handle this via the non-short-circuit code path, but if we get here,
-                // it means that scalarModeDetector did a false-positive scalar mode detection.
-                // In such case, it's a bug we should fix, so let's fail JIT compilation to flag that.
+                // it means that scalarModeDetector did a false-positive scalar mode detection, or
+                // that hasWideLaneConversionSource() cleared a filter that went on to emit a
+                // conversion after all. In such case, it's a bug we should fix, so let's fail JIT
+                // compilation to flag that - a short-circuit opcode cannot branch per SIMD lane and
+                // must never reach the four-lane backend.
                 throw SqlException.position(0).put("expected scalar compilation mode, got: ").put(execHint);
             }
 
@@ -3074,10 +3177,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
             // Check if the backend is going to use SIMD, although we expected scalar mode.
             final int execHint = getExecHint(forceScalar);
-            if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
+            if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE || execHint == EXEC_HINT_WIDE_LANE) {
                 // We could handle this via the non-short-circuit code path, but if we get here,
-                // it means that scalarModeDetector did a false-positive scalar mode detection.
-                // In such case, it's a bug we should fix, so let's fail JIT compilation to flag that.
+                // it means that scalarModeDetector did a false-positive scalar mode detection, or
+                // that hasWideLaneConversionSource() cleared a filter that went on to emit a
+                // conversion after all. In such case, it's a bug we should fix, so let's fail JIT
+                // compilation to flag that - a short-circuit opcode cannot branch per SIMD lane and
+                // must never reach the four-lane backend.
                 throw SqlException.position(0).put("expected scalar compilation mode, got: ").put(execHint);
             }
 

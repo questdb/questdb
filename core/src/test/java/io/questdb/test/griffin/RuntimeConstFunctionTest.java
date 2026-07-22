@@ -50,6 +50,7 @@ import io.questdb.griffin.engine.functions.GeoShortFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.LongWidthIntFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -164,7 +165,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         // constant disagrees with the same expression over a column. -2_856_928_958 wraps to
         // +1_438_038_338 as INT.
         {
-            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new LongWidthIntFunction() {
                 @Override
                 public int getInt(Record rec) {
                     return (int) -2_856_928_958L; // +1_438_038_338
@@ -322,8 +323,10 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             }, c, f -> f.getChar(null), 'Q');
         }
 
-        // INT - the one wrapper that caches two widths, so init() reads the arg twice: once via getInt()
-        // and once via getLong(), which this arg does not override and so routes back through getInt().
+        // INT - the one wrapper that caches two widths. This arg does not override getLong(), so it
+        // is width-stable and init() derives the long from the cached int instead of evaluating the
+        // subtree a second time. The divergent arg, which must still be read twice, is covered by
+        // testIntRuntimeConstReadsTheArgOnlyFromInit.
         {
             final int[] c = {0};
             assertCachedRoundTrip(new IntFunction() {
@@ -337,7 +340,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                 public boolean isRuntimeConstant() {
                     return true;
                 }
-            }, c, f -> f.getInt(null), 1_234_567, 2);
+            }, c, f -> f.getInt(null), 1_234_567);
         }
 
         // LONG
@@ -566,12 +569,13 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertTrue(inner instanceof UnaryFunction);
         assertFalse(((UnaryFunction) inner).getArg() instanceof RuntimeConstFunction);
 
-        // behavioral: the subtree is evaluated in init(), never per row. The subtree is INT-typed, so the
-        // wrapper caches both widths and init() reads it twice - once via getInt() and once via getLong().
-        // What matters is that the count does not grow with the row count.
+        // behavioral: the subtree is evaluated in init(), never per row. rc_unary is a plain INT
+        // pass-through, so it inherits IntFunction.getLong() and reports isIntWidthStable() == true;
+        // the wrapper derives its cached long from the cached int rather than walking the subtree a
+        // second time. What matters most is that the count does not grow with the row count.
         f.init(null, sqlExecutionContext);
         final int afterInit = evalCounter.get();
-        assertEquals("INT subtree is read once per cached width in init()", 2, afterInit);
+        assertEquals("a width-stable INT subtree is read once in init()", 1, afterInit);
         for (int i = 0; i < 100; i++) {
             assertEquals(7, f.getInt(null));
         }
@@ -591,7 +595,9 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         // so a single false anywhere in a predicate makes SqlCodeGenerator.compileWorkerFiltersConditionally
         // re-parse and re-compile the *whole* filter once per shared query worker - an ordinary prepared
         // statement like "WHERE i = :x + 1" wraps ":x + 1" as an INT runtime constant and would pay N
-        // compiles on an N-worker box. init() therefore reads both getters eagerly.
+        // compiles on an N-worker box. init() therefore reads both widths eagerly - and for that
+        // shape it really does read the arg twice, since AddIntFunc extends LongWidthIntFunction and
+        // so reports isIntWidthStable() false.
         //
         // This pins that: an override would flip the first assertion.
         final RuntimeConstFunction intFn = RuntimeConstFunction.newInstance(new IntFunction() {
@@ -688,11 +694,13 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     @Test
     public void testIntRuntimeConstReadsTheArgOnlyFromInit() throws SqlException {
         // The thread-safety report above is only sound while no getter touches the arg or writes a
-        // field. init() reads getInt() and getLong() exactly once each - two evaluations of the
-        // runtime-constant subtree per cursor - and every row after that is served from the cached
-        // fields. A lazy getLong() would show up here as a third evaluation on the first LONG read.
+        // field. This arg diverges between widths, so it reports isIntWidthStable() false and init()
+        // reads getInt() and getLong() exactly once each - two evaluations of the runtime-constant
+        // subtree per cursor, the most any arg costs - and every row after that is served from the
+        // cached fields. A lazy getLong() would show up here as a third evaluation on the first LONG
+        // read. A width-stable arg reads once instead; testAllFoldableTypesCacheAndRoundTrip pins that.
         final int[] argReads = {0};
-        final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+        final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new LongWidthIntFunction() {
             @Override
             public int getInt(Record rec) {
                 argReads[0]++;
@@ -734,7 +742,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         // assignment in init() would make the second cursor serve the first one's stale value.
         final int[] narrow = {10};
         final long[] wide = {10_000_000_000L}; // distinct from the wrapped int, as a division/overflow widen would be
-        final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+        final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new LongWidthIntFunction() {
             @Override
             public int getInt(Record rec) {
                 return narrow[0];
