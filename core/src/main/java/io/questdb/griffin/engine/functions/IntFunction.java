@@ -73,7 +73,9 @@ public abstract class IntFunction implements Function {
 
     @Override
     public long getDate(Record rec) {
-        return Numbers.intToLong(getInt(rec));
+        // Reads getLong(), as getTimestamp() does. Both are 64-bit temporal reads of the same
+        // value, so they must not disagree: an overflowing INT arithmetic widens under either.
+        return getLong(rec);
     }
 
     @Override

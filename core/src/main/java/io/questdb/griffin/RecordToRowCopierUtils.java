@@ -798,7 +798,9 @@ public class RecordToRowCopierUtils {
                                 asm.invokeInterface(wPutLong, 3);
                                 break;
                             case ColumnType.DATE:
-                                asm.invokeStatic(implicitCastIntAsLong);
+                                if (!widenIntSource) {
+                                    asm.invokeStatic(implicitCastIntAsLong);
+                                }
                                 asm.invokeInterface(wPutDate, 3);
                                 break;
                             case ColumnType.TIMESTAMP:
@@ -1957,7 +1959,9 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
-                            asm.invokeStatic(implicitCastIntAsLong);
+                            if (!widenIntSource) {
+                                asm.invokeStatic(implicitCastIntAsLong);
+                            }
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
@@ -2982,12 +2986,15 @@ public class RecordToRowCopierUtils {
      * INT column always reports width stability, so it keeps its 4-byte read: taking it at long
      * width would read past the value.
      * <p>
-     * Only LONG and TIMESTAMP targets widen. The INT-to-DATE, -FLOAT, -DOUBLE and -DECIMAL casts
-     * all read their argument at INT width, so widening here would make the stored value
-     * disagree with the explicit cast instead of agreeing with it.
+     * Only the 64-bit targets widen: LONG, DATE and TIMESTAMP, matching the three casts that read
+     * their argument at long width. The INT-to-FLOAT, -DOUBLE and -DECIMAL casts read theirs at
+     * INT width, so widening those would make the stored value disagree with the explicit cast
+     * instead of agreeing with it.
      */
     private static boolean widensIntSource(ColumnTypes fromTypes, int fromIndex, int toColumnTypeTag) {
-        return (toColumnTypeTag == ColumnType.LONG || toColumnTypeTag == ColumnType.TIMESTAMP)
+        return (toColumnTypeTag == ColumnType.LONG
+                || toColumnTypeTag == ColumnType.DATE
+                || toColumnTypeTag == ColumnType.TIMESTAMP)
                 && !fromTypes.isColumnIntWidthStable(fromIndex);
     }
 }

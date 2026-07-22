@@ -36,9 +36,9 @@ import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
-import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.LongWidthIntFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -50,6 +50,7 @@ import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal32Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
+import io.questdb.std.BitSet;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -449,14 +450,22 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class IntCoalesceFunction extends IntFunction implements MultiArgCoalesceFunction {
+    private static class IntCoalesceFunction extends LongWidthIntFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
+        // Arguments whose getInt() alone answers getLong(), so getLong() reads them once. See
+        // getLong() for why the others cannot be collapsed the same way.
+        private final BitSet intWidthStableArgs = new BitSet();
         private final int size;
 
         public IntCoalesceFunction(ObjList<Function> args, int size) {
             super();
             this.args = args;
             this.size = size;
+            for (int i = 0; i < size; i++) {
+                if (args.getQuick(i).isIntWidthStable()) {
+                    intWidthStableArgs.set(i);
+                }
+            }
         }
 
         @Override
@@ -473,6 +482,39 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return Numbers.INT_NULL;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            // Picks the argument at INT width, exactly as getInt() does. Testing nullness at long
+            // width instead would pick a different argument when an overflowing INT term lands on
+            // INT_NULL, and the two getters would disagree on which branch won.
+            //
+            // An argument must be read only ONCE per row: a second read of a non-deterministic one
+            // is a fresh draw, and that draw can be null, which would let coalesce return null
+            // despite a non-null fallback. A width-stable argument needs one read because its
+            // getInt() already carries its full value. An overflowing INT argument genuinely needs
+            // both widths, so it is read twice only when it is row stable; otherwise the pick moves
+            // to long width, which is the same tradeoff InLongFunctionFactory resolves this way.
+            for (int i = 0; i < size; i++) {
+                final Function arg = args.getQuick(i);
+                if (intWidthStableArgs.get(i)) {
+                    final int value = arg.getInt(rec);
+                    if (value != Numbers.INT_NULL) {
+                        return value;
+                    }
+                } else if (arg.isRowStable()) {
+                    if (arg.getInt(rec) != Numbers.INT_NULL) {
+                        return arg.getLong(rec);
+                    }
+                } else {
+                    final long value = arg.getLong(rec);
+                    if (value != Numbers.LONG_NULL) {
+                        return value;
+                    }
+                }
+            }
+            return Numbers.LONG_NULL;
         }
     }
 
@@ -927,14 +969,16 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoIntCoalesceFunction extends IntFunction implements BinaryCoalesceFunction {
+    private static class TwoIntCoalesceFunction extends LongWidthIntFunction implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
+        private final boolean isArgs0IntWidthStable;
 
         public TwoIntCoalesceFunction(ObjList<Function> args) {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
+            this.isArgs0IntWidthStable = args0.isIntWidthStable();
         }
 
         @Override
@@ -949,6 +993,28 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Function getLeft() {
             return args0;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            // See IntCoalesceFunction#getLong for why the argument is picked at INT width and why
+            // each argument is read only once per row.
+            if (isArgs0IntWidthStable) {
+                final int value = args0.getInt(rec);
+                if (value != Numbers.INT_NULL) {
+                    return value;
+                }
+            } else if (args0.isRowStable()) {
+                if (args0.getInt(rec) != Numbers.INT_NULL) {
+                    return args0.getLong(rec);
+                }
+            } else {
+                final long value = args0.getLong(rec);
+                if (value != Numbers.LONG_NULL) {
+                    return value;
+                }
+            }
+            return args1.getLong(rec);
         }
 
         @Override

@@ -806,7 +806,15 @@ public class ExpressionNode implements Mutable, Sinkable {
         if (type == CONSTANT) {
             if (!isNumericConstantToken(token)) {
                 isConstFoldLongValid = false;
-                isConstFoldWidening = false;
+                // A quoted literal is not numeric-looking, but overload resolution still casts it
+                // to a number when the other operand is one, so l * '02' * 4 is integer arithmetic
+                // whose regrouping changes the result exactly as l * 2 * 4 would. Marking it
+                // widening keeps the guard closed, so the two spellings agree. It also keeps
+                // d + '0.1' + 1 evaluating left to right, where '0.1' resolves against the DOUBLE
+                // column, rather than regrouping to d + ('0.1' + 1) and failing to cast '0.1' to
+                // INT. Unquoted non-numeric tokens - null, true, false, a geohash, a type keyword -
+                // cannot become an arithmetic operand this way and stay reassociable.
+                isConstFoldWidening = Chars.isQuoted(token);
                 return;
             }
             try {

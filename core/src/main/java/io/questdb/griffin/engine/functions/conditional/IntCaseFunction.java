@@ -26,11 +26,11 @@ package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongWidthIntFunction;
 import io.questdb.std.ObjList;
 
 @SuppressWarnings("resource")
-class IntCaseFunction extends IntFunction implements CaseFunction {
+class IntCaseFunction extends LongWidthIntFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
 
@@ -48,5 +48,12 @@ class IntCaseFunction extends IntFunction implements CaseFunction {
     @Override
     public int getInt(Record rec) {
         return picker.pick(rec).getInt(rec);
+    }
+
+    // Reads the picked branch at long width, so CASE carries an overflowing INT branch the way
+    // the branch itself does: (a+b)::LONG and (CASE WHEN ... THEN a+b END)::LONG agree.
+    @Override
+    public long getLong(Record rec) {
+        return picker.pick(rec).getLong(rec);
     }
 }

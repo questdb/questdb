@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastIntToDateFunctionFactory implements FunctionFactory {
@@ -52,9 +51,9 @@ public class CastIntToDateFunctionFactory implements FunctionFactory {
 
         @Override
         public long getDate(Record rec) {
-            // IntFunction.getDate() reads getInt(), so this cast wraps too. See CastIntToDouble.
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? value : Numbers.LONG_NULL;
+            // IntFunction.getDate() delegates to getLong() and widens, so this cast widens too
+            // and agrees with ::TIMESTAMP over the same expression.
+            return arg.getLong(rec);
         }
     }
 }

@@ -31,7 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongWidthIntFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -53,13 +53,15 @@ public class NullIfIntFunctionFactory implements FunctionFactory {
         return new NullIfIntFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class NullIfIntFunction extends IntFunction implements BinaryFunction {
+    private static class NullIfIntFunction extends LongWidthIntFunction implements BinaryFunction {
         private final Function intFunc1;
         private final Function intFunc2;
+        private final boolean isFunc1IntWidthStable;
 
         public NullIfIntFunction(Function intFunc1, Function intFunc2) {
             this.intFunc1 = intFunc1;
             this.intFunc2 = intFunc2;
+            this.isFunc1IntWidthStable = intFunc1.isIntWidthStable();
         }
 
         @Override
@@ -70,6 +72,18 @@ public class NullIfIntFunctionFactory implements FunctionFactory {
         @Override
         public Function getLeft() {
             return intFunc1;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            // Compares at INT width, exactly as getInt() does, so both getters null out the same
+            // rows. A width-stable first argument carries its whole value in that read, so it is
+            // not read again - a second read of a non-deterministic one would be a fresh draw.
+            final int value = intFunc1.getInt(rec);
+            if (value == intFunc2.getInt(rec)) {
+                return Numbers.LONG_NULL;
+            }
+            return isFunc1IntWidthStable ? value : intFunc1.getLong(rec);
         }
 
         @Override

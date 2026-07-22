@@ -530,6 +530,21 @@ public final class WhereClauseParser implements Mutable {
         ExpressionNode unitNode = args.getQuick(1);
         ExpressionNode offsetNode = args.getQuick(0);
 
+        // Only a predicate over the designated timestamp can become an interval. SqlOptimiser only
+        // ever wraps one, but intrinsicOps dispatches and_offset on its token alone, so a
+        // hand-written call over any other column reaches here too. The analysis below would then
+        // consume the conjunct - analyzeEquals0 sets tempModel.keyColumn without applying an
+        // interval, and the merge reports full representation - so the predicate would vanish and
+        // the query would silently return rows that fail it.
+        //
+        // Declining is not enough: the stranded-wrapper rebuild would turn the call into a dateadd
+        // residual over a non-timestamp column, which either fails with a confusing cast error or
+        // silently applies a time offset to a plain number. and_offset is internal, with no
+        // FunctionFactory and no public arity, so reject the call outright and say so.
+        if (!referencesTimestamp(predicate)) {
+            throw SqlException.$(node.position, "unknown function name: ").put(node.token);
+        }
+
         // Parse unit character - must be a constant single-character token
         // Valid forms: 'h' (quoted single char) or h (unquoted single char)
         if (unitNode.type != ExpressionNode.CONSTANT) {

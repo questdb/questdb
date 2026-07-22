@@ -422,6 +422,10 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
                 row.putLong(toIndex, record.getLong(fromIndex));
                 return;
             }
+            if (toTypeTag == ColumnType.DATE) {
+                row.putDate(toIndex, record.getLong(fromIndex));
+                return;
+            }
             if (toTypeTag == ColumnType.TIMESTAMP) {
                 row.putTimestamp(toIndex, record.getLong(fromIndex));
                 return;

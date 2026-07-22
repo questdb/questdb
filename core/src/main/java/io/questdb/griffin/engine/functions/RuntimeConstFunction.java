@@ -493,8 +493,8 @@ public interface RuntimeConstFunction extends UnaryFunction {
             // (1000000 * 1000000) / 7 wraps to -103911424 under getInt() yet widens to 142857142857
             // under getLong(), whose low 32 bits (1123222089) are a different number.
             //
-            // Those args report isIntWidthStable() false - LongWidthIntFunction, which all eleven of
-            // them extend, declares it final - and only for them is the widened value underivable,
+            // Those args report isIntWidthStable() false - LongWidthIntFunction, which all of them
+            // extend, declares it final - and only for them is the widened value underivable,
             // so only they cost a second evaluation of the runtime-constant subtree. An INT function
             // implementing Function directly (json_extract) derives its two widths independently and
             // inherits the conservative default of false, so it keeps the second read too.

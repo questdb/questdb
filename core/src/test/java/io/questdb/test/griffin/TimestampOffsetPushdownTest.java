@@ -2544,4 +2544,43 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     .returns("tt\tprice\n");
         });
     }
+
+    @Test
+    public void testHandWrittenAndOffsetOverNonTimestampPredicateDoesNotDropIt() throws Exception {
+        // and_offset is an internal pseudo-function with no FunctionFactory, but intrinsicOps
+        // dispatches it on its token alone, so a hand-written call reached analyzeAndOffset
+        // ungated. Over a non-timestamp predicate the analysis consumed the conjunct without ever
+        // applying an interval - analyzeEquals0 set the key column and the merge reported full
+        // representation - so the predicate silently vanished and the query returned rows that
+        // fail it. A hand-written call now falls through to the function compiler instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ao (s SYMBOL, l LONG, b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ao VALUES
+                        ('a', 9, true,  '2020-01-01T00:00:00.000000Z'),
+                        ('b', 1, false, '2020-01-02T00:00:00.000000Z')
+                    """);
+
+            // the plain predicates, for reference
+            assertQuery("SELECT s FROM ao WHERE s = 'a'").returns("s\na\n");
+            assertQuery("SELECT l FROM ao WHERE l > 5").returns("l\n9\n");
+
+            // Each of these used to compile and return the wrong rows. They are now rejected.
+            //
+            // a key predicate: used to return BOTH rows, the predicate having been consumed
+            assertExceptionNoLeakCheck("SELECT s FROM ao WHERE and_offset(s = 'a', 'h', 1)", 23,
+                    "unknown function name: and_offset");
+            // a non-key predicate over a LONG column: used to build dateadd over a LONG
+            assertExceptionNoLeakCheck("SELECT l FROM ao WHERE and_offset(l > 5, 'h', 1)", 23,
+                    "unknown function name: and_offset");
+            // a bare boolean column: used to drop the offset silently
+            assertExceptionNoLeakCheck("SELECT b FROM ao WHERE and_offset(b, 'h', 1)", 23,
+                    "unknown function name: and_offset");
+
+            // the optimiser-generated wrapper over the designated timestamp still pushes down
+            assertQuery("SELECT * FROM (SELECT dateadd('h', -1, ts) tt, s FROM ao) WHERE tt > '2020-01-01T12:00:00.000000Z'")
+                    .timestamp("tt")
+                    .returns("tt\ts\n2020-01-01T23:00:00.000000Z\tb\n");
+        });
+    }
 }

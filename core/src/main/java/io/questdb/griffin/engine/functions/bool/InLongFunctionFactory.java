@@ -73,13 +73,13 @@ public class InLongFunctionFactory implements FunctionFactory {
         // the key widens (getLong) to its full value. For a LONG/TIMESTAMP key every
         // element widens to long anyway.
         final boolean isNarrowIntKey = isNarrowInt(ColumnType.tagOf(args.getQuick(0).getType()));
-        // The two key widths only differ for the handful of INT functions that override
-        // getLong() to compute at long width (the arithmetic and bitwise operators, and a
-        // runtime-const wrapper over one): those wrap mod 2^32 under getInt() but keep the
-        // full value under getLong(), so the key has to be read once per element width.
-        // Every other narrow key - a column, a cast, a constant, a CASE, a bind variable -
-        // reports isIntWidthStable(), and its two reads are the same number; then one set
-        // holds every element and getBool probes it once per row.
+        // The two key widths only differ for the INT functions that override getLong() to compute
+        // at long width - the arithmetic and bitwise operators, the conditionals that forward a
+        // branch of one (CASE, COALESCE, NULLIF), and a runtime-const wrapper over one: those wrap
+        // mod 2^32 under getInt() but keep the full value under getLong(), so the key has to be
+        // read once per element width. Every other narrow key - a column, a cast, a constant, a
+        // bind variable - reports isIntWidthStable(), and its two reads are the same number; then
+        // one set holds every element and getBool probes it once per row.
         //
         // Splitting reads the key at both widths, which is only safe when the two reads carry
         // consistent values. A row-unstable key (e.g. rnd_int() + 0) breaks that: getInt() and

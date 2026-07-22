@@ -30,14 +30,19 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.Numbers;
 
 public final class IntFunctionMemoizer extends IntFunction implements MemoizerFunction {
     private final Function fn;
-    private boolean validValue;
+    private final boolean isIntWidthStable;
+    private boolean isValidLongValue;
+    private boolean isValidValue;
+    private long longValue;
     private int value;
 
     public IntFunctionMemoizer(Function fn) {
         this.fn = fn;
+        this.isIntWidthStable = fn.isIntWidthStable();
     }
 
     @Override
@@ -47,11 +52,34 @@ public final class IntFunctionMemoizer extends IntFunction implements MemoizerFu
 
     @Override
     public int getInt(Record rec) {
-        if (!validValue) {
+        if (!isValidValue) {
             value = fn.getInt(rec);
-            validValue = true;
+            isValidValue = true;
         }
         return value;
+    }
+
+    /**
+     * Memoizes the long width separately. IntFunction.getLong() would widen the memoized INT,
+     * truncating a delegate whose value only exists at long width - which is exactly the
+     * disagreement between a stored value and an explicit cast that {@link Function#isIntWidthStable}
+     * exists to prevent.
+     */
+    @Override
+    public long getLong(Record rec) {
+        if (isIntWidthStable) {
+            return Numbers.intToLong(getInt(rec));
+        }
+        if (!isValidLongValue) {
+            longValue = fn.getLong(rec);
+            isValidLongValue = true;
+        }
+        return longValue;
+    }
+
+    @Override
+    public boolean isIntWidthStable() {
+        return isIntWidthStable;
     }
 
     @Override
@@ -71,7 +99,8 @@ public final class IntFunctionMemoizer extends IntFunction implements MemoizerFu
 
     @Override
     public void memoize(Record record) {
-        validValue = false;
+        isValidValue = false;
+        isValidLongValue = false;
     }
 
     @Override

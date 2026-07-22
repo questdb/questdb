@@ -352,11 +352,12 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * {@link io.questdb.griffin.engine.functions.ShortFunction} and
      * {@link io.questdb.griffin.engine.functions.ByteFunction} widen their own narrow accessor in
      * getLong(), so they return true, and every function built on them - columns, constants, casts,
-     * CASE, bind variables - inherits it. Two kinds of function must not: one that overrides that
-     * getLong() to compute at long width (the INT arithmetic and bitwise operators, whose
-     * overflowing result wraps mod 2^32 under getInt() but keeps its full value under getLong()),
-     * which overrides this method back to false; and one that implements {@link Function} directly
-     * and derives its two widths independently (json_extract), which simply inherits this default.
+     * bind variables - inherits it. Two kinds of function must not: one that overrides that
+     * getLong() to compute at long width, which overrides this method back to false - the INT
+     * arithmetic and bitwise operators, whose overflowing result wraps mod 2^32 under getInt() but
+     * keeps its full value under getLong(), and the conditionals that forward a branch of one
+     * (CASE, COALESCE, NULLIF); and one that implements {@link Function} directly and derives its
+     * two widths independently (json_extract), which simply inherits this default.
      * <p>
      * INT functions that compute a wider intermediate result extend
      * {@link io.questdb.griffin.engine.functions.LongWidthIntFunction}, which declares that the two
