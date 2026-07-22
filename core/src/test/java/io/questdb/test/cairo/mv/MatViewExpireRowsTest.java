@@ -352,6 +352,80 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpireScalarCleanupNanoTimestampCompactsAndWipes() throws Exception {
+        // A TIMESTAMP_NS designated timestamp has no partition-bounds fast path, so cleanup classifies via
+        // the survivor count scan. The scan's partition-range bind variables must carry the column's native
+        // unit (nanos): a partial partition compacts to its survivors, a fully-expired one is wiped.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp_ns) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000000Z')," +   // v<2 -> expired (d1 partial)
+                    "('B', 5.0, '2024-01-01T00:00:00.000000000Z')," +   // kept
+                    "('C', 1.5, '2024-01-02T00:00:00.000000000Z')," +   // v<2 -> d2 fully expired
+                    "('D', 9.0, '2024-01-03T00:00:00.000000000Z')");    // active partition
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.cleanupTable(token, predicate);
+            }
+            drainWalAndMatViewQueues();
+
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    B\t5.0
+                    D\t9.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testExpireScalarCleanupNanoTimestampKeepsLiveRows() throws Exception {
+        // Cleanup on a TIMESTAMP_NS view must never remove live rows. Nothing satisfies v < 0 here, so a
+        // sweep must leave every partition intact. The survivor scan's partition-range bind variables carry
+        // nano floors typed as nanos; a unit mismatch there mis-scales the scan interval, and an interval
+        // that misses the partition's rows counts zero survivors and wipes the whole (fully live) partition
+        // via an empty REPLACE_RANGE.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp_ns) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000000Z')," +
+                    "('B', 5.0, '2024-01-02T00:00:00.000000000Z')," +
+                    "('C', 9.0, '2024-01-03T00:00:00.000000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < 0.0");
+            drainWalAndMatViewQueues();
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t3\n");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.cleanupTable(token, predicate);
+            }
+            drainWalAndMatViewQueues();
+
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t3\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    A\t1.0
+                    B\t5.0
+                    C\t9.0
+                    """);
+        });
+    }
+
+    @Test
     public void testExpireScalarCleanupReclaimsOldPartition() throws Exception {
         // The physical cleanup reclaims on a mat view via REPLACE_RANGE (DROP PARTITION via SQL is rejected
         // for mat views). Here a wholly-below-threshold partition is wiped.

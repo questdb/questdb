@@ -235,6 +235,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         partitionRowCounts.clear();
 
         final String timestampColumnName;
+        // The designated timestamp column's type; partition floors are in this column's native unit, and the
+        // survivor queries' $1/$2 range binds carry the same type so no unit conversion is applied to them.
+        final int timestampType;
         // For a window/keep-by survivor query: the quoted base column list, so the synthetic keep column is
         // projected away (built from the reader metadata while it is open).
         String windowColumnsCsv = null;
@@ -261,6 +264,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 return false; // non-timestamp table; nothing to expire (should not happen for a WAL table)
             }
             timestampColumnName = metadata.getColumnName(timestampIndex);
+            timestampType = metadata.getColumnType(timestampIndex);
 
             // Tie the predicate and the seqTxn baseline to ONE consistent snapshot: this reader. `predicate`
             // was snapshotted at sweep-start discovery (runSerially), well before this reader opened. If an
@@ -447,6 +451,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                     return replaceWindowPartitionsOnePass(
                             selectSql,
                             timestampColumnName,
+                            timestampType,
                             tableToken,
                             tableName,
                             txnTracker,
@@ -496,10 +501,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                             if (cleanupCompiler == null) {
                                 cleanupCompiler = engine.getSqlCompiler();
                             }
-                            bindPartitionRange(floorTs, nextFloorTs); // declare $1/$2 types before compiling
+                            bindPartitionRange(timestampType, floorTs, nextFloorTs); // declare $1/$2 types before compiling
                             countFactory = cleanupCompiler.compile(countSql, sqlExecutionContext).getRecordCursorFactory();
                         }
-                        action = classifyPartition(countFactory, floorTs, nextFloorTs, rowCount);
+                        action = classifyPartition(countFactory, timestampType, floorTs, nextFloorTs, rowCount);
                         if (action == ACTION_DROP) {
                             // Fully expired -> no-scan empty REPLACE_RANGE wipe, gated on the sequencer txn so a
                             // row a concurrent writer back-filled since the survivor scan is never deleted.
@@ -523,7 +528,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                                 if (cleanupCompiler == null) {
                                     cleanupCompiler = engine.getSqlCompiler();
                                 }
-                                bindPartitionRange(floorTs, nextFloorTs);
+                                bindPartitionRange(timestampType, floorTs, nextFloorTs);
                                 // Build the factory into a local and assign the field ONLY after the copier
                                 // is built: if generateCopier() throws, selectFactory must stay null so the
                                 // next partition rebuilds it cleanly (otherwise a non-null factory with a null
@@ -541,7 +546,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                                 selectFactory = f;
                             }
                             if (replacePartition(selectFactory, survivorCopier, selectTsIndex, walWriter,
-                                    tableName, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
+                                    tableName, timestampType, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
                                 expectedSeqTxn++; // our REPLACE commit advanced the sequencer by exactly one txn
                                 isWorkDone = true;
                             }
@@ -745,7 +750,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         return ACTION_UNKNOWN;
     }
 
-    private int classifyPartition(RecordCursorFactory countFactory, long floorTs, long nextFloorTs, long rowCount) throws SqlException {
+    private int classifyPartition(RecordCursorFactory countFactory, int timestampType, long floorTs, long nextFloorTs, long rowCount) throws SqlException {
         scalarPartitionScanCount++;
         // Classify with a read-only count() scan, then copy only REPLACE partitions. This is deliberately
         // NOT folded into the copy: for an arbitrary predicate the class of a partition is unknown until it
@@ -754,7 +759,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // to the WAL writer and then roll back the SKIP partitions — turning the common fully-live partition
         // from a read-only scan into a scan plus discarded WAL write I/O. Only the (few) expired partitions
         // pay for a second scan.
-        final long survivors = countSurvivors(countFactory, floorTs, nextFloorTs);
+        final long survivors = countSurvivors(countFactory, timestampType, floorTs, nextFloorTs);
         // survivors == 0 -> fully expired (DROP/wipe); 0 < survivors < rowCount -> partially expired (REPLACE
         // compacts to survivors); survivors == rowCount -> nothing expired (SKIP). rowCount is the reader
         // snapshot, so only act when something is clearly expired.
@@ -767,10 +772,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     // Binds $1 = partition floor (inclusive), $2 = next floor (exclusive). The interval optimiser prunes to
     // exactly this logical partition (an interval forward scan), so the count/select factories are compiled
     // ONCE per sweep and merely rebound per partition rather than re-parsed + re-codegen'd from a literal.
-    private void bindPartitionRange(long floorTs, long nextFloorTs) throws SqlException {
+    // The floors are in the designated timestamp column's native unit, so the bind variables are typed with
+    // that column's type (timestampType): a TIMESTAMP_NS column's nano floors bind as nanos, keeping the
+    // survivor scan's interval in the same unit as the REPLACE_RANGE commit. Typing them as micros would
+    // make the interval evaluation re-scale the already-nano floors and fail every NS survivor query.
+    private void bindPartitionRange(int timestampType, long floorTs, long nextFloorTs) throws SqlException {
         final BindVariableService bind = sqlExecutionContext.getBindVariableService();
-        bind.setTimestamp(0, floorTs);
-        bind.setTimestamp(1, nextFloorTs);
+        bind.setTimestampWithType(0, timestampType, floorTs);
+        bind.setTimestampWithType(1, timestampType, nextFloorTs);
     }
 
     private boolean commitWithFence(
@@ -792,8 +801,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         );
     }
 
-    private long countSurvivors(RecordCursorFactory countFactory, long floorTs, long nextFloorTs) throws SqlException {
-        bindPartitionRange(floorTs, nextFloorTs);
+    private long countSurvivors(RecordCursorFactory countFactory, int timestampType, long floorTs, long nextFloorTs) throws SqlException {
+        bindPartitionRange(timestampType, floorTs, nextFloorTs);
         try (RecordCursor cursor = countFactory.getCursor(sqlExecutionContext)) {
             if (cursor.hasNext()) {
                 return cursor.getRecord().getLong(0);
@@ -868,6 +877,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private boolean replaceWindowPartitionsOnePass(
             String selectSql,
             String timestampColumnName,
+            int timestampType,
             TableToken tableToken,
             String tableName,
             SeqTxnTracker txnTracker,
@@ -875,7 +885,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     ) throws SqlException {
         final long rangeLo = partitionFloors.getQuick(0);
         final long rangeHi = partitionNextFloors.getQuick(partitionFloors.size() - 1);
-        bindPartitionRange(rangeLo, rangeHi);
+        bindPartitionRange(timestampType, rangeLo, rangeHi);
         boolean isWorkDone = false;
         WalWriter walWriter = null;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -951,6 +961,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             int cursorTimestampIndex,
             WalWriter walWriter,
             String tableName,
+            int timestampType,
             long floorTs,
             long nextFloorTs,
             SeqTxnTracker txnTracker,
@@ -960,7 +971,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // per partition (the SQL uses $1/$2 bind variables for the partition range). The copier is safe to
         // reuse across partitions because the concurrency gate below defers on ANY concurrent transaction,
         // so a structural ALTER cannot change the column layout mid-sweep without the REPLACE deferring.
-        bindPartitionRange(floorTs, nextFloorTs);
+        bindPartitionRange(timestampType, floorTs, nextFloorTs);
         long appended = 0;
         try (RecordCursor cursor = selectFactory.getCursor(sqlExecutionContext)) {
             final Record record = cursor.getRecord();
