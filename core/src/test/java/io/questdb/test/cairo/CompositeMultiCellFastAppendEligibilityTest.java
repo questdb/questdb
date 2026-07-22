@@ -476,6 +476,93 @@ public class CompositeMultiCellFastAppendEligibilityTest extends AbstractCairoTe
         });
     }
 
+    /**
+     * Never-false-positive regression (composite-partitioning fast-append spec 2, Task 2 -- close the
+     * stale-low cache gap on the shared early-bail paths). The shared {@code compositeCellMaxTimestamp}
+     * is read by spec-1's LIVE single-cell fast-append ACTION to decide append-only, so a stale-low
+     * entry corrupts the cell. A MULTI-DAY commit crosses a day boundary, so BOTH predicates bail at
+     * their shared last-(day-)partition gate BEFORE folding -- yet the full O3 path still commits the
+     * rows and advances the touched cell's real committed max into the new day. Before the fix that left
+     * the cell's cache entry stale-low (pinned at its old-day max), and a later single-cell commit into
+     * the cell at a ts BETWEEN the stale value and the cell's new real max was falsely judged
+     * append-only -> the out-of-order row was fast-appended PAST the cell's max = on-disk corruption.
+     * <p>
+     * This drives that exact sequence and asserts the composite table still equals a plain twin. RED
+     * before the fix (X's day-2 cell is physically {@code [10:00, 05:00]} vs the twin's {@code [05:00,
+     * 10:00]}); GREEN after (the multi-cell predicate now folds every touched cell's true max even on
+     * the multi-day early-bail, so the 05:00 commit correctly fails append-only and takes the full path).
+     */
+    @Test
+    public void testStaleLowCacheAfterMultiDayCommitDoesNotCorruptLaterSingleCellAppend() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            execute("insert into c values ('2020-01-01T00:00:00.000000Z','R0',0.0)");
+            execute("insert into p values ('2020-01-01T00:00:00.000000Z','R0',0.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // 1. Warm cell X on day 1: seed (full path -- creates the cell, folds
+            // compositeCellMaxTimestamp[X]=00:10), then a single-cell ordered commit at 00:20 that
+            // engages the REAL single-cell fast-append (cache warm). Confirmed via the committed counter:
+            // if this does not fire, the stale-low gap below is unreachable and this test proves nothing.
+            // compositeCellMaxTimestamp[X] is now 00:20 (day 1).
+            seedCell("X", "2020-01-01T00:10:00.000000Z", 1.0);
+
+            long beforeWarm = TableWriter.getCompositeFastAppendCommittedCount();
+            execute("insert into c values ('2020-01-01T00:20:00.000000Z','X',1.1)");
+            execute("insert into p values ('2020-01-01T00:20:00.000000Z','X',1.1)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            Assert.assertEquals(
+                    "setup: the single-cell fast-append must actually fire so compositeCellMaxTimestamp[X]"
+                            + " is warm (00:20) -- otherwise the stale-low gap below is unreachable",
+                    beforeWarm + 1, TableWriter.getCompositeFastAppendCommittedCount());
+
+            // 2. MULTI-DAY commit into X: one row on day 1 (23:00) AND one on day 2 (10:00). o3TimestampMax
+            // (day 2) exceeds day 1's partition-hi, so BOTH predicates bail at the shared last-partition
+            // gate -- the unchanged full O3 path commits both rows and advances X's real committed max to
+            // 2020-01-02T10:00 (day 2 becomes the last partition). Before the fix neither predicate folds
+            // here, so compositeCellMaxTimestamp[X] is left stale-low at 00:20 (day 1).
+            execute("insert into c values " +
+                    "('2020-01-01T23:00:00.000000Z','X',1.2)," +
+                    "('2020-01-02T10:00:00.000000Z','X',1.3)");
+            execute("insert into p values " +
+                    "('2020-01-01T23:00:00.000000Z','X',1.2)," +
+                    "('2020-01-02T10:00:00.000000Z','X',1.3)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // 3. Single-cell ordered commit into X on day 2 at 05:00 -- AFTER the stale cached value
+            // (00:20, day 1) but strictly BEFORE X's real committed max (10:00, day 2). With a stale-low
+            // cache the single-cell predicate judges 05:00 > 00:20 = append-only and the LIVE fast-append
+            // action appends 05:00 PAST X's day-2 max (10:00) => physical out-of-order corruption.
+            execute("insert into c values ('2020-01-02T05:00:00.000000Z','X',1.4)");
+            execute("insert into p values ('2020-01-02T05:00:00.000000Z','X',1.4)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // 4. The composite table must still equal the plain twin. RED before the fix: X's day-2 cell
+            // is physically [10:00, 05:00] (corrupted) vs the twin's correctly-ordered [05:00, 10:00].
+            engine.releaseInactive();
+            assertWalTableNotSuspended("p");
+            assertSqlCursors(
+                    "select ts, exch, px from p where exch = 'X'",
+                    "select ts, exch, px from c where exch = 'X'");
+            assertSqlCursors(
+                    "select ts, exch, px from p where exch = 'X' and ts in '2020-01-02'",
+                    "select ts, exch, px from c where exch = 'X' and ts in '2020-01-02'");
+            assertSqlCursors(
+                    "select ts, exch, px from p order by ts, exch",
+                    "select ts, exch, px from c order by ts, exch");
+            assertSqlCursors("select count() from p", "select count() from c");
+            assertSqlCursors(
+                    "select exch, count() from p group by exch order by exch",
+                    "select exch, count() from c group by exch order by exch");
+        });
+    }
+
     private void assertWalTableNotSuspended(String tableName) {
         Assert.assertFalse(
                 tableName + " must not be suspended",

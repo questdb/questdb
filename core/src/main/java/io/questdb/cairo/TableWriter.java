@@ -367,17 +367,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // (day, cellKey) existence is independently verified via the _txn attached-partition record first,
     // so a stale cross-day value can never cause a false "empty cell" or false "append-only" read.
     // FOLD-NOT-WIPE (Task 2, replacing Task 1's dedicated compositeMultiCellMaxTimestamp + its wipe):
-    // every flag-on composite commit folds each touched cell's real observed max (Math.max) into this
-    // ONE cache -- the single-cell predicate/action for single-cell commits, the multi-cell predicate
-    // (which ALWAYS folds -- even on a per-cell ordering violation, even on an ineligible verdict) for
-    // every other shape. So the cache is never stale-low and can never drive a false-positive
-    // append-only read; because the single-cell fast-append ACTS on that read, a stale-low value would
-    // corrupt the cell, so never-false-positive is the hard invariant. A cell this writer has not itself
-    // observed is cold (absent) and fails closed. Both predicates read the cache BEFORE this commit's own
-    // fold mutates it (the single-cell predicate deliberately does NOT fold on a multi-cell commit -- it
-    // runs first, and folding there would mask the multi-cell predicate's own pre-commit read). Null
-    // until the first composite commit this writer observes (never allocated for a plain table, or while
-    // the flag is off).
+    // EVERY flag-on composite commit maintains each touched cell's entry, so the cache is NEVER stale-low
+    // and can never drive a false-positive append-only read. Because the single-cell fast-append ACTS on
+    // that read, a stale-low value would fast-append an out-of-order row past the cell's max (on-disk
+    // corruption), so never-stale-low is the hard invariant. Exactly one of two paths maintains it on
+    // every commit:
+    //   (1) a commit that takes spec-1's single-cell fast-append early return folds its cell via the
+    //       ACTION (applyCompositeSingleCellFastAppend, Math.max);
+    //   (2) EVERY OTHER commit reaches isCompositeMultiCellFastAppendPossible, which is the UNIVERSAL
+    //       maintainer: it resolves every touched cell's true max in one forward scan and folds them all
+    //       (Math.max), unconditionally -- even on a per-cell ordering violation, an ineligible verdict,
+    //       dedup mode, OR a multi-day / non-last-partition span. Its dedup and last-partition checks are
+    //       eligibility gates only; they no longer early-return before the fold (the stale-low bug Task 2
+    //       closed: those two gates once bailed BEFORE folding while the full O3 path still advanced the
+    //       cell's real max).
+    // The single-cell predicate deliberately does NOT fold on a multi-cell (or dedup / multi-day) commit
+    // -- it runs FIRST in the hook, so folding there would mask the multi-cell predicate's own pre-commit
+    // read; the multi-cell predicate (which always runs unless (1) fired) is the backstop. Folding can
+    // never go stale-low even across a day roll or under dedup: a composite table carries no WAL lag (the
+    // scanned [rowLo, rowHi) is the complete committed row set), dedup never drops a cell's max-timestamp
+    // row nor fabricates a higher one, and a cell touched only on an older day folds an older-day max the
+    // last-partition empty-cell gate then never consults. A cell this writer has not itself observed is
+    // cold (absent -> get() returns -1) and fails closed. Null until the first composite commit this
+    // writer observes (never allocated for a plain table, or while the flag is off).
     private IntLongHashMap compositeCellMaxTimestamp;
     // Non-owning holder for a composite table's write-side interners (dedicated dicts + _cell
     // registry). Null for plain/cluster-only tables. The interner SymbolMapWriters themselves live
@@ -5304,15 +5316,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * </ul>
      * Every distinct cell touched by this commit has its observed max (this commit's own MAX ts for that
      * cell over the whole scan) folded into the shared {@link #compositeCellMaxTimestamp} before
-     * returning, REGARDLESS of the eligibility verdict above (including when {@code distinctCount < 2},
-     * i.e. for an ordinary single-cell-shaped commit, AND when a per-cell ordering violation made the
-     * commit ineligible) -- the full O3 composite path this task never skips
-     * commits these rows regardless, so each touched cell's real max genuinely does advance to {@code
-     * max(old, new)} whether or not THIS commit counted as "eligible"; this is also the only way a
-     * cell ever becomes warm enough for a LATER multi-cell commit's append-only check to consult (see
-     * the field's own docs). Task 2 tightened this: even a per-cell ordering violation still folds every
-     * touched cell's true max (the scan runs to completion rather than bailing) -- the shared cache the
-     * single-cell fast-append ACTION reads must never go stale-low, so it must be folded on EVERY commit.
+     * returning, REGARDLESS of the eligibility verdict above -- including when {@code distinctCount < 2}
+     * (an ordinary single-cell-shaped commit), when a per-cell ordering violation made the commit
+     * ineligible, when {@link #isCommitDedupMode()} is set, AND when the commit spans more than the last
+     * day partition (a multi-day / backfill commit). The unchanged full O3 composite path commits these
+     * rows regardless, so each touched cell's real max genuinely does advance to {@code max(old, new)}
+     * whether or not THIS commit counted as "eligible"; this is also the only way a cell ever becomes
+     * warm enough for a LATER multi-cell commit's append-only check to consult (see the field's own docs).
+     * Task 2 makes this predicate the UNIVERSAL cache-maintainer: it is the sole fold site for every
+     * flag-on composite commit that does not take spec-1's single-cell fast-append early return (that
+     * path folds via the action), so the dedup and last-partition gates -- which used to early-return
+     * false BEFORE folding -- are now eligibility conditions only, never fold-skipping bails. That closes
+     * the stale-low gap where a multi-day (or dedup) commit advanced a cell's real max via the full path
+     * while leaving the shared cache pinned low, which the LIVE single-cell fast-append ACTION reads to
+     * gate append-only -- a stale-low entry there fast-appends an out-of-order row past the cell's max
+     * (on-disk corruption). The fold can never go stale-low even across a day roll or under dedup: see
+     * {@link #compositeCellMaxTimestamp}'s own FOLD-NOT-WIPE docs.
      * <p>
      * <b>Does NOT check the fixed-size-column / column-top-0 gates.</b> This is, deliberately, a
      * DETECTION-only method that mirrors {@link #isCompositeSingleCellFastAppendPossible}'s own
@@ -5337,13 +5356,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3TimestampMin,
             long o3TimestampMax
     ) {
-        if (isCommitDedupMode()) {
-            return false;
-        }
-        if (txWriter.getPartitionTimestampByTimestamp(o3TimestampMin) != lastPartitionTimestamp
-                || o3TimestampMax > partitionTimestampHi) {
-            return false;
-        }
+        // Task 2 -- UNIVERSAL cache-maintainer. This predicate is the sole fold site for every flag-on
+        // composite commit that does NOT take spec-1's single-cell fast-append early return (that path
+        // folds via the action itself). So the two early-bail gates it shares with the single-cell
+        // predicate -- dedup and the last-(day-)partition bound -- must NOT skip the fold, or the shared
+        // compositeCellMaxTimestamp the LIVE single-cell action reads would be left stale-low for a cell
+        // the unchanged full O3 path then advances: a multi-day commit that carries a last-day cell's max
+        // into a NEW day, or a dedup commit that advances a cell's max, both bailed BEFORE folding here.
+        // A later single-cell commit landing between that stale value and the cell's real max would be
+        // falsely judged append-only and its out-of-order row fast-appended past the cell's max =
+        // corruption. Both conditions therefore become ELIGIBILITY gates only; the forward scan and the
+        // fold at the bottom run unconditionally (read-then-fold order preserved -- see below).
+        final boolean dedup = isCommitDedupMode();
+        final boolean lastPartition = txWriter.getPartitionTimestampByTimestamp(o3TimestampMin) == lastPartitionTimestamp
+                && o3TimestampMax <= partitionTimestampHi;
 
         final int dimCount = metadata.getPartitionSpec().getDimensionCount();
         final int[] dimScratch = new int[dimCount];
@@ -5392,8 +5418,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Decide eligibility reading the shared cache's state as it stood BEFORE this commit's own fold-in
         // below mutates it. The single-cell predicate ran first in the hook but deliberately did NOT fold
-        // this commit's cells (see its own docs), so these reads see genuinely pre-commit values.
-        boolean eligible = !orderingViolated && distinctCount >= 2 && distinctCount <= maxOpenCells;
+        // this commit's cells (see its own docs), so these reads see genuinely pre-commit values. The
+        // dedup and last-partition gates (both would have early-returned false before Task 2's fix) are
+        // now folded into this boolean instead, so an ineligible commit still reaches the fold below.
+        boolean eligible = !dedup && lastPartition && !orderingViolated && distinctCount >= 2 && distinctCount <= maxOpenCells;
         if (eligible) {
             for (int i = 0; i < distinctCount; i++) {
                 final int cellKey = distinctCells.getQuick(i);
@@ -5411,10 +5439,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // Fold every touched cell's real observed max into the SHARED cache, ALWAYS -- regardless of the
-        // eligibility verdict AND regardless of an ordering violation. This is the guaranteed folder for
-        // every multi-cell (and every out-of-order) commit: the single-cell fast-append action reads this
-        // same cache to gate append-only, so a stale-low entry here would let it corrupt a cell. cellMaxTs
-        // is the cell's true max over the whole commit (== last-seen when ordered).
+        // eligibility verdict, an ordering violation, dedup mode, OR a multi-day / non-last-partition
+        // span. This is the guaranteed folder for every commit that reaches this predicate (i.e. every
+        // flag-on composite commit except the ones taking spec-1's single-cell fast-append early return,
+        // which fold via the action): the single-cell fast-append action reads this same cache to gate
+        // append-only, so a stale-low entry here would let it corrupt a cell. cellMaxTs is the cell's true
+        // max over the whole commit (== last-seen when ordered). Folding is exactly correct even for dedup
+        // and cross-day commits, and can never go stale-low: a composite table carries no WAL lag (so
+        // [rowLo, rowHi) IS the complete row set), dedup never drops a cell's max-timestamp row nor
+        // fabricates a higher one, and Math.max only ever raises the entry -- so the folded value is always
+        // >= the cell's post-commit true max on the last partition (a stale-HIGH entry only ever costs a
+        // missed fast-append, never a false positive). A cell touched only on an older day folds an
+        // older-day max that the last-partition empty-cell gate then never consults (the cell is empty on
+        // the new last day), so keying by cellKey alone stays sound across the roll.
         if (compositeCellMaxTimestamp == null) {
             compositeCellMaxTimestamp = new IntLongHashMap();
         }
