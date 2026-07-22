@@ -5323,11 +5323,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * the field's own docs). The one exception: a per-cell ordering violation aborts the whole method
      * immediately, folding in nothing from this scan -- the simplest safe choice when this scan's own
      * picture of a cell's max is unreliable.
+     * <p>
+     * <b>Does NOT check the fixed-size-column / column-top-0 gates.</b> This is, deliberately, a
+     * DETECTION-only method that mirrors {@link #isCompositeSingleCellFastAppendPossible}'s own
+     * detection-layer scope exactly: neither predicate checks whether the touched cell's columns are
+     * all fixed-size, nor whether any column carries a non-zero column top (an ADD COLUMN artifact).
+     * Those two gates live at the ACTION layer only, in {@link #canCompositeFastAppendCell}, which spec
+     * 1's real single-cell action ({@link #applyCompositeSingleCellFastAppend}) invokes per cell,
+     * immediately before acting -- never this detection method. A future task that lets an eligible
+     * multi-cell commit here actually fast-append MUST invoke {@link #canCompositeFastAppendCell} (or
+     * an equivalent per-cell check) for EVERY touched cell before acting on any of them, falling the
+     * WHOLE commit back to the existing full path if any single one of those cells fails it -- exactly
+     * mirroring the single-cell action's own precondition. This method's {@code true} result alone is
+     * never sufficient for a caller to act on.
      *
      * @return true iff this commit is multi-cell fast-append-eligible (detection only -- no caller
      *         acts on this result yet)
      */
-    boolean isCompositeMultiCellFastAppendPossible(long rowLo, long rowHi, boolean ordered, long o3TimestampMin, long o3TimestampMax) {
+    boolean isCompositeMultiCellFastAppendPossible(
+            long rowLo,
+            long rowHi,
+            boolean ordered, // unread today; kept for signature parity with isCompositeSingleCellFastAppendPossible
+            long o3TimestampMin,
+            long o3TimestampMax
+    ) {
         if (isCommitDedupMode()) {
             return false;
         }
@@ -13133,6 +13152,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         if (canCompositeFastAppendCell(fastAppendCellKey)) {
                             applyCompositeSingleCellFastAppend(fastAppendCellKey, rowLo, rowHi, o3TimestampMax);
                             compositeFastAppendCommittedCount.incrementAndGet();
+                            // Review fix (spec 2, Task 1): this real action advances fastAppendCellKey's
+                            // true committed max, but returns below WITHOUT ever reaching this method's
+                            // own multi-cell branch (see the block just below) -- the only other place
+                            // that folds into compositeMultiCellMaxTimestamp. Left unfolded, that cache
+                            // would go stale (too low) for this cell, and a LATER multi-cell commit
+                            // landing between the stale value and this real new max would be wrongly
+                            // judged append-only (a false positive -- see
+                            // isCompositeMultiCellFastAppendPossible's own docs on this cache and
+                            // CompositeMultiCellFastAppendEligibilityTest#
+                            // testStaleMultiCellCacheAfterRealSingleCellFastAppendDoesNotFalsePositive).
+                            // Fold here too, identical max(old,new) guard as every other fold-in site.
+                            if (compositeMultiCellMaxTimestamp == null) {
+                                compositeMultiCellMaxTimestamp = new IntLongHashMap();
+                            }
+                            final long priorMultiCellCached = compositeMultiCellMaxTimestamp.get(fastAppendCellKey);
+                            if (priorMultiCellCached == -1 || o3TimestampMax > priorMultiCellCached) {
+                                compositeMultiCellMaxTimestamp.put(fastAppendCellKey, o3TimestampMax);
+                            }
                             return true;
                         }
                     }

@@ -65,6 +65,9 @@ import org.junit.Test;
  *     detection/counting only, never behavior (no early return is ever taken for a multi-cell
  *     commit);</li>
  *     <li>with the flag off, an otherwise multi-cell-eligible commit never increments the counter.</li>
+ *     <li>(review fix) a cell most recently advanced by a REAL single-cell fast-append action (not
+ *     merely detected eligible) is not later falsely judged multi-cell append-only-eligible by a stale
+ *     {@code compositeMultiCellMaxTimestamp} entry that action never refreshed.</li>
  * </ul>
  */
 public class CompositeMultiCellFastAppendEligibilityTest extends AbstractCairoTest {
@@ -307,6 +310,123 @@ public class CompositeMultiCellFastAppendEligibilityTest extends AbstractCairoTe
                     "select exch, count() from p group by exch order by exch",
                     "select exch, count() from c group by exch order by exch"
             );
+        });
+    }
+
+    /**
+     * Review fix (composite-partitioning fast-append spec 2, Task 1 self-review): {@link
+     * TableWriter#isCompositeMultiCellFastAppendPossible}'s own dedicated cache ({@code
+     * compositeMultiCellMaxTimestamp}) is folded by that method itself on every commit it examines --
+     * but a commit that takes spec 1's REAL single-cell fast-append early return ({@code
+     * applyCompositeSingleCellFastAppend}, via the {@code processWalCommit} hook) never reaches this
+     * method at all: that branch returns before the multi-cell branch ever runs. Before the fix, that
+     * real action only ever updated spec 1's OWN cache ({@code compositeCellMaxTimestamp}), leaving
+     * {@code compositeMultiCellMaxTimestamp} stale (too low) for that cell. A later multi-cell commit
+     * whose row for that cell lands strictly between the stale cached value and the cell's true
+     * (higher) committed max was then WRONGLY judged append-only -- a genuine false positive, violating
+     * this predicate's one hard invariant (never-false-positive for append-only). This test proves the
+     * fix: the fold now also happens at the single-cell action site itself, immediately before its
+     * early return, so the cache can never go stale relative to the cell's real committed max.
+     */
+    @Test
+    public void testStaleMultiCellCacheAfterRealSingleCellFastAppendDoesNotFalsePositive() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            execute("insert into c values ('2020-01-01T00:00:00.000000Z','R0',0.0)");
+            execute("insert into p values ('2020-01-01T00:00:00.000000Z','R0',0.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // 1. Seed both cells (first commit each -- full path, cells created; both this method's own
+            // cache AND spec 1's single-cell cache warmed to 00:10 for SA/SB, per seedCell's own docs).
+            seedCell("SA", "2020-01-01T00:10:00.000000Z", 1.0);
+            seedCell("SB", "2020-01-01T00:10:00.000000Z", 2.0);
+
+            // 2. A genuine multi-cell, ordered, append-only commit into both cells: eligible, folding
+            // compositeMultiCellMaxTimestamp[SA] = 00:20. Side effect (spec 1's own documented, existing
+            // behavior, unrelated to this fix): the single-cell predicate detects this as multi-cell and
+            // unconditionally CLEARS its own compositeCellMaxTimestamp cache entirely.
+            long beforeMulti1 = TableWriter.getCompositeMultiCellFastAppendEligibleCount();
+            execute("insert into c values " +
+                    "('2020-01-01T00:20:00.000000Z','SA',1.1)," +
+                    "('2020-01-01T00:20:01.000000Z','SB',2.1)");
+            execute("insert into p values " +
+                    "('2020-01-01T00:20:00.000000Z','SA',1.1)," +
+                    "('2020-01-01T00:20:01.000000Z','SB',2.1)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            Assert.assertEquals(
+                    "setup: multi-cell append-only commit warming compositeMultiCellMaxTimestamp[SA] to 00:20 must be eligible",
+                    beforeMulti1 + 1, TableWriter.getCompositeMultiCellFastAppendEligibleCount());
+
+            // 3a. Single-cell commit into SA right after the wipe above: spec 1's own
+            // compositeCellMaxTimestamp[SA] is gone, so THIS commit cold-fails append-only (a missed
+            // detection, per spec 1's own documented conservative design) and takes the full path -- but
+            // re-WARMS compositeCellMaxTimestamp[SA] to 00:30. Because this commit falls through (rather
+            // than early-returning), it also reaches THIS method's own multi-cell branch (single-cell
+            // shaped, so not multi-cell-eligible, but still folds unconditionally per this method's own
+            // docs) -- advancing compositeMultiCellMaxTimestamp[SA] to 00:30 too. This step is what
+            // creates the STALE value the false positive below exploits: it is only step 3b next, whose
+            // commit takes the REAL fast-append early return, that leaves this cache stuck at 00:30
+            // while the cell's real committed max keeps advancing.
+            long beforeCommitted1 = TableWriter.getCompositeFastAppendCommittedCount();
+            execute("insert into c values ('2020-01-01T00:30:00.000000Z','SA',1.2)");
+            execute("insert into p values ('2020-01-01T00:30:00.000000Z','SA',1.2)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            Assert.assertEquals(
+                    "sanity: the re-warm commit right after a multi-cell wipe must cold-fail spec-1's own"
+                            + " cache and take the full path, not a real fast-append",
+                    beforeCommitted1, TableWriter.getCompositeFastAppendCommittedCount());
+
+            // 3b. Another single-cell commit into SA: compositeCellMaxTimestamp[SA] is now warm (00:30,
+            // from 3a), so THIS ONE genuinely fires spec 1's REAL single-cell fast-append early return --
+            // advancing SA's real committed max to 00:50 -- and, because of that early return, never
+            // reaches this method's own multi-cell branch this commit. Confirmed via the committed
+            // counter (per this task's own instruction: if this assertion ever fails, the false positive
+            // below is unreachable and this test's premise needs re-examination).
+            long beforeCommitted2 = TableWriter.getCompositeFastAppendCommittedCount();
+            execute("insert into c values ('2020-01-01T00:50:00.000000Z','SA',1.3)");
+            execute("insert into p values ('2020-01-01T00:50:00.000000Z','SA',1.3)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            Assert.assertEquals(
+                    "a real single-cell fast-append must actually fire here (SA's real committed max is"
+                            + " now 00:50) -- otherwise this test's targeted false positive is unreachable",
+                    beforeCommitted2 + 1, TableWriter.getCompositeFastAppendCommittedCount());
+
+            // 4. The targeted false positive (pre-fix): a multi-cell commit lands a row for SA at 00:40
+            // -- strictly BEFORE SA's real committed max (00:50, just fast-appended in 3b) but strictly
+            // AFTER compositeMultiCellMaxTimestamp[SA]'s STALE value (00:30, from step 3a -- step 3b's
+            // real fast-append never refreshed it, pre-fix). SB's own row (00:25) is genuinely
+            // append-only (after SB's real max, 00:20:01). Pre-fix, SA's stale-but-passing check let the
+            // whole (all-or-nothing) commit through as eligible -- a genuine false positive: SA is NOT
+            // actually append-only (00:40 < its real max 00:50). Post-fix, compositeMultiCellMaxTimestamp
+            // [SA] was ALSO refreshed to 00:50 by step 3b's real fast-append, so SA correctly fails
+            // append-only (00:40 is not > 00:50) and the whole commit is correctly ruled ineligible.
+            long beforeMulti2 = TableWriter.getCompositeMultiCellFastAppendEligibleCount();
+            execute("insert into c values " +
+                    "('2020-01-01T00:40:00.000000Z','SA',1.4)," +
+                    "('2020-01-01T00:25:00.000000Z','SB',2.2)");
+            execute("insert into p values " +
+                    "('2020-01-01T00:40:00.000000Z','SA',1.4)," +
+                    "('2020-01-01T00:25:00.000000Z','SB',2.2)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            Assert.assertEquals(
+                    "SA's row (00:40) lands before its REAL committed max (00:50) even though it is after"
+                            + " the STALE compositeMultiCellMaxTimestamp entry (00:30) a real single-cell"
+                            + " fast-append left behind -- must NOT be judged multi-cell append-only-eligible",
+                    beforeMulti2, TableWriter.getCompositeMultiCellFastAppendEligibleCount());
+
+            // Behavior unchanged throughout (Task 1 is detection-only: this predicate's false positive
+            // never actually skipped real work, so composite results still exactly match the plain twin
+            // regardless of the bug -- the fix corrects the COUNTER, not data correctness).
+            engine.releaseInactive();
+            assertWalTableNotSuspended("p");
+            assertSqlCursors("select ts, exch, px from p order by ts, exch", "select ts, exch, px from c order by ts, exch");
         });
     }
 
