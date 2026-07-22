@@ -38,9 +38,10 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
+import io.questdb.std.IntLongHashMap;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -112,6 +113,7 @@ public class MetadataCache implements QuietCloseable {
     private volatile boolean fullyHydrated = false;
     private final Object expiryPolicySnapshotLock = new Object();
     private final LongHashSet pendingExpiryPolicyIds = new LongHashSet();
+    private final IntLongHashMap pendingExpiryPolicyVersions = new IntLongHashMap();
     private volatile long expiryPolicyVersion;
 
     public MetadataCache(CairoEngine engine) {
@@ -172,24 +174,84 @@ public class MetadataCache implements QuietCloseable {
     }
 
     /**
-     * Records that an EXPIRE ROWS policy now exists (or is being created), opening the read-filter gate
-     * ({@link #mayHaveExpiryPolicy()}). Called as a policy is set, BEFORE it becomes visible, so a query
-     * racing the SET/CREATE never sees the gate closed and skips the filter. The pending ID remains in the
-     * immutable snapshot until authoritative hydration, drop, or cache clear reconciles it.
+     * Cancels a pending EXPIRE ROWS metadata transition after the table writer failed to publish it. The cache
+     * write lock protects the active-table scan while the rebuilt snapshot removes only this transition's
+     * conservative pending mark.
+     */
+    public void cancelExpiryPolicyUpdate(int tableId) {
+        try (MetadataCacheWriter ignore = writeLock()) {
+            if (clearPendingExpiryPolicy(tableId)) {
+                publishActiveExpiryPolicySnapshot();
+            }
+        }
+    }
+
+    /**
+     * Cancels one unpublished transition without clearing a newer or previously retained pending transition.
+     */
+    public void cancelExpiryPolicyUpdate(int tableId, long updateVersion, long previousPendingVersion) {
+        try (MetadataCacheWriter ignore = writeLock()) {
+            synchronized (expiryPolicySnapshotLock) {
+                if (pendingExpiryPolicyVersions.get(tableId) != updateVersion) {
+                    return;
+                }
+                if (previousPendingVersion > -1 && !isExpiryPolicyVersionCached(tableId, previousPendingVersion)) {
+                    pendingExpiryPolicyVersions.put(tableId, previousPendingVersion);
+                } else {
+                    pendingExpiryPolicyIds.remove(tableId);
+                    pendingExpiryPolicyVersions.remove(tableId);
+                }
+            }
+            publishActiveExpiryPolicySnapshot();
+        }
+    }
+
+    public long getExpiryPolicyVersion() {
+        return expiryPolicyVersion;
+    }
+
+    /**
+     * Returns whether this table has an EXPIRE ROWS metadata transition in progress. The immutable snapshot
+     * makes this a lock-free check on the SQL parse path.
+     */
+    public boolean isExpiryPolicyUpdatePending(TableToken tableToken) {
+        return expiryPolicySnapshot.pendingTableIds.contains(tableToken.getTableId());
+    }
+
+    /**
+     * Marks any SET or DROP EXPIRE transition before the writer mutates metadata. The mark opens the read-filter
+     * gate and makes SQL use authoritative metadata until hydration publishes the new cache entry. Replacement
+     * SET and DROP must also create a pending mark even though the active-policy ID already exists.
      */
     public void markExpiryPolicyPossible(int tableId) {
+        markExpiryPolicyPossible(tableId, 0);
+    }
+
+    /**
+     * Marks a transition to the given metadata version and returns the target of any superseded pending mark.
+     */
+    public long markExpiryPolicyPossible(int tableId, long updateVersion) {
         synchronized (expiryPolicySnapshotLock) {
-            final ExpiryPolicySnapshot current = expiryPolicySnapshot;
-            if (current.tableIds.contains(tableId)) {
-                return;
-            }
-            final LongHashSet ids = copyTableIds(current.tableIds, 1);
-            ids.add(tableId);
+            final long previousPendingVersion = pendingExpiryPolicyVersions.get(tableId);
             pendingExpiryPolicyIds.add(tableId);
-            // The policy is not authoritative in tableMap yet. Publish only its ID to keep racing reads
-            // conservative; the writer's subsequent cache hydration rebuilds the full active-table snapshot.
-            expiryPolicySnapshot = new ExpiryPolicySnapshot(ids, current.tables);
+            pendingExpiryPolicyVersions.put(tableId, updateVersion);
+            final ExpiryPolicySnapshot current = expiryPolicySnapshot;
+            final LongHashSet ids;
+            if (current.tableIds.contains(tableId)) {
+                ids = current.tableIds;
+            } else {
+                ids = copyTableIds(current.tableIds, 1);
+                ids.add(tableId);
+            }
+            // Publish the pending IDs independently from active IDs: the parser must distinguish an active,
+            // cache-resident policy from a transition whose policy must come from authoritative metadata.
+            expiryPolicySnapshot = new ExpiryPolicySnapshot(
+                    ids,
+                    copyTableIds(pendingExpiryPolicyIds, 0),
+                    copyActiveExpiryTablesExcluding(current.tables, tableId)
+            );
             expiryPolicyVersion++;
+            return previousPendingVersion;
         }
     }
 
@@ -199,10 +261,6 @@ public class MetadataCache implements QuietCloseable {
      * thereafter true only once a policied table has been cached. Lets the read filter and the cleanup
      * discovery skip their per-table work on databases that never use EXPIRE ROWS.
      */
-    public long getExpiryPolicyVersion() {
-        return expiryPolicyVersion;
-    }
-
     public boolean mayHaveExpiryPolicy() {
         return !fullyHydrated || expiryPolicySnapshot.tableIds.size() > 0;
     }
@@ -210,7 +268,7 @@ public class MetadataCache implements QuietCloseable {
     /**
      * Per-table refinement of {@link #mayHaveExpiryPolicy()}: whether THIS table may carry an EXPIRE ROWS
      * policy. Conservatively true while hydrating (the id set is not yet complete); afterwards true only
-     * for tables whose id is in the policied set. Lock-free — a volatile read of an immutable snapshot —
+     * for tables whose id is in the policied set. Lock-free - a volatile read of an immutable snapshot -
      * so the read filter can skip the cache read lock + predicate lookup for the (typically many)
      * non-policied tables once some unrelated table has a policy.
      */
@@ -218,10 +276,43 @@ public class MetadataCache implements QuietCloseable {
         return !fullyHydrated || expiryPolicySnapshot.tableIds.contains(tableToken.getTableId());
     }
 
+    /**
+     * Advances the policy epoch immediately after _meta/_txn publish a pending transition. Compilers use the
+     * epoch to reject a parse decision made against the previous authoritative metadata version.
+     */
+    public void publishExpiryPolicyUpdate() {
+        synchronized (expiryPolicySnapshotLock) {
+            expiryPolicyVersion++;
+        }
+    }
+
     private boolean clearPendingExpiryPolicy(int tableId) {
         synchronized (expiryPolicySnapshotLock) {
+            pendingExpiryPolicyVersions.remove(tableId);
             return pendingExpiryPolicyIds.remove(tableId) > -1;
         }
+    }
+
+    private boolean clearPendingExpiryPolicy(int tableId, long hydratedMetadataVersion) {
+        synchronized (expiryPolicySnapshotLock) {
+            final long updateVersion = pendingExpiryPolicyVersions.get(tableId);
+            if (updateVersion < 0 || hydratedMetadataVersion < updateVersion) {
+                return false;
+            }
+            pendingExpiryPolicyVersions.remove(tableId);
+            return pendingExpiryPolicyIds.remove(tableId) > -1;
+        }
+    }
+
+    private static ObjList<CairoTable> copyActiveExpiryTablesExcluding(ObjList<CairoTable> current, int tableId) {
+        final ObjList<CairoTable> copy = new ObjList<>(current.size());
+        for (int i = 0, n = current.size(); i < n; i++) {
+            final CairoTable table = current.getQuick(i);
+            if (table != null && table.getTableToken().getTableId() != tableId) {
+                copy.add(table);
+            }
+        }
+        return copy;
     }
 
     private static LongHashSet copyTableIds(LongHashSet current, int extraCapacity) {
@@ -230,6 +321,18 @@ public class MetadataCache implements QuietCloseable {
             copy.add(current.get(i));
         }
         return copy;
+    }
+
+    private boolean isExpiryPolicyVersionCached(int tableId, long metadataVersion) {
+        for (int i = 0, n = tableMap.size(); i < n; i++) {
+            final CairoTable table = tableMap.getAt(i);
+            if (table != null
+                    && table.getTableToken().getTableId() == tableId
+                    && table.getMetadataVersion() >= metadataVersion) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -770,7 +873,10 @@ public class MetadataCache implements QuietCloseable {
             }
 
             tableMap.put(table.getTableName(), table);
-            final boolean hasPendingExpiryPublication = clearPendingExpiryPolicy(token.getTableId());
+            final boolean hasPendingExpiryPublication = clearPendingExpiryPolicy(
+                    token.getTableId(),
+                    table.getMetadataVersion()
+            );
             if (fullyHydrated || hasPendingExpiryPublication) {
                 publishActiveExpiryPolicySnapshot();
             }
@@ -925,13 +1031,18 @@ public class MetadataCache implements QuietCloseable {
                 }
                 final String predicate = table.getExpiryPredicate();
                 if (predicate != null && !predicate.isEmpty()) {
-                    tableIds.add(table.getTableToken().getTableId());
-                    tables.add(table);
+                    final int tableId = table.getTableToken().getTableId();
+                    tableIds.add(tableId);
+                    if (!pendingExpiryPolicyIds.contains(tableId)) {
+                        // Cleanup must not act on P0 after a replacement SET or DROP starts. Hydration or
+                        // cancellation republishes the authoritative policy after clearing the pending ID.
+                        tables.add(table);
+                    }
                 }
             }
             expiryPolicySnapshot = tables.size() == 0 && tableIds.size() == 0
                     ? ExpiryPolicySnapshot.EMPTY
-                    : new ExpiryPolicySnapshot(tableIds, tables);
+                    : new ExpiryPolicySnapshot(tableIds, copyTableIds(pendingExpiryPolicyIds, 0), tables);
             expiryPolicyVersion++;
         }
     }
@@ -986,11 +1097,17 @@ public class MetadataCache implements QuietCloseable {
     }
 
     private static final class ExpiryPolicySnapshot {
-        private static final ExpiryPolicySnapshot EMPTY = new ExpiryPolicySnapshot(new LongHashSet(), new ObjList<>());
+        private static final ExpiryPolicySnapshot EMPTY = new ExpiryPolicySnapshot(
+                new LongHashSet(),
+                new LongHashSet(),
+                new ObjList<>()
+        );
+        private final LongHashSet pendingTableIds;
         private final LongHashSet tableIds;
         private final ObjList<CairoTable> tables;
 
-        private ExpiryPolicySnapshot(LongHashSet tableIds, ObjList<CairoTable> tables) {
+        private ExpiryPolicySnapshot(LongHashSet tableIds, LongHashSet pendingTableIds, ObjList<CairoTable> tables) {
+            this.pendingTableIds = pendingTableIds;
             this.tableIds = tableIds;
             this.tables = tables;
         }
@@ -1157,6 +1274,7 @@ public class MetadataCache implements QuietCloseable {
                 expiryPolicySnapshot = ExpiryPolicySnapshot.EMPTY;
                 expiryPolicyVersion++;
                 pendingExpiryPolicyIds.clear();
+                pendingExpiryPolicyVersions.clear();
             }
             // Advance the epoch so a reconcile that overlapped this clear does not count
             // its (clear-induced) "no progress" toward the give-up budget.
@@ -1316,7 +1434,7 @@ public class MetadataCache implements QuietCloseable {
             translateCoveringIndicesToDense(table);
 
             tableMap.put(table.getTableName(), table);
-            final boolean hasPendingExpiryPublication = clearPendingExpiryPolicy(tableToken.getTableId());
+            final boolean hasPendingExpiryPublication = clearPendingExpiryPolicy(tableToken.getTableId(), metadataVersion);
             if (fullyHydrated || hasPendingExpiryPublication) {
                 publishActiveExpiryPolicySnapshot();
             }

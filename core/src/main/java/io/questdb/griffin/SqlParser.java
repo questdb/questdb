@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
@@ -1351,22 +1352,26 @@ public class SqlParser {
         if (tableToken == null || !tableToken.isMatView()) {
             return null;
         }
-        try (MetadataCacheReader metadataRO = cairoEngine.getMetadataCache().readLock()) {
-            final CairoTable table = metadataRO.getTable(tableToken);
-            if (table != null) {
-                final String predicate = table.getExpiryPredicate();
-                if (predicate == null || predicate.isEmpty()) {
-                    return null;
+        final MetadataCache metadataCache = cairoEngine.getMetadataCache();
+        // During SET/DROP the cache deliberately retains P0 until authoritative _meta/_txn publish P1. Bypass
+        // that stale entry while the transition is pending. A concurrent mark after this check advances the
+        // policy epoch, so the compiler rejects and reparses any decision made here against P0.
+        if (!metadataCache.isExpiryPolicyUpdatePending(tableToken)) {
+            try (MetadataCacheReader metadataRO = metadataCache.readLock()) {
+                final CairoTable table = metadataRO.getTable(tableToken);
+                if (table != null) {
+                    final String predicate = table.getExpiryPredicate();
+                    if (predicate == null || predicate.isEmpty()) {
+                        return null;
+                    }
+                    // Copy: the CairoTable's name view must not outlive the read lock we are about to release.
+                    expiryTimestampColumnName = Chars.toString(table.getTimestampName());
+                    return predicate;
                 }
-                // Copy: the CairoTable's name view must not outlive the read lock we are about to release.
-                expiryTimestampColumnName = Chars.toString(table.getTimestampName());
-                return predicate;
             }
         }
-        // Cache miss for a resolvable table: the in-memory cache may not be hydrated yet (the brief
-        // startup window before MetadataCache.onStartupAsyncHydrator finishes). Fall back to the
-        // authoritative table metadata so the read filter is never silently skipped — that would
-        // otherwise expose expired rows until hydration caught up.
+        // Cache miss, or a policy transition in progress: fall back to authoritative table metadata. This
+        // prevents a pending first/replacement SET or DROP from embedding the cache's previous policy state.
         try (TableMetadata metadata = cairoEngine.getTableMetadata(tableToken)) {
             final String predicate = metadata.getExpiryPredicate();
             if (predicate == null || predicate.isEmpty()) {
@@ -1376,6 +1381,11 @@ public class SqlParser {
             expiryTimestampColumnName = tsIndex >= 0 ? Chars.toString(metadata.getColumnName(tsIndex)) : null;
             return predicate;
         } catch (CairoException e) {
+            if (metadataCache.isExpiryPolicyUpdatePending(tableToken)) {
+                // Failing open while P0 is intentionally bypassed could permanently bind no-policy to P1.
+                // Propagate the transient failure; callers may retry, but they must not expose rows silently.
+                throw e;
+            }
             // Table concurrently dropped/renamed, or its metadata is briefly unavailable: treat as no policy.
             return null;
         }

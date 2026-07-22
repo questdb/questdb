@@ -1072,6 +1072,88 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPendingExpiryPolicyCancellationPreservesActivePolicy() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            final TableToken base = engine.verifyTableName("base");
+            final TableToken mv = engine.verifyTableName("mv");
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(mv));
+            Assert.assertFalse(cache.isExpiryPolicyUpdatePending(mv));
+
+            final long beforeMark = cache.getExpiryPolicyVersion();
+            cache.markExpiryPolicyPossible(mv.getTableId());
+            Assert.assertTrue("replacement/drop must become pending even for an active ID", cache.isExpiryPolicyUpdatePending(mv));
+            Assert.assertTrue(cache.getExpiryPolicyVersion() > beforeMark);
+
+            // An unrelated snapshot rebuild must not reintroduce mv's old policy to cleanup discovery.
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.dropTable(base);
+            }
+            final ObjList<TableToken> tokens = new ObjList<>();
+            try (MetadataCacheReader ro = cache.readLock()) {
+                ro.collectPoliciedTables(tokens, new ObjList<>(), new LongList());
+            }
+            Assert.assertEquals("cleanup must skip a policy while its replacement/drop is pending", 0, tokens.size());
+
+            final long beforeCancel = cache.getExpiryPolicyVersion();
+            cache.cancelExpiryPolicyUpdate(mv.getTableId());
+            Assert.assertTrue(cache.getExpiryPolicyVersion() > beforeCancel);
+            Assert.assertFalse(cache.isExpiryPolicyUpdatePending(mv));
+            Assert.assertTrue("failed replacement/drop must preserve the active policy", cache.mayTableHaveExpiryPolicy(mv));
+            try (MetadataCacheReader ro = cache.readLock()) {
+                ro.collectPoliciedTables(tokens, new ObjList<>(), new LongList());
+            }
+            Assert.assertEquals("cancellation must restore cleanup discovery", 1, tokens.size());
+        });
+    }
+
+    @Test
+    public void testPendingExpiryPolicySupersedingTransitionRejectsStaleHydration() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            final TableToken mv = engine.verifyTableName("mv");
+            final long cachedMetadataVersion;
+            try (MetadataCacheReader ro = cache.readLock()) {
+                cachedMetadataVersion = ro.getTable(mv).getMetadataVersion();
+            }
+
+            final long firstUpdateVersion = cachedMetadataVersion + 1;
+            Assert.assertEquals(-1, cache.markExpiryPolicyPossible(mv.getTableId(), firstUpdateVersion));
+            final long secondUpdateVersion = cachedMetadataVersion + 2;
+            Assert.assertEquals(
+                    firstUpdateVersion,
+                    cache.markExpiryPolicyPossible(mv.getTableId(), secondUpdateVersion)
+            );
+
+            // Hydration that started before the second transition must not clear its newer pending mark.
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.hydrateTable(mv);
+            }
+            Assert.assertTrue(cache.isExpiryPolicyUpdatePending(mv));
+
+            // A failed second transition restores the earlier pending target, which remains conservative because
+            // the cache only contains the still-older metadata version.
+            cache.cancelExpiryPolicyUpdate(mv.getTableId(), secondUpdateVersion, firstUpdateVersion);
+            Assert.assertTrue(cache.isExpiryPolicyUpdatePending(mv));
+            cache.cancelExpiryPolicyUpdate(mv.getTableId(), firstUpdateVersion, -1);
+            Assert.assertFalse(cache.isExpiryPolicyUpdatePending(mv));
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(mv));
+        });
+    }
+
+    @Test
     public void testPendingExpiryPolicySurvivesUnrelatedPublishAndFailedHydrate() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE alpha (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

@@ -3338,25 +3338,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public void setMetaExpiry(String predicate, long cleanupIntervalMicros) {
         commit();
-        if (predicate != null) {
-            if (!getTableToken().isMatView()) {
-                // Defense-in-depth: EXPIRE ROWS is materialized-view-only and the compiler enforces it. Never
-                // persist a policy onto a non-mat-view at apply time, even from a malformed/forged WAL alter.
-                // Skip rather than throw -- a throw during WAL apply would suspend the table; a clear
-                // (predicate == null) still proceeds below so DROP EXPIRE always works.
-                LOG.error().$("ignoring EXPIRE ROWS policy on non-materialized-view [table=")
-                        .$safe(getTableToken().getTableName()).I$();
-                return;
-            }
-            // Open the read-filter gate before the policy is written/hydrated, so a query racing this
-            // SET (e.g. the first policy on the database) cannot skip the filter and expose expired rows.
-            engine.getMetadataCache().markExpiryPolicyPossible(getTableToken().getTableId());
+        if (predicate != null && !getTableToken().isMatView()) {
+            // Defense-in-depth: EXPIRE ROWS is materialized-view-only and the compiler enforces it. Never
+            // persist a policy onto a non-mat-view at apply time, even from a malformed/forged WAL alter.
+            // Skip rather than throw -- a throw during WAL apply would suspend the table; a clear
+            // (predicate == null) still proceeds below so DROP EXPIRE always works.
+            LOG.error().$("ignoring EXPIRE ROWS policy on non-materialized-view [table=")
+                    .$safe(getTableToken().getTableName()).I$();
+            return;
         }
-        metadata.setExpiry(predicate, cleanupIntervalMicros);
-        // writeMetadataToDisk() rewrites _meta (persisting the policy via the ALTER-rewrite
-        // serializer), bumps the metadata version, and refreshes the MetadataCache via
-        // hydrateTable(metadata) so the read-time row-expiry filter immediately sees the change.
-        writeMetadataToDisk();
+
+        final MetadataCache metadataCache = engine.getMetadataCache();
+        final long expiryPolicyUpdateVersion = metadata.getMetadataVersion() + 1;
+        // Mark every transition, including replacement SET and DROP, before mutating metadata. Pending reads
+        // bypass the old cache entry, and the epoch makes a parser that already observed the old gate retry.
+        final long previousPendingExpiryVersion = metadataCache.markExpiryPolicyPossible(
+                getTableToken().getTableId(),
+                expiryPolicyUpdateVersion
+        );
+        try {
+            metadata.setExpiry(predicate, cleanupIntervalMicros);
+        } catch (Throwable th) {
+            // No authoritative metadata changed, so restore any earlier pending publication and close this epoch.
+            metadataCache.cancelExpiryPolicyUpdate(
+                    getTableToken().getTableId(),
+                    expiryPolicyUpdateVersion,
+                    previousPendingExpiryVersion
+            );
+            throw th;
+        }
+        // The expiry-aware overload advances the policy epoch when _meta/_txn publish, then hydrates the cache
+        // and clears the pending mark. It cancels only failures that occur before authoritative publication.
+        writeMetadataToDisk(true, expiryPolicyUpdateVersion, previousPendingExpiryVersion);
     }
 
     @Override
@@ -14435,11 +14448,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void writeMetadataToDisk() {
-        rewriteAndSwapMetadata(metadata);
-        clearTodoAndCommitMeta();
-        fireMetadataVersionPublishedBarrier();
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
+        writeMetadataToDisk(false, -1, -1);
+    }
+
+    private void writeMetadataToDisk(
+            boolean isExpiryPolicyUpdate,
+            long expiryPolicyUpdateVersion,
+            long previousPendingExpiryVersion
+    ) {
+        boolean isMetadataVersionPublished = false;
+        try {
+            rewriteAndSwapMetadata(metadata);
+            clearTodoAndCommitMeta();
+            isMetadataVersionPublished = true;
+            if (isExpiryPolicyUpdate) {
+                // Publish the policy epoch in the same writer thread immediately after the authoritative metadata
+                // version. A compiler that parsed the previous version will observe the epoch change and retry.
+                engine.getMetadataCache().publishExpiryPolicyUpdate();
+            }
+            fireMetadataVersionPublishedBarrier();
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+        } catch (Throwable th) {
+            if (isExpiryPolicyUpdate && !isMetadataVersionPublished) {
+                // The cache still describes the authoritative version. Remove only this failed transition's mark.
+                engine.getMetadataCache().cancelExpiryPolicyUpdate(
+                        getTableToken().getTableId(),
+                        expiryPolicyUpdateVersion,
+                        previousPendingExpiryVersion
+                );
+            }
+            // After publication, retain the pending mark on failure. Reads then use authoritative metadata rather
+            // than the stale cache until a later successful hydration reconciles it.
+            throw th;
         }
     }
 

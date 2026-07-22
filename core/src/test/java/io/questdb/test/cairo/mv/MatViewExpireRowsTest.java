@@ -29,11 +29,17 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.mp.Job;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
@@ -41,10 +47,12 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -124,6 +132,84 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                         k\tv
                         C\t3.0
                         """
+        );
+    }
+
+    @Test
+    public void testInsertSelectCompiledDuringDropExpireUsesCurrentPolicy() throws Exception {
+        assertInsertSelectCompiledDuringPolicyChange(
+                " EXPIRE ROWS WHEN v < 2.0",
+                "ALTER MATERIALIZED VIEW mv DROP EXPIRE",
+                """
+                        k\tv
+                        A\t1.0
+                        B\t2.0
+                        C\t3.0
+                        """
+        );
+    }
+
+    @Test
+    public void testInsertSelectCompiledDuringFirstSetExpireUsesCurrentPolicy() throws Exception {
+        assertInsertSelectCompiledDuringPolicyChange(
+                "",
+                "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < 2.0",
+                """
+                        k\tv
+                        B\t2.0
+                        C\t3.0
+                        """
+        );
+    }
+
+    @Test
+    public void testInsertSelectCompiledDuringReplacementSetExpireUsesCurrentPolicy() throws Exception {
+        assertInsertSelectCompiledDuringPolicyChange(
+                " EXPIRE ROWS WHEN v < 2.0",
+                "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < 3.0",
+                """
+                        k\tv
+                        C\t3.0
+                        """
+        );
+    }
+
+    @Test
+    public void testAlterViewCompiledDuringDropExpireUsesCurrentDependencies() throws Exception {
+        assertViewCompiledDuringPolicyChange(
+                " EXPIRE ROWS WHEN v < 2.0",
+                "CREATE VIEW v1 AS (SELECT k FROM mv)",
+                "ALTER MATERIALIZED VIEW mv DROP EXPIRE",
+                "ALTER VIEW v1 AS (SELECT k FROM mv)",
+                "k\nA\nB\nC\n",
+                null,
+                "v"
+        );
+    }
+
+    @Test
+    public void testCreateOrReplaceViewCompiledDuringReplacementSetExpireUsesCurrentDependencies() throws Exception {
+        assertViewCompiledDuringPolicyChange(
+                " EXPIRE ROWS WHEN v < 2.0",
+                "CREATE VIEW v1 AS (SELECT k FROM mv)",
+                "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN ts < '2024-01-03'",
+                "CREATE OR REPLACE VIEW v1 AS (SELECT k FROM mv)",
+                "k\nC\n",
+                "ts",
+                "v"
+        );
+    }
+
+    @Test
+    public void testCreateViewCompiledDuringFirstSetExpireUsesCurrentDependencies() throws Exception {
+        assertViewCompiledDuringPolicyChange(
+                "",
+                null,
+                "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < 2.0",
+                "CREATE VIEW v1 AS (SELECT k FROM mv)",
+                "k\nB\nC\n",
+                "v",
+                "ts"
         );
     }
 
@@ -1094,6 +1180,219 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 }
             } finally {
                 resumeCacheHydration.countDown();
+                TableWriter.setMetadataVersionPublishedBarrier(null);
+                applyThread.join(30_000);
+            }
+        });
+    }
+
+    private void assertInsertSelectCompiledDuringPolicyChange(
+            String initialExpiryClause,
+            String policyChangeSql,
+            String expected
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', 3.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)" + initialExpiryClause);
+            execute("CREATE TABLE sink (k SYMBOL, v DOUBLE)");
+            drainWalAndMatViewQueues();
+
+            // Warm the cache so the INSERT model captures P0 before the transition starts.
+            if (initialExpiryClause.isEmpty()) {
+                assertQuery("SELECT k, v FROM mv ORDER BY k").expectSize().noLeakCheck().returns(
+                        "k\tv\nA\t1.0\nB\t2.0\nC\t3.0\n"
+                );
+            } else {
+                assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().returns(
+                        "k\tv\nB\t2.0\nC\t3.0\n"
+                );
+            }
+
+            final AtomicInteger factoryGenerationAttempts = new AtomicInteger();
+            final AtomicReference<Throwable> applyError = new AtomicReference<>();
+            final CountDownLatch insertModelCompiled = new CountDownLatch(1);
+            final CountDownLatch metadataVersionPublished = new CountDownLatch(1);
+            final CountDownLatch resumeCacheHydration = new CountDownLatch(1);
+            execute(policyChangeSql);
+            TableWriter.setMetadataVersionPublishedBarrier(() -> {
+                metadataVersionPublished.countDown();
+                try {
+                    if (!resumeCacheHydration.await(30, TimeUnit.SECONDS)) {
+                        throw new AssertionError("timed out waiting to resume metadata-cache hydration");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            });
+            SqlCompilerImpl.setInsertSelectFactoryGenerationBarrier(() -> {
+                if (factoryGenerationAttempts.getAndIncrement() == 0) {
+                    insertModelCompiled.countDown();
+                    try {
+                        if (!metadataVersionPublished.await(30, TimeUnit.SECONDS)) {
+                            throw new AssertionError("timed out waiting for metadata-version publication");
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                }
+            });
+
+            final Thread applyThread = new Thread(() -> {
+                try {
+                    if (!insertModelCompiled.await(30, TimeUnit.SECONDS)) {
+                        throw new AssertionError("timed out waiting for INSERT SELECT model compilation");
+                    }
+                    drainWalQueue();
+                } catch (Throwable th) {
+                    applyError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "expire-policy-insert-select-apply");
+
+            try {
+                applyThread.start();
+                try (
+                        SqlCompiler sqlCompiler = engine.getSqlCompiler();
+                        InsertOperation insertOperation = sqlCompiler.compile(
+                                "INSERT INTO sink SELECT k, v FROM mv ORDER BY k",
+                                sqlExecutionContext
+                        ).popInsertOperation()
+                ) {
+                    resumeCacheHydration.countDown();
+                    applyThread.join(30_000);
+                    assertFalse("WAL apply did not finish", applyThread.isAlive());
+                    if (applyError.get() != null) {
+                        throw new AssertionError("WAL apply failed", applyError.get());
+                    }
+                    try (OperationFuture future = insertOperation.execute(sqlExecutionContext)) {
+                        future.await();
+                    }
+                }
+                assertEquals("INSERT SELECT must retry after the policy epoch changes", 2, factoryGenerationAttempts.get());
+                assertQuery("SELECT k, v FROM sink ORDER BY k").expectSize().noLeakCheck().returns(expected);
+            } finally {
+                insertModelCompiled.countDown();
+                resumeCacheHydration.countDown();
+                SqlCompilerImpl.setInsertSelectFactoryGenerationBarrier(null);
+                TableWriter.setMetadataVersionPublishedBarrier(null);
+                applyThread.join(30_000);
+            }
+        });
+    }
+
+    private void assertViewCompiledDuringPolicyChange(
+            String initialExpiryClause,
+            String initialViewSql,
+            String policyChangeSql,
+            String viewSql,
+            String expected,
+            String expectedPolicyColumn,
+            String stalePolicyColumn
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', 3.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)" + initialExpiryClause);
+            drainWalAndMatViewQueues();
+            if (initialViewSql != null) {
+                execute(initialViewSql);
+                drainWalAndViewQueues();
+            }
+
+            if (initialExpiryClause.isEmpty()) {
+                assertQuery("SELECT k FROM mv ORDER BY k").expectSize().noLeakCheck().returns("k\nA\nB\nC\n");
+            } else {
+                assertQuery("SELECT k FROM mv ORDER BY k").noLeakCheck().returns("k\nB\nC\n");
+            }
+
+            final AtomicInteger factoryGenerationAttempts = new AtomicInteger();
+            final AtomicReference<Throwable> applyError = new AtomicReference<>();
+            final CountDownLatch metadataVersionPublished = new CountDownLatch(1);
+            final CountDownLatch resumeCacheHydration = new CountDownLatch(1);
+            final CountDownLatch viewModelCompiled = new CountDownLatch(1);
+            execute(policyChangeSql);
+            TableWriter.setMetadataVersionPublishedBarrier(() -> {
+                metadataVersionPublished.countDown();
+                try {
+                    if (!resumeCacheHydration.await(30, TimeUnit.SECONDS)) {
+                        throw new AssertionError("timed out waiting to resume metadata-cache hydration");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            });
+            SqlCompilerImpl.setViewFactoryGenerationBarrier(() -> {
+                if (factoryGenerationAttempts.getAndIncrement() == 0) {
+                    viewModelCompiled.countDown();
+                    try {
+                        if (!metadataVersionPublished.await(30, TimeUnit.SECONDS)) {
+                            throw new AssertionError("timed out waiting for metadata-version publication");
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                }
+            });
+
+            final Thread applyThread = new Thread(() -> {
+                try {
+                    if (!viewModelCompiled.await(30, TimeUnit.SECONDS)) {
+                        throw new AssertionError("timed out waiting for view model compilation");
+                    }
+                    drainWalQueue();
+                } catch (Throwable th) {
+                    applyError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "expire-policy-view-apply");
+
+            try {
+                applyThread.start();
+                execute(viewSql);
+                resumeCacheHydration.countDown();
+                applyThread.join(30_000);
+                assertFalse("WAL apply did not finish", applyThread.isAlive());
+                if (applyError.get() != null) {
+                    throw new AssertionError("WAL apply failed", applyError.get());
+                }
+                assertEquals("view compilation must retry after the policy epoch changes", 2, factoryGenerationAttempts.get());
+                final TableToken viewToken = engine.getTableTokenIfExists("v1");
+                assertNotNull(viewToken);
+                final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
+                assertNotNull(viewDefinition);
+                final LowerCaseCharSequenceHashSet columns = viewDefinition.getDependencies().get("mv");
+                assertNotNull(columns);
+                assertTrue(columns.contains("k"));
+                if (expectedPolicyColumn != null) {
+                    assertTrue(columns.contains(expectedPolicyColumn));
+                }
+                assertFalse(columns.contains(stalePolicyColumn));
+                if (expectedPolicyColumn == null) {
+                    assertQuery("SELECT * FROM v1 ORDER BY k").expectSize().noLeakCheck().returns(expected);
+                } else {
+                    assertQuery("SELECT * FROM v1 ORDER BY k").noLeakCheck().returns(expected);
+                }
+            } finally {
+                viewModelCompiled.countDown();
+                resumeCacheHydration.countDown();
+                SqlCompilerImpl.setViewFactoryGenerationBarrier(null);
                 TableWriter.setMetadataVersionPublishedBarrier(null);
                 applyThread.join(30_000);
             }

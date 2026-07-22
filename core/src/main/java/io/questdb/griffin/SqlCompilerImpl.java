@@ -171,6 +171,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     };
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
     private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
+    private static volatile Runnable insertSelectFactoryGenerationBarrier;
+    private static volatile Runnable viewFactoryGenerationBarrier;
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
@@ -374,6 +376,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    @TestOnly
+    public static void setInsertSelectFactoryGenerationBarrier(@Nullable Runnable barrier) {
+        insertSelectFactoryGenerationBarrier = barrier;
+    }
+
+    @TestOnly
+    public static void setViewFactoryGenerationBarrier(@Nullable Runnable barrier) {
+        viewFactoryGenerationBarrier = barrier;
+    }
+
     @Override
     public void clear() {
         clearExceptSqlText();
@@ -549,6 +561,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
                 }
                 LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(queryModel);
                 clearExceptSqlText();
                 lexer.restart();
                 if (insertModel != null) {
@@ -1848,28 +1861,75 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
-            final IQueryModel queryModel = executionModel.getQueryModel();
-            SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
-            engine.getViewGraph().validateNoCycle(viewToken, queryModel);
+            int remainingRetries = maxRecompileAttempts;
+            for (; ; ) {
+                final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                ExecutionModel executionModel = null;
+                boolean isRetry = false;
+                try {
+                    executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+                    final IQueryModel queryModel = executionModel.getQueryModel();
+                    dependencies.clear();
+                    SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
+                    engine.getViewGraph().validateNoCycle(viewToken, queryModel);
 
-            try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
-                final RecordMetadata metadata = factory.getMetadata();
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    final CharSequence columnName = metadata.getColumnName(i);
-                    if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
-                        throw SqlException.position(0)
-                                .put("invalid column name [name=")
-                                .put(columnName)
-                                .put(", position=")
-                                .put(i)
-                                .put(']');
+                    final Runnable barrier = viewFactoryGenerationBarrier;
+                    if (barrier != null) {
+                        barrier.run();
+                    }
+                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(
+                            queryModel,
+                            null,
+                            executionContext,
+                            false
+                    )) {
+                        final RecordMetadata metadata = factory.getMetadata();
+                        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                            final CharSequence columnName = metadata.getColumnName(i);
+                            if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
+                                throw SqlException.position(0)
+                                        .put("invalid column name [name=")
+                                        .put(columnName)
+                                        .put(", position=")
+                                        .put(i)
+                                        .put(']');
+                            }
+                        }
+                        // test the cursor, if no exception thrown viewSql is working
+                        try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                            cursor.hasNext();
+                        }
+                    }
+
+                    if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
+                        isRetry = true;
+                    } else {
+                        executionContext.getSecurityContext().authorizeAlterView(viewToken);
+                        if (!executionContext.isValidationOnly()) {
+                            engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
+                        }
+                        if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                            compiledQuery.ofAlterView();
+                            return;
+                        }
+                        isRetry = true;
+                    }
+                } catch (TableReferenceOutOfDateException e) {
+                    isRetry = true;
+                    if (remainingRetries == 0) {
+                        throw SqlException.$(0, e.getFlyweightMessage());
+                    }
+                } finally {
+                    if (isRetry) {
+                        freeTableNameFunctions(executionModel);
                     }
                 }
-                // test the cursor, if no exception thrown viewSql is working
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                    cursor.hasNext();
+
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during view compilation");
                 }
+                LOG.info().$("retrying view after metadata or row-expiry policy change [view=")
+                        .$(viewToken).$(", fd=").$(executionContext.getRequestFd()).I$();
             }
         } catch (SqlException e) {
             // position is reported from the view SQL, we have to adjust it
@@ -1879,12 +1939,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // position is reported from the view SQL, we have to adjust it
             throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
         }
-
-        executionContext.getSecurityContext().authorizeAlterView(viewToken);
-        if (!executionContext.isValidationOnly()) {
-            engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
-        }
-        compiledQuery.ofAlterView();
     }
 
     private TableToken authorizeCompileView(SqlExecutionContext executionContext, CompileViewModel model) {
@@ -3134,6 +3188,39 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return compileExecutionModel0(executionContext, model);
     }
 
+    private RecordCursorFactory compileExplainWithExpiryPolicyRetries(
+            ExplainModel initialExplainModel,
+            SqlExecutionContext executionContext,
+            long initialExpiryPolicyVersion
+    ) throws SqlException {
+        ExplainModel explainModel = initialExplainModel;
+        long expiryPolicyVersion = initialExpiryPolicyVersion;
+        int remainingRetries = maxRecompileAttempts;
+        for (; ; ) {
+            final RecordCursorFactory factory = generateExplain(explainModel, executionContext);
+            final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+            if (expiryPolicyVersion == currentExpiryPolicyVersion) {
+                return factory;
+            }
+
+            Misc.free(factory);
+            if (--remainingRetries < 0) {
+                throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+            }
+            LOG.info().$("retrying explain after row-expiry policy change [fd=")
+                    .$(executionContext.getRequestFd()).I$();
+            freeTableNameFunctions(explainModel);
+            clearExceptSqlText();
+            lexer.restart();
+            expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+            final ExecutionModel executionModel = compileExecutionModel(executionContext);
+            if (executionModel.getModelType() != ExecutionModel.EXPLAIN) {
+                throw SqlException.position(0).put("EXPLAIN query expected");
+            }
+            explainModel = (ExplainModel) executionModel;
+        }
+    }
+
     private void compileInner(
             @NotNull SqlExecutionContext executionContext,
             CharSequence sqlText,
@@ -3315,7 +3402,44 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private InsertOperation compileInsertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+    private InsertOperation compileInsertAsSelect(
+            ExecutionModel initialExecutionModel,
+            SqlExecutionContext executionContext,
+            long initialExpiryPolicyVersion
+    ) throws SqlException {
+        ExecutionModel executionModel = initialExecutionModel;
+        long expiryPolicyVersion = initialExpiryPolicyVersion;
+        int remainingRetries = maxRecompileAttempts;
+        for (; ; ) {
+            final Runnable barrier = insertSelectFactoryGenerationBarrier;
+            if (barrier != null) {
+                barrier.run();
+            }
+            final InsertOperation insertOperation = compileInsertAsSelectOneShot(executionModel, executionContext);
+            final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+            if (expiryPolicyVersion == currentExpiryPolicyVersion) {
+                return insertOperation;
+            }
+
+            Misc.free(insertOperation);
+            if (--remainingRetries < 0) {
+                throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+            }
+            LOG.info().$("retrying insert-select after row-expiry policy change [fd=")
+                    .$(executionContext.getRequestFd()).I$();
+            freeTableNameFunctions(executionModel.getQueryModel());
+            clearExceptSqlText();
+            lexer.restart();
+            expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+            executionModel = compileExecutionModel(executionContext);
+            if (executionModel.getModelType() != ExecutionModel.INSERT
+                    || executionModel.getQueryModel() == null) {
+                throw SqlException.position(0).put("INSERT SELECT query expected");
+            }
+        }
+    }
+
+    private InsertOperation compileInsertAsSelectOneShot(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
         // A connection authorized while the node was PRIMARY keeps a read-write security
         // context across an in-place demote. Check the live engine state before touching the
         // table registry, so the caller sees "replica access is read-only" rather than
@@ -3719,6 +3843,46 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofRollback();
     }
 
+    private void compileSelectWithExpiryPolicyRetries(
+            IQueryModel initialQueryModel,
+            SqlExecutionContext executionContext,
+            boolean generateProgressLogger,
+            long initialExpiryPolicyVersion
+    ) throws SqlException {
+        IQueryModel queryModel = initialQueryModel;
+        long expiryPolicyVersion = initialExpiryPolicyVersion;
+        int remainingRetries = maxRecompileAttempts;
+        for (; ; ) {
+            final RecordCursorFactory factory = generateSelectWithRetries(
+                    queryModel,
+                    null,
+                    executionContext,
+                    generateProgressLogger
+            );
+            final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+            if (expiryPolicyVersion == currentExpiryPolicyVersion) {
+                compiledQuery.ofSelect(factory, queryModel.isCacheable());
+                return;
+            }
+
+            Misc.free(factory);
+            if (--remainingRetries < 0) {
+                throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+            }
+            LOG.info().$("retrying plan after row-expiry policy change [q=`").$(queryModel)
+                    .$("`, fd=").$(executionContext.getRequestFd()).I$();
+            freeTableNameFunctions(queryModel);
+            clearExceptSqlText();
+            lexer.restart();
+            expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+            final ExecutionModel executionModel = compileExecutionModel(executionContext);
+            if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                throw SqlException.position(0).put("SELECT query expected");
+            }
+            queryModel = (IQueryModel) executionModel;
+        }
+    }
+
     private void compileSet(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         // SET [SESSION | LOCAL] name { = | TO } value [, value]*
         // PG compatibility no-op — validate syntax, then discard.
@@ -3908,6 +4072,43 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofTruncate();
     }
 
+    private UpdateOperation compileUpdateWithExpiryPolicyRetries(
+            IQueryModel initialUpdateQueryModel,
+            SqlExecutionContext executionContext,
+            long initialExpiryPolicyVersion
+    ) throws SqlException {
+        IQueryModel updateQueryModel = initialUpdateQueryModel;
+        long expiryPolicyVersion = initialExpiryPolicyVersion;
+        int remainingRetries = maxRecompileAttempts;
+        for (; ; ) {
+            final TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
+            final UpdateOperation updateOperation;
+            try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
+                updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
+            }
+            final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+            if (expiryPolicyVersion == currentExpiryPolicyVersion) {
+                return updateOperation;
+            }
+
+            Misc.free(updateOperation);
+            if (--remainingRetries < 0) {
+                throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+            }
+            LOG.info().$("retrying update after row-expiry policy change [fd=")
+                    .$(executionContext.getRequestFd()).I$();
+            freeTableNameFunctions(updateQueryModel);
+            clearExceptSqlText();
+            lexer.restart();
+            expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+            final ExecutionModel executionModel = compileExecutionModel(executionContext);
+            if (executionModel.getModelType() != ExecutionModel.UPDATE) {
+                throw SqlException.position(0).put("UPDATE query expected");
+            }
+            updateQueryModel = (IQueryModel) executionModel;
+        }
+    }
+
     private void compileUsingModel(SqlExecutionContext executionContext, long beginNanos, boolean generateProgressLogger) throws SqlException {
         // This method will not populate sql cache directly; factories are assumed to be non-reentrant, and once
         // factory is out of this method, the caller assumes full ownership over it. However, the caller may
@@ -3920,17 +4121,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         ExecutionModel executionModel = null;
         try {
-            executionModel = compileExecutionModel(executionContext);
+            // Snapshot before parsing: the parser makes both policy and no-policy decisions while building the
+            // model. Reject that model if a SET/DROP transition changes the epoch during parsing. Every path
+            // that generates a factory from the model retains this snapshot through factory generation.
+            long expiryPolicyVersion;
+            int remainingExpiryPolicyRetries = maxRecompileAttempts;
+            for (; ; ) {
+                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                executionModel = compileExecutionModel(executionContext);
+                if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                    break;
+                }
+                if (--remainingExpiryPolicyRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying model after row-expiry policy change [fd=")
+                        .$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(executionModel);
+                clearExceptSqlText();
+                lexer.restart();
+            }
             switch (executionModel.getModelType()) {
                 case ExecutionModel.QUERY:
-                    compiledQuery.ofSelect(
-                            generateSelectWithRetries(
-                                    (IQueryModel) executionModel,
-                                    null,
-                                    executionContext,
-                                    generateProgressLogger
-                            ),
-                            ((IQueryModel) executionModel).isCacheable()
+                    compileSelectWithExpiryPolicyRetries(
+                            (IQueryModel) executionModel,
+                            executionContext,
+                            generateProgressLogger,
+                            expiryPolicyVersion
                     );
                     break;
                 case ExecutionModel.CREATE_TABLE:
@@ -3981,17 +4198,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     checkViewModification(executionModel);
                     checkMatViewModification(executionModel);
                     final IQueryModel updateQueryModel = (IQueryModel) executionModel;
-                    TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
-                    try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
-                        compiledQuery.ofUpdate(generateUpdate(updateQueryModel, executionContext, metadata));
-                    }
+                    compiledQuery.ofUpdate(compileUpdateWithExpiryPolicyRetries(
+                            updateQueryModel,
+                            executionContext,
+                            expiryPolicyVersion
+                    ));
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
                     break;
                 case ExecutionModel.EXPLAIN:
                     sqlId = queryRegistry.register(sqlText, executionContext);
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                    compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
+                    compiledQuery.ofExplain(compileExplainWithExpiryPolicyRetries(
+                            (ExplainModel) executionModel,
+                            executionContext,
+                            expiryPolicyVersion
+                    ));
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 case ExecutionModel.COMPILE_VIEW:
@@ -4006,7 +4228,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // we use SQL Compiler state (reusing objects) to generate InsertOperation
                     if (insertModel.getQueryModel() != null) {
                         // InsertSelect progress will be recorded during the execute phase, to accurately reflect its real select progress.
-                        compiledQuery.ofInsert(compileInsertAsSelect(insertModel, executionContext), true);
+                        compiledQuery.ofInsert(compileInsertAsSelect(insertModel, executionContext, expiryPolicyVersion), true);
                     } else {
                         QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                         compiledQuery.ofInsert(compileInsert(insertModel, executionContext), false);
@@ -4022,9 +4244,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 queryRegistry.unregister(sqlId, executionContext);
             }
         } catch (Throwable th) {
-            if (executionModel != null) {
-                freeTableNameFunctions(executionModel.getQueryModel());
-            }
+            freeTableNameFunctions(executionModel);
             // unregister query on error
             queryRegistry.unregister(sqlId, executionContext);
 
@@ -4104,7 +4324,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofCompileView();
     }
 
-    private void compileViewQuery(
+    private long compileViewQuery(
             @Transient @NotNull SqlExecutionContext executionContext,
             @NotNull CreateViewOperation createViewOp
     ) throws SqlException {
@@ -4129,25 +4349,60 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final long beginNanos = configuration.getNanosecondClock().getTicks();
 
         final int selectTextPosition = createTableOp.getSelectTextPosition();
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
         try {
-            final IQueryModel queryModel;
-            try {
-                final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
-                if (executionModel.getModelType() != ExecutionModel.QUERY) {
-                    throw SqlException.$(startPos, "SELECT query expected");
-                }
-                queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
-            } catch (SqlException e) {
-                e.setPosition(e.getPosition() + selectTextPosition);
-                throw e;
-            }
-            createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+            int remainingRetries = maxRecompileAttempts;
+            for (; ; ) {
+                final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                IQueryModel queryModel = null;
+                RecordCursorFactory factory = null;
+                boolean isRetry = false;
+                try {
+                    final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                    if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                        throw SqlException.$(startPos, "SELECT query expected");
+                    }
+                    queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                    createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                    dependencies.clear();
+                    SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
 
-            try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), queryModel.isCacheable());
-            } catch (SqlException e) {
-                e.setPosition(e.getPosition() + selectTextPosition);
-                throw e;
+                    final Runnable barrier = viewFactoryGenerationBarrier;
+                    if (barrier != null) {
+                        barrier.run();
+                    }
+                    factory = generateSelectOneShot(queryModel, executionContext, false);
+                    if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> operationDependencies =
+                                createViewOp.getViewDefinition().getDependencies();
+                        operationDependencies.clear();
+                        operationDependencies.putAll(dependencies);
+                        compiledQuery.ofSelect(factory, queryModel.isCacheable());
+                        return expiryPolicyVersion;
+                    }
+                    isRetry = true;
+                } catch (TableReferenceOutOfDateException e) {
+                    isRetry = true;
+                    if (remainingRetries == 0) {
+                        throw SqlException.$(selectTextPosition, e.getFlyweightMessage());
+                    }
+                } catch (SqlException e) {
+                    e.setPosition(e.getPosition() + selectTextPosition);
+                    throw e;
+                } finally {
+                    if (isRetry) {
+                        Misc.free(factory);
+                        freeTableNameFunctions(queryModel);
+                    }
+                }
+
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(selectTextPosition).put("too many row-expiry policy changes during view compilation");
+                }
+                LOG.info().$("retrying view after metadata or row-expiry policy change [view=")
+                        .$(createViewOp.getTableName()).$(", fd=").$(executionContext.getRequestFd()).I$();
+                clearExceptSqlText();
+                lexer.restart();
             }
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
@@ -4654,12 +4909,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (createTableOp.getSelectText() != null) {
                     RecordCursorFactory newFactory = null;
                     RecordCursor newCursor;
+                    long expiryPolicyVersion;
                     for (int retryCount = 0; ; retryCount++) {
                         try {
-                            compileViewQuery(executionContext, createViewOp);
+                            expiryPolicyVersion = compileViewQuery(executionContext, createViewOp);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
                             newCursor = newFactory.getCursor(executionContext);
+                            if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
+                                Misc.free(newCursor);
+                                newFactory = Misc.free(newFactory);
+                                if (retryCount == maxRecompileAttempts) {
+                                    throw SqlException.position(0).put("too many row-expiry policy changes during view compilation");
+                                }
+                                LOG.info().$("retrying view after row-expiry policy change [view=")
+                                        .$(createViewOp.getTableName()).$(", fd=").$(executionContext.getRequestFd()).I$();
+                                continue;
+                            }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
@@ -4687,6 +4953,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 metadata
                         );
                         viewToken = viewDefinition.getViewToken();
+                        if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
+                            refreshViewDefinitionAfterExpiryPolicyChange(
+                                    createTableOp.getSelectText(),
+                                    createTableOp.getSelectTextPosition(),
+                                    executionContext,
+                                    viewToken
+                            );
+                        }
                     } finally {
                         Misc.free(newCursor);
                         Misc.free(newFactory);
@@ -4918,6 +5192,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return affectedPartitions;
     }
 
+    private void freeTableNameFunctions(ExecutionModel executionModel) {
+        if (executionModel instanceof ExplainModel explainModel) {
+            freeTableNameFunctions(explainModel.getInnerExecutionModel());
+        } else if (executionModel != null) {
+            freeTableNameFunctions(executionModel.getQueryModel());
+        }
+    }
+
     private void freeTableNameFunctions(IQueryModel queryModel) {
         if (queryModel == null) {
             return;
@@ -4929,6 +5211,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 for (int i = 1, n = joinModels.size(); i < n; i++) {
                     freeTableNameFunctions(joinModels.getQuick(i));
                 }
+            }
+
+            final IQueryModel unionModel = queryModel.getUnionModel();
+            if (unionModel != null) {
+                freeTableNameFunctions(unionModel);
             }
 
             Misc.free(queryModel.getTableNameFunction());
@@ -5330,6 +5617,59 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
+    }
+
+    private void refreshViewDefinitionAfterExpiryPolicyChange(
+            String viewSql,
+            int viewSqlPosition,
+            SqlExecutionContext executionContext,
+            TableToken viewToken
+    ) throws SqlException {
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            int remainingRetries = maxRecompileAttempts;
+            for (; ; ) {
+                final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                ExecutionModel executionModel = null;
+                boolean isRetry = false;
+                try {
+                    executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+                    final IQueryModel queryModel = executionModel.getQueryModel();
+                    dependencies.clear();
+                    SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
+                    engine.getViewGraph().validateNoCycle(viewToken, queryModel);
+                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(
+                            queryModel,
+                            null,
+                            executionContext,
+                            false
+                    ); RecordCursor cursor = factory.getCursor(executionContext)) {
+                        cursor.hasNext();
+                    }
+                    if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
+                        isRetry = true;
+                    } else {
+                        engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
+                        if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                            return;
+                        }
+                        isRetry = true;
+                    }
+                } catch (TableReferenceOutOfDateException e) {
+                    isRetry = true;
+                    if (remainingRetries == 0) {
+                        throw SqlException.$(viewSqlPosition, e.getFlyweightMessage());
+                    }
+                } finally {
+                    if (isRetry) {
+                        freeTableNameFunctions(executionModel);
+                    }
+                }
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(viewSqlPosition).put("too many row-expiry policy changes during view compilation");
+                }
+            }
+        }
     }
 
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
