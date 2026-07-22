@@ -151,3 +151,18 @@ The adaptive Fast↔Dense prelude (`cairo.sql.asof.adaptive.backscan.budget`) is
 measured regime** (~1.4–2× slower than Dense even on its best-case `sparse_tail`, and it never
 touches the index). Recommend leaving it dormant/opt-in or removing it; it is not part of this
 auto-selection.
+
+---
+
+## Phase 1 SHIPPED (2026-07-22)
+
+Auto-`asof_index` implemented and verified. Commits `8c9c717e5`…`d7909e5c8` on `perf/asof-fast-scaletimestamp-hoist`:
+config (`cairo.sql.asof.auto.algo` default on, `cairo.sql.asof.index.max.master.bp` default 200),
+`executionContext` threaded into `generateJoinAsof`, base-row-count estimate via `getTableToken()` +
+`RecentWriteTracker`/reader, auto-select `AsOfJoinIndexedRecordCursorFactory` when the slave symbol is
+indexed and `effMaster*10000 <= slaveN*bp`, EXPLAIN `select=auto:…` reason, do-no-harm + equivalence tests.
+
+Tests: `AsOfJoinTest` 120/120, `AsOfJoinFuzzTest` 6/6 green. End-to-end benchmark (illiquid_idx, master 1000 / slave 2M):
+`default` (no hint) 0.505 ms == `index` hint 0.512 ms, vs forced `dense` 24.6 ms — **~49× faster by default**.
+
+Deferred to Phase 2: memoized dense-ts fallback + K sweep; WHERE-time-filtered master estimate (currently over-estimates to base size → stays on Dense, safe).
