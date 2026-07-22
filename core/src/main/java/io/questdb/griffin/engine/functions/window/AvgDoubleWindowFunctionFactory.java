@@ -28,8 +28,11 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -460,6 +463,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int timestampIndex;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         protected double sum;
@@ -789,6 +793,14 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * The in-RAM whole-state form, used by
+         * {@link io.questdb.cairo.lv.LiveViewFunctionSnapshot} to clone a partition
+         * into an out-of-order repair's scratch overlay. The durable checkpoint
+         * uses the chunked ring form instead, which shares pages across roots -
+         * sharing a scratch clone has nothing to share with. Both carry the same
+         * six map slots, so a state-layout change must move both together.
+         */
         @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final double partitionSum = source.getDouble(offset);
@@ -818,10 +830,38 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public int checkpointStateFormatVersion() {
-            return 1;
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putDouble(0, source.getSum());
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
         }
 
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 2;
+        }
+
+        /**
+         * The in-RAM whole-state form. See
+         * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue)}
+         * for why it stands beside the chunked ring form.
+         */
         @Override
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putDouble(value.getDouble(0));
@@ -839,10 +879,53 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            sink.putAggregateState(value.getDouble(0), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putRow(
+                        memory.getLong(startOffset + idx * RECORD_SIZE),
+                        memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES)
+                );
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
+        }
+
+        @Override
         public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
                     && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+        }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab. Reused across partitions so a restore that walks thousands of them
+         * allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, double value) {
+                memory.putLong(startOffset + rows * RECORD_SIZE, timestamp);
+                memory.putDouble(startOffset + rows * RECORD_SIZE + Long.BYTES, value);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
         }
 
         @Override

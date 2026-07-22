@@ -72,7 +72,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertEquals("avg(D)", first.identity.getFactorySignature());
             Assert.assertTrue(first.identity.getPartitionSignature().contains("sym"));
             Assert.assertTrue(first.identity.getOrderSignature().contains("ts"));
-            Assert.assertTrue(first.identity.getStateCodecIdentity().contains("/avg(D)/v1"));
+            Assert.assertTrue(first.identity.getStateCodecIdentity().contains("/avg(D)/v2"));
 
             final Metadata renamedWindow = compileMetadata(
                     "select ts, sym, avg(x) over other as a from base "

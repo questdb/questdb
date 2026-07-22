@@ -29,6 +29,8 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.map.Map;
@@ -621,6 +623,57 @@ public interface WindowFunction extends Function {
         throw new UnsupportedOperationException(
                 "freezeCheckpointState not implemented for " + getClass().getName()
         );
+    }
+
+    /**
+     * Streams ONE partition's frame ring into {@code sink} so the checkpoint seal can
+     * share the chunk pages the previous boundary already wrote instead of encoding the
+     * whole frame again. The function writes its exact aggregate continuation state and
+     * then every live ring row in designated-timestamp order; the seal decides which of
+     * those rows are new. For scalar no-map functions {@code value} is {@code null}.
+     * <p>
+     * The default throws — only window functions that {@link #supportsCheckpointRingState()}
+     * override.
+     */
+    default void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+        throw new UnsupportedOperationException(
+                "freezeCheckpointRingState not implemented for " + getClass().getName()
+        );
+    }
+
+    /**
+     * Rehydrates ONE partition's frame ring previously written by
+     * {@link #freezeCheckpointRingState(LiveViewCheckpointRingStateSink, MapValue)}. The
+     * live-view checkpoint framework owns iteration and has already read the partition key
+     * and called {@code createValue()}, passing the fresh {@code value} here; for scalar
+     * no-map functions {@code value} is {@code null}. The function sizes its ring from
+     * {@link LiveViewCheckpointRingStateSource#getRowCount()} and fills it from
+     * {@link LiveViewCheckpointRingStateSource#forEachRow}.
+     * <p>
+     * The default throws — only window functions that {@link #supportsCheckpointRingState()}
+     * override.
+     */
+    default void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+        throw new UnsupportedOperationException(
+                "restoreCheckpointRingState not implemented for " + getClass().getName()
+        );
+    }
+
+    /**
+     * Reports whether this function persists its per-partition state as a ring of
+     * {@code (timestamp, value)} rows plus an exact aggregate tail — the shape
+     * {@link #freezeCheckpointRingState(LiveViewCheckpointRingStateSink, MapValue)} and
+     * {@link #restoreCheckpointRingState(LiveViewCheckpointRingStateSource, MapValue)}
+     * carry. The checkpoint seal routes such a function through the persistent chunk
+     * layer, so adjacent roots reference the same pages for the rows they share; every
+     * other function writes one complete state image per root through
+     * {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)}.
+     * <p>
+     * Implies {@link #supportsCheckpointState()}: the ring shape is an alternative
+     * encoding of checkpoint state, not an alternative to having any.
+     */
+    default boolean supportsCheckpointRingState() {
+        return false;
     }
 
     /**

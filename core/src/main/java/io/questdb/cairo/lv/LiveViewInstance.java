@@ -257,6 +257,14 @@ public class LiveViewInstance implements QuietCloseable {
     // gating role for O3 detection and (b) trailing this in {@code _lv.s} would
     // add a write per commit.
     private volatile long latestSeenTs = Numbers.LONG_NULL;
+    // Lowest designated timestamp the runtime has consumed since the current head
+    // checkpoint was sealed, or Long.MAX_VALUE when it has consumed none. The
+    // checkpoint seal needs it to prove the batch behind it sits strictly above
+    // the head boundary; only then may a bounded-frame function carry the head
+    // root's chunk pages forward instead of encoding its whole frame again.
+    // Written by the refresh worker alone, off the same per-row call that
+    // maintains latestSeenTs, and reset by setHeadCheckpoint.
+    private long minSeenTsSinceCheckpoint = Long.MAX_VALUE;
     // Lead eligibility (cached, schema-derived). True when every output column is a
     // type the in-mem tier can store (see LiveViewInMemoryBuffer.isColumnTypeSupported:
     // fixed-width, SYMBOL via eager interning, and the variable-length STRING / BINARY /
@@ -1007,6 +1015,19 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return the lowest base-row timestamp the refresh worker has fed through
+     * the window pipeline since the current head checkpoint, or
+     * {@link Long#MAX_VALUE} when it has fed none. Strictly above the head
+     * boundary's {@code maxTimestamp} is the checkpoint seal's proof that the
+     * batch behind it changed nothing the head root already holds, which is what
+     * lets a bounded-frame function reference that root's chunk pages instead of
+     * writing its frame again.
+     */
+    public long getMinSeenTsSinceCheckpoint() {
+        return minSeenTsSinceCheckpoint;
+    }
+
+    /**
      * @return the per-view tracker charged for the anchor map and the anchored window
      * functions' partition maps, or null when the view has no anchored window yet. The
      * refresh worker binds it into the SQL execution context so the window cursor's
@@ -1488,6 +1509,17 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Restarts the {@link #getMinSeenTsSinceCheckpoint()} window. Called once a
+     * checkpoint root has been published, so the next seal measures only the
+     * rows fed after it. {@link #setHeadCheckpoint} does the same for a cadence
+     * seal; a seed root is published without touching the head, which is why the
+     * seal path resets explicitly rather than relying on that.
+     */
+    public void resetMinSeenTsSinceCheckpoint() {
+        minSeenTsSinceCheckpoint = Long.MAX_VALUE;
+    }
+
+    /**
      * Re-arms the seed sweep's single-shot resume setup (see
      * {@link #isSeedResumeAttempted()}). Called by the refresh worker after
      * {@link #prepareForBaseSchemaRecompile()} on a SEEDING view so the next
@@ -1571,6 +1603,7 @@ public class LiveViewInstance implements QuietCloseable {
         // setHeadCheckpoint call, never a torn mix.
         this.headCheckpoint = new long[]{lvSeqTxn, maxTs, stateBytes, baseSeqTxn};
         this.rowsSinceLastCheckpointWritten = 0;
+        this.minSeenTsSinceCheckpoint = Long.MAX_VALUE;
         this.lastCheckpointWrittenUs = writtenUs;
     }
 
@@ -1615,6 +1648,9 @@ public class LiveViewInstance implements QuietCloseable {
     public void setLatestSeenTs(long ts) {
         if (ts > latestSeenTs) {
             latestSeenTs = ts;
+        }
+        if (ts < minSeenTsSinceCheckpoint) {
+            minSeenTsSinceCheckpoint = ts;
         }
     }
 

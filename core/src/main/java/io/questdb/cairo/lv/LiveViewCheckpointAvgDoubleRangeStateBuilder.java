@@ -29,10 +29,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -40,10 +38,23 @@ import java.io.Closeable;
 import java.util.Arrays;
 
 /**
- * Copy-on-write chunk builder for the partitioned bounded-RANGE double-average
- * ring. Sealed chunks are reused by reference, expiration advances a logical
- * offset into the shared head, and only a tail that receives new rows is copied
- * and frozen into the candidate data segment.
+ * Copy-on-write chunk builder for the partitioned bounded-RANGE double ring.
+ * Sealed chunks are reused by reference, expiration advances a logical offset
+ * into the shared head, and only the rows this boundary appended are encoded.
+ * <p>
+ * The tail a boundary appends is always a fresh chunk, so a chunk boundary sits
+ * at every checkpoint boundary and a sealed chunk is never rewritten. That is
+ * what keeps a seal proportional to the rows the batch added instead of the
+ * live frame: reopening the previous tail to top it up would re-encode every
+ * row already in it, which for a dense cadence is the whole frame, every time.
+ * The price is one chunk per boundary spanned by the frame; the caller bounds
+ * that by rebuilding from empty once a partition's chunk count reaches its cap
+ * ({@link #getChunkCount()}).
+ * <p>
+ * The builder never reads a data page. Everything it carries forward - the
+ * chunk references, row count, head offset and last timestamp - comes out of
+ * the previous root's checksummed partition entry, which is what lets a repair
+ * chain onto a boundary whose chunks are still in an unpublished segment.
  */
 public class LiveViewCheckpointAvgDoubleRangeStateBuilder implements Closeable {
 
@@ -56,7 +67,6 @@ public class LiveViewCheckpointAvgDoubleRangeStateBuilder implements Closeable {
     private long rowCount;
     private final LiveViewCheckpointStateCodec.Scratch scratch;
     private int tailCount;
-    private boolean tailMutable;
 
     public LiveViewCheckpointAvgDoubleRangeStateBuilder(@NotNull CairoConfiguration configuration) {
         this(configuration, null);
@@ -85,12 +95,8 @@ public class LiveViewCheckpointAvgDoubleRangeStateBuilder implements Closeable {
                     .put("live view checkpoint avg RANGE timestamps must be non-decreasing")
                     .put(" [previous=").put(lastTimestamp).put(", timestamp=").put(timestamp).put(']');
         }
-        makeTailMutable();
-        if (tailCount == LiveViewCheckpointStateCodec.CHUNK_ROWS && refCount == 0 && headOffset > 0) {
-            compactMutableHead();
-        }
         if (tailCount == LiveViewCheckpointStateCodec.CHUNK_ROWS) {
-            sealMutableTail(writer);
+            sealTail(writer);
         }
         Unsafe.putLong(scratch.timestampsAddress() + (long) tailCount * Long.BYTES, timestamp);
         Unsafe.putLong(
@@ -136,19 +142,22 @@ public class LiveViewCheckpointAvgDoubleRangeStateBuilder implements Closeable {
             headOffset = 0;
         }
         if (remaining > 0) {
-            if (!tailMutable || refCount != 0 || remaining > tailCount - headOffset) {
+            // Only the rows this boundary appended are left to drop, and they sit
+            // in scratch rather than in a page, so the head advances by moving them
+            // down instead of by an offset.
+            if (refCount != 0 || headOffset != 0 || remaining > tailCount) {
                 throw CairoException.critical(0).put("live view checkpoint avg RANGE mutable head state inconsistent");
             }
-            final int available = tailCount - headOffset;
-            if (remaining < available) {
-                headOffset += (int) remaining;
-                rowCount -= remaining;
-                return;
+            final int kept = tailCount - (int) remaining;
+            if (kept > 0) {
+                final long bytes = (long) kept * Long.BYTES;
+                final long dropped = remaining * Long.BYTES;
+                Vect.memmove(scratch.timestampsAddress(), scratch.timestampsAddress() + dropped, bytes);
+                Vect.memmove(scratch.doublesAddress(), scratch.doublesAddress() + dropped, bytes);
             }
-            rowCount -= available;
-            remaining -= available;
-            tailCount = 0;
-            headOffset = 0;
+            rowCount -= remaining;
+            tailCount = kept;
+            remaining = 0;
         }
         if (remaining != 0 || rowCount < 0) {
             throw CairoException.critical(0).put("live view checkpoint avg RANGE head drop state inconsistent");
@@ -173,13 +182,15 @@ public class LiveViewCheckpointAvgDoubleRangeStateBuilder implements Closeable {
             @NotNull LiveViewCheckpointPartitionMapEntry out
     ) {
         ensureInitialized();
-        if (frameSize < 0 || frameSize > rowCount) {
+        // A frame with an unbounded low bound counts rows into its aggregate and
+        // then expires them from the ring, so frameSize may exceed the live rows.
+        if (frameSize < 0) {
             throw CairoException.critical(0)
                     .put("live view checkpoint avg RANGE frame size out of bounds")
                     .put(" [frameSize=").put(frameSize).put(", rowCount=").put(rowCount).put(']');
         }
-        if (tailMutable && tailCount > 0) {
-            sealMutableTail(writer);
+        if (tailCount > 0) {
+            sealTail(writer);
         }
         if (rowCount == 0) {
             refCount = 0;
@@ -205,23 +216,44 @@ public class LiveViewCheckpointAvgDoubleRangeStateBuilder implements Closeable {
         initialized = false;
     }
 
-    public void of(
-            @Transient @NotNull Path checkpointsDir,
-            @NotNull LiveViewCheckpointSegmentDirectory segmentDirectory,
-            @NotNull LiveViewCheckpointPartitionMapEntry previous
-    ) {
-        previousReader.of(checkpointsDir, segmentDirectory, previous);
+    /**
+     * @return the chunks this state currently holds, sealed plus the one the
+     * appended tail will become
+     */
+    public int getChunkCount() {
+        ensureInitialized();
+        return refCount / 2 + (tailCount > 0 ? 1 : 0);
+    }
+
+    /**
+     * @return the designated timestamp of the newest live row, or 0 for an empty
+     * ring
+     */
+    public long getLastTimestamp() {
+        ensureInitialized();
+        return lastTimestamp;
+    }
+
+    public long getRowCount() {
+        ensureInitialized();
+        return rowCount;
+    }
+
+    /**
+     * Carries the previous root's chunk references forward. Reads no data page:
+     * {@code previous} is the checksummed partition entry, and everything the
+     * builder needs is in it.
+     */
+    public void of(@NotNull LiveViewCheckpointPartitionMapEntry previous) {
+        previousReader.ofMetadata(previous);
         final LiveViewCheckpointStatePageRef[] previousRefs = previousReader.copyStatePageRefs();
         ensureRefCapacity(previousRefs.length);
-        for (int i = 0; i < previousRefs.length; i++) {
-            refs[i] = previousRefs[i];
-        }
+        System.arraycopy(previousRefs, 0, refs, 0, previousRefs.length);
         refCount = previousRefs.length;
         rowCount = previousReader.getRowCount();
         headOffset = previousReader.getHeadOffset();
         lastTimestamp = previousReader.getLastTimestamp();
         tailCount = 0;
-        tailMutable = false;
         initialized = true;
     }
 
@@ -231,19 +263,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateBuilder implements Closeable {
         headOffset = 0;
         lastTimestamp = 0;
         tailCount = 0;
-        tailMutable = false;
         initialized = true;
-    }
-
-    private void compactMutableHead() {
-        final int live = tailCount - headOffset;
-        if (live > 0) {
-            final long bytes = (long) live * Long.BYTES;
-            Vect.memmove(scratch.timestampsAddress(), scratch.timestampsAddress() + (long) headOffset * Long.BYTES, bytes);
-            Vect.memmove(scratch.doublesAddress(), scratch.doublesAddress() + (long) headOffset * Long.BYTES, bytes);
-        }
-        tailCount = live;
-        headOffset = 0;
     }
 
     private void ensureInitialized() {
@@ -258,33 +278,18 @@ public class LiveViewCheckpointAvgDoubleRangeStateBuilder implements Closeable {
         }
     }
 
-    private void makeTailMutable() {
-        if (tailMutable) {
-            return;
-        }
-        tailMutable = true;
-        tailCount = 0;
-        if (refCount == 0) {
-            return;
-        }
-        final int lastRows = refs[refCount - 2].getRowCount();
-        if (lastRows < LiveViewCheckpointStateCodec.CHUNK_ROWS) {
-            tailCount = previousReader.decodeChunk(
-                    refs[refCount - 2], refs[refCount - 1],
-                    scratch.timestampsAddress(), scratch.doublesAddress()
-            );
-            refCount -= 2;
-        }
-    }
-
     private void removeFirstChunk() {
         if (refCount > 2) {
             System.arraycopy(refs, 2, refs, 0, refCount - 2);
         }
+        // The shift leaves the vacated slots aliasing references that are still
+        // live further down. Clear them so nothing can reach a chunk twice.
+        refs[refCount - 1] = null;
+        refs[refCount - 2] = null;
         refCount -= 2;
     }
 
-    private void sealMutableTail(@NotNull LiveViewCheckpointDataSegmentWriter writer) {
+    private void sealTail(@NotNull LiveViewCheckpointDataSegmentWriter writer) {
         if (tailCount <= 0) {
             return;
         }
@@ -293,12 +298,8 @@ public class LiveViewCheckpointAvgDoubleRangeStateBuilder implements Closeable {
             throw CairoException.critical(0)
                     .put("live view checkpoint avg RANGE state page reference count exceeds format limit");
         }
-        if (refs[refCount] == null) {
-            refs[refCount] = new LiveViewCheckpointStatePageRef();
-        }
-        if (refs[refCount + 1] == null) {
-            refs[refCount + 1] = new LiveViewCheckpointStatePageRef();
-        }
+        refs[refCount] = new LiveViewCheckpointStatePageRef();
+        refs[refCount + 1] = new LiveViewCheckpointStatePageRef();
         final int timestampCodec = LiveViewCheckpointStateCodec.selectTimestampCodec(scratch.timestampsAddress(), tailCount);
         LiveViewCheckpointStateCodec.encodeTimestamps(
                 writer.beginPage(), scratch.timestampsAddress(), tailCount, timestampCodec
@@ -319,7 +320,6 @@ public class LiveViewCheckpointAvgDoubleRangeStateBuilder implements Closeable {
         );
         refCount += 2;
         tailCount = 0;
-        tailMutable = true;
     }
 
     private void validateLogicalBounds() {

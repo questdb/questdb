@@ -71,6 +71,14 @@ import java.util.Arrays;
 
 public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
 
+    // Ten commits fill the dense view's 1000-second frame, so its head root has nine
+    // earlier chunks to reference; two more take the sharing past the first refill.
+    private static final int DENSE_COMMITS = 12;
+    // Rows one dense commit adds, at one-second spacing. Above
+    // LiveViewCheckpointRingSeal.MIN_SHARED_CHUNK_ROWS, so the chunk each seal writes
+    // carries enough rows to be worth a later root's reference.
+    private static final int DENSE_ROWS_PER_COMMIT = 100;
+
     @After
     public void resetClock() {
         setCurrentMicros(-1);
@@ -290,6 +298,79 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     } finally {
                         directory.close();
                     }
+                }
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testDenseFrameSealCarriesTheHeadRootsChunksForwardByReference() throws Exception {
+        assertMemoryLeak(() -> {
+            // A frame ten commits wide, refilled a hundred rows at a time, so a seal
+            // has nine earlier chunks to reference and one to write. Each seal's
+            // chunk stays big enough that referencing it beats re-encoding it - the
+            // line LiveViewCheckpointRingSeal.chunkCap draws.
+            createDenseView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 1; commit <= DENSE_COMMITS; commit++) {
+                    commitDenseAndRefresh(job, commit);
+                }
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                final RuntimeSnapshot newestState = snapshotRuntime(functions, null);
+
+                final long earlyMaxTs = ts(denseTimestamp(DENSE_ROWS_PER_COMMIT * 3 - 1));
+                final long newestMaxTs = ts(denseTimestamp(DENSE_ROWS_PER_COMMIT * DENSE_COMMITS - 1));
+                try (
+                        LiveViewCheckpointMetaStore store = openStore(instance);
+                        LiveViewCheckpointGenerationPin pin = store.pin();
+                        LiveViewCheckpointTimelineReader timeline = openTimelineReader(instance);
+                        LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
+                        LiveViewCheckpointSegmentDirectory directory =
+                                new LiveViewCheckpointSegmentDirectory(configuration);
+                        Path checkpointsDir = checkpointsDir(instance)
+                ) {
+                    Assert.assertEquals(DENSE_COMMITS, timeline.size(pin.getTimelineRootRef()));
+                    final LiveViewCheckpointTimelineEntry newest = new LiveViewCheckpointTimelineEntry();
+                    Assert.assertTrue(timeline.last(pin.getTimelineRootRef(), newest));
+                    root.of(checkpointsDir, newest.rootRef);
+
+                    // The head root names one data segment per chunk its frame still
+                    // holds, and all but the newest of those were written by earlier
+                    // seals. Without sharing this would be one - the segment this
+                    // seal wrote its own complete image into.
+                    Assert.assertTrue(
+                            "the head root names " + root.getSegmentIdCount() + " data segments",
+                            root.getSegmentIdCount() > 1
+                    );
+                    directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
+                    int sharedSegments = 0;
+                    for (int i = 0; i < directory.size(); i++) {
+                        if (directory.getReferenceCountAt(i) > 1) {
+                            sharedSegments++;
+                        }
+                    }
+                    Assert.assertTrue(
+                            "no data segment is referenced by more than one root",
+                            sharedSegments > 0
+                    );
+                }
+
+                // Sharing is only worth having if both ends of it restore exactly.
+                // An early root and the newest one are rebuilt from overlapping page
+                // sets, so a chunk spliced into the wrong root's ring would show up
+                // as a state mismatch here.
+                try (
+                        Path checkpointsDir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreReader reader =
+                                new LiveViewCheckpointTimelineStoreReader(configuration)
+                ) {
+                    reader.of(checkpointsDir);
+                    reader.restore(earlyMaxTs, 2, instance.getLiveViewToken().getTableId(), functions, null);
+                    reader.restore(newestMaxTs, DENSE_COMMITS - 1, instance.getLiveViewToken().getTableId(), functions, null);
+                    assertRuntimeSnapshot(newestState, functions, null);
                 }
                 assertNoRefreshFaults("lv");
             }
@@ -559,6 +640,15 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         });
     }
 
+    private static String denseTimestamp(int second) {
+        return String.format(
+                "2026-01-01T%02d:%02d:%02d.000000Z",
+                second / 3600,
+                (second % 3600) / 60,
+                second % 60
+        );
+    }
+
     private void appendAndRefresh(LiveViewRefreshJob job, int second, long value) throws Exception {
         setCurrentMicros(currentMicros + 200_000);
         execute("INSERT INTO base VALUES ('" + timestamp(second) + "', 'a', " + value + ")");
@@ -579,6 +669,33 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+    }
+
+    private void commitDenseAndRefresh(LiveViewRefreshJob job, int commit) throws Exception {
+        setCurrentMicros(currentMicros + 200_000);
+        final StringBuilder sql = new StringBuilder("INSERT INTO base VALUES ");
+        final int firstSecond = (commit - 1) * DENSE_ROWS_PER_COMMIT;
+        for (int i = 0; i < DENSE_ROWS_PER_COMMIT; i++) {
+            if (i > 0) {
+                sql.append(", ");
+            }
+            sql.append("('").append(denseTimestamp(firstSecond + i)).append("', 'a', ")
+                    .append(firstSecond + i).append(')');
+        }
+        execute(sql.toString());
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+    }
+
+    private void createDenseView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute(
+                "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                        "SELECT ts, sym, sum(x) OVER (" +
+                        "PARTITION BY sym ORDER BY ts RANGE BETWEEN '1000' SECOND PRECEDING AND CURRENT ROW" +
+                        ") s FROM base"
+        );
     }
 
     private void createView(boolean anchored) throws Exception {

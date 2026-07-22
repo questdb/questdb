@@ -65,32 +65,47 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
     }
 
     @Test
-    public void testCopyOnWriteTailAndPartialSharedHeadSurviveRestart() throws Exception {
+    public void testSealedChunksAreSharedAndOnlyTheAppendedTailIsWritten() throws Exception {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
             final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
+            final long[] secondSegmentBytes = new long[1];
             try (LiveViewCheckpointSegmentDirectory directory = new LiveViewCheckpointSegmentDirectory(configuration)) {
                 writeInitial(first, directory, 1, 4_106);
 
                 try (LiveViewCheckpointAvgDoubleRangeStateBuilder builder = new LiveViewCheckpointAvgDoubleRangeStateBuilder(configuration);
                      LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                      Path dir = new Path()) {
-                    builder.of(checkpointsDir(dir), directory, first);
+                    builder.of(first);
                     builder.dropHeadRows(5);
                     writer.of(checkpointsDir(dir), 2);
                     builder.append(writer, 4_106_000, 10_000.0);
                     builder.append(writer, 4_107_000, -0.0);
                     builder.append(writer, 4_108_000, 10_002.0);
                     builder.freeze(writer, KEY, -0.0, 4_104, second);
-                    directory.addSegment(2, writer.commit(), 1);
+                    secondSegmentBytes[0] = writer.commit();
+                    directory.addSegment(2, secondSegmentBytes[0], 1);
                 }
 
+                // Both chunks the first root sealed are referenced verbatim; the
+                // three appended rows become a chunk of their own. The head's five
+                // expired rows stay inside the shared chunk 0 - the offset moves,
+                // the page does not.
                 Assert.assertEquals(4, first.getStatePageCount());
-                Assert.assertEquals(4, second.getStatePageCount());
-                assertRefEquals(first.getStatePageRef(0), second.getStatePageRef(0));
-                assertRefEquals(first.getStatePageRef(1), second.getStatePageRef(1));
+                Assert.assertEquals(6, second.getStatePageCount());
+                for (int i = 0; i < 4; i++) {
+                    assertRefEquals(first.getStatePageRef(i), second.getStatePageRef(i));
+                }
                 Assert.assertEquals(1, first.getStatePageRef(2).getSegmentId());
-                Assert.assertEquals(2, second.getStatePageRef(2).getSegmentId());
+                Assert.assertEquals(2, second.getStatePageRef(4).getSegmentId());
+                Assert.assertEquals(3, second.getStatePageRef(4).getRowCount());
+                Assert.assertEquals(3, second.getStatePageRef(5).getRowCount());
+                // The second root paid for its three rows and nothing else, over a
+                // frame of 4104.
+                Assert.assertTrue(
+                        "second root wrote " + secondSegmentBytes[0] + " bytes for three appended rows",
+                        secondSegmentBytes[0] < 128
+                );
 
                 final LongList firstTimestamps = new LongList();
                 final LongList firstValues = new LongList();
@@ -212,7 +227,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
                         if (generation == 0) {
                             builder.ofEmpty();
                         } else {
-                            builder.of(checkpointsDir(dir), directory, previous);
+                            builder.of(previous);
                             builder.dropHeadRows(drop);
                         }
                         writer.of(checkpointsDir(dir), 100 + generation);
@@ -248,7 +263,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
                 try (LiveViewCheckpointAvgDoubleRangeStateBuilder builder = new LiveViewCheckpointAvgDoubleRangeStateBuilder(configuration);
                      LiveViewCheckpointDataSegmentWriter unopenedWriter = new LiveViewCheckpointDataSegmentWriter(configuration);
                      Path dir = new Path()) {
-                    builder.of(checkpointsDir(dir), directory, first);
+                    builder.of(first);
                     builder.dropHeadRows(LiveViewCheckpointStateCodec.CHUNK_ROWS + 5L);
                     builder.freeze(unopenedWriter, KEY, 1.25, 7, second);
                 }
@@ -276,7 +291,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
             try {
                 reader.of(checkpointsDir(dir), directory, entry);
                 if (readPayload) {
-                    reader.forEach((timestamp, value) -> {
+                    reader.forEachRow((timestamp, value) -> {
                     });
                 }
                 Assert.fail("expected corrupt avg RANGE state rejection");
@@ -309,7 +324,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateTest extends AbstractCairoTest
             reader.of(checkpointsDir(dir), directory, entry);
             Assert.assertEquals(expectedTimestamps.size(), reader.getRowCount());
             final int[] index = {0};
-            reader.forEach((timestamp, value) -> {
+            reader.forEachRow((timestamp, value) -> {
                 final int i = index[0]++;
                 Assert.assertEquals(expectedTimestamps.getQuick(i), timestamp);
                 Assert.assertEquals(expectedValues.getQuick(i), Double.doubleToRawLongBits(value));

@@ -707,11 +707,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     true,
                     batchMaxTs,
                     instance.getLvRowsTotal(),
+                    instance.getMinSeenTsSinceCheckpoint(),
                     seedCursorOffset
             );
         } finally {
             roleLock.unlock();
         }
+        // Only a published root moves the window the next seal measures over. A
+        // failed append leaves it open, so the next attempt still sees every row
+        // fed since the root that is actually on disk.
+        instance.resetMinSeenTsSinceCheckpoint();
         instance.recordCheckpointTimelineWalPurgeFloor(timelineResult.getWalPurgeFloor());
         return timelineResult.getLogicalStateBytes();
     }

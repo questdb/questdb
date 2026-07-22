@@ -49,6 +49,8 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 
 /**
@@ -82,18 +84,28 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     private final HashSet<String> lifecycleReconciledDirs = new HashSet<>();
     private final CairoConfiguration configuration;
     private final MemoryCARW keyBuffer;
+    private final LiveViewCheckpointRingSeal ringSeal;
     @TestOnly
     private int testFailureStage;
 
     public LiveViewCheckpointTimelineStoreWriter(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
         this.keyBuffer = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+        this.ringSeal = new LiveViewCheckpointRingSeal(configuration, null);
     }
 
     /**
      * Appends one logical boundary strictly above the current head and publishes
      * the generation that carries it.
      *
+     * @param batchMinTs       the lowest designated timestamp the runtime has
+     *                         processed since the current head boundary, or
+     *                         {@link Numbers#LONG_NULL} when the caller cannot say.
+     *                         A ring-shaped function shares the head root's chunk
+     *                         pages only when this proves the batch sits strictly
+     *                         above that boundary; anything weaker writes a complete
+     *                         state image, which costs more but cannot splice a prefix
+     *                         the runtime no longer holds
      * @param seedCursorOffset the seed sweep's base-cursor row offset when a
      *                         mid-sweep cadence event drives this append, so a
      *                         restart can resume the sweep from the root this
@@ -113,6 +125,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             boolean primaryOwner,
             long maxTimestamp,
             long effectiveLvRowPosition,
+            long batchMinTs,
             long seedCursorOffset
     ) {
         if (!primaryOwner) {
@@ -150,6 +163,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         historyEpoch,
                         maxTimestamp,
                         effectiveLvRowPosition,
+                        batchMinTs,
                         seedCursorOffset,
                         orphanUpperBound
                 );
@@ -199,6 +213,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     @Override
     public void close() {
         Misc.free(keyBuffer);
+        Misc.free(ringSeal);
         lifecycleReconciledDirs.clear();
     }
 
@@ -317,6 +332,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPageRef oldAnchorRootRef = new LiveViewCheckpointPageRef();
             final LiveViewCheckpointPageRef oldFunctionDirectoryRef = new LiveViewCheckpointPageRef();
             final LiveViewCheckpointPageRef newRootRef = new LiveViewCheckpointPageRef();
+            // Roots that actually name the capture's segment. A boundary whose
+            // rings all carried the previous boundary's chunks forward names
+            // nothing in it, and counting it would leave the segment referenced
+            // after every root that reads it is gone.
+            int captureSegmentRootRefs = 0;
             for (int i = 0; i < boundaryCount; i++) {
                 final FrozenBoundary boundary = capture.boundaries.getQuick(i);
                 final LiveViewCheckpointTimelineEntry oldEntry = boundary.oldEntry;
@@ -350,7 +370,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 for (int s = 0, n = oldCheckpointRoot.getSegmentIdCount(); s < n; s++) {
                     removedSegmentIds.add(oldCheckpointRoot.getSegmentId(s));
                 }
-                dropSegmentId(addedSegmentIds, capture.dataSegmentId);
+                if (dropSegmentId(addedSegmentIds, capture.dataSegmentId)) {
+                    captureSegmentRootRefs++;
+                }
                 segmentDirectory.applyRootReferenceChanges(removedSegmentIds, addedSegmentIds, generation);
 
                 final long prefixCorrection = deltaReader.prefixSum(
@@ -376,8 +398,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
             nextSegmentId = roots.nextSegmentId;
             long metadataBytesAdded = roots.metadataBytesAdded;
-            if (boundaryCount > 0) {
-                segmentDirectory.addSegment(capture.dataSegmentId, dataSegmentBytes, boundaryCount);
+            if (dataSegmentBytes > 0) {
+                segmentDirectory.addSegment(capture.dataSegmentId, dataSegmentBytes, captureSegmentRootRefs);
             }
 
             final LiveViewCheckpointPageRef newTimelineRoot = new LiveViewCheckpointPageRef();
@@ -465,6 +487,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             long historyEpoch,
             long maxTimestamp,
             long effectiveLvRowPosition,
+            long batchMinTs,
             long seedCursorOffset,
             long orphanUpperBound
     ) {
@@ -551,8 +574,29 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final long dataSegmentId = nextSegmentId++;
             dataWriter.of(checkpointsDir, dataSegmentId);
 
-            final FrozenBoundary boundary = freezeBoundary(dataWriter, functions, anchorWindow);
-            final long dataSegmentBytes = dataWriter.commit();
+            // A cadence seal only ever runs on changes above the current head, and
+            // the chunk sharing needs that proven per row rather than assumed: an
+            // unknown or overlapping minimum keeps the sharing off and writes a
+            // complete image, which is what the seal did before the chunk layer.
+            final boolean isStrictlyForward = hasPrevious
+                    && batchMinTs != Numbers.LONG_NULL
+                    && batchMinTs > previousEntry.maxTimestamp;
+            final FrozenBoundary boundary;
+            try (RootPreviousBoundary previousBoundary = isStrictlyForward
+                    ? new RootPreviousBoundary(checkpointsDir, oldFunctionDirectory, previousEntry.maxTimestamp)
+                    : null) {
+                boundary = freezeBoundary(dataWriter, functions, anchorWindow, previousBoundary);
+            }
+            final boolean hasData = !dataWriter.isEmpty();
+            final long dataSegmentBytes;
+            if (hasData) {
+                dataSegmentBytes = dataWriter.commit();
+            } else {
+                // Every ring shared its pages and nothing new was encoded. The
+                // reserved id stays burned rather than reused: ids are monotonic.
+                dataWriter.discard();
+                dataSegmentBytes = 0;
+            }
             if (testFailureStage == TEST_FAIL_AFTER_DATA_PUBLISH) {
                 throw CairoException.critical(0).put("test failure after live view checkpoint data publication");
             }
@@ -592,8 +636,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             timelineWriter.append(oldTimelineRoot, entry, nextSegmentId++, newTimelineRoot);
             metadataBytesAdded = checkedAdd(metadataBytesAdded, timelineWriter.getLastSegmentBytes());
 
-            segmentDirectory.addSegment(dataSegmentId, dataSegmentBytes, 1);
-            dropSegmentId(reusedSegmentIds, dataSegmentId);
+            if (hasData) {
+                segmentDirectory.addSegment(dataSegmentId, dataSegmentBytes, 1);
+                dropSegmentId(reusedSegmentIds, dataSegmentId);
+            }
             if (reusedSegmentIds.size() > 0) {
                 segmentDirectory.applyRootReferenceChanges(new LongList(), reusedSegmentIds, generation);
             }
@@ -674,14 +720,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * Removes {@code segmentId} from a root's referenced-segment list. The
      * segment a publication introduces is registered with its own root count, so
      * it must not also be counted through the per-root reference changes.
+     *
+     * @return true when the root did reference it
      */
-    private static void dropSegmentId(LongList segmentIds, long segmentId) {
+    private static boolean dropSegmentId(LongList segmentIds, long segmentId) {
         for (int i = 0, n = segmentIds.size(); i < n; i++) {
             if (segmentIds.getQuick(i) == segmentId) {
                 segmentIds.removeIndex(i);
-                return;
+                return true;
             }
         }
+        return false;
     }
 
     private static void removeMissingPartitions(
@@ -699,7 +748,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         final LiveViewCheckpointPageRef oldPartitionRoot = new LiveViewCheckpointPageRef();
         oldFunctionRoot.getPartitionMapRootRef(oldPartitionRoot);
         oldPartitionReader.iterateAll(oldPartitionRoot, entry -> {
-            if (!frozen.currentKeys.contains(ByteBuffer.wrap(entry.getKey()))) {
+            if (!frozen.partitionsByKey.containsKey(ByteBuffer.wrap(entry.getKey()))) {
                 builder.removePartition(entry.getKey());
             }
         });
@@ -727,6 +776,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * A cadence seal freezes once; a repair freezes once per logical boundary its
      * replay crosses, all into the same segment.
      * <p>
+     * {@code previousBoundary} is the boundary immediately below this one, when
+     * one exists and this freeze is provably above it. A ring-shaped function
+     * carries that boundary's chunk pages forward by reference and encodes only
+     * the rows above it, so a seal costs the rows the batch added rather than the
+     * live frame. Everything else writes one complete state image per root.
+     * <p>
      * Anchor entries are the exception: one is a key plus its last-seen anchor
      * value, so they are carried to publication as values and land in the
      * anchor-map metadata pages rather than in the data segment.
@@ -734,7 +789,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     private FrozenBoundary freezeBoundary(
             LiveViewCheckpointDataSegmentWriter dataWriter,
             @NotNull ObjList<WindowFunction> functions,
-            @Nullable LiveViewWindow anchorWindow
+            @Nullable LiveViewWindow anchorWindow,
+            @Nullable PreviousBoundary previousBoundary
     ) {
         final FrozenBoundary boundary = new FrozenBoundary();
         long logicalStateBytes = 0;
@@ -766,7 +822,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     function.checkpointStateFormatVersion(),
                     LiveViewCheckpointMetadata.encodeKeySchema(function.getCheckpointKeyColumnTypes())
             );
-            logicalStateBytes = checkedAdd(logicalStateBytes, freezeFunction(dataWriter, function, frozen));
+            logicalStateBytes = checkedAdd(
+                    logicalStateBytes,
+                    freezeFunction(dataWriter, function, frozen, previousBoundary)
+            );
             boundary.functions.add(frozen);
         }
         if (boundary.functions.size() == 0) {
@@ -779,10 +838,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     private long freezeFunction(
             LiveViewCheckpointDataSegmentWriter dataWriter,
             WindowFunction function,
-            FrozenFunction frozen
+            FrozenFunction frozen,
+            @Nullable PreviousBoundary previousBoundary
     ) {
         final Map map = function.getPartitionMap();
+        final boolean isRingShaped = function.supportsCheckpointRingState();
         if (map == null) {
+            if (isRingShaped) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint ring state requires a partition map");
+            }
             final LiveViewCheckpointStatePageRef ref = freezeStatePage(dataWriter, function, null);
             frozen.scalarStateRef = ref;
             return ref.getDecodedLength();
@@ -794,6 +859,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         final int tombstoneIndex = function.getTombstoneValueIndex();
         final MapRecordCursor cursor = map.getCursor();
         final MapRecord record = map.getRecord();
+        final LiveViewCheckpointPartitionMapEntry ringEntry =
+                isRingShaped ? new LiveViewCheckpointPartitionMapEntry() : null;
         while (cursor.hasNext()) {
             final MapValue value = record.getValue();
             if (tombstoneIndex >= 0 && value.getByte(tombstoneIndex) == 1) {
@@ -806,10 +873,26 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             for (int i = 0; i < keyLength; i++) {
                 key[i] = keyBuffer.getByte(i);
             }
-            final LiveViewCheckpointStatePageRef stateRef = freezeStatePage(dataWriter, function, value);
-            frozen.addPartition(key, stateRef);
             logicalBytes = checkedAdd(logicalBytes, keyLength);
-            logicalBytes = checkedAdd(logicalBytes, stateRef.getDecodedLength());
+            if (isRingShaped) {
+                final LiveViewCheckpointPartitionMapEntry previous = previousBoundary == null
+                        ? null
+                        : previousBoundary.find(frozen.identity, frozen.stateFormatVersion, key);
+                logicalBytes = checkedAdd(logicalBytes, ringSeal.seal(
+                        dataWriter,
+                        function,
+                        value,
+                        key,
+                        previous,
+                        previousBoundary == null ? Numbers.LONG_NULL : previousBoundary.getMaxTimestamp(),
+                        ringEntry
+                ));
+                frozen.addPartition(ringEntry);
+            } else {
+                final LiveViewCheckpointStatePageRef stateRef = freezeStatePage(dataWriter, function, value);
+                frozen.addPartition(key, stateRef);
+                logicalBytes = checkedAdd(logicalBytes, stateRef.getDecodedLength());
+            }
         }
         return logicalBytes;
     }
@@ -881,9 +964,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     private static final class FrozenFunction {
-        private final HashSet<ByteBuffer> currentKeys = new HashSet<>();
         private final byte[] identity;
         private final byte[] keySchema;
+        private final HashMap<ByteBuffer, FrozenPartition> partitionsByKey = new HashMap<>();
         private final ObjList<FrozenPartition> partitions = new ObjList<>();
         private LiveViewCheckpointStatePageRef scalarStateRef;
         private final int stateFormatVersion;
@@ -895,12 +978,33 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         private void addPartition(byte[] key, LiveViewCheckpointStatePageRef stateRef) {
-            currentKeys.add(ByteBuffer.wrap(key));
-            partitions.add(new FrozenPartition(
+            addPartition(new FrozenPartition(
                     key,
                     new byte[0],
                     new LiveViewCheckpointStatePageRef[]{stateRef}
             ));
+        }
+
+        /**
+         * Takes a ring seal's entry by copy: the seal reuses one flyweight for
+         * every partition it freezes.
+         */
+        private void addPartition(LiveViewCheckpointPartitionMapEntry entry) {
+            final LiveViewCheckpointStatePageRef[] refs =
+                    new LiveViewCheckpointStatePageRef[entry.getStatePageCount()];
+            for (int i = 0; i < refs.length; i++) {
+                refs[i] = LiveViewCheckpointPartitionMapEntry.copyRef(entry.getStatePageRef(i));
+            }
+            addPartition(new FrozenPartition(
+                    Arrays.copyOf(entry.getKey(), entry.getKey().length),
+                    Arrays.copyOf(entry.getScalarState(), entry.getScalarState().length),
+                    refs
+            ));
+        }
+
+        private void addPartition(FrozenPartition partition) {
+            partitionsByKey.put(ByteBuffer.wrap(partition.key), partition);
+            partitions.add(partition);
         }
     }
 
@@ -913,6 +1017,70 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.key = key;
             this.scalarState = scalarState;
             this.statePageRefs = statePageRefs;
+        }
+
+        private void copyTo(LiveViewCheckpointPartitionMapEntry out) {
+            out.of(key, scalarState, statePageRefs);
+        }
+    }
+
+    /**
+     * The boundary a freeze may carry unchanged chunk pages forward from: the
+     * root immediately below it on the cadence path, the boundary the replay
+     * captured immediately before it on the repair path.
+     * <p>
+     * A lookup returns null whenever the previous boundary has nothing to share -
+     * no such function, a different state layout, or a partition that did not
+     * exist there - and the freeze then writes that partition from empty.
+     */
+    private interface PreviousBoundary {
+
+        @Nullable
+        LiveViewCheckpointPartitionMapEntry find(byte[] functionIdentity, int stateFormatVersion, byte[] key);
+
+        long getMaxTimestamp();
+    }
+
+    /**
+     * Shares against a boundary the replay froze earlier in the same repair
+     * capture. Its chunks sit in the capture's own unpublished temporary
+     * segment, which is exactly why the sharing path reads no data page.
+     */
+    private static final class CapturedPreviousBoundary implements PreviousBoundary {
+        private final FrozenBoundary boundary;
+        private final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+        private final long maxTimestamp;
+
+        private CapturedPreviousBoundary(FrozenBoundary boundary, long maxTimestamp) {
+            this.boundary = boundary;
+            this.maxTimestamp = maxTimestamp;
+        }
+
+        @Override
+        public @Nullable LiveViewCheckpointPartitionMapEntry find(
+                byte[] functionIdentity,
+                int stateFormatVersion,
+                byte[] key
+        ) {
+            for (int i = 0, n = boundary.functions.size(); i < n; i++) {
+                final FrozenFunction function = boundary.functions.getQuick(i);
+                if (function.stateFormatVersion != stateFormatVersion
+                        || !Arrays.equals(function.identity, functionIdentity)) {
+                    continue;
+                }
+                final FrozenPartition partition = function.partitionsByKey.get(ByteBuffer.wrap(key));
+                if (partition == null) {
+                    return null;
+                }
+                partition.copyTo(entry);
+                return entry;
+            }
+            return null;
+        }
+
+        @Override
+        public long getMaxTimestamp() {
+            return maxTimestamp;
         }
     }
 
@@ -1117,7 +1285,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 dataWriter.of(checkpointsDir, dataSegmentId);
                 isDataOpen = true;
             }
-            final FrozenBoundary boundary = freezeBoundary(dataWriter, functions, anchorWindow);
+            // The replay feeds rows in canonical timestamp order and captures at
+            // each boundary it crosses, so every row behind this boundary and
+            // ahead of the previous one sits strictly above the previous one's
+            // maxTimestamp - the same proof the cadence seal needs from its
+            // caller, here by construction.
+            final PreviousBoundary previousBoundary = size == 0
+                    ? null
+                    : new CapturedPreviousBoundary(
+                    boundaries.getQuick(size - 1),
+                    boundaries.getQuick(size - 1).oldEntry.maxTimestamp
+            );
+            final FrozenBoundary boundary = freezeBoundary(dataWriter, functions, anchorWindow, previousBoundary);
             boundary.oldEntry.copyFrom(entry);
             boundary.effectiveLvRowPosition = effectiveLvRowPosition;
             boundaries.add(boundary);
@@ -1191,7 +1370,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return boundaries.size();
         }
 
+        /**
+         * @return the published segment's exact length, or 0 when the capture's
+         * boundaries all shared their pages and encoded nothing new
+         */
         private long commitData() {
+            if (!isDataOpen || dataWriter.isEmpty()) {
+                if (isDataOpen) {
+                    dataWriter.discard();
+                }
+                isDataPublished = true;
+                return 0;
+            }
             final long bytes = dataWriter.commit();
             isDataPublished = true;
             return bytes;
@@ -1207,6 +1397,69 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             .put(", highTsExclusive=").put(highTsExclusive).put(']');
                 }
             }
+        }
+    }
+
+    /**
+     * Shares against the published root immediately below this seal. Resolves a
+     * function root once and then probes its persistent partition map per key.
+     */
+    private final class RootPreviousBoundary implements PreviousBoundary, Closeable {
+        private final Path checkpointsDir = new Path();
+        private final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+        private final LiveViewCheckpointFunctionDirectory functionDirectory;
+        private final LiveViewCheckpointFunctionRoot functionRoot =
+                new LiveViewCheckpointFunctionRoot(configuration);
+        private final long maxTimestamp;
+        private final LiveViewCheckpointPartitionMapReader partitionReader =
+                new LiveViewCheckpointPartitionMapReader(configuration);
+        private final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
+        private byte[] resolvedIdentity;
+
+        private RootPreviousBoundary(
+                Path checkpointsDir,
+                LiveViewCheckpointFunctionDirectory functionDirectory,
+                long maxTimestamp
+        ) {
+            this.checkpointsDir.of(checkpointsDir);
+            this.functionDirectory = functionDirectory;
+            this.maxTimestamp = maxTimestamp;
+            this.partitionReader.of(checkpointsDir);
+        }
+
+        @Override
+        public void close() {
+            Misc.free(functionRoot);
+            Misc.free(partitionReader);
+            Misc.free(checkpointsDir);
+        }
+
+        @Override
+        public @Nullable LiveViewCheckpointPartitionMapEntry find(
+                byte[] functionIdentity,
+                int stateFormatVersion,
+                byte[] key
+        ) {
+            if (!Arrays.equals(resolvedIdentity, functionIdentity)) {
+                resolvedIdentity = null;
+                partitionRootRef.clear();
+                if (!functionDirectory.find(functionIdentity, functionRootRef)) {
+                    return null;
+                }
+                functionRoot.of(checkpointsDir, functionRootRef);
+                if (functionRoot.getStateFormatVersion() != stateFormatVersion) {
+                    return null;
+                }
+                functionRoot.getPartitionMapRootRef(partitionRootRef);
+                resolvedIdentity = functionIdentity;
+            }
+            return partitionReader.find(partitionRootRef, key, entry) ? entry : null;
+        }
+
+        @Override
+        public long getMaxTimestamp() {
+            return maxTimestamp;
         }
     }
 

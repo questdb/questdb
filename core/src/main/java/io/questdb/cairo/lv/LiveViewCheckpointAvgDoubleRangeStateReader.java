@@ -39,11 +39,18 @@ import java.io.Closeable;
 
 /**
  * Restores the persistent chunked ring used by partitioned {@code avg(double)}
- * over a bounded RANGE frame. Each logical chunk is a timestamp page followed
- * by an exact-double page. The partition entry's checksummed scalar payload
- * owns the logical head offset and exact aggregate continuation state.
+ * and {@code sum(double)} over a bounded RANGE frame. Each logical chunk is a
+ * timestamp page followed by an exact-double page. The partition entry's
+ * checksummed scalar payload owns the logical head offset and exact aggregate
+ * continuation state.
+ * <p>
+ * Chunks carry whatever row count the seal that wrote them appended, capped at
+ * {@link LiveViewCheckpointStateCodec#CHUNK_ROWS}: a cadence seal closes its
+ * tail so the next root can reference it rather than copy it, which puts a
+ * chunk boundary at every checkpoint boundary. The scalar row count and head
+ * offset, not the chunk sizes, say which rows are live.
  */
-public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable {
+public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable, LiveViewCheckpointRingStateSource {
 
     public static final int FORMAT_VERSION = 1;
     public static final int SCALAR_STATE_BYTES = 5 * Long.BYTES;
@@ -86,6 +93,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable {
         statePageRefs = new LiveViewCheckpointStatePageRef[0];
     }
 
+    @Override
     public long getFrameSize() {
         ensureInitialized();
         return frameSize;
@@ -101,6 +109,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable {
         return lastTimestamp;
     }
 
+    @Override
     public long getRowCount() {
         ensureInitialized();
         return rowCount;
@@ -116,6 +125,7 @@ public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable {
         copyRef(statePageRefs[index], out);
     }
 
+    @Override
     public double getSum() {
         ensureInitialized();
         return Double.longBitsToDouble(sumBits);
@@ -126,8 +136,10 @@ public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable {
      * deliberately lazy: opening the root validates bounded metadata only,
      * while a malformed referenced data page invalidates the root when read.
      */
-    public void forEach(@NotNull RowConsumer consumer) {
+    @Override
+    public void forEachRow(@NotNull RowConsumer consumer) {
         ensureInitialized();
+        ensureBound();
         long rowsRead = 0;
         long previousTimestamp = 0;
         boolean hasPrevious = false;
@@ -160,15 +172,34 @@ public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable {
         }
     }
 
+    /**
+     * Opens {@code entry} for both metadata and payload access.
+     */
     public void of(
             @Transient @NotNull Path checkpointsDir,
             @NotNull LiveViewCheckpointSegmentDirectory segmentDirectory,
             @NotNull LiveViewCheckpointPartitionMapEntry entry
     ) {
-        initialized = false;
-        openSegmentId = -1;
+        ofMetadata(entry);
         this.checkpointsDir.of(checkpointsDir);
         this.segmentDirectory = segmentDirectory;
+    }
+
+    /**
+     * Decodes and validates {@code entry}'s scalar payload and chunk references
+     * without binding a data segment to read them from.
+     * <p>
+     * A cadence seal starts from the previous root this way: it needs the row
+     * count, head offset, last timestamp and chunk references to carry the
+     * shared prefix forward, and none of those live in a data page. It also
+     * means a repair can chain one captured boundary onto the one before it,
+     * whose chunks are still sitting in an unpublished temporary segment that no
+     * reader could open.
+     */
+    public void ofMetadata(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
+        initialized = false;
+        openSegmentId = -1;
+        this.segmentDirectory = null;
         final byte[] scalar = entry.getScalarState();
         if (scalar.length != SCALAR_STATE_BYTES) {
             throw invalid("avg RANGE scalar state size mismatch")
@@ -202,9 +233,6 @@ public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable {
                         .put(" [timestamps=").put(timestampRef.getRowCount())
                         .put(", values=").put(valueRef.getRowCount()).put(']');
             }
-            if (i + 2 < refCount && timestampRef.getRowCount() != LiveViewCheckpointStateCodec.CHUNK_ROWS) {
-                throw invalid("avg RANGE non-tail chunk is not full, rows=").put(timestampRef.getRowCount());
-            }
             if (physicalRows > Long.MAX_VALUE - timestampRef.getRowCount()) {
                 throw invalid("avg RANGE physical row count overflow");
             }
@@ -212,12 +240,16 @@ public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable {
             statePageRefs[i] = LiveViewCheckpointPartitionMapEntry.copyRef(timestampRef);
             statePageRefs[i + 1] = LiveViewCheckpointPartitionMapEntry.copyRef(valueRef);
         }
-        if (rowCount < 0 || frameSize < 0 || frameSize > rowCount) {
+        // frameSize is the function's own aggregate cardinality, not a ring index:
+        // a frame whose low bound is unbounded folds rows into the aggregate and
+        // then drops them from the ring, so it counts rows the ring no longer
+        // holds. Only its sign is structural here.
+        if (rowCount < 0 || frameSize < 0) {
             throw invalid("avg RANGE scalar row counts invalid")
                     .put(" [rowCount=").put(rowCount).put(", frameSize=").put(frameSize).put(']');
         }
         if (rowCount == 0) {
-            if (refCount != 0 || headOffset != 0 || lastTimestamp != 0 || frameSize != 0) {
+            if (refCount != 0 || headOffset != 0 || lastTimestamp != 0) {
                 throw invalid("avg RANGE empty state is not canonical");
             }
         } else if (refCount == 0 || headOffset < 0
@@ -234,19 +266,9 @@ public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable {
     int decodeChunk(int chunkIndex, long timestampAddress, long valueAddress) {
         final LiveViewCheckpointStatePageRef timestampRef = statePageRefs[chunkIndex * 2];
         final LiveViewCheckpointStatePageRef valueRef = statePageRefs[chunkIndex * 2 + 1];
-        return decodeChunk(timestampRef, valueRef, timestampAddress, valueAddress);
-    }
-
-    int decodeChunk(
-            LiveViewCheckpointStatePageRef timestampRef,
-            LiveViewCheckpointStatePageRef valueRef,
-            long timestampAddress,
-            long valueAddress
-    ) {
-        final int rows = timestampRef.getRowCount();
         decodeTimestamps(timestampRef, timestampAddress);
         decodeValues(valueRef, valueAddress);
-        return rows;
+        return timestampRef.getRowCount();
     }
 
     LiveViewCheckpointStatePageRef[] copyStatePageRefs() {
@@ -341,6 +363,13 @@ public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable {
         dataReader.assertFullyConsumed(consumed, ref.getDecodedLength(), ref.getRowCount());
     }
 
+    private void ensureBound() {
+        if (segmentDirectory == null) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint avg RANGE state reader is not bound to a data segment directory");
+        }
+    }
+
     private void ensureInitialized() {
         if (!initialized) {
             throw CairoException.critical(0).put("live view checkpoint avg RANGE state reader is not initialized");
@@ -370,10 +399,5 @@ public class LiveViewCheckpointAvgDoubleRangeStateReader implements Closeable {
                 LiveViewCheckpointStateCodec.CHUNK_ROWS,
                 LiveViewCheckpointStateCodec.CHUNK_ROWS * Long.BYTES
         );
-    }
-
-    @FunctionalInterface
-    public interface RowConsumer {
-        void accept(long timestamp, double value);
     }
 }

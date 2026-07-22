@@ -50,11 +50,14 @@ import org.junit.Test;
  * Every case measures the dimension over a timeline that keeps growing under it
  * and asserts the law the measurement follows, so a regression that reintroduces
  * a dependence on view age fails here rather than in a benchmark nobody runs.
- * The four dimensions that meet their criteria are:
+ * The five dimensions that meet their criteria are:
  * <ul>
- *     <li><b>write cost per seal</b> - a cadence seal writes exactly one
- *     complete frame image, and that figure is byte-identical whether 40 or 160
- *     roots precede it;</li>
+ *     <li><b>write cost per seal</b> - a cadence seal writes one frame image,
+ *     packed by the semantic codecs to a fraction of the raw frame, and that
+ *     figure is flat whether 40 or 160 roots precede it;</li>
+ *     <li><b>structural sharing</b> - a frame wide enough for a chunk descriptor
+ *     to pay for itself carries the previous root's chunk pages forward by
+ *     reference and writes only the rows the batch appended;</li>
  *     <li><b>lookup latency</b> - the timeline tree's height, its copy-on-write
  *     append cost and the wall clock of a predecessor lookup all grow
  *     logarithmically, measured at 1, 1K and 20K logical entries;</li>
@@ -65,12 +68,12 @@ import org.junit.Test;
  *     caught up with the base after every round, and the work each round
  *     publishes is constant as the timeline grows past a hundred entries.</li>
  * </ul>
- * Two measured shortfalls are asserted rather than omitted, so the gap is a
+ * One measured shortfall is asserted rather than omitted, so the gap is a
  * failing expectation the day it closes rather than a forgotten one - see
- * {@link #testSteadyStateGrowthWritesOneFrameImagePerRoot}, which records both:
- * a root re-encodes the whole frame instead of sharing pages with its
- * predecessor, and publication metadata grows with the segment count because the
- * segment directory is one page rewritten per publication.
+ * {@link #testSteadyStateGrowthWritesOneFrameImagePerRoot}: publication metadata
+ * grows with the segment count, because the segment directory is one page
+ * rewritten in full per publication while the timeline tree beside it copies
+ * only its search path.
  * <p>
  * Wall clock is asserted only where the operation under test dominates it - the
  * lookup case, which runs against nothing else. A checkpoint seal's own elapsed
@@ -93,6 +96,15 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
     // of the production 64-way tree, so the height/cost curve has three points on it.
     private static final int[] LOOKUP_ENTRY_COUNTS = {1, 1_000, 20_000};
     private static final int LOOKUP_QUERIES = 10_000;
+    // Rows per key one commit of the dense-frame case adds, at one-second spacing.
+    // Comfortably above LiveViewCheckpointRingSeal.MIN_SHARED_CHUNK_ROWS, so the
+    // chunk each seal writes carries enough rows to be worth referencing later.
+    private static final int DENSE_ROWS_PER_COMMIT = 200;
+    private static final int DENSE_SAMPLE = 40;
+    private static final int DENSE_SAMPLES = 3;
+    // Twenty commits fill this frame, so twenty chunks per key live inside it.
+    private static final String RANGE_DENSE_FRAME =
+            "PARTITION BY sym ORDER BY ts RANGE BETWEEN '4000' SECOND PRECEDING AND CURRENT ROW";
     private static final String RANGE_30S_FRAME =
             "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW";
     private static final String RANGE_60S_FRAME =
@@ -310,6 +322,57 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDenseFrameSealsShareChunksWithThePreviousRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            // A frame wide enough for a chunk descriptor to pay for itself: 4000
+            // rows per key, refilled 200 rows at a time, so twenty roots' worth of
+            // chunks sit inside one frame and the seal has something to share.
+            createBaseAndView("base", "lv", RANGE_DENSE_FRAME);
+            final long[] dataBytes = new long[DENSE_SAMPLES + 1];
+            long logicalStateBytes = 0;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 1; commit <= DENSE_SAMPLES * DENSE_SAMPLE; commit++) {
+                    commitDense(job, "base", commit);
+                    if (commit % DENSE_SAMPLE == 0) {
+                        driveRefreshToQuiescence(job);
+                        final LiveViewInstance instance = viewInstance("lv");
+                        try (LiveViewCheckpointMetaStore store = openStore(instance)) {
+                            dataBytes[commit / DENSE_SAMPLE] = store.getSuperblock().dataBytes;
+                        }
+                        logicalStateBytes = instance.getHeadCheckpointStateBytes();
+                    }
+                }
+
+                final LiveViewInstance instance = viewInstance("lv");
+                Assert.assertEquals(
+                        "one cadence seal per commit",
+                        DENSE_SAMPLES * DENSE_SAMPLE,
+                        timelineEntries(instance)
+                );
+                assertViewMatchesRecompute("lv", "base", RANGE_DENSE_FRAME);
+
+                // Steady state: the frame is full and every seal drops as many rows
+                // off the head as it appends, so what a seal writes is the 200 rows
+                // per key it appended - not the 4000 per key it holds.
+                final long steadyPerSeal =
+                        (dataBytes[DENSE_SAMPLES] - dataBytes[DENSE_SAMPLES - 1]) / DENSE_SAMPLE;
+                Assert.assertTrue(
+                        "a seal wrote " + steadyPerSeal + " bytes over a " + logicalStateBytes + " byte frame",
+                        20 * steadyPerSeal < logicalStateBytes
+                );
+                // And the timeline holds one copy of each captured row rather than
+                // one copy per root: 240 roots over a frame this size would be two
+                // orders of magnitude more than what the rows themselves cost.
+                Assert.assertTrue(
+                        "the timeline holds " + dataBytes[DENSE_SAMPLES] + " bytes over "
+                                + (DENSE_SAMPLES * DENSE_SAMPLE) + " roots of " + logicalStateBytes + " bytes each",
+                        dataBytes[DENSE_SAMPLES] < DENSE_SAMPLES * DENSE_SAMPLE * logicalStateBytes / 10
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSteadyStateGrowthWritesOneFrameImagePerRoot() throws Exception {
         assertMemoryLeak(() -> {
             // Rows every five seconds under a one-minute look-behind, so a frame holds
@@ -338,34 +401,38 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
                 Assert.assertEquals("one cadence seal per commit", SEALS, timelineEntries(instance));
                 assertViewMatchesRecompute("lv", "base", RANGE_60S_FRAME);
 
-                // Write cost per seal: byte-identical across the last two windows, so a
-                // seal costs the live frame and nothing per root that precedes it.
+                // Write cost per seal: flat across the last two windows, so a seal
+                // costs the live frame and nothing per root that precedes it. Not
+                // byte-identical any more - the timestamp and double codecs pack the
+                // frame, and how well they pack it moves by a byte or two as the
+                // values grow.
                 final long midDataPerSeal = (dataBytes[3] - dataBytes[2]) / SAMPLE;
                 final long lateDataPerSeal = (dataBytes[4] - dataBytes[3]) / SAMPLE;
-                Assert.assertEquals(
-                        "a seal's data bytes must not depend on how many roots precede it",
-                        midDataPerSeal,
-                        lateDataPerSeal
+                Assert.assertTrue(
+                        "a seal's data bytes must not depend on how many roots precede it: "
+                                + midDataPerSeal + " then " + lateDataPerSeal,
+                        Math.abs(midDataPerSeal - lateDataPerSeal) <= 2
                 );
+                // The semantic codecs are where this frame's win is: rows on a fixed
+                // cadence carry no timestamp delta-of-delta and the values differ in
+                // few bits, so a root's image costs a fraction of the raw frame.
                 Assert.assertTrue(
                         "a seal wrote " + lateDataPerSeal + " bytes over a " + logicalStateBytes + " byte frame",
-                        lateDataPerSeal <= logicalStateBytes
+                        4 * lateDataPerSeal < logicalStateBytes
                 );
 
-                // Recorded shortfall 1: a root re-encodes its whole frame rather than
-                // sharing pages with the root before it, so the total is one complete
-                // image per root - roots times frame - where the design's storage claim
-                // is unique captured rows plus descriptors. The persistent-chunk layer
-                // exists but the seal path freezes every partition's complete state
-                // instead of going through it. Asserted rather than omitted, so closing
-                // the gap fails here and gets recorded instead of passing unnoticed.
+                // This frame declines chunk sharing, and the total is therefore still
+                // one image per root. That is the intended answer at this size, not a
+                // gap: a chunk costs two 40-byte page references in every later root,
+                // against the 16 raw bytes of the row it would save re-encoding, so a
+                // thirteen-row frame refilled one row at a time would pay far more in
+                // partition-entry metadata than it saved in payload.
+                // LiveViewCheckpointRingSeal.chunkCap draws that line at
+                // MIN_SHARED_CHUNK_ROWS rows per chunk, which leaves this frame with
+                // one chunk - rebuilt per root - and lets a dense frame share almost
+                // everything (testDenseFrameSealsShareChunksWithThePreviousRoot).
                 Assert.assertTrue(
-                        "a root writes the whole frame: " + lateDataPerSeal + " bytes per seal over a "
-                                + logicalStateBytes + " byte frame",
-                        10 * lateDataPerSeal >= 9 * logicalStateBytes
-                );
-                Assert.assertTrue(
-                        "the timeline holds one complete image per root: " + dataBytes[4] + " bytes over "
+                        "the timeline holds one image per root: " + dataBytes[4] + " bytes over "
                                 + SEALS + " roots",
                         10 * dataBytes[4] >= 9 * SEALS * lateDataPerSeal
                 );
@@ -410,12 +477,13 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
         return height;
     }
 
-    private static String timestamp(int secondOfDay) {
+    private static String timestamp(int second) {
         return String.format(
-                "2026-01-01T%02d:%02d:%02d.000000Z",
-                secondOfDay / 3600,
-                (secondOfDay % 3600) / 60,
-                secondOfDay % 60
+                "2026-01-%02dT%02d:%02d:%02d.000000Z",
+                1 + second / 86_400,
+                (second % 86_400) / 3600,
+                (second % 3600) / 60,
+                second % 60
         );
     }
 
@@ -448,6 +516,30 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
         execute("INSERT INTO " + baseName + " (ts, sym, x) VALUES "
                 + "('" + rowTs + "', 'a', " + value + "), "
                 + "('" + rowTs + "', 'b', " + (value + 1) + ")");
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+    }
+
+    /**
+     * Commits {@code DENSE_ROWS_PER_COMMIT} rows per key at one-second spacing,
+     * ascending, and gives the refresh job a turn on them. Ascending matters: an
+     * out-of-order commit routes the whole cycle through the repair path, which
+     * would measure something other than the cadence seal.
+     */
+    private void commitDense(LiveViewRefreshJob job, String baseName, int commit) throws Exception {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        final StringBuilder sql = new StringBuilder("INSERT INTO " + baseName + " (ts, sym, x) VALUES ");
+        final int firstSecond = (commit - 1) * DENSE_ROWS_PER_COMMIT;
+        for (int i = 0; i < DENSE_ROWS_PER_COMMIT; i++) {
+            final String rowTs = timestamp(firstSecond + i);
+            if (i > 0) {
+                sql.append(", ");
+            }
+            sql.append("('").append(rowTs).append("', 'a', ").append(firstSecond + i).append("), ")
+                    .append("('").append(rowTs).append("', 'b', ").append(firstSecond + i + 1).append(')');
+        }
+        execute(sql.toString());
         drainWalQueue();
         drainJob(job);
         drainWalQueue();

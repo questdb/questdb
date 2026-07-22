@@ -305,7 +305,10 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
                          new LiveViewCheckpointTimelineStoreWriter(configuration);
                  Path dir = checkpointsDir()) {
                 try {
-                    writer.append(dir, new ObjList<>(), null, 7, 0, 0, 0, 0, false, 1, 0, Numbers.LONG_NULL);
+                    writer.append(
+                            dir, new ObjList<>(), null, 7, 0, 0, 0, 0, false, 1, 0,
+                            Numbers.LONG_NULL, Numbers.LONG_NULL
+                    );
                     Assert.fail("expected replica publication rejection");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "replica must not publish");

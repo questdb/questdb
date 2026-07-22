@@ -131,6 +131,22 @@ public class LiveViewCheckpointDataSegmentWriter implements Closeable {
     }
 
     /**
+     * Closes and unlinks the temporary segment without publishing it. A seal
+     * whose functions all shared their pages with the previous boundary writes
+     * no payload at all, and an empty segment cannot be published: the format
+     * has no representation for a zero-length data file, and nothing would
+     * reference it.
+     */
+    public void discard() {
+        if (!isOpen) {
+            return;
+        }
+        mem.close(false);
+        ff.removeQuiet(tmpPath.$());
+        reset();
+    }
+
+    /**
      * Finishes the current payload and fills its metadata reference.
      */
     public void endPage(
@@ -162,6 +178,14 @@ public class LiveViewCheckpointDataSegmentWriter implements Closeable {
         }
         out.of(segmentId, pageOffset, (int) storedLength, decodedLength, pageKind, codec, rowCount, flags);
         pageOffset = -1;
+    }
+
+    /**
+     * @return true when the open segment holds no payload yet
+     */
+    public boolean isEmpty() {
+        ensureOpen();
+        return mem.getAppendOffset() == 0;
     }
 
     /**

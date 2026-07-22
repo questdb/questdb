@@ -67,6 +67,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     private final LiveViewStatePageReader keyPageReader = new LiveViewStatePageReader();
     private final LiveViewCheckpointMetaStore metaStore;
     private final LiveViewCheckpointPartitionMapReader partitionReader;
+    private final LiveViewCheckpointAvgDoubleRangeStateReader ringStateReader;
     private final LiveViewCheckpointRoot root;
     private final LiveViewCheckpointSegmentDirectory segmentDirectory;
     private final LiveViewStatePageReader statePageReader = new LiveViewStatePageReader();
@@ -83,6 +84,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         keyMemory = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
         metaStore = new LiveViewCheckpointMetaStore(configuration);
         partitionReader = new LiveViewCheckpointPartitionMapReader(configuration);
+        ringStateReader = new LiveViewCheckpointAvgDoubleRangeStateReader(configuration);
         root = new LiveViewCheckpointRoot(configuration);
         segmentDirectory = new LiveViewCheckpointSegmentDirectory(configuration);
         timelineReader = new LiveViewCheckpointTimelineReader(configuration);
@@ -102,6 +104,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         Misc.free(keyMemory);
         Misc.free(metaStore);
         Misc.free(partitionReader);
+        Misc.free(ringStateReader);
         Misc.free(root);
         Misc.free(segmentDirectory);
         Misc.free(timelineReader);
@@ -314,15 +317,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     }
 
     private LiveViewCheckpointDataSegmentReader openStatePage(@NotNull LiveViewCheckpointStatePageRef ref) {
-        if (!rootCatalogueContains(ref.getSegmentId()) || !functionCatalogueContains(ref.getSegmentId())) {
-            throw invalid("state page segment is absent from its root catalogue, segmentId=")
-                    .put(ref.getSegmentId());
-        }
-        final int directoryIndex = findDirectoryIndex(ref.getSegmentId());
-        if (directoryIndex < 0 || segmentDirectory.getReferenceCountAt(directoryIndex) <= 0) {
-            throw invalid("state page segment is absent from the published directory, segmentId=")
-                    .put(ref.getSegmentId());
-        }
+        final int directoryIndex = validateStatePageSegment(ref);
         final LiveViewCheckpointDataSegmentReader reader = readerFor(
                 ref.getSegmentId(),
                 segmentDirectory.getFileLengthAt(directoryIndex)
@@ -434,6 +429,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             return;
         }
         final Map map = function.getPartitionMap();
+        final boolean isRingShaped = function.supportsCheckpointRingState();
         final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
         functionRoot.getPartitionMapRootRef(partitionRootRef);
         partitionReader.iterateAll(partitionRootRef, entry -> {
@@ -451,6 +447,11 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             final MapValue value = key.createValue();
             if (!value.isNew()) {
                 throw invalid("function root contains a duplicate partition key");
+            }
+            if (isRingShaped) {
+                ringStateReader.of(checkpointsDir, segmentDirectory, entry);
+                function.restoreCheckpointRingState(ringStateReader, value);
+                return;
             }
             final LiveViewCheckpointStatePageRef ref = entry.getStatePageRef(0);
             final LiveViewCheckpointDataSegmentReader reader = openStatePage(ref);
@@ -555,12 +556,10 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             openStatePage(scalarRef);
             return;
         }
+        final boolean isRingShaped = function.supportsCheckpointRingState();
         final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
         functionRoot.getPartitionMapRootRef(partitionRootRef);
         partitionReader.iterateAll(partitionRootRef, entry -> {
-            if (entry.getScalarState().length != 0 || entry.getStatePageCount() != 1) {
-                throw invalid("function partition entry shape invalid");
-            }
             final byte[] encodedKey = entry.getKey();
             final long consumed = LiveViewSnapshotKeyCodec.validateKey(
                     openKeyPage(encodedKey),
@@ -570,8 +569,42 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             if (consumed != encodedKey.length) {
                 throw invalid("partition key decoder did not consume reference exactly");
             }
+            if (isRingShaped) {
+                // The chunk reader validates the entry's own scalar payload and
+                // page references; what it cannot see is whether the segments
+                // those references name belong to this root at all, so that is
+                // checked here, exactly as openStatePage does for a whole image.
+                ringStateReader.ofMetadata(entry);
+                for (int i = 0, n = entry.getStatePageCount(); i < n; i++) {
+                    validateStatePageSegment(entry.getStatePageRef(i));
+                }
+                return;
+            }
+            if (entry.getScalarState().length != 0 || entry.getStatePageCount() != 1) {
+                throw invalid("function partition entry shape invalid");
+            }
             openStatePage(entry.getStatePageRef(0));
         });
+    }
+
+    /**
+     * Proves one data-segment reference is reachable from this root: named by the
+     * root's own catalogue, by the function root's, and by the published segment
+     * directory with a live reference count.
+     *
+     * @return the segment's index in the published directory
+     */
+    private int validateStatePageSegment(@NotNull LiveViewCheckpointStatePageRef ref) {
+        if (!rootCatalogueContains(ref.getSegmentId()) || !functionCatalogueContains(ref.getSegmentId())) {
+            throw invalid("state page segment is absent from its root catalogue, segmentId=")
+                    .put(ref.getSegmentId());
+        }
+        final int directoryIndex = findDirectoryIndex(ref.getSegmentId());
+        if (directoryIndex < 0 || segmentDirectory.getReferenceCountAt(directoryIndex) <= 0) {
+            throw invalid("state page segment is absent from the published directory, segmentId=")
+                    .put(ref.getSegmentId());
+        }
+        return directoryIndex;
     }
 
     private void validateFunctions(@NotNull ObjList<WindowFunction> functions) {
