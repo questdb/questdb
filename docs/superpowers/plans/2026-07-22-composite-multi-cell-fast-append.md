@@ -126,13 +126,30 @@ on it. The single-cell branch (spec 1) is untouched.
 
 ---
 
-### Task 2: Unify the scalar handle into a bounded N-cell open-handle cache (behavior-preserving) — refactor
+### Task 2: Unify per-cell state — handle cache (Part A) + max-ts cache (Part B) (behavior-preserving) — refactor
 
-Replace spec-1's single scalar cell handle with ONE bounded `IntObjHashMap<ObjList<MemoryMA>>` cache
-(cellKey → that cell's open column handles) that the existing single-cell path now goes through. This
-de-risks the resource management (open / LRU-evict / non-truncating close of N cells) SEPARATELY from Task 3's
-multi-cell correctness, and removes the dual-handle-on-one-file hazard before two paths share cells. **Zero
-behavior change**: single-cell fast-append still `== twin`; spec-1's tests + crash suite stay green.
+Unify the two pieces of duplicated per-cell writer state that Task 3's multi-cell routine will rely on, so
+one source of truth exists before two paths share a cell. **Zero correctness change**: single-cell
+fast-append still `== twin`; spec-1's tests + crash suite stay green; flag-off byte-identical.
+
+**Part A — handle cache.** Replace spec-1's single scalar cell handle with ONE bounded
+`IntObjHashMap<ObjList<MemoryMA>>` cache (cellKey → that cell's open column handles) that the existing
+single-cell path now goes through. De-risks resource management (open / LRU-evict / non-truncating close of N
+cells) SEPARATELY from Task 3's multi-cell correctness, and removes the dual-handle-on-one-file hazard (two
+`MemoryMA` at different positions on one file → corruption) before two paths share cells.
+
+**Part B — max-ts cache.** Replace the THREE-part per-cell-max mechanism Task 1 left behind — the dedicated
+`compositeMultiCellMaxTimestamp` field, the `compositeCellMaxTimestamp.clear()` WIPE in
+`isCompositeSingleCellFastAppendPossible` on multi-cell commits, and the Task-1 fold-in-at-single-cell-action
+patch — with ONE shared `compositeCellMaxTimestamp` that is **FOLD-NOT-WIPE**: both predicates read it, and
+every flag-on composite commit folds each touched cell's observed max into it (single-cell predicate folds on
+BOTH single- and multi-cell commits instead of wiping; multi-cell predicate folds; both action routines fold).
+This is the structural fix for Task 1's dedicated-cache workaround. **Never-false-positive is preserved**
+(the shared cache is folded on every flag-on composite commit — single/multi, eligible/ineligible — so it is
+never stale-low; cold-on-reopen still fails closed) and single-cell engagement STRICTLY IMPROVES (no
+wipe-induced cold-fail after a multi-cell commit). Single-cell RESULTS are unchanged (`== twin`); only the
+fast-path engagement RATE rises — so a spec-1 test asserting an EXACT single-cell fast-append count may need
+its expected count updated (a `== twin` correctness assertion does not).
 
 **Files:**
 - Modify: `TableWriter.java`:
@@ -150,7 +167,16 @@ behavior change**: single-cell fast-append still `== twin`; spec-1's tests + cra
     of the scalar field — otherwise UNCHANGED (same append + same `_txn` fold).
   - Update every close/reposition/rollback/`doClose`/`syncCompositeFastAppendCell` (`:5457`, `:5478`) + partition
     roll site that referenced the scalar fields to iterate the cache (close ALL entries non-truncating).
-- Test: extend existing `CompositeFastAppendTest.java` (spec 1).
+  - **Part B (max-ts cache):** in `isCompositeSingleCellFastAppendPossible` (`:5153`) replace the multi-cell
+    `compositeCellMaxTimestamp.clear()` wipe with a loop folding each touched cell's observed max (the method
+    already resolves every row's cellKey to detect multi-cell — reuse that pass). Delete the
+    `compositeMultiCellMaxTimestamp` field and repoint `isCompositeMultiCellFastAppendPossible`'s reads/folds at
+    the shared `compositeCellMaxTimestamp`. Delete the Task-1 fold-in-at-single-cell-action patch (~`:13130`):
+    it is redundant once the shared cache is the single source (the single-cell action already folds
+    `compositeCellMaxTimestamp` at `:5292`). GROUND all `compositeCellMaxTimestamp`/`compositeMultiCellMaxTimestamp`
+    read+fold+wipe sites first (grep both names) so none is missed.
+- Test: extend existing `CompositeFastAppendTest.java` (spec 1) for Part A; extend
+  `CompositeMultiCellFastAppendEligibilityTest.java` (Task 1) for Part B.
 
 **Interfaces:**
 - Consumes Task 1. Produces: `ObjList<MemoryMA> ensureCompositeFastAppendCellOpen(int cellKey, long partitionTs, int partitionIndexRaw, long srcDataMax)`
@@ -164,17 +190,27 @@ behavior change**: single-cell fast-append still `== twin`; spec-1's tests + cra
   Then set `max.open.cells=1`, repeat A/B/A, and assert the count never exceeds 1 (LRU eviction) while `c == p`
   stays correct across the eviction cycles. RED today (`getCompositeFastAppendOpenCellCount` doesn't exist; the
   scalar handle holds ≤1).
-- [ ] **Step 2: Run → FAIL:** `mvn -q -pl core test -Dtest=CompositeFastAppendTest`.
-- [ ] **Step 3: Implement** the cache refactor per the Files section. Watch: (i) a cache miss must open the
+  **Part B test** (add to `CompositeMultiCellFastAppendEligibilityTest`): (i) **engagement-improves** — after a
+  multi-cell commit touching cell `A`, a following single-cell ordered commit to `A` now engages the spec-1
+  fast path (assert `getCompositeFastAppendCommittedCount()` rises) where the wipe made it cold-fail; RED today
+  (wipe ⇒ no engagement). (ii) **never-false-positive still holds** — the Task-1 stale-low regression test must
+  stay GREEN through the refactor (shared cache is folded, not wiped). Both `== twin`.
+- [ ] **Step 2: Run → FAIL:** `mvn -q -pl core test -Dtest=CompositeFastAppendTest,CompositeMultiCellFastAppendEligibilityTest`.
+- [ ] **Step 3: Implement** BOTH parts per the Files section. Part A (handle) watch: (i) a cache miss opens the
   handle at the cell's CURRENT committed size (`srcDataMax`), never 0; (ii) LRU eviction MUST `close(false)`
   non-truncating; (iii) a partition roll (new last day) or full commit must flush + drop the whole cache (all
-  cached cells belonged to the prior day); (iv) `doClose`/rollback close ALL entries non-truncating.
-- [ ] **Step 4: Run → PASS** (new alternating + eviction assertions; all pre-existing spec-1
-  `CompositeFastAppendTest` cases still green).
+  cached cells belonged to the prior day); (iv) `doClose`/rollback close ALL entries non-truncating. Part B
+  (max-ts cache) watch: (v) the single-cell predicate now FOLDS every touched cell's max on multi-cell commits
+  (was a wipe) — grep-verify no `compositeMultiCellMaxTimestamp` reference remains; (vi) the folded value is the
+  real observed max (`Math.max` guard), so the shared cache is never stale-low.
+- [ ] **Step 4: Run → PASS** (Part A alternating + eviction; Part B engagement-improves + stale-low-still-GREEN;
+  all pre-existing spec-1 `CompositeFastAppendTest` + Task-1 `CompositeMultiCellFastAppendEligibilityTest` cases
+  still green — update only an EXACT single-cell-count expectation if engagement legitimately rose, never a
+  `== twin` assertion).
 - [ ] **Step 5: Regression.** `mvn -q -pl core test -Dtest='Composite*,Wal*,O3*,Commit*'` +
   `mvn -q -pl core test -Dtest=CompositeFastAppendCrashTest` (spec-1 crash suite MUST stay green — proves the
   refactor kept crash-safety). Flag-OFF composite byte-identical; plain untouched.
-- [ ] **Step 6: Commit** — `refactor(cairo): unify composite fast-append handle into bounded N-cell cache`
+- [ ] **Step 6: Commit** — `refactor(cairo): unify composite fast-append per-cell state (N-cell handle cache + shared fold-not-wipe max-ts cache)`
 
 ---
 
