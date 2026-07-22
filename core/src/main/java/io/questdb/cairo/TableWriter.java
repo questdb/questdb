@@ -13160,16 +13160,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // rename _meta to _meta.prev
         renameMetaToMetaPrev();
+
+        // After moving _meta to _meta.prev we must arm the _todo restore marker BEFORE any step
+        // that can fail. If we abort while _meta has been renamed away but no _todo exists yet,
+        // open-time recovery cannot roll back and instead rolls forward to the half-applied
+        // _meta.swp -- surfacing e.g. a spurious "duplicate column" when the failed DDL is
+        // legitimately retried. writeRestoreMetaTodo() writes the marker into the already-mapped
+        // todo memory before it opens anything, so the marker survives even if the directory
+        // fsync below faults.
+        writeRestoreMetaTodo();
+
+        // Durably persist the _meta -> _meta.prev rename together with the _todo marker. This
+        // fsync must stay AFTER writeRestoreMetaTodo(): opening the directory can fail (injected
+        // IO fault, real EIO), and only with the marker already in place does a failure here
+        // leave a recoverable state.
         if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
             final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
             if (dirFd != -1) {
                 ff.fsyncAndClose(dirFd);
             }
         }
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo();
 
         // rename _meta.swp to _meta
         renameSwapMetaToMeta();
@@ -13252,15 +13262,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             ddlMem.sync(false);
             if (configuration.getCommitMode() != CommitMode.NOSYNC) {
-                path.trimTo(pathSize).concat(META_SWAP_FILE_NAME);
-                if (index > 0) {
-                    path.put('.').put(index);
+                try {
+                    path.trimTo(pathSize).concat(META_SWAP_FILE_NAME);
+                    if (index > 0) {
+                        path.put('.').put(index);
+                    }
+                    final long swpFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+                    if (swpFd != -1) {
+                        ff.fsyncAndClose(swpFd);
+                    }
+                } finally {
+                    // Always restore path to the table root. If openRONoCache above faults, the
+                    // rollback-DDL catch calls openMetaFile(ff, path, ...), which assumes path is at
+                    // pathSize and concatenates _meta -- a stale _meta.swp suffix would make it open
+                    // "_meta.swp/_meta" (ENOTDIR), fail the revert, and falsely distress the writer.
+                    path.trimTo(pathSize);
                 }
-                final long swpFd = TableUtils.openRONoCache(ff, path.$(), LOG);
-                if (swpFd != -1) {
-                    ff.fsyncAndClose(swpFd);
-                }
-                path.trimTo(pathSize);
             }
             return index;
         } catch (Throwable th) {
@@ -15047,12 +15064,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             todoMem.jumpTo(56);
             todoMem.sync(false);
             if (configuration.getCommitMode() != CommitMode.NOSYNC) {
-                path.concat(TODO_FILE_NAME);
-                final long todoFd = TableUtils.openRONoCache(ff, path.$(), LOG);
-                if (todoFd != -1) {
-                    ff.fsyncAndClose(todoFd);
+                try {
+                    path.concat(TODO_FILE_NAME);
+                    final long todoFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+                    if (todoFd != -1) {
+                        ff.fsyncAndClose(todoFd);
+                    }
+                } finally {
+                    // Restore path even if openRONoCache faults, so the RECOVER_FROM_TODO_WRITE_FAILURE
+                    // handler below (and any later use) sees path at the table root rather than a stale
+                    // _todo_ suffix.
+                    path.trimTo(pathSize);
                 }
-                path.trimTo(pathSize);
             }
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, e);
