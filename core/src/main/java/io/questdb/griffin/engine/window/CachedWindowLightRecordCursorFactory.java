@@ -56,10 +56,15 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     private final GenericRecordMetadata chainMetadata;
     private final ObjList<WindowFunction> forwardUnorderedFunctions;
     private final ObjList<ObjList<WindowFunction>> ordered2PassFunctions;
+    // Parallel to ordered2PassFunctions: precomputed once, true iff at least one function in the
+    // group reads the base Record in pass2. When false the pass2 loop skips positionRecordABaseOnly.
+    private final boolean[] ordered2PassNeedsRecord;
     private final ObjList<ObjList<WindowFunction>> orderedFunctions;
     private final int orderedGroupCount;
     private final ObjList<IntList> sortKeys;
     private final ObjList<WindowFunction> unordered2PassFunctions;
+    // True iff at least one unordered two-pass function reads the base Record in pass2 (precomputed).
+    private final boolean unordered2PassNeedsRecord;
     @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
     private ObjList<WindowFunction> allFunctions;
@@ -146,6 +151,14 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             }
 
             ordered2PassFunctions = orderedTmp;
+            if (orderedTmp != null) {
+                ordered2PassNeedsRecord = new boolean[orderedTmp.size()];
+                for (int i = 0, n = orderedTmp.size(); i < n; i++) {
+                    ordered2PassNeedsRecord[i] = groupNeedsBaseRecord(orderedTmp.getQuiet(i));
+                }
+            } else {
+                ordered2PassNeedsRecord = null;
+            }
 
             ObjList<WindowFunction> unorderedTmp = null;
             ObjList<WindowFunction> forwardTmp = null;
@@ -175,6 +188,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
             }
             this.unordered2PassFunctions = unorderedTmp;
+            this.unordered2PassNeedsRecord = groupNeedsBaseRecord(unorderedTmp);
             this.forwardUnorderedFunctions = forwardTmp;
             this.backwardUnorderedFunctions = backwardTmp;
 
@@ -186,6 +200,22 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             close();
             throw th;
         }
+    }
+
+    // Precompute a two-pass group's base-record need once (not per row): the pass2 loop can skip
+    // the per-row random-access base re-read iff EVERY function in the group opts out via
+    // WindowFunction.pass2NeedsBaseRecord(). A null/empty group needs no record. Correctness over
+    // micro-opt: any single function that still reads the record forces repositioning for the group.
+    private static boolean groupNeedsBaseRecord(@Nullable ObjList<WindowFunction> functions) {
+        if (functions == null) {
+            return false;
+        }
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (functions.getQuick(i).pass2NeedsBaseRecord()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -534,14 +564,20 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     }
                     final WindowSortBuffer group = sortBuffers.getQuick(i);
                     final int functionCount = functions.size();
+                    // Skip the per-row random-access base re-read entirely when no function in this
+                    // group reads the base Record in pass2 (need-flag precomputed once in the ctor).
+                    final boolean needsRecord = ordered2PassNeedsRecord[i];
                     group.toTop();
                     while (group.hasNext()) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                         long rIdx = group.next();
                         // pass2 reads only base columns through recordA and reads/writes its own
                         // output via spi.getAddress (position-independent), so narrow positioning
-                        // would be wasted work over millions of rows.
-                        positionRecordABaseOnly(rIdx);
+                        // would be wasted work over millions of rows. And when no function even reads
+                        // the base Record, the base-only re-read itself is skipped.
+                        if (needsRecord) {
+                            positionRecordABaseOnly(rIdx);
+                        }
                         for (int j = 0; j < functionCount; j++) {
                             functions.getQuick(j).pass2(recordA, rIdx, lightSpi);
                         }
@@ -551,10 +587,16 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
             if (unordered2PassFunctions != null) {
                 final int funcCount = unordered2PassFunctions.size();
+                // Skip the per-row random-access base re-read entirely when no function reads the
+                // base Record in pass2 (need-flag precomputed once in the ctor). This is the hot
+                // keep-flag path (m4/minmax/lttb): pass2 drives off pass1's cached buffers only.
+                final boolean needsRecord = unordered2PassNeedsRecord;
                 for (long rIdx = 0; rIdx < size; rIdx++) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     // see the ordered pass2 loop: base-only positioning suffices here too.
-                    positionRecordABaseOnly(rIdx);
+                    if (needsRecord) {
+                        positionRecordABaseOnly(rIdx);
+                    }
                     for (int j = 0; j < funcCount; j++) {
                         unordered2PassFunctions.getQuick(j).pass2(recordA, rIdx, lightSpi);
                     }

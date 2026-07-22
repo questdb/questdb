@@ -205,6 +205,83 @@ public class M4WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPass2NoBaseReadByteIdentical() throws Exception {
+        // Guard for the pass2 base-re-read elimination (cache pass1's null-pattern instead of
+        // re-deriving isNullRow(record) via a random-access base re-read). Interleaved NULL / NaN
+        // and normal values is the alignment-sensitive case: null rows are dropped from the bucket
+        // buffer, so pass2 must skip exactly the same rows pass1 dropped or the keep-set shifts. We
+        // assert BOTH the full m4() keep-flag column (pins the false rows around nulls) AND that the
+        // kept (ts,v) set is byte-identical to the old SUBSAMPLE cursor - a single kept-row
+        // difference here is a correctness failure, not a perf detail.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v double) timestamp(ts)");
+            // x%7==0 -> null value; x%5==0 -> spike (100.0); else x. Nulls and spikes interleave so
+            // the dropped rows are scattered through the buckets, exercising the pass2Ordinal/selIdx
+            // walk against the cached null bitset. 40 rows, target=8 -> bucketing actually runs.
+            execute("insert into t select x::timestamp, " +
+                    "case when x%7=0 then null when x%5=0 then 100.0 else x::double end " +
+                    "from long_sequence(40)");
+
+            // Full keep-flag column (golden pins the exact per-row alignment, incl. false @ nulls).
+            assertQuery("select ts, v, m4(ts, v, 8) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\t1.0\ttrue
+                            1970-01-01T00:00:00.000002Z\t2.0\tfalse
+                            1970-01-01T00:00:00.000003Z\t3.0\tfalse
+                            1970-01-01T00:00:00.000004Z\t4.0\tfalse
+                            1970-01-01T00:00:00.000005Z\t100.0\ttrue
+                            1970-01-01T00:00:00.000006Z\t6.0\tfalse
+                            1970-01-01T00:00:00.000007Z\tnull\tfalse
+                            1970-01-01T00:00:00.000008Z\t8.0\tfalse
+                            1970-01-01T00:00:00.000009Z\t9.0\tfalse
+                            1970-01-01T00:00:00.000010Z\t100.0\tfalse
+                            1970-01-01T00:00:00.000011Z\t11.0\tfalse
+                            1970-01-01T00:00:00.000012Z\t12.0\tfalse
+                            1970-01-01T00:00:00.000013Z\t13.0\tfalse
+                            1970-01-01T00:00:00.000014Z\tnull\tfalse
+                            1970-01-01T00:00:00.000015Z\t100.0\tfalse
+                            1970-01-01T00:00:00.000016Z\t16.0\tfalse
+                            1970-01-01T00:00:00.000017Z\t17.0\tfalse
+                            1970-01-01T00:00:00.000018Z\t18.0\tfalse
+                            1970-01-01T00:00:00.000019Z\t19.0\ttrue
+                            1970-01-01T00:00:00.000020Z\t100.0\ttrue
+                            1970-01-01T00:00:00.000021Z\tnull\tfalse
+                            1970-01-01T00:00:00.000022Z\t22.0\ttrue
+                            1970-01-01T00:00:00.000023Z\t23.0\tfalse
+                            1970-01-01T00:00:00.000024Z\t24.0\tfalse
+                            1970-01-01T00:00:00.000025Z\t100.0\tfalse
+                            1970-01-01T00:00:00.000026Z\t26.0\tfalse
+                            1970-01-01T00:00:00.000027Z\t27.0\tfalse
+                            1970-01-01T00:00:00.000028Z\tnull\tfalse
+                            1970-01-01T00:00:00.000029Z\t29.0\tfalse
+                            1970-01-01T00:00:00.000030Z\t100.0\tfalse
+                            1970-01-01T00:00:00.000031Z\t31.0\tfalse
+                            1970-01-01T00:00:00.000032Z\t32.0\tfalse
+                            1970-01-01T00:00:00.000033Z\t33.0\tfalse
+                            1970-01-01T00:00:00.000034Z\t34.0\tfalse
+                            1970-01-01T00:00:00.000035Z\tnull\tfalse
+                            1970-01-01T00:00:00.000036Z\t36.0\tfalse
+                            1970-01-01T00:00:00.000037Z\t37.0\tfalse
+                            1970-01-01T00:00:00.000038Z\t38.0\tfalse
+                            1970-01-01T00:00:00.000039Z\t39.0\tfalse
+                            1970-01-01T00:00:00.000040Z\t100.0\ttrue
+                            """);
+
+            // Cross-check: the kept (ts,v) rows must be byte-identical to the old SUBSAMPLE cursor
+            // on the same data. Capture the window's kept rows, then compare the SUBSAMPLE output
+            // to them directly - if the pass2 null-alignment drifted, these diverge.
+            printSql("select ts, v from (select ts, v, m4(ts, v, 8) over (order by ts) keep from t) where keep");
+            final String windowKept = sink.toString();
+            printSql("select ts, v from t SUBSAMPLE m4(v, 8)");
+            TestUtils.assertEquals(windowKept, sink);
+        });
+    }
+
+    @Test
     public void testExplainPlan() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");

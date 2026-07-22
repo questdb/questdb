@@ -146,6 +146,12 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         private static final long INITIAL_CAPACITY = 64;
         private final SubsampleAlgorithm algorithm;
         private final String name;
+        // Per-absolute-row null bitset built in pass1 (1 bit/row, appended in absolute traversal
+        // order). pass2 consults it instead of re-deriving isNullRow(record) from a random-access
+        // base re-read; see pass2NeedsBaseRecord(). Same native-memory lifecycle as `selected`
+        // (allocate on reopen, clear on toTop, close on reset/close) - a prior real native leak on
+        // the lttb gap scratch is the discipline mirrored here.
+        private final DirectLongList nullBits = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
         private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
         private final long target;
         private final Function tsArg;
@@ -170,6 +176,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         // isNullRow keeps it aligned with pass1's bufferCount, since both passes see rows in the
         // same order).
         private long pass2Ordinal;   // running non-null row counter during pass2 (same traversal order as pass1)
+        private long pass2Row;       // running ALL-row counter during pass2 (index into nullBits, same order as pass1)
+        private long rowCount;       // running ALL-row counter during pass1 (null + non-null); number of bits in nullBits
         private long selIdx;         // monotonic cursor into `selected` during pass2
         // Resolved once at construction (valueArg's type never changes across rows), used by
         // readValue() to replicate SubsampleRecordCursorFactory.getValueAsDouble()'s per-type
@@ -192,6 +200,7 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             Misc.free(tsArg);
             Misc.free(valueArg);
             selected.close();
+            nullBits.close();
             freeBuffer();
         }
 
@@ -218,6 +227,14 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public boolean pass2NeedsBaseRecord() {
+            // pass2 drives entirely off pass1's cached (ts,value) buffer, `selected`, and the
+            // per-row null bitset; it never reads the base Record. Lets the cached executor skip
+            // the per-row random-access base re-read in its pass2 loop.
+            return false;
         }
 
         @Override
@@ -250,14 +267,18 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             final long ts = tsArg.getTimestamp(record);
             if (ts == Numbers.LONG_NULL) {
                 // Dropped: not appended to the buffer, not counted - mirrors bufferInput().
+                // Record the drop in the per-row null bitset so pass2 need not re-read the record.
+                appendNullFlag(true);
                 return;
             }
             final double value = readValue(record);
             if (Double.isNaN(value)) {
                 // Dropped: a null/NaN value must never seed (or otherwise poison) a bucket's
                 // min/max - mirrors bufferInput()'s "if (Double.isNaN(value)) continue;".
+                appendNullFlag(true);
                 return;
             }
+            appendNullFlag(false);
             ensureCapacity();
             final long offset = count * SubsampleAlgorithm.ENTRY_SIZE;
             Unsafe.getUnsafe().putLong(buffer + offset, count);
@@ -269,9 +290,12 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
             final boolean keep;
-            if (isNullRow(record)) {
-                // Same row this was in pass1 (both passes visit rows in the same order), so this
-                // recomputation stays aligned with the bufferCount pass1 assigned to non-null rows.
+            // Consult pass1's cached null bitset in the same absolute traversal order pass1 wrote it
+            // (both passes visit rows in the same order), so this stays byte-identical to the old
+            // isNullRow(record) path while needing no base-record re-read - see pass2NeedsBaseRecord().
+            if (nullFlag(pass2Row++)) {
+                // Same row this was in pass1, so this stays aligned with the bufferCount pass1
+                // assigned to non-null rows.
                 keep = false;
             } else {
                 final long bufferPos = pass2Ordinal++;
@@ -293,6 +317,7 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         public void preparePass2() {
             selIdx = 0;
             pass2Ordinal = 0;
+            pass2Row = 0;
             if (count <= target) {
                 // Mirror SubsampleRecordCursorFactory.bufferAndSelect's
                 // `bufferSize <= targetPoints -> selectAll()` short-circuit: when the buffered
@@ -314,19 +339,26 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void reopen() {
             count = 0;
+            rowCount = 0;
             pass2Ordinal = 0;
+            pass2Row = 0;
             selIdx = 0;
             selected.reopen();
             selected.clear();
+            nullBits.reopen();
+            nullBits.clear();
         }
 
         @Override
         public void reset() {
             super.reset();
             count = 0;
+            rowCount = 0;
             pass2Ordinal = 0;
+            pass2Row = 0;
             selIdx = 0;
             selected.close();
+            nullBits.close();
             freeBuffer();
         }
 
@@ -348,9 +380,12 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         public void toTop() {
             super.toTop();
             count = 0;
+            rowCount = 0;
             pass2Ordinal = 0;
+            pass2Row = 0;
             selIdx = 0;
             selected.clear();
+            nullBits.clear();
         }
 
         private void ensureCapacity() {
@@ -378,13 +413,31 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         /**
-         * True when the row must be dropped from bucketing entirely: a NULL timestamp, or a
-         * null/NaN value. Exactly mirrors SubsampleRecordCursorFactory.bufferInput()'s
-         * {@code ts == Numbers.LONG_NULL} / {@code Double.isNaN(value)} skip so m4() buckets the
-         * same row set the old SUBSAMPLE cursor did.
+         * Appends one bit for the current pass1 row to {@code nullBits} in absolute traversal
+         * order: {@code true} for a dropped (NULL ts / null-or-NaN value) row, {@code false} for a
+         * buffered row. pass1 is called once per row in order, so this is O(1) amortised. pass2
+         * reads the same bits back via {@link #nullFlag(long)} instead of re-deriving null-ness from
+         * a random-access base re-read (mirrors the old {@code isNullRow(record)}: a NULL timestamp,
+         * or a null/NaN value, per SubsampleRecordCursorFactory.bufferInput()).
          */
-        private boolean isNullRow(Record record) {
-            return tsArg.getTimestamp(record) == Numbers.LONG_NULL || Double.isNaN(readValue(record));
+        private void appendNullFlag(boolean isNull) {
+            final long wordIndex = rowCount >>> 6;
+            // rowCount grows by 1 per call, so at most one new 64-bit word is needed, and only when
+            // this row opens a fresh word (rowCount % 64 == 0).
+            if (wordIndex >= nullBits.size()) {
+                nullBits.add(0L);
+            }
+            if (isNull) {
+                nullBits.set(wordIndex, nullBits.get(wordIndex) | (1L << (rowCount & 63)));
+            }
+            rowCount++;
+        }
+
+        /**
+         * Reads the null bit for absolute row {@code row} recorded during pass1.
+         */
+        private boolean nullFlag(long row) {
+            return (nullBits.get(row >>> 6) & (1L << (row & 63))) != 0;
         }
 
         /**

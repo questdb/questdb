@@ -312,6 +312,23 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Whether {@link #pass2(Record, long, WindowSPI)} reads the base {@code Record} argument.
+     * <p>
+     * When every two-pass function in a cached-execution group returns {@code false}, the executor
+     * skips the per-row random-access base re-read ({@code baseCursor.recordAt(...)}) that would
+     * otherwise reposition the record before each {@code pass2} call. Return {@code false} only if
+     * {@code pass2} never reads the base {@code Record} argument (e.g. it drives entirely off state
+     * cached during {@link #pass1(Record, long, WindowSPI)} and writes its output through the
+     * {@link WindowSPI}).
+     *
+     * @return {@code true} (default) if {@code pass2} needs a positioned base record; {@code false}
+     * if the base record is never read in {@code pass2}.
+     */
+    default boolean pass2NeedsBaseRecord() {
+        return true;
+    }
+
+    /**
      * Prepares state before the optional secondary cached traversal.
      */
     default void preparePass2() {
