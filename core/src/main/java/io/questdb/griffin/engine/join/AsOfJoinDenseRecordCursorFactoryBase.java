@@ -28,8 +28,6 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -42,11 +40,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
-import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * Dense ASOF JOIN cursor is an improvement over the Light cursor for the case where
@@ -155,16 +151,8 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
     protected abstract void putFactoryType(PlanSink sink);
 
-    protected abstract class AsOfJoinDenseRecordCursorBase extends AbstractKeyedAsOfJoinRecordCursor {
+    protected abstract class AsOfJoinDenseRecordCursorBase extends AbstractDenseScanAsOfJoinRecordCursor {
         protected static final int DUMMY_VALUE = -10;
-
-        private final Map bwdScanKeyToRowId;
-        private final Map fwdScanKeyToRowId;
-        private long backwardRowId = -1;
-        private boolean backwardScanExhausted;
-        private long forwardRowId = -1;
-        private boolean forwardScanExhausted;
-        private boolean slaveCursorReadyForForwardScan;
         // Adaptive prelude: when >= 0, serve master rows via the proven Fast keyed loop (super.hasNext()
         // + performKeyMatching back-scan below) until the cumulative back-scan length exceeds the budget,
         // then switch to the resilient forward-scan Dense mode for the remaining rows. -1 = pure Dense.
@@ -182,16 +170,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 int slaveTimestampIndex,
                 int slaveTimestampType
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, 1);
-            this.fwdScanKeyToRowId = fwdScanKeyToRowId;
-            this.bwdScanKeyToRowId = bwdScanKeyToRowId;
-        }
-
-        @Override
-        public void close() {
-            Misc.free(bwdScanKeyToRowId);
-            Misc.free(fwdScanKeyToRowId);
-            super.close();
+            super(columnSplit, fwdScanKeyToRowId, bwdScanKeyToRowId, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, 1);
         }
 
         @Override
@@ -219,176 +198,26 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 record.hasSlave(false);
                 return true;
             }
-
-            if (forwardRowId == -1) {
-                // No scanning done yet, initialize state of forward and backward scans
-                nextSlave(masterTimestamp);
-                if (!record.hasSlave()) {
-                    // There are no prevailing slave rows (all are more recent than master row)
-                    return true;
-                }
-                long rowId = slaveRecB.getRowId();
-                backwardRowId = rowId;
-                forwardRowId = rowId;
-            }
-
-            if (!slaveCursorReadyForForwardScan) {
-                slaveTimeFrameCursor.jumpTo(Rows.toPartitionIndex(forwardRowId));
-                slaveTimeFrameCursor.open();
-                slaveTimeFrameCursor.recordAt(slaveRecB, forwardRowId);
-                slaveCursorReadyForForwardScan = true;
-            }
-
-            MapKey key;
-            MapValue value;
-            if (!forwardScanExhausted) {
-                scanForward(masterTimestamp, minSlaveTimestamp);
-            }
-
-            // Let's see if we saw a matching symbol in forward scan
-            key = fwdScanKeyToRowId.withKey();
-            putSlaveKeyToFind(key, slaveKeyToFind);
-            value = key.findValue();
-            if (value != null) {
-                return setupSlaveRec(value.getLong(0), minSlaveTimestamp);
-            }
-            // Symbol not found, see if we already saw it in backward scan
-            key = bwdScanKeyToRowId.withKey();
-            putSlaveKeyToFind(key, slaveKeyToFind);
-            value = key.findValue();
-            if (value != null) {
-                return setupSlaveRec(value.getLong(0), minSlaveTimestamp);
-            }
-            if (backwardScanExhausted) {
-                // Symbol not found in backward scan, and the scan already reached the end, report no match
-                record.hasSlave(false);
-                return true;
-            }
-
-            // Resume the backward scan
-            slaveCursorReadyForForwardScan = false;
-            slaveTimeFrameCursor.jumpTo(Rows.toPartitionIndex(backwardRowId));
-            slaveTimeFrameCursor.open();
-            long frameRowLo = Rows.toRowID(slaveTimeFrame.getFrameIndex(), slaveTimeFrame.getRowLo());
-            while (true) {
-                slaveTimeFrameCursor.recordAt(slaveRecB, backwardRowId);
-                long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                if (slaveTimestamp < minSlaveTimestamp) {
-                    // minSlaveTimestamp will only get larger in later calls, it's safe to conclude backward scan now
-                    backwardScanExhausted = true;
-                    break;
-                }
-                key = bwdScanKeyToRowId.withKey();
-                putSlaveJoinKey(key);
-                value = key.createValue();
-                if (value.isNew()) {
-                    value.putLong(0, backwardRowId);
-                }
-                int slaveKey = getSlaveJoinKey();
-                if (joinKeysMatch(slaveKeyToFind, slaveKey)) {
-                    return setupSlaveRec(backwardRowId, minSlaveTimestamp);
-                }
-                if (backwardRowId > frameRowLo) {
-                    backwardRowId--;
-                } else {
-                    if (!slaveTimeFrameCursor.prev()) {
-                        backwardScanExhausted = true;
-                        break;
-                    }
-                    slaveTimeFrameCursor.open();
-                    int frameIndex = slaveTimeFrame.getFrameIndex();
-                    frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
-                    backwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
-                }
-                circuitBreaker.statefulThrowExceptionIfTripped();
-            }
-            record.hasSlave(false);
-            return true;
+            return resolveViaDenseScan(masterTimestamp, minSlaveTimestamp, slaveKeyToFind);
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            // Reopen the scan maps before super.of() adopts the cursors so an open-time breach frees each exactly once.
-            fwdScanKeyToRowId.reopen();
-            fwdScanKeyToRowId.clear();
-            bwdScanKeyToRowId.reopen();
-            bwdScanKeyToRowId.clear();
-            resetScanState();
+            reopenAndClearDenseScanMaps();
+            resetDenseScanState();
             adaptiveBackScanUsed = 0;
             adaptiveDenseMode = false;
             super.of(masterCursor, slaveCursor, circuitBreaker);
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            // Bound lazily before of() reopens them; map malloc/free nets on the per-query counter.
-            fwdScanKeyToRowId.setMemoryTracker(tracker);
-            bwdScanKeyToRowId.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toTop() {
             super.toTop();
-            if (fwdScanKeyToRowId.isOpen()) {
-                fwdScanKeyToRowId.clear();
-            }
-            if (bwdScanKeyToRowId.isOpen()) {
-                bwdScanKeyToRowId.clear();
-            }
-            resetScanState();
+            clearDenseScanMapsIfOpen();
+            resetDenseScanState();
             adaptiveBackScanUsed = 0;
             adaptiveDenseMode = false;
         }
-
-        private void resetScanState() {
-            slaveCursorReadyForForwardScan = false;
-            forwardScanExhausted = false;
-            backwardScanExhausted = false;
-            backwardRowId = -1;
-            forwardRowId = -1;
-        }
-
-        private void scanForward(long masterTimestamp, long minSlaveTimestamp) {
-            MapValue value;
-            MapKey key;
-            long frameRowHi = Rows.toRowID(slaveTimeFrame.getFrameIndex(), slaveTimeFrame.getRowHi());
-            while (true) {
-                slaveTimeFrameCursor.recordAt(slaveRecB, forwardRowId);
-                long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                if (slaveTimestamp > masterTimestamp) {
-                    break;
-                }
-                if (slaveTimestamp >= minSlaveTimestamp) {
-                    key = fwdScanKeyToRowId.withKey();
-                    putSlaveJoinKey(key);
-                    value = key.createValue();
-                    value.putLong(0, slaveRecB.getRowId());
-                }
-                forwardRowId++;
-                if (forwardRowId == frameRowHi) {
-                    if (!slaveTimeFrameCursor.next()) {
-                        forwardScanExhausted = true;
-                        break;
-                    }
-                    slaveTimeFrameCursor.open();
-                    int frameIndex = slaveTimeFrame.getFrameIndex();
-                    frameRowHi = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi());
-                    forwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
-                }
-                circuitBreaker.statefulThrowExceptionIfTripped();
-            }
-        }
-
-        private boolean setupSlaveRec(long slaveRowId, long minSlaveTimestamp) {
-            slaveTimeFrameCursor.recordAt(slaveRecB, slaveRowId);
-            long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-            record.hasSlave(slaveTimestamp >= minSlaveTimestamp);
-            return true;
-        }
-
-        protected abstract int getSlaveJoinKey();
-
-        protected abstract boolean joinKeysMatch(int slaveKeyToFind, int slaveKey);
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
@@ -439,13 +268,8 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         // and the Dense scan state so the next hasNext re-initialises Dense cleanly from the top.
         private void switchToDenseMode() {
             adaptiveDenseMode = true;
-            resetScanState();
-            if (fwdScanKeyToRowId.isOpen()) {
-                fwdScanKeyToRowId.clear();
-            }
-            if (bwdScanKeyToRowId.isOpen()) {
-                bwdScanKeyToRowId.clear();
-            }
+            resetDenseScanState();
+            clearDenseScanMapsIfOpen();
             slaveFrameRow = Long.MIN_VALUE;
             slaveFrameIndex = -1;
             lookaheadTimestamp = Long.MIN_VALUE;
@@ -457,12 +281,6 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         public void setAdaptiveBackScanBudget(long budget) {
             this.adaptiveBackScanBudget = budget;
         }
-
-        protected abstract void putSlaveJoinKey(MapKey key);
-
-        protected abstract void putSlaveKeyToFind(MapKey key, int slaveKeyToFind);
-
-        protected abstract int setupSymbolKeyToFind();
     }
 
     static {
