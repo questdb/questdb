@@ -222,26 +222,44 @@ the N bumps into `fixed`/`transient`, then take the early return committing ONE 
 corruption-prone core; it is synchronous + all-cells-pre-exist, so the `_txn` array never reindexes mid-loop
 and the fold is spec-1's per-cell arithmetic applied N times.
 
+**Prereq — complete eligibility so the action can append unconditionally (all-or-nothing, no partial state):**
+`isCompositeMultiCellFastAppendPossible` (Task 1/2) currently gates append-only + pre-existing-non-empty per
+cell but NOT the `canCompositeFastAppendCell` gate (fixed-size columns table-wide + column-top-0 per cell — a
+Task-1 carry-forward). Add it to the predicate's per-cell loop (grep `canCompositeFastAppendCell`) so
+`eligible == true` ⇒ EVERY cell is appendable. Then the action never appends to a cell that must fall back
+(which would leave a partially-committed multi-cell commit). Do this BEFORE the fold (the fold must still run
+for ineligible commits — keep the read-then-fold order Task 2 established).
+
 **Files:**
 - Modify: `TableWriter.java`:
   - Add `applyCompositeMultiCellFastAppend(long rowLo, long rowHi, long o3TimestampMax)`:
     1. **Gather** — group `[rowLo,rowHi)` by cellKey into per-cell contiguous row runs. GROUND + REUSE
-       `processO3BlockComposite`'s existing stable group-by-cell (`:11680`); do NOT re-sort (the commit is
-       `ordered`). Yields, per cell: its `cellKey`, its ordered row run(s), its per-cell min/max ts.
+       `processO3BlockComposite`'s existing stable group-by-cell (grep it); do NOT re-sort. Because the commit
+       may be per-symbol-ordered (globally out-of-order, cells INTERLEAVED), a cell's rows may be several runs —
+       gather all of a cell's rows in buffer order (each cell's subsequence is internally ordered by the
+       predicate's `!orderingViolated` guarantee). Yields, per cell: `cellKey`, its ordered run(s), min/max ts.
     2. For each cell (in any order): `ensureCompositeFastAppendCellOpen(cellKey, lastPartitionTs, rawIndex, srcDataMax)`
-       (Task 2 cache), then append its run(s) via the EXISTING per-column primitive `appendCompositeFastAppendColumn`
-       (`:5311`, reused as-is per column per run), then `syncCompositeFastAppendCell` that cell.
-    3. **N-fold `_txn` bump** — for each cell apply spec-1's EXACT arithmetic (`:5273-5283`):
+       (Task 2 N-cell cache — returns the cell's `ObjList<MemoryMA>`), append its run(s) via the EXISTING
+       per-column primitive `appendCompositeFastAppendColumn` (grep it; reused as-is per column per run), then
+       sync that cell's columns (grep `syncCompositeFastAppendCell` — generalize to the cell being appended).
+    3. **N-fold `_txn` bump** — for each cell apply spec-1's EXACT single-cell arithmetic (grep
+       `updateAttachedPartitionSizeByRawIndex` in `applyCompositeSingleCellFastAppend`):
        `updateAttachedPartitionSizeByRawIndex(rawIndex_c, lastPartitionTs, newSize_c, txn-1, cellKey_c)`, then
        `if (cell c is the array's last (ts ASC, cellKey ASC) entry) transientRowCount = newSize_c; else fixedRowCount += Δ_c;`
-       (at most one cell is the last entry ⇒ well-defined; array not reindexed since all cells pre-exist).
-    4. One `updateMaxTimestamp(max(currentMax, o3TimestampMax))` + `partitionTimestampHi` raise;
-       `addPhysicallyWrittenRows(ΣΔ_c)`; populate `compositeCellMaxTimestamp` for ALL N cells.
+       (at most one cell is the last entry ⇒ well-defined; array NOT reindexed since all cells pre-exist).
+       Consider extracting this per-cell bump+fold into a shared helper the single-cell path also calls (DRY) —
+       but only if it comes out cleaner; do not force it.
+    4. One `updateMaxTimestamp(max(currentMax, o3TimestampMax))` + `partitionTimestampHi` raise +
+       `addPhysicallyWrittenRows(ΣΔ_c)`. **Do NOT fold `compositeCellMaxTimestamp` here** — the multi-cell
+       predicate ALREADY folded all N cells' maxes before returning `true` (Task 2's read-then-fold), and that
+       folded value equals this commit's per-cell committed max. (A redundant re-fold would be harmless
+       `Math.max` but is not needed; note the invariant in a comment so Task-4/whole-branch don't re-add it.)
     5. Return so the caller commits the cheap way (mirror spec-1's early return; `seqTxn` advances only via the
-       single durable `_txn` write). On any per-cell append failure: set `distressed` + rethrow (`:5261-5267`).
-  - Wire the hook: after the spec-1 single-cell branch, add
+       single durable `_txn` write). On any per-cell append failure: set `distressed` + rethrow (grep the
+       single-cell catch). All N size bumps land in ONE `_txn` — never commit per cell.
+  - Wire the hook: after the spec-1 single-cell branch (grep the `isWalCompositeFastAppendEnabled()` hook), add
     `else if (isCompositeMultiCellFastAppendPossible(...)) { applyCompositeMultiCellFastAppend(...); <early return>; }`
-    (GROUND the `:12922` hook + spec-1's single-cell early-return shape).
+    (GROUND spec-1's single-cell early-return shape — the cheap commit path).
 - Test: `core/src/test/java/io/questdb/test/cairo/CompositeMultiCellFastAppendTest.java` (new).
 
 **Interfaces:** Consumes Tasks 1–2. Produces the committed, cell-routed on-disk state via the multi-cell fast path.
