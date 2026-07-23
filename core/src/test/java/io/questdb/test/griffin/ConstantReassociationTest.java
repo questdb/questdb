@@ -327,7 +327,7 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReassociationReordersTree() throws Exception {
+    public void testReassociationOfModeledArithmeticOperators() throws Exception {
         assertReassociationNoOp("d + 1 + 4");
         assertReassociationNoOp("d * 2 * 3");
         assertReassociationNoOp("l & 3 & 5");

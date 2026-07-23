@@ -667,7 +667,7 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonDeterministicSplitKeyEvaluatedOncePerRow() throws SqlException {
+    public void testNonDeterministicSplitKeyEvaluatedOncePerRow() throws Exception {
         // A split key - an INT function that computes at long width under getLong() - is normally
         // read at both widths so an INT-width element wraps against getInt() and a LONG-width one
         // widens against getLong(). That is correct for a deterministic key, whose two width reads
@@ -682,32 +682,34 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
         // elements, so a split key would fall through to the second width; a correctly single-read
         // key touches exactly one width. Assert the total number of key reads is 1, across every
         // list shape that reaches a distinct InLong function.
-        try (CountingIntKey key = new CountingIntKey(11)) {
-            key.nonDeterministic = true;
+        assertMemoryLeak(() -> {
+            try (CountingIntKey key = new CountingIntKey(11)) {
+                key.nonDeterministic = true;
 
-            // two-constant path -> InLongTwoConstFunction
-            try (Function f = newInFunction(key, new IntConstant(7), new LongConstant(5_000_000_000L))) {
-                Assert.assertFalse(f.getBool(null));
-                Assert.assertEquals(1, key.intCalls + key.longCalls);
-                Assert.assertEquals(0, key.intCalls);
-            }
+                // two-constant path -> InLongTwoConstFunction
+                try (Function f = newInFunction(key, new IntConstant(7), new LongConstant(5_000_000_000L))) {
+                    Assert.assertFalse(f.getBool(null));
+                    Assert.assertEquals(1, key.intCalls + key.longCalls);
+                    Assert.assertEquals(0, key.intCalls);
+                }
 
-            // constant-set path (>= 3 elements) -> InLongConstFunction
-            key.reset();
-            try (Function f = newInFunction(key, new IntConstant(7), new IntConstant(8), new LongConstant(5_000_000_000L))) {
-                Assert.assertFalse(f.getBool(null));
-                Assert.assertEquals(1, key.intCalls + key.longCalls);
-                Assert.assertEquals(0, key.intCalls);
-            }
+                // constant-set path (>= 3 elements) -> InLongConstFunction
+                key.reset();
+                try (Function f = newInFunction(key, new IntConstant(7), new IntConstant(8), new LongConstant(5_000_000_000L))) {
+                    Assert.assertFalse(f.getBool(null));
+                    Assert.assertEquals(1, key.intCalls + key.longCalls);
+                    Assert.assertEquals(0, key.intCalls);
+                }
 
-            // variable path (a non-constant element) -> InLongVarFunction
-            key.reset();
-            try (Function f = newInFunction(key, new NonConstIntElement(7), new LongConstant(5_000_000_000L))) {
-                Assert.assertFalse(f.getBool(null));
-                Assert.assertEquals(1, key.intCalls + key.longCalls);
-                Assert.assertEquals(0, key.intCalls);
+                // variable path (a non-constant element) -> InLongVarFunction
+                key.reset();
+                try (Function f = newInFunction(key, new NonConstIntElement(7), new LongConstant(5_000_000_000L))) {
+                    Assert.assertFalse(f.getBool(null));
+                    Assert.assertEquals(1, key.intCalls + key.longCalls);
+                    Assert.assertEquals(0, key.intCalls);
+                }
             }
-        }
+        });
     }
 
     @Test
@@ -801,7 +803,7 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSplitKeyReadsSecondWidthOnlyOnMiss() throws SqlException {
+    public void testSplitKeyReadsSecondWidthOnlyOnMiss() throws Exception {
         // A split key - an INT function that computes at long width under getLong() - is the only key
         // whose two reads can disagree, so the IN list probes it at both widths. An element matching
         // on the first width must not make the row pay for the other: each width is evaluated only
@@ -810,36 +812,38 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
         // The list below mixes widths on purpose: the INT element reads the key at INT width, the
         // LONG one at long width. The key carries 7, so the INT element hits and the long read is
         // never needed.
-        try (CountingIntKey key = new CountingIntKey(7)) {
-            // two-constant path
-            try (Function f = newInFunction(key, new IntConstant(7), new LongConstant(5_000_000_000L))) {
-                Assert.assertTrue(f.getBool(null));
-                Assert.assertEquals(1, key.intCalls);
-                Assert.assertEquals(0, key.longCalls);
+        assertMemoryLeak(() -> {
+            try (CountingIntKey key = new CountingIntKey(7)) {
+                // two-constant path
+                try (Function f = newInFunction(key, new IntConstant(7), new LongConstant(5_000_000_000L))) {
+                    Assert.assertTrue(f.getBool(null));
+                    Assert.assertEquals(1, key.intCalls);
+                    Assert.assertEquals(0, key.longCalls);
 
-                // a miss on the INT element does reach the long width
+                    // a miss on the INT element does reach the long width
+                    key.reset();
+                    key.value = 11;
+                    Assert.assertFalse(f.getBool(null));
+                    Assert.assertEquals(1, key.intCalls);
+                    Assert.assertEquals(1, key.longCalls);
+                }
+
+                // variable path: a non-constant element forces it, and is reached first
                 key.reset();
-                key.value = 11;
-                Assert.assertFalse(f.getBool(null));
-                Assert.assertEquals(1, key.intCalls);
-                Assert.assertEquals(1, key.longCalls);
-            }
+                key.value = 7;
+                try (Function f = newInFunction(key, new NonConstIntElement(7), new LongConstant(5_000_000_000L))) {
+                    Assert.assertTrue(f.getBool(null));
+                    Assert.assertEquals(1, key.intCalls);
+                    Assert.assertEquals(0, key.longCalls);
 
-            // variable path: a non-constant element forces it, and is reached first
-            key.reset();
-            key.value = 7;
-            try (Function f = newInFunction(key, new NonConstIntElement(7), new LongConstant(5_000_000_000L))) {
-                Assert.assertTrue(f.getBool(null));
-                Assert.assertEquals(1, key.intCalls);
-                Assert.assertEquals(0, key.longCalls);
-
-                key.reset();
-                key.value = 11;
-                Assert.assertFalse(f.getBool(null));
-                Assert.assertEquals(1, key.intCalls);
-                Assert.assertEquals(1, key.longCalls);
+                    key.reset();
+                    key.value = 11;
+                    Assert.assertFalse(f.getBool(null));
+                    Assert.assertEquals(1, key.intCalls);
+                    Assert.assertEquals(1, key.longCalls);
+                }
             }
-        }
+        });
     }
 
     @Test

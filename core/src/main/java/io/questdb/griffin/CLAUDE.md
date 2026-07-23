@@ -359,11 +359,17 @@ source can answer `false`.
 
 A factory answers `false` only if its cursor hands the base record through — re-positioning it
 by row id counts. Delegating today: limit, filter, column selection, light sort / top-K,
-latest by, query progress, stale view check. Keeping the default `true`: full sort, group by,
-distinct-over-map, joins, unions, window — all map- or chain-backed, where the value has
-already been copied into a 4-byte slot, so the wrap has genuinely happened and reading at long
-width would over-read. A per-column hybrid record (`SortKeyMaterializing`, `CachedWindowLight`)
-must keep the default unless it answers per column.
+latest by, query progress, stale view check, the **master columns of a join** (`JoinRecord`
+hands the master record straight through; the master is never value-materialised), the **base
+columns of an extra-null-column pad**, and **UNION ALL** — a live leg pass-through that
+delegates a column only when *both* legs are width-unstable, because if either leg is a real INT
+column its `getLong()` would over-read the 4-byte slot, forcing the whole column to INT width.
+Keeping the default `true`: full sort, group by, distinct-over-map, the **slave columns of a
+value-materialised join**, the **aggregate columns of a window join**, other set operations —
+all map- or chain-backed, where the value has already been copied into a 4-byte slot, so the
+wrap has genuinely happened and reading at long width would over-read. A per-column hybrid
+record (`SortKeyMaterializing`, `CachedWindowLight`) must keep the default unless it answers per
+column.
 
 ### Reading a function at two widths
 

@@ -53,6 +53,20 @@ public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory 
     }
 
     @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // UNION ALL is a live pass-through: UnionRecord.getInt/getLong (or the IntColumn-style cast
+        // functions of UnionCastRecord) delegate to the active leg's record, so an overflowing INT
+        // projection on a leg keeps its wide value at long width - like the join master and the other
+        // transparent wrappers. But the copier reads ONE width for the whole column across both legs,
+        // and getLong() is only safe to read on a width-unstable (function-backed) leg; a width-stable
+        // leg may be a real INT column whose getLong() would over-read its 4-byte slot. So the union
+        // may report unstable only when BOTH legs are unstable - then getLong() is safe on either side
+        // and widens both. If either leg is width-stable, the column must be read at INT width, which
+        // wraps an overflowing projection on the other leg (unavoidable without a per-leg-width read).
+        return factoryA.isColumnIntWidthStable(columnIndex) || factoryB.isColumnIntWidthStable(columnIndex);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

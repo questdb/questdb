@@ -303,12 +303,16 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * an INT column 4 bytes, so the wrap has already happened and reading at long width would
      * over-read. Hence delegating is opt-in rather than a {@link #getBaseFactory()} walk.
      * <p>
-     * Delegating today: limit, filter, column selection, light sort / top-K, latest by, and the
-     * query-progress and stale-view wrappers. Keeping the default: full sort, group by,
-     * distinct-over-map, joins, unions, window - all map- or chain-backed. A record that is
-     * per-column hybrid must also keep the default unless it answers per column: a materialized
-     * sort key and a cached window column live in 4-byte-strided buffers while the rest of the
-     * record still comes from the base.
+     * Delegating today: limit, filter, column selection, light sort / top-K, latest by, the
+     * query-progress and stale-view wrappers, the master columns of a join, the base columns of an
+     * extra-null-column pad, and UNION ALL - which hands its active leg through and so delegates a
+     * column only when both legs are width-unstable (if either leg is a real INT column, a long-width
+     * read would over-read that leg's 4-byte slot, so the whole column stays at INT width). Keeping
+     * the default: full sort, group by, distinct-over-map, the slave columns of a value-materialised
+     * join, the aggregate columns of a window join, other set operations - all map- or chain-backed. A
+     * record that is per-column hybrid must also keep the default unless it answers per column: a
+     * materialized sort key and a cached window column live in 4-byte-strided buffers while the rest of
+     * the record still comes from the base.
      *
      * @param columnIndex column index
      * @return true if reading the column at INT width and widening equals reading it at LONG width

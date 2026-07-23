@@ -3159,7 +3159,7 @@ public final class WhereClauseParser implements Mutable {
         // dateadd(this_unit, o1, dateadd(outer_unit, o2, ts)), and calendar units do not commute with
         // fixed-tick units. It also removes the nested wrapper at source, so no and_offset survives
         // into the residual filter. Mirrors rebuildStrandedAndOffsets, which recurses for this reason.
-        rebuildStrandedAndOffsets(expressionNodePool, predicate);
+        rebuildStrandedAndOffsets(expressionNodePool, predicate, timestamp);
         // The temp interval extraction may have marked predicate sub-nodes as consumed (intrinsicValue
         // TRUE); reset them so collapseIntrinsicNodes keeps the whole reconstructed residual. This runs
         // after the recursion above so a TRUE mark the inner wrapper's copyFrom carried up is cleared too.
@@ -3185,7 +3185,7 @@ public final class WhereClauseParser implements Mutable {
      * Rewriting is idempotent: {@code copyFrom} replaces the wrapper with the rebuilt predicate, so a
      * second pass finds no {@code and_offset} node.
      */
-    public static void rebuildStrandedAndOffsets(ObjectPool<ExpressionNode> pool, ExpressionNode node) {
+    public static void rebuildStrandedAndOffsets(ObjectPool<ExpressionNode> pool, ExpressionNode node, CharSequence designatedTimestamp) {
         if (node == null) {
             return;
         }
@@ -3196,7 +3196,13 @@ public final class WhereClauseParser implements Mutable {
             final ExpressionNode predicate = node.args.getQuick(2);
             final ExpressionNode unitNode = node.args.getQuick(1);
             final ExpressionNode offsetNode = node.args.getQuick(0);
-            if (unitNode.type == ExpressionNode.CONSTANT
+            // Only rewrite a wrapper whose inner predicate references the designated timestamp - the
+            // shape SqlOptimiser produces, mirroring the analyzeAndOffset guard. A hand-written
+            // and_offset over any other column would otherwise be rewritten into dateadd(...) over that
+            // column, silently treating a non-timestamp value as a timestamp and dropping rows; leave it
+            // for the function compiler to reject as an unknown function name, as master did.
+            if (referencesColumn(predicate, designatedTimestamp)
+                    && unitNode.type == ExpressionNode.CONSTANT
                     && unitNode.token != null
                     && !unitNode.token.isEmpty()
                     && offsetNode.type == ExpressionNode.CONSTANT) {
@@ -3204,7 +3210,7 @@ public final class WhereClauseParser implements Mutable {
                     // The stored offset is the inverse of the original dateadd stride, so negate it
                     // to restore the virtual-column semantics - see analyzeAndOffset.
                     final int stride = -Numbers.parseInt(offsetNode.token);
-                    rebuildStrandedAndOffsets(pool, predicate);
+                    rebuildStrandedAndOffsets(pool, predicate, designatedTimestamp);
                     resetIntrinsicMarks(predicate);
                     wrapTimestampLiterals(pool, predicate, unitNode.token, Integer.toString(stride));
                     node.copyFrom(predicate);
@@ -3214,11 +3220,34 @@ public final class WhereClauseParser implements Mutable {
                 }
             }
         }
-        rebuildStrandedAndOffsets(pool, node.lhs);
-        rebuildStrandedAndOffsets(pool, node.rhs);
+        rebuildStrandedAndOffsets(pool, node.lhs, designatedTimestamp);
+        rebuildStrandedAndOffsets(pool, node.rhs, designatedTimestamp);
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            rebuildStrandedAndOffsets(pool, node.args.getQuick(i));
+            rebuildStrandedAndOffsets(pool, node.args.getQuick(i), designatedTimestamp);
         }
+    }
+
+    /**
+     * Recursively reports whether any column literal in {@code node} names {@code columnName}
+     * (case-insensitive, null-safe). Used to gate the stranded and_offset rewrite on the wrapped
+     * predicate actually referencing the designated timestamp.
+     */
+    private static boolean referencesColumn(ExpressionNode node, CharSequence columnName) {
+        if (node == null || columnName == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            return Chars.equalsIgnoreCaseNc(node.token, columnName);
+        }
+        if (referencesColumn(node.lhs, columnName) || referencesColumn(node.rhs, columnName)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (referencesColumn(node.args.getQuick(i), columnName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean referencesTimestamp(ExpressionNode node) {

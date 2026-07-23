@@ -5331,6 +5331,60 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
     }
 
+    @Test
+    public void testIntWidthProductInAndCastMatchAcrossPartialParquet() throws Exception {
+        // The INT-width IN / cast family (an overflowing a*b compared or IN-tested) had no partial
+        // parquet coverage. Pruning runs before the row filter, so a mixed-storage table could drop a
+        // row a single-storage table keeps if the pushdown disagreed with the row filter on the
+        // widened value. The native partition runs the compiled/JIT filter, the parquet partition the
+        // Java filter, so this differential pins that they agree for the width-sensitive shapes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tp (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String rows = """
+                    INSERT INTO %s VALUES
+                    (2_000_000_000, 2, '2024-01-01T00:00:00.000000Z'),
+                    (100, 3, '2024-01-01T01:00:00.000000Z'),
+                    (null, 5, '2024-01-02T00:00:00.000000Z'),
+                    (7, 11, '2024-01-02T01:00:00.000000Z')
+                    """;
+            execute(rows.formatted("tn"));
+            execute(rows.formatted("tp"));
+            execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+
+            // (a*b) overflows INT for the first row: getInt() wraps, the widened product is 4e9. The
+            // parquet partition (day 1) runs the Java filter, the native partition (day 2) the compiled
+            // filter, so each differential exercises both within one query.
+            assertIntWidthNativeMatchesParquet("(a * b) IN (4_000_000_000)", "a\n2000000000\n");
+            assertIntWidthNativeMatchesParquet("(a * b) IN (null, 300)", "a\n100\nnull\n");
+            assertIntWidthNativeMatchesParquet("(a * b)::long > 1_000_000_000", "a\n2000000000\n");
+            assertIntWidthNativeMatchesParquet("(a * b)::long = 4_000_000_000", "a\n2000000000\n");
+        });
+    }
+
+    @Test
+    public void testBeyondFloatRangeBoundDeclinesPushdown() throws Exception {
+        // A finite DOUBLE bound beyond the FLOAT range narrows to +/-Infinity when pushed into a FLOAT
+        // stats slot ((float) 1e40 == +Infinity). QuestDB records an overflowing FLOAT as +/-Infinity
+        // in the stats, so pruning on the infinite bound is safe here; but an external read_parquet()
+        // file may keep an infinite row out of its stats and be false-pruned. The FLOAT arm therefore
+        // declines the pushdown for such a bound - no row group is skipped - and the query still
+        // returns the correct rows via a superset scan.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.0", "2.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            sink.clear();
+            printSql("SELECT c6 FROM tp WHERE c6 >= 1e40 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n", sink);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    private void assertIntWidthNativeMatchesParquet(String whereClause, String expected) throws Exception {
+        assertQuery("SELECT a FROM tn WHERE " + whereClause + " ORDER BY ts").noLeakCheck().returns(expected);
+        assertQuery("SELECT a FROM tp WHERE " + whereClause + " ORDER BY ts").noLeakCheck().returns(expected);
+    }
+
     // All-native tn and a partial-parquet sibling tp with identical data. The first daily
     // partition (single row = parquetValue) converts to parquet, so its INT stats are
     // min == max == parquetValue -- a group saturated at that exact value. The second row

@@ -4303,8 +4303,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // An and_offset wrapper that never reached interval extraction would otherwise be handed
         // to the function compiler, which fails with "unknown function name: and_offset". Rebuild
         // it into its dateadd residual here, before the backups are taken, so every copy of the
-        // filter carries the compilable form.
-        WhereClauseParser.rebuildStrandedAndOffsets(expressionNodePool, filterExpr);
+        // filter carries the compilable form. Gate the rewrite on the designated timestamp so a
+        // hand-written and_offset over a non-timestamp column is left for the compiler to reject
+        // rather than silently rewritten into a dateadd over that column.
+        final RecordMetadata filterMetadata = factory.getMetadata();
+        final int filterTimestampIndex = filterMetadata.getTimestampIndex();
+        WhereClauseParser.rebuildStrandedAndOffsets(
+                expressionNodePool,
+                filterExpr,
+                filterTimestampIndex < 0 ? null : filterMetadata.getColumnName(filterTimestampIndex)
+        );
 
         // back up in case if the above factory steals the filter
         model.setBackupWhereClause(deepClone(expressionNodePool, filterExpr));

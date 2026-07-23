@@ -42,6 +42,26 @@ public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCurs
         this.slaveFactory = slaveFactory;
     }
 
+    @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // A join hands the master factory's live record straight through JoinRecord: for a master
+        // column (columnIndex < split) getInt()/getLong() delegate to master.getInt()/getLong(), so a
+        // widened INT projection on the master keeps its wide value at long width. The master is never
+        // value-materialised in any join (streamed live, or re-read by row id via recordAt), so the
+        // master side may delegate to the master factory - just like limit / filter / sort / selection
+        // wrappers - and the store then widens the same way it does without the join.
+        //
+        // The slave side keeps the default true. In a value-materialised join (full hash / outer,
+        // keyed AsOf/Lt) the slave lives in a 4-byte chain/map slot where a long-width read would
+        // over-read, so true is mandatory; in a light join the slave is a live row-id re-read where
+        // delegating would also be correct, but true stays safe (it never over-reads). Widening a
+        // live-slave overflowing projection is a pre-existing gap outside this change's master scope.
+        if (columnIndex < masterFactory.getMetadata().getColumnCount()) {
+            return masterFactory.isColumnIntWidthStable(columnIndex);
+        }
+        return true;
+    }
+
     protected final Throwable closeJoinOwnersBestEffort() {
         final RecordMetadata metadata = detachMetadata();
         final RecordCursorFactory masterFactory = this.masterFactory;

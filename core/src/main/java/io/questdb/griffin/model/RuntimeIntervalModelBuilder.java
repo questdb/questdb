@@ -851,10 +851,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * MonotonicTimestampFunction}'s {@code invertConstantShift} does for the identical hazard, so
      * both spellings of the predicate agree. Throwing, which is what this used to do, made the
      * optimiser's own arithmetic a user-visible error on a perfectly valid query.
-     *
-     * @param isLo whether {@code value} is the lower boundary of the source interval
+     * <p>
+     * The wrap handling is deliberately side-agnostic - it raises {@code isOffsetOutOfRange} for
+     * either boundary wrapping - so the caller need not tell {@code applyOffset} which side it holds.
      */
-    private long applyOffset(long value, TimestampDriver.TimestampAddMethod addMethod, int offset, TimestampDriver otherDriver, boolean isLo) {
+    private long applyOffset(long value, TimestampDriver.TimestampAddMethod addMethod, int offset, TimestampDriver otherDriver) {
         if (value == Numbers.LONG_NULL || value == Long.MAX_VALUE || offset == 0) {
             return value;
         }
@@ -1081,8 +1082,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             parsedIntervals.clear();
             for (int i = 0, n = otherIntervals.size(); i < n; i += 2) {
                 isOffsetOutOfRange = false;
-                final long lo = applyOffset(otherIntervals.getQuick(i), addMethod, offset, otherDriver, true);
-                long hi = applyOffset(otherIntervals.getQuick(i + 1), addMethod, offset, otherDriver, false);
+                final long lo = applyOffset(otherIntervals.getQuick(i), addMethod, offset, otherDriver);
+                long hi = applyOffset(otherIntervals.getQuick(i + 1), addMethod, offset, otherDriver);
                 if (isOffsetOutOfRange) {
                     // Decline the whole pushdown: the caller frees the temp model and rebuilds the
                     // dateadd as a residual row filter, which re-checks each row with the same

@@ -39,6 +39,35 @@ import org.junit.Test;
 public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
+    public void testHandwrittenAndOffsetOverNonTimestampIsRejected() throws Exception {
+        // and_offset is an internal pseudo-function SqlOptimiser inserts only over the designated
+        // timestamp. A hand-written call over a numeric column, reaching the residual filter via an OR
+        // branch (which skips interval extraction and analyzeAndOffset's guard), must be rejected as an
+        // unknown function - not silently rebuilt into dateadd(...) over that column, which would treat
+        // the number as a timestamp and drop rows. rebuildStrandedAndOffsets now gates on the wrapped
+        // predicate referencing the designated timestamp.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (10, '2020-01-01T10:00:00.000000Z'),
+                        (200000, '2020-01-02T10:00:00.000000Z')
+                    """);
+            // the residual predicate on the numeric column matches n=200000
+            assertQuery("SELECT n FROM t WHERE ts < '2019-01-01' OR (n > 100) ORDER BY n")
+                    .noLeakCheck().returns("n\n200000\n");
+            // wrapped in a hand-written and_offset over the numeric column, it is rejected outright
+            // (before the fix it was rewritten to dateadd('h', -5, n) > 100 and returned no rows)
+            assertExceptionNoLeakCheck(
+                    "SELECT n FROM t WHERE ts < '2019-01-01' OR and_offset(n > 100, 'h', 5) ORDER BY n",
+                    43,
+                    "unknown function name: and_offset(BOOLEAN,CHAR,INT)",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
     public void testNullBoundOffsetPushdownReturnsEmpty() throws Exception {
         // A NULL timestamp bound makes the inner predicate unsatisfiable, so the temp interval model
         // becomes an empty set. The merge must intersect this model to empty rather than consume

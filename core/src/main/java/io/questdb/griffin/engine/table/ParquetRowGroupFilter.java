@@ -949,6 +949,14 @@ public final class ParquetRowGroupFilter {
         if (!isPushableFloatingBound(d)) {
             return false;
         }
+        // A finite bound beyond the FLOAT range narrows to +/-Infinity under (float) d. QuestDB's own
+        // writer records an overflowing FLOAT as +/-Infinity in the stats, so an infinite bound prunes
+        // safely there; but an external read_parquet() file may keep an infinite row out of its stats,
+        // and pruning on an infinite bound would then drop a row the (double-width) row filter keeps.
+        // Decline; a superset scan is always safe.
+        if (!Float.isFinite((float) d)) {
+            return false;
+        }
         final boolean isRoundUp;  // "<" / ">=" pivot on d - tolerance, "<=" / ">" on d + tolerance
         final boolean isStepUp;   // the direction that makes the bound SAFER, not tighter
         switch (opType) {

@@ -418,6 +418,105 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertIntoWiderColumnWidensThroughJoinMaster() throws Exception {
+        // A join hands the master cursor's live record straight through JoinRecord: getInt(col < split)
+        // -> master.getInt(col) wraps, getLong(col < split) -> master.getLong(col) widens. The master is
+        // never value-materialised in any join, so - like limit / filter / sort / selection wrappers -
+        // the join must report a widened master INT projection as width-unstable, and the row copier
+        // then stores the widened value the store rule already keeps for those wrappers. The default
+        // true truncated it on store, so INSERT ... SELECT through a join disagreed with the same
+        // INSERT ... SELECT through a plain sub-select. (A named column read back as ::long wraps for
+        // both shapes; that pre-existing behaviour is unrelated - the store is what must agree.)
+        final int[] copierTypes = {
+                RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD,
+                RecordToRowCopierUtils.COPIER_TYPE_CHUNKED,
+                RecordToRowCopierUtils.COPIER_TYPE_LOOPING
+        };
+        for (int c = 0; c < copierTypes.length; c++) {
+            setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierTypes[c]);
+            final String s = "_j" + c; // tables outlive the block, so each copier gets its own
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE mx" + s + " (a INT, b INT, k INT)");
+                execute("INSERT INTO mx" + s + " VALUES (2_000_000_000, 2_000_000_000, 1)");
+                execute("CREATE TABLE my" + s + " (k INT)");
+                execute("INSERT INTO my" + s + " VALUES (1)");
+
+                // the master subquery is an overflowing INT projection, streamed live through the join
+                execute("CREATE TABLE jd" + s + " (l LONG)");
+                execute("INSERT INTO jd" + s + " SELECT m.v FROM (SELECT a + b AS v, k FROM mx" + s + ") m JOIN my" + s + " y ON m.k = y.k");
+                assertQuery("SELECT l FROM jd" + s).noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+                // the same store through a plain sub-select (no join) must produce the identical value
+                execute("CREATE TABLE sd" + s + " (l LONG)");
+                execute("INSERT INTO sd" + s + " SELECT m.v FROM (SELECT a + b AS v FROM mx" + s + ") m");
+                assertQuery("SELECT l FROM sd" + s).noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+                // a plain INT master column has no wider value: it must keep its INT-width read
+                execute("CREATE TABLE mi" + s + " (i INT, k INT)");
+                execute("INSERT INTO mi" + s + " VALUES (-2_147_483_648, 1)");
+                execute("CREATE TABLE jdi" + s + " (l LONG)");
+                execute("INSERT INTO jdi" + s + " SELECT m.i FROM mi" + s + " m JOIN my" + s + " y ON m.k = y.k");
+                assertQuery("SELECT l FROM jdi" + s).noLeakCheck().expectSize().returns("l\nnull\n");
+            });
+        }
+    }
+
+    @Test
+    public void testInsertIntoWiderColumnWidensThroughWindowJoinNullPad() throws Exception {
+        // A WINDOW JOIN with a constant-false residual ON filter degenerates to the master with its
+        // window-aggregate columns null-padded by ExtraNullColumnCursorFactory. Its base columns
+        // (columnIndex < columnSplit) hand the master record straight through, so an overflowing INT
+        // projection under the pad must stay width-unstable and widen on store, exactly like the join
+        // master case. The default true truncated it. The plan pins ExtraNullColumnRecord in the store
+        // path, so the test stays meaningful if the optimiser stops degenerating this shape.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wt (a INT, b INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO wt VALUES (2_000_000_000, 2_000_000_000, 'x', '2024-01-01T00:00:00.000000Z')");
+            execute("CREATE TABLE wp (sym SYMBOL, price INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO wp VALUES ('x', 1, '2024-01-01T00:00:00.000000Z')");
+
+            final String wj = "SELECT v FROM (SELECT v, sum(p.price) AS s FROM (SELECT (a + b) AS v, sym, ts FROM wt) t " +
+                    "WINDOW JOIN wp p ON (t.sym = p.sym) AND 1 > 2 RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING)";
+            assertQuery(wj).noLeakCheck().expectSize().withPlanContaining("ExtraNullColumnRecord").returns("v\n-294967296\n");
+
+            execute("CREATE TABLE wd (l LONG)");
+            execute("INSERT INTO wd " + wj);
+            assertQuery("SELECT l FROM wd").noLeakCheck().expectSize().returns("l\n4000000000\n");
+        });
+    }
+
+    @Test
+    public void testInsertIntoWiderColumnWidensThroughUnionAll() throws Exception {
+        // UNION ALL is a live pass-through (UnionRecord/UnionCastRecord delegate getInt/getLong to the
+        // active leg), so when BOTH legs are overflowing INT projections the union column widens on
+        // store exactly like the join master - both legs' getLong() are safe to read. When a leg is a
+        // plain INT column, though, its getLong() would over-read the 4-byte slot, so the column must be
+        // read at INT width for the whole union; the projection leg then wraps (unavoidable without a
+        // per-leg-width read, and no worse than master). The row-copier reads one width per column, so
+        // the guard is per union, not per leg.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ua (a INT, b INT)");
+            execute("INSERT INTO ua VALUES (2_000_000_000, 2_000_000_000)");
+            execute("CREATE TABLE ub (a INT, b INT)");
+            execute("INSERT INTO ub VALUES (2_000_000_000, 2_000_000_000)");
+
+            // both legs overflowing projections: the union widens both, like the direct/join store
+            execute("CREATE TABLE ud (l LONG)");
+            execute("INSERT INTO ud SELECT a + b FROM ua UNION ALL SELECT a + b FROM ub");
+            assertQuery("SELECT l FROM ud").noLeakCheck().expectSize().returns("l\n4000000000\n4000000000\n");
+
+            // mixed: projection leg + plain INT column leg. The projection leg wraps (INT-width read),
+            // the real column leg is stored verbatim - crucially NOT over-read (getLong on a 4-byte INT
+            // slot would splice adjacent rows into one long).
+            execute("CREATE TABLE ur (i INT)");
+            execute("INSERT INTO ur VALUES (5), (7)");
+            execute("CREATE TABLE umd (l LONG)");
+            execute("INSERT INTO umd SELECT a + b FROM ua UNION ALL SELECT i FROM ur");
+            assertQuery("SELECT l FROM umd ORDER BY l").noLeakCheck().expectSize().returns("l\n-294967296\n5\n7\n");
+        });
+    }
+
+    @Test
     public void testReassociationDivModPairWrappingToIntNullWrapsLikeColumnAndLiteral() throws Exception {
         // (intCol + C1) + (C2 / C3) - the inner constant element uses '/' (DivInt) or
         // '%' (RemInt). Both are INT-typed and propagate INT_NULL exactly like + - *, so a

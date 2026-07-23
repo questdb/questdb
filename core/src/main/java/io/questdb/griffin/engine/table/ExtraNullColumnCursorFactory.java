@@ -145,6 +145,19 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // The base columns (columnIndex < columnSplit) hand the base record straight through
+        // (ExtraNullColumnRecord.getInt/getLong delegate to base.getInt/getLong), so a widened INT
+        // projection on the base keeps its wide value at long width and may delegate to the base
+        // factory. The synthetic null-padding columns above the split are a constant NULL, which is
+        // width-stable, so they keep the default true.
+        if (columnIndex < columnSplit) {
+            return base.isColumnIntWidthStable(columnIndex);
+        }
+        return true;
+    }
+
+    @Override
     public boolean isProjection() {
         return true;
     }
