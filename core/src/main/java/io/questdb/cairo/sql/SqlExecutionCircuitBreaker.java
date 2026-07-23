@@ -124,6 +124,14 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     boolean checkIfTripped(long millis, long fd);
 
+    /**
+     * Same as {@link #checkIfTripped()} but bypasses the connection-probe throttle. Meant for cold
+     * error paths that classify an abort after the fact and need a current connection verdict.
+     */
+    default boolean checkIfTrippedNoThrottle() {
+        return checkIfTripped();
+    }
+
     AtomicBoolean getCancelledFlag();
 
     @Nullable

@@ -24,17 +24,11 @@
 
 package io.questdb.test.griffin.engine.join;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractCairoTest;
+import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
+import io.questdb.test.AbstractOomSweepTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -48,26 +42,31 @@ import org.junit.Test;
  * (the factory's {@code _close()} does not free the reusable cursor). That leaked
  * the first sink's 8-byte heap, tagged {@code NATIVE_RECORD_CHAIN}. The query
  * fuzzer's malloc fault injection surfaced this leak.
+ * <p>
+ * {@link AbstractOomSweepTest#assertCursorOpenOomSweep} drives the ceiling sweep; the two tests here
+ * differ only in which factory they route the fault into.
  */
-public class AsOfJoinFastOomTest extends AbstractCairoTest {
+public class AsOfJoinFastOomTest extends AbstractOomSweepTest {
 
     @Test
     public void testFilteredKeyedAsOfJoinCleansUpWhenCursorRunsOutOfMemory() throws Exception {
-        // The slave-side filter routes the plan through FilteredAsOfJoinFastRecordCursorFactory,
-        // whose of() reopens the same pair of sinks.
+        // The filter has to sit in the slave sub-query. As a top-level WHERE it becomes a post-join
+        // Filter over a plain AsOf Join Fast, and this test would silently duplicate the one below.
         assertNoLeakOnCursorOom(
-                "SELECT m.k1, m.v, s.v FROM master m ASOF JOIN slave s ON (k1, k2) WHERE s.v > 0"
+                "SELECT m.k1, m.v, s.v FROM master m ASOF JOIN (SELECT * FROM slave WHERE v > 0) s ON (k1, k2)",
+                FilteredAsOfJoinFastRecordCursorFactory.class
         );
     }
 
     @Test
     public void testKeyedAsOfJoinCleansUpWhenCursorRunsOutOfMemory() throws Exception {
         assertNoLeakOnCursorOom(
-                "SELECT m.k1, m.v, s.v FROM master m ASOF JOIN slave s ON (k1, k2)"
+                "SELECT m.k1, m.v, s.v FROM master m ASOF JOIN slave s ON (k1, k2)",
+                AsOfJoinFastRecordCursorFactory.class
         );
     }
 
-    private void assertNoLeakOnCursorOom(String query) throws Exception {
+    private void assertNoLeakOnCursorOom(String query, Class<? extends RecordCursorFactory> expectedFactory) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE master AS (" +
@@ -84,51 +83,16 @@ public class AsOfJoinFastOomTest extends AbstractCairoTest {
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
 
-            // Confirm the plan really exercises the fast keyed cursor.
-            printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join Fast");
-
-            // Warm the reader and compiler pools so the swept allocation failure lands
-            // inside cursor open (the sink reopen()s), not in first-touch table open.
-            drain(query);
-
-            boolean sawOom = false;
-            // Sweep the native-memory ceiling across the cursor-open allocation points.
-            // Some ceiling lets the first sink reopen() succeed and trips the second; the
-            // pre-fix code then leaked the first sink's 8-byte heap.
-            for (int slack = 0; slack <= 64 * 1024; slack += 8) {
-                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
-                try {
-                    drain(query);
-                } catch (CairoException e) {
-                    Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
-                    sawOom = true;
-                } finally {
-                    Unsafe.setRssMemLimit(0);
-                }
+            // Confirm the query really exercises the cursor under test. The EXPLAIN type name cannot
+            // do this: "AsOf Join Fast" is emitted by both the keyed and the no-key fast factory, and
+            // is a substring of "Filtered AsOf Join Fast", so a name guard passes for four different
+            // factories. Match the class instead - these factories are siblings, so no subclass of one
+            // can pass for another.
+            try (RecordCursorFactory factory = select(query)) {
+                TestUtils.assertFactoryInTree(factory, expectedFactory, query);
             }
-            Assert.assertTrue("sweep never tripped the RSS limit; widen the range", sawOom);
 
-            // Recovery: with the ceiling removed the same query runs cleanly.
-            Unsafe.setRssMemLimit(0);
-            drain(query);
+            assertCursorOpenOomSweep(query);
         });
-    }
-
-    private void drain(String query) throws Exception {
-        final StringSink localSink = new StringSink();
-        try (RecordCursorFactory factory = select(query)) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                final RecordMetadata metadata = factory.getMetadata();
-                final int columnCount = metadata.getColumnCount();
-                final Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    for (int i = 0; i < columnCount; i++) {
-                        CursorPrinter.printColumn(record, metadata, i, localSink, false);
-                    }
-                    localSink.clear();
-                }
-            }
-        }
     }
 }
