@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.window;
 
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
@@ -78,13 +79,24 @@ public class CadenceWindowFunctionTest extends AbstractCairoTest {
                         """,
                 bindVariableService -> bindVariableService.setLong(0, 1)
         ));
-        // Re-bind $1 = 0: out-of-range detected at cursor-open (range validation moved from
-        // newInstance to per-execution init), same message/position as a constant would produce.
+        // Runtime validation mirrors SUBSAMPLE's legacy cursor (including distinct NULL/range errors).
         cases.add(BindVarTuple.fails(
-                "stride 0 (runtime out of range)",
+                "stride 0 (runtime below minimum)",
                 22,
-                "stride must be a positive constant",
+                "stride must be at least 1",
                 bindVariableService -> bindVariableService.setLong(0, 0)
+        ));
+        cases.add(BindVarTuple.fails(
+                "stride above int maximum",
+                22,
+                "stride exceeds maximum of 2147483647",
+                bindVariableService -> bindVariableService.setLong(0, (long) Integer.MAX_VALUE + 1)
+        ));
+        cases.add(BindVarTuple.fails(
+                "stride unset",
+                22,
+                "stride must be set",
+                bindVariableService -> bindVariableService.setLong(0, Numbers.LONG_NULL)
         ));
 
         assertQuery("select ts, v, cadence($1) over (order by ts) keep from t")

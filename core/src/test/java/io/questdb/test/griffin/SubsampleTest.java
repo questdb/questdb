@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
@@ -253,9 +252,8 @@ public class SubsampleTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByLosesDesignationButSubsampleStillWorks() throws Exception {
-        // SAMPLE BY results lose designated timestamp (AsyncGroupByRecordCursorFactory
-        // has timestampIndex=-1), but the nested model chain confirms designation.
-        // The type-scan fallback must work for this case.
+        // SAMPLE BY results lose designated-timestamp metadata, but the aggregation wrapper keeps
+        // the timestamp output available to the outer window selector.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -302,18 +300,64 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testErrorUnknownMethodWithoutDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP)");
+            assertException(
+                    "SELECT price, ts FROM t SUBSAMPLE unknown_algo(price, 5)",
+                    24,
+                    "SUBSAMPLE requires a designated timestamp column"
+            );
+        });
+    }
+
+    @Test
     public void testErrorColumnNotFound() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            // Migrated: the value column is now resolved by FunctionParser (not the cursor's
-            // by-name lookup), so the error text/position differ from the old cursor's "column
-            // not found". The query is invalid either way; the same divergence already ships
-            // latently for m4/minmax (they have no test covering this shape).
             assertException(
                     "SELECT price, ts FROM t SUBSAMPLE lttb(nonexistent, 5)",
                     39,
-                    "Invalid column: nonexistent"
+                    "column not found: nonexistent"
             );
+            assertException(
+                    "SELECT * FROM t SUBSAMPLE m4(nonexistent, 5)",
+                    29,
+                    "column not found: nonexistent"
+            );
+            assertException(
+                    "SELECT * FROM t SUBSAMPLE minmax(nonexistent, 5)",
+                    33,
+                    "column not found: nonexistent"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorColumnNotFoundPrecedesMissingDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP)");
+            for (String method : new String[]{"lttb", "m4", "minmax"}) {
+                final String sql = "SELECT * FROM t SUBSAMPLE " + method + "(nonexistent, 5)";
+                assertException(sql, sql.indexOf("nonexistent"), "column not found: nonexistent");
+            }
+            final String expressionSql = "SELECT * FROM t SUBSAMPLE m4(price * 2, 5)";
+            assertException(expressionSql, expressionSql.lastIndexOf('*'), "column not found: *");
+        });
+    }
+
+    @Test
+    public void testErrorTargetFunctionParserErrorIsNotMasked() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            for (String method : new String[]{"lttb", "m4", "minmax"}) {
+                final String sql = "SELECT * FROM t SUBSAMPLE " + method + "(price, no_such_function())";
+                assertException(
+                        sql,
+                        sql.indexOf("no_such_function"),
+                        "unknown function name: no_such_function"
+                );
+            }
         });
     }
 
@@ -536,12 +580,17 @@ public class SubsampleTest extends AbstractCairoTest {
                     (40.0, '2024-01-01T04:00:00.000000Z')
                     """);
             // CTE with SUBSAMPLE on the outer query
+            final String query = "WITH data AS (SELECT price, ts FROM t) SELECT price, ts FROM data SUBSAMPLE lttb(price, 2)";
             assertSql(
                     "price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "40.0\t2024-01-01T04:00:00.000000Z\n",
-                    "WITH data AS (SELECT price, ts FROM t) SELECT price, ts FROM data SUBSAMPLE lttb(price, 2)"
+                    query
             );
+            printSql("EXPLAIN " + query);
+            final String plan = sink.toString();
+            Assert.assertTrue("CTE SUBSAMPLE must use the window path: " + plan, plan.contains("CachedWindow"));
+            Assert.assertFalse("CTE SUBSAMPLE must not use the legacy cursor: " + plan, plan.contains("Subsample"));
         });
     }
 
@@ -558,12 +607,17 @@ public class SubsampleTest extends AbstractCairoTest {
                     (40.0, '2024-01-01T04:00:00.000000Z')
                     """);
             // Subquery wrapping with SUBSAMPLE on the outer query
+            final String query = "SELECT price, ts FROM (SELECT * FROM t) SUBSAMPLE lttb(price, 2)";
             assertSql(
                     "price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "40.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM (SELECT * FROM t) SUBSAMPLE lttb(price, 2)"
+                    query
             );
+            printSql("EXPLAIN " + query);
+            final String plan = sink.toString();
+            Assert.assertTrue("subquery SUBSAMPLE must use the window path: " + plan, plan.contains("CachedWindow"));
+            Assert.assertFalse("subquery SUBSAMPLE must not use the legacy cursor: " + plan, plan.contains("Subsample"));
         });
     }
 
@@ -817,6 +871,23 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLttbGapRejectsConstantExpressionsLikeLegacyCursor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 5, concat('1', 'h'))",
+                    49,
+                    "expected single letter qualifier"
+            );
+            assertException(
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 5, '1h'::string)",
+                    53,
+                    "expected single letter qualifier"
+            );
+        });
+    }
+
+    @Test
     public void testSubsampleInParenthesizedSubquery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -991,15 +1062,43 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testErrorNonNumericColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (name SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            // Migrated: the value column's type is now validated by FunctionParser's overload
-            // resolution (not the cursor's own numeric-type check), so the error text/position
-            // differ from the old cursor's "numeric column expected". The query is invalid
-            // either way; the same divergence already ships latently for m4/minmax.
             assertException(
                     "SELECT * FROM t SUBSAMPLE lttb(name, 5)",
-                    26,
-                    "there is no matching function `lttb` with the argument types: (TIMESTAMP, SYMBOL, INT)"
+                    31,
+                    "numeric column expected, got: SYMBOL"
             );
+            assertException(
+                    "SELECT * FROM t SUBSAMPLE m4(name, 5)",
+                    29,
+                    "numeric column expected, got: SYMBOL"
+            );
+            assertException(
+                    "SELECT * FROM t SUBSAMPLE minmax(name, 5)",
+                    33,
+                    "numeric column expected, got: SYMBOL"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorNonNumericProjectedAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (name SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE j (name SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            final String[] queries = {
+                    "SELECT name x, ts FROM t SUBSAMPLE lttb(x, 2)",
+                    "SELECT * FROM (SELECT name x, ts FROM t) SUBSAMPLE lttb(x, 2)",
+                    "WITH q AS (SELECT name x, ts FROM t) SELECT * FROM q SUBSAMPLE lttb(x, 2)",
+                    "SELECT ts, first(name) x FROM t SAMPLE BY 1h SUBSAMPLE lttb(x, 2)",
+                    "SELECT * FROM (SELECT t.name x, t.ts FROM t ASOF JOIN j ON (name)) SUBSAMPLE lttb(x, 2)"
+            };
+            for (String sql : queries) {
+                assertException(
+                        sql,
+                        sql.lastIndexOf("x, 2"),
+                        "numeric column expected, got: SYMBOL"
+                );
+            }
         });
     }
 
@@ -1562,6 +1661,33 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubsampleWithDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            final String query = "SELECT DISTINCT ts, price FROM t SUBSAMPLE uniform(2)";
+            assertSql(
+                    "ts\tprice\n" +
+                            "2024-01-01T00:00:00.000000Z\t10.0\n" +
+                            "2024-01-01T02:00:00.000000Z\t30.0\n",
+                    query
+            );
+            printSql("EXPLAIN " + query);
+            final String plan = sink.toString();
+            Assert.assertTrue("DISTINCT must execute below the window selector: " + plan, plan.indexOf("CachedWindow") < plan.indexOf("Async Group By"));
+            Assert.assertTrue("DISTINCT plan must use a window selector: " + plan, plan.contains("CachedWindow"));
+            Assert.assertTrue("DISTINCT must remain below the window selector: " + plan, plan.contains("Async Group By"));
+            Assert.assertFalse("DISTINCT plan must not use the legacy cursor: " + plan, plan.contains("Subsample"));
+        });
+    }
+
+    @Test
     public void testErrorVarcharColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (name VARCHAR, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -1574,7 +1700,7 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExplainPlanShowsSubsample() throws Exception {
+    public void testExplainPlanShowsWindowSubsample() throws Exception {
         // `lttb(price, 500)` is a happy-path case the migration is designed to move OFF the custom
         // SUBSAMPLE cursor, so the plan no longer shows a "Subsample" node - it shows the desugared
         // keep-flag window, now with the filter FUSED into a row-selecting node (same shape as
@@ -1836,7 +1962,7 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testExplainPlanSubsampleBeforeOrderBy() throws Exception {
         // `lttb(price, 500)` is a happy-path case that now desugars to a window keep-flag and fuses the
-        // filter into a row-selecting window node (see testExplainPlanShowsSubsample). The original
+        // filter into a row-selecting window node (see testExplainPlanShowsWindowSubsample). The original
         // intent of this test - SUBSAMPLE's row reduction happens before the outer ORDER BY sorts the
         // (already-reduced) result - still holds: the fused window node (CachedWindowLightSelect) is
         // nested INSIDE, i.e. printed after/deeper than, the outer sort node, meaning it runs first,
@@ -2018,11 +2144,11 @@ public class SubsampleTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Fast path vs fallback path tests ----
+    // ---- Window selection across input shapes ----
 
     @Test
-    public void testFastPathDirectScan() throws Exception {
-        // Direct table scan: uses fast path (rowId, 24 bytes/row, no RecordChain)
+    public void testWindowDirectScanPassesThroughColumns() throws Exception {
+        // Direct table scan: all pass-through columns must remain aligned with selected rows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, volume INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2044,8 +2170,8 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFastPathWithWhere() throws Exception {
-        // WHERE filter + fast path: recordAt() must produce filtered rows
+    public void testWindowSelectionAfterWhere() throws Exception {
+        // WHERE filters the input before the row-selecting window runs.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2067,8 +2193,8 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFastPathWithLimit() throws Exception {
-        // LIMIT runs after SUBSAMPLE: reduces already-subsampled result
+    public void testWindowSelectionBeforeLimit() throws Exception {
+        // LIMIT runs after SUBSAMPLE and reduces the already-selected result.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -2090,9 +2216,8 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFastPathCursorReuseAndToTop() throws Exception {
-        // Verify fast path cursor can be reused via getCursor() and
-        // toTop() resets iteration correctly
+    public void testWindowCursorReuseAndToTop() throws Exception {
+        // Verify the window cursor can be reused via getCursor() and toTop() resets iteration correctly.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -2127,9 +2252,8 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFallbackPathSampleBy() throws Exception {
-        // SAMPLE BY uses fallback path (RecordChain materialization)
-        // because AsyncGroupByRecordCursorFactory has timestampIndex=-1
+    public void testWindowAfterSampleBy() throws Exception {
+        // The aggregation wrapper exposes SAMPLE BY output to the outer row-selecting window.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -2141,7 +2265,7 @@ public class SubsampleTest extends AbstractCairoTest {
                     (50.0, '2024-01-01T02:00:00.000000Z'),
                     (60.0, '2024-01-01T02:30:00.000000Z')
                     """);
-            // SAMPLE BY produces 3 rows, fallback materializes them, SUBSAMPLE reduces to 2
+            // SAMPLE BY produces 3 rows and SUBSAMPLE reduces them to 2.
             assertSql(
                     "ts\tavg\n" +
                             "2024-01-01T00:00:00.000000Z\t15.0\n" +
@@ -2152,8 +2276,8 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFallbackPathCursorReuse() throws Exception {
-        // Verify fallback path cursor can be reused (RecordChain cleared between runs)
+    public void testWindowAfterSampleByCursorReuse() throws Exception {
+        // Verify the window-over-aggregation cursor can be reused across executions.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -2185,12 +2309,9 @@ public class SubsampleTest extends AbstractCairoTest {
     // ---- Sorting tests ----
 
     @Test
-    public void testFallbackSortDescendingInput() throws Exception {
-        // Deterministic descending input via subquery with ORDER BY ts DESC.
-        // The inner sort produces a SortedRecordCursorFactory (no designated
-        // timestamp, non-forward direction), forcing fallback path. The
-        // fallback's isSorted=false triggers nativeSortBufferByTimestamp()
-        // which must reorder to ascending before the algorithm runs.
+    public void testWindowSelectionPreservesDescendingInput() throws Exception {
+        // The algorithm selects by ascending timestamp while the row-selecting window preserves the
+        // descending order supplied by its input query.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -2201,24 +2322,23 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T03:00:00.000000Z'),
                     (40.0, '2024-01-01T04:00:00.000000Z')
                     """);
-            // Inner subquery delivers rows in DESC order. Fallback path
-            // buffers them descending (isSorted=false), native sort reorders
-            // to ascending, LTTB selects first (10) and last (40).
+            // Inner subquery delivers rows in DESC order. LTTB's OVER (ORDER BY ts) window still selects
+            // first (10) and last (40) by ascending timestamp, but - unlike the deleted cursor, which
+            // force-sorted its output ascending - the keep-flag window preserves the query's own DESC
+            // ordering, so the two kept rows are emitted 40 then 10 (same row SET, honouring ORDER BY).
             assertSql(
                     "price\tts\n" +
-                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "40.0\t2024-01-01T04:00:00.000000Z\n",
+                            "40.0\t2024-01-01T04:00:00.000000Z\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n",
                     "SELECT price, ts FROM (SELECT price, ts FROM t ORDER BY ts DESC) SUBSAMPLE lttb(price, 2)"
             );
         });
     }
 
     @Test
-    public void testFallbackSortNegativeTimestamp() throws Exception {
-        // SAMPLE BY 1w around 1970-01-01 produces a bucket starting on
-        // Monday 1969-12-29 (pre-epoch, negative timestamp). This exercises
-        // the ts ^ Long.MIN_VALUE signed-to-unsigned mapping in the native
-        // sort. Without it, negative timestamps sort after positive ones.
+    public void testWindowSelectionOrdersNegativeTimestampForAlgorithm() throws Exception {
+        // SAMPLE BY 1w around 1970-01-01 produces a pre-epoch bucket. The window ORDER BY must place
+        // that negative timestamp correctly when choosing the algorithm's first and last points.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -2232,14 +2352,14 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // SAMPLE BY 1w ALIGN TO CALENDAR produces buckets starting at
             // 1969-12-29 (negative ts), 1970-01-05, 1970-01-12.
-            // Wrap in ORDER BY ts DESC to force deterministic descending input,
-            // ensuring isSorted=false and nativeSortBufferByTimestamp() runs.
-            // The sort must handle the negative first-bucket timestamp correctly
-            // via ts ^ Long.MIN_VALUE signed-to-unsigned mapping.
+            // The subquery's ORDER BY ts DESC is honoured on output by the keep-flag window (the deleted
+            // cursor force-sorted ascending). LTTB's OVER (ORDER BY ts) still selects the first
+            // (1969-12-29, negative ts) and last (1970-01-12) buckets by ascending timestamp - proving the
+            // negative-timestamp ordering is correct - but they are emitted in the query's DESC order.
             assertSql(
                     "ts\tavg\n" +
-                            "1969-12-29T00:00:00.000000Z\t15.0\n" +
-                            "1970-01-12T00:00:00.000000Z\t55.0\n",
+                            "1970-01-12T00:00:00.000000Z\t55.0\n" +
+                            "1969-12-29T00:00:00.000000Z\t15.0\n",
                     """
                             SELECT ts, avg FROM (
                                 SELECT ts, avg(price) avg FROM t
@@ -2252,9 +2372,8 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFallbackSortSampleByAlreadySorted() throws Exception {
-        // SAMPLE BY produces time-bucketed rows that are typically monotonic.
-        // The fallback path should detect isSorted=true and skip sorting.
+    public void testWindowSelectionOnMonotonicSampleBy() throws Exception {
+        // SAMPLE BY produces monotonic time buckets consumed by the outer row-selecting window.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -2266,8 +2385,7 @@ public class SubsampleTest extends AbstractCairoTest {
                     (50.0, '2024-01-01T02:00:00.000000Z'),
                     (60.0, '2024-01-01T02:30:00.000000Z')
                     """);
-            // SAMPLE BY 1h produces 3 monotonic rows, SUBSAMPLE reduces to 2.
-            // isSorted=true, native sort is skipped.
+            // SAMPLE BY 1h produces 3 monotonic rows and SUBSAMPLE reduces them to 2.
             assertSql(
                     "ts\tavg\n" +
                             "2024-01-01T00:00:00.000000Z\t15.0\n" +
@@ -2502,6 +2620,11 @@ public class SubsampleTest extends AbstractCairoTest {
                             "50.0\t2024-01-01T04:00:00.000000Z\n",
                     "SELECT price, ts FROM t SUBSAMPLE lttb(price, $1)"
             );
+            // A bind-variable target now MIGRATES to the keep-flag window path (no legacy Subsample cursor).
+            printSql("EXPLAIN SELECT price, ts FROM t SUBSAMPLE lttb(price, $1)");
+            final String plan = sink.toString();
+            Assert.assertTrue("bind-var target must migrate to the window path: " + plan, plan.contains("CachedWindowLightSelect"));
+            Assert.assertFalse("bind-var target must not use a Subsample cursor: " + plan, plan.contains("Subsample"));
         });
     }
 
@@ -3552,6 +3675,22 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCadenceStrideOneWithBindSeedUnset() throws Exception {
+        // Legacy cadence(1) is a no-op and returns the base cursor without reading its seed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (10.0, '2024-01-01T00:00:00.000000Z')");
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 1);
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE cadence($1, $2)"
+            );
+        });
+    }
+
+    @Test
     public void testCadenceStrideOneWithNullSeed() throws Exception {
         // cadence(1, NULL): validates seed type, but stride=1 returns all rows
         assertMemoryLeak(() -> {
@@ -3684,6 +3823,11 @@ public class SubsampleTest extends AbstractCairoTest {
                             "50.0\t2024-01-01T04:00:00.000000Z\n",
                     "SELECT price, ts FROM t SUBSAMPLE cadence($1)"
             );
+            // A bind-variable stride now MIGRATES to the keep-flag window path (no legacy Subsample cursor).
+            printSql("EXPLAIN SELECT price, ts FROM t SUBSAMPLE cadence($1)");
+            final String plan = sink.toString();
+            Assert.assertTrue("bind-var stride must migrate to the window path: " + plan, plan.contains("CachedWindowLightSelect"));
+            Assert.assertFalse("bind-var stride must not use a Subsample cursor: " + plan, plan.contains("Subsample"));
         });
     }
 
@@ -3799,13 +3943,13 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testM4ExpressionValueArgFallsThroughToCursorError() throws Exception {
-        // Regression: the value-inspecting gate must migrate m4/minmax to the window path ONLY
-        // when the value arg (arg 0) is a bare column literal. The old cursor resolves the value
-        // arg BY NAME ONLY (columnNode.token), so an expression like v*2 makes it look up a column
-        // literally named "*" and fail. If the gate ignored this and migrated anyway, the window
-        // function would happily evaluate v*2 as a DOUBLE expression and return a result instead
-        // of reproducing that error - a byte-identity divergence. Assert the cursor's exact error.
+    public void testM4ExpressionValueArgRejected() throws Exception {
+        // The value-inspecting gate migrates m4/minmax to the window path ONLY when the value arg
+        // (arg 0) is a bare column literal. The legacy cursor resolved the value arg BY NAME ONLY
+        // (columnNode.token), so an expression like v*2 looked up a column literally named "*" and
+        // failed with "column not found". The rewrite now throws that same error (message and
+        // position) directly for a non-literal value arg, so the window path never silently
+        // evaluates v*2 as a DOUBLE expression. Assert the cursor-identical error.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             assertException(
@@ -4016,87 +4160,6 @@ public class SubsampleTest extends AbstractCairoTest {
                     "SELECT ts, price FROM x SUBSAMPLE sdt(price * 2, 0.5)",
                     34,
                     "SUBSAMPLE sdt requires a plain column as its first argument"
-            );
-        });
-    }
-
-    // ---- cairo.subsample.window.enabled kill-switch ----
-    // Default-on boolean gating ONLY the five count/value migration arms (uniform/cadence/m4/
-    // minmax/lttb). When false, those five fall through to the untouched pre-migration custom
-    // SUBSAMPLE cursor. sdt has no cursor fallback (its gate is total - see the sdt section above)
-    // and is therefore unaffected: it must still migrate to the window path regardless of the flag.
-
-    @Test
-    public void testSubsampleWindowKillSwitch() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO x VALUES
-                    (10.0, '2024-01-01T00:00:00.000000Z'),
-                    (20.0, '2024-01-01T01:00:00.000000Z'),
-                    (5.0, '2024-01-01T02:00:00.000000Z'),
-                    (30.0, '2024-01-01T03:00:00.000000Z'),
-                    (15.0, '2024-01-01T04:00:00.000000Z'),
-                    (25.0, '2024-01-01T05:00:00.000000Z'),
-                    (8.0, '2024-01-01T06:00:00.000000Z'),
-                    (35.0, '2024-01-01T07:00:00.000000Z')
-                    """);
-
-            final String query = "SELECT ts, price FROM x SUBSAMPLE m4(price, 4)";
-
-            // Switch ON (default): m4 migrates to the keep-flag window path and fuses the filter into
-            // the row-selecting window node (CachedWindowLightSelect, no separate __keep_subsample Filter).
-            printSql(query);
-            final String windowRows = sink.toString();
-            printSql("EXPLAIN " + query);
-            final String windowPlan = sink.toString();
-            Assert.assertTrue(
-                    "switch-on plan should contain the fused row-selecting window node: " + windowPlan,
-                    windowPlan.contains("CachedWindowLightSelect")
-            );
-            Assert.assertFalse(
-                    "switch-on plan should not contain a separate keep-filter node: " + windowPlan,
-                    windowPlan.contains("__keep_subsample")
-            );
-            Assert.assertFalse(
-                    "switch-on plan should not contain a Subsample cursor node: " + windowPlan,
-                    windowPlan.contains("Subsample")
-            );
-
-            // Switch OFF: m4 must fall through to the untouched custom cursor and return
-            // byte-identical rows to the switch-on run.
-            setProperty(PropertyKey.CAIRO_SUBSAMPLE_WINDOW_ENABLED, "false");
-            printSql(query);
-            final String cursorRows = sink.toString();
-            TestUtils.assertEquals(windowRows, cursorRows);
-            printSql("EXPLAIN " + query);
-            final String cursorPlan = sink.toString();
-            Assert.assertTrue(
-                    "switch-off plan should contain the Subsample cursor node: " + cursorPlan,
-                    cursorPlan.contains("Subsample")
-            );
-            Assert.assertFalse(
-                    "switch-off plan should not contain the window keep-filter: " + cursorPlan,
-                    cursorPlan.contains("__keep_subsample")
-            );
-
-            // sdt has no cursor fallback: it must still migrate to the window path with the
-            // switch off (its total gate is independent of cairo.subsample.window.enabled), and it
-            // fuses into the row-selecting window node (the keep-flag fusion is likewise independent
-            // of that switch), so no separate __keep_subsample Filter appears.
-            printSql("EXPLAIN SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)");
-            final String sdtPlan = sink.toString();
-            Assert.assertTrue(
-                    "sdt should still migrate to the fused window path with the switch off: " + sdtPlan,
-                    sdtPlan.contains("CachedWindowLightSelect")
-            );
-            Assert.assertFalse(
-                    "sdt should not contain a separate keep-filter node when fused: " + sdtPlan,
-                    sdtPlan.contains("__keep_subsample")
-            );
-            Assert.assertFalse(
-                    "sdt should never fall back to a Subsample cursor node: " + sdtPlan,
-                    sdtPlan.contains("Subsample")
             );
         });
     }

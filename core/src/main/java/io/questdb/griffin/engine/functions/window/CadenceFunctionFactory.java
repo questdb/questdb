@@ -74,7 +74,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
     static final int SEED_MODE_NONE = 0;
     static final int SEED_MODE_RANDOM = 2;
     // LONG signature so both INT literals (auto-widened) and LONG literals resolve; the value is
-    // validated to fit a positive long stride below.
+    // validated to fit the positive INT stride range below.
     private static final String SIGNATURE = NAME + "(L)";
 
     @Override
@@ -273,8 +273,14 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
                 // targetFunc.init()+getStride(): a bind-variable stride is re-read (and range-checked)
                 // every run, so re-binding between executions takes effect.
                 long s = strideFunc.getLong(null);
-                if (s == Numbers.LONG_NULL || s < 1) {
-                    throw SqlException.$(stridePosition, "stride must be a positive constant");
+                if (s == Numbers.LONG_NULL) {
+                    throw SqlException.$(stridePosition, "stride must be set");
+                }
+                if (s < 1) {
+                    throw SqlException.$(stridePosition, "stride must be at least 1");
+                }
+                if (s > Integer.MAX_VALUE) {
+                    throw SqlException.$(stridePosition, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
                 }
                 stride = s;
             }
@@ -282,6 +288,13 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             // time); it reads the same value every execution, so there is nothing to redo here.
             if (seedFunc != null) {
                 seedFunc.init(symbolTableSource, executionContext);
+                // The legacy cursor returns its base cursor immediately for cadence(1), without reading
+                // the seed. For stride > 1, validate the seed eagerly, independent of row count:
+                // preparePass2 short-circuits computeOffset() when stride > totalRows, which would
+                // otherwise let an unset bind-variable seed slip through silently.
+                if (stride > 1 && seedFunc.getLong(null) == Numbers.LONG_NULL) {
+                    throw SqlException.$(seedPosition, "seed must be set");
+                }
             }
             // Captured every execution (not just once) so a fresh Rnd draw is used on each run when
             // seedMode == SEED_MODE_RANDOM; see computeOffset().

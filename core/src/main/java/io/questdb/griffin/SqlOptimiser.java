@@ -9288,8 +9288,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Desugars {@code SUBSAMPLE uniform(N)} into a windowed keep-flag subquery so it executes via the
-     * {@code uniform(N)} boolean window function instead of the custom SUBSAMPLE cursor:
+     * Desugars every valid {@code SUBSAMPLE} method into a windowed keep-flag subquery, for example:
      * <pre>
      *   SELECT &lt;cols&gt; FROM t SUBSAMPLE uniform(N)
      *   =&gt;
@@ -9297,11 +9296,9 @@ public class SqlOptimiser implements Mutable {
      *   FROM (SELECT &lt;cols&gt;, uniform(N) OVER (ORDER BY ts) __keep_subsample FROM t)
      *   WHERE __keep_subsample
      * </pre>
-     * Partial migration: only {@code uniform} with a compile-time-constant target &gt;= 2 and a directly
-     * available designated timestamp is desugared. Every other case - other methods
-     * (lttb/m4/minmax/cadence), non-constant/bind-variable targets, targets &lt; 2, wrong arity, or a
-     * missing timestamp - is left with the SUBSAMPLE node in place so the existing custom cursor path
-     * handles it with its exact validation and error messages.
+     * The dispatch below is total: valid count/value methods migrate (including bind variables,
+     * aggregation wrappers, and joins), while invalid shapes throw cursor-compatible errors here.
+     * No count/value SUBSAMPLE node is left for the legacy code-generation path.
      */
     private IQueryModel rewriteSubsample(IQueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {
         return rewriteSubsample(model, sqlExecutionContext, false);
@@ -9314,9 +9311,8 @@ public class SqlOptimiser implements Mutable {
      *                    per-branch recursion below. Propagated downward through every recursive call
      *                    (nested model, join branches, union model) so a SUBSAMPLE arbitrarily deep
      *                    inside any join branch - not just one directly attached to the join node
-     *                    itself - is still flagged. See {@link #isConstantUniformTarget} callers below
-     *                    for why the value-inspecting gate (m4/minmax/lttb) refuses to migrate under
-     *                    this flag.
+     *                    itself - is still flagged. Only sdt refuses a join context (it throws); the
+     *                    count/value methods migrate in a join via the alias-qualified {@code windowTsToken}.
      */
     private IQueryModel rewriteSubsample(IQueryModel model, @Transient SqlExecutionContext sqlExecutionContext, boolean insideJoin) throws SqlException {
         if (model == null || !model.isOptimisable()) {
@@ -9343,7 +9339,22 @@ public class SqlOptimiser implements Mutable {
 
             final ExpressionNode subsample = nested.getSubsample();
             if (subsample != null) {
-                final ExpressionNode timestamp = nested.getTimestamp();
+                final int subsamplePos = nested.getSubsamplePosition();
+                ExpressionNode timestamp = nested.getTimestamp();
+                if (timestamp == null) {
+                    // The designated timestamp may live on an inner model (subquery / CTE / ORDER BY
+                    // wrapper) while still being a visible column at this level - e.g.
+                    // `FROM (SELECT * FROM t) SUBSAMPLE ...`. Mirror the legacy cursor's chain search so
+                    // these valid shapes still migrate rather than being rejected as timestamp-less.
+                    IQueryModel tsSearch = nested.getNestedModel();
+                    while (tsSearch != null) {
+                        if (tsSearch.getTimestamp() != null) {
+                            timestamp = tsSearch.getTimestamp();
+                            break;
+                        }
+                        tsSearch = tsSearch.getNestedModel();
+                    }
+                }
                 // The timestamp reference the injected keep-flag window will see. Normally the bare
                 // designated-timestamp name off a single-table FROM. But when the SUBSAMPLE sits
                 // DIRECTLY on a multi-branch join (`nested` IS the join, i.e. getJoinModels().size() > 1),
@@ -9368,102 +9379,74 @@ public class SqlOptimiser implements Mutable {
                         windowTsToken = e.toImmutable();
                     }
                 }
-                // Kill-switch: cairo.subsample.window.enabled (default true) gates ONLY the five
-                // count/value migration arms below (uniform/cadence/m4/minmax/lttb) - when false, they
-                // all fall through to the untouched pre-migration custom cursor path, exactly as if none
-                // of the gate conditions in each arm had matched. The sdt arm below has NO cursor
-                // fallback (its gate is total, see the comment on that branch) and is therefore NOT
-                // wrapped by this flag - sdt always migrates regardless of the switch.
-                final boolean subsampleWindowEnabled = configuration.isSubsampleWindowEnabled();
-                // Aggregation contexts (e.g. SAMPLE BY / GROUP BY, once rewriteSampleBy has turned them
-                // into a group-by projection) DO migrate for the five count/value arms below: a window
-                // function cannot be injected INTO an aggregating model, so desugarSubsample WRAPS the
-                // aggregating model as a subquery instead (see its isAggregationContext branch). Only the
-                // sdt arm still refuses an aggregation context (it throws).
-                if (subsampleWindowEnabled
-                        && subsample.paramCount == 1
-                        && Chars.equalsIgnoreCase(subsample.token, "uniform")) {
-                    final ExpressionNode targetNode = subsample.args.getQuick(0);
-                    if (timestamp != null
-                            && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
-                        model = desugarUniformSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin);
+                // TOTAL count/value + sdt gates. Every SUBSAMPLE shape either MIGRATES to a keep-flag
+                // window function or THROWS a cursor-identical SqlException here; none reaches the legacy
+                // SUBSAMPLE cursor (deleted in a follow-up). Structural rejects (wrong arity, non-literal
+                // value, target/stride/seed that is neither a constant nor a bind variable, an invalid
+                // CONSTANT target/stride/seed, unknown method) throw at rewrite with the cursor's exact
+                // message and position. Range/type errors for a bind-variable target/stride MIGRATE and
+                // are re-reported cursor-identically by the window factory at runtime; LTTB's raw gap
+                // token is validated here so constant expressions do not widen the old grammar.
+                // Aggregation contexts (SAMPLE BY / GROUP BY) and join contexts DO migrate for the five
+                // count/value arms (desugarSubsample wraps the aggregating model; `windowTsToken` qualifies
+                // the join timestamp); only sdt still refuses those.
+                if (Chars.equalsIgnoreCase(subsample.token, "uniform")) {
+                    if (subsample.paramCount != 1) {
+                        throw SqlException.$(subsample.position, "uniform() requires exactly 1 argument: target points");
                     }
-                } else if (subsampleWindowEnabled
-                        && (subsample.paramCount == 1 || subsample.paramCount == 2)
-                        && Chars.equalsIgnoreCase(subsample.token, "cadence")) {
-                    // Migrate cadence only when the window path is byte-identical to the old cursor:
-                    //  - stride (arg 0) is a compile-time constant in [2, MAX_INT]. This falls through
-                    //    cadence(1) (the cursor special-cases it to return the base cursor directly) and
-                    //    out-of-range / bind-variable strides, whose exact errors the cursor re-reports.
-                    //  - a 2-arg seed (arg 1) is a compile-time integer constant that is not NULL. A NULL
-                    //    (random) seed, a bind-variable / runtime-constant seed, or a non-integer seed all
-                    //    fall through to the old cursor (random mode draws a different RNG, so it cannot be
-                    //    byte-identical; the non-integer case must reproduce the cursor's exact error).
-                    final ExpressionNode strideNode = subsample.args.getQuick(0);
-                    if (timestamp != null
-                            && isConstantUniformTarget(strideNode, sqlExecutionContext)
-                            && (subsample.paramCount == 1
-                            || isConstantCadenceSeed(subsample.args.getQuick(1), sqlExecutionContext))) {
-                        model = desugarCadenceSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin);
+                    if (timestamp == null) {
+                        throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
                     }
-                } else if (subsampleWindowEnabled
-                        && subsample.paramCount == 2
-                        && (Chars.equalsIgnoreCase(subsample.token, "m4")
-                        || Chars.equalsIgnoreCase(subsample.token, "minmax"))) {
-                    // Migrate m4(value, target) / minmax(value, target) to their keep-flag window
-                    // function only when the window path is byte-identical to the old cursor:
-                    //  - target (arg 1) is a compile-time constant in [2, MAX_INT]. A bind-variable /
-                    //    runtime-constant / out-of-range / non-integer target, and the 3-arg
-                    //    m4(value, target, extra) error shape (paramCount != 2), all fall through to the
-                    //    custom cursor, which re-reports the identical error.
-                    //  - a designated timestamp is present and we are not in an aggregation context
-                    //    (a keep-flag window cannot be injected into an aggregating model).
-                    //  - the value (arg 0) is a bare column literal (ExpressionNode.LITERAL). The old
-                    //    cursor resolves the value arg BY NAME ONLY (columnNode.token), so it only ever
-                    //    supports a plain column reference; an expression like v*2 or abs(v) makes the
-                    //    cursor look up a column named "*" / "abs" and fail with "column not found". The
-                    //    window path, by contrast, deep-clones the value arg and evaluates it as a full
-                    //    DOUBLE expression, which would silently return a result instead of reproducing
-                    //    that error. So non-literal value args fall through to the untouched cursor.
-                    // A join context is NOT gated out: `windowTsToken` above qualifies the ORDER BY / ts
-                    // arg with the master alias when the SUBSAMPLE sits directly on a multi-branch join,
-                    // and a branch-local SUBSAMPLE (single-table `nested`) migrates with the bare name.
-                    final ExpressionNode valueNode = subsample.args.getQuick(0);
-                    final ExpressionNode targetNode = subsample.args.getQuick(1);
-                    if (timestamp != null
-                            && valueNode != null
-                            && valueNode.type == ExpressionNode.LITERAL
-                            && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
-                        model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin, subsample.token);
+                    validatePositionTargetOrThrow(subsample.args.getQuick(0), false, sqlExecutionContext);
+                    model = desugarUniformSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin);
+                } else if (Chars.equalsIgnoreCase(subsample.token, "cadence")) {
+                    if (subsample.paramCount < 1 || subsample.paramCount > 2) {
+                        throw SqlException.$(subsample.position, "cadence() requires 1 or 2 arguments: stride and optional seed");
                     }
-                } else if (subsampleWindowEnabled
-                        && (subsample.paramCount == 2 || subsample.paramCount == 3)
-                        && Chars.equalsIgnoreCase(subsample.token, "lttb")) {
-                    // Migrate lttb(value, target[, gap]) to the lttb keep-flag window function only when
-                    // the window path is byte-identical to the old cursor. Mirrors the m4/minmax gate:
-                    //  - the value (arg 0) is a bare column literal (the cursor resolves it BY NAME only,
-                    //    so an expression like v*2 makes it fail with "column not found"; the window path
-                    //    would silently evaluate it - so non-literal value args fall through).
-                    //  - target (arg 1) is a compile-time constant in [2, MAX_INT]; a bind-variable /
-                    //    runtime-constant / out-of-range / non-integer target falls through to the cursor.
-                    //  - a designated timestamp is present and we are not in an aggregation context.
-                    //  - IF a 3rd arg (gap) is present, it is a compile-time constant string parsing to a
-                    //    valid, non-overflowing positive interval with a supported unit (s/m/h/d). A
-                    //    non-constant / non-string / invalid / overflowing gap falls through so the cursor
-                    //    re-reports the identical error at its own position. A 4th+ arg makes paramCount
-                    //    miss this gate and fall through to the cursor's "at most 3 arguments" error.
-                    // A join context is NOT gated out - same alias-qualified-timestamp handling via
-                    // `windowTsToken` as m4/minmax above.
-                    final ExpressionNode valueNode = subsample.args.getQuick(0);
-                    final ExpressionNode targetNode = subsample.args.getQuick(1);
-                    if (timestamp != null
-                            && valueNode != null
-                            && valueNode.type == ExpressionNode.LITERAL
-                            && isConstantUniformTarget(targetNode, sqlExecutionContext)
-                            && (subsample.paramCount == 2
-                            || isConstantLttbGap(subsample.args.getQuick(2), sqlExecutionContext))) {
-                        model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin, subsample.token);
+                    if (timestamp == null) {
+                        throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
                     }
+                    validatePositionTargetOrThrow(subsample.args.getQuick(0), true, sqlExecutionContext);
+                    if (subsample.paramCount == 2) {
+                        validateCadenceSeedOrThrow(subsample.args.getQuick(1), sqlExecutionContext);
+                    }
+                    model = desugarCadenceSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin);
+                } else if (Chars.equalsIgnoreCase(subsample.token, "m4")
+                        || Chars.equalsIgnoreCase(subsample.token, "minmax")) {
+                    if (subsample.paramCount < 2) {
+                        throw SqlException.$(subsample.position, "SUBSAMPLE ")
+                                .put(subsample.token).put("() requires at least 2 arguments: column and target points");
+                    }
+                    if (subsample.paramCount > 2) {
+                        throw SqlException.$(subsample.args.getQuick(2).position, subsample.token)
+                                .put("() accepts exactly 2 arguments: column and target points");
+                    }
+                    // Legacy codegen resolves the by-name value column before checking the designated
+                    // timestamp. Preserve that error precedence for combined-invalid queries.
+                    final QueryColumn valueColumn = resolveValueInspectingColumnOrThrow(model, subsample.args.getQuick(0));
+                    if (timestamp == null) {
+                        throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+                    }
+                    validateValueInspectingArgsOrThrow(valueColumn, subsample, sqlExecutionContext);
+                    model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin, subsample.token);
+                } else if (Chars.equalsIgnoreCase(subsample.token, "lttb")) {
+                    if (subsample.paramCount < 2) {
+                        throw SqlException.$(subsample.position, "SUBSAMPLE lttb() requires at least 2 arguments: column and target points");
+                    }
+                    if (subsample.paramCount > 3) {
+                        throw SqlException.$(subsample.args.getQuick(3).position, "lttb() accepts at most 3 arguments: column, target points, and optional gap threshold");
+                    }
+                    // Legacy codegen resolves the by-name value column before checking the designated
+                    // timestamp. Preserve that error precedence for combined-invalid queries.
+                    final QueryColumn valueColumn = resolveValueInspectingColumnOrThrow(model, subsample.args.getQuick(0));
+                    if (timestamp == null) {
+                        throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+                    }
+                    validateValueInspectingArgsOrThrow(valueColumn, subsample, sqlExecutionContext);
+                    if (subsample.paramCount == 3) {
+                        validateLttbGapOrThrow(subsample.args.getQuick(2));
+                    }
+                    model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin, subsample.token);
                 } else if (Chars.equalsIgnoreCase(subsample.token, "sdt")) {
                     // TOTAL GATE for sdt. Unlike the other methods, sdt has NO custom SUBSAMPLE cursor,
                     // so a non-migrable sdt node must NOT fall through to codegen (which would only emit
@@ -9500,6 +9483,15 @@ public class SqlOptimiser implements Mutable {
                     // sdt-in-join already threw above (subsampleInJoinContext), so windowTsToken here is
                     // always the bare designated-timestamp name.
                     model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin, subsample.token);
+                } else {
+                    // Timestamp resolution precedes method dispatch on the legacy codegen path.
+                    if (timestamp == null) {
+                        throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+                    }
+                    // Total catch-all: an unrecognised method name. Throw the cursor-identical error here
+                    // so the deleted-in-a-follow-up codegen dispatch is unreachable.
+                    throw SqlException.$(subsample.position, "unknown subsample method: ").put(subsample.token)
+                            .put(". Supported methods: lttb, m4, minmax, uniform, cadence");
                 }
             }
         }
@@ -9510,104 +9502,241 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * True only when {@code targetNode} is a compile-time constant in {@code [2, Integer.MAX_VALUE]}.
-     * On anything else - bind variable, runtime constant, out-of-range, non-integer, or a parse
-     * failure - returns false, leaving the SUBSAMPLE node in place for the custom cursor path, which
-     * re-validates and reports the identical error, so no oracle behavior is lost.
+     * TOTAL validation for a position-only SUBSAMPLE target/stride (uniform/cadence). Mirrors the legacy
+     * cursor's {@code generateSubsample} so the deleted-in-a-follow-up cursor path is unreachable:
+     * <ul>
+     *   <li>a valid CONSTANT (cursor range via {@link SqlCodeGenerator#getTargetPoints}/{@link
+     *       SqlCodeGenerator#getStride}) migrates (returns normally);</li>
+     *   <li>a bind-variable / runtime constant migrates - the window factory re-validates its range and
+     *       type per execution, cursor-identically;</li>
+     *   <li>an INVALID constant (NULL, out of range, non-integer type) throws the cursor-identical
+     *       {@code SqlException} at {@code node.position}; and</li>
+     *   <li>anything that is neither a constant nor a bind variable throws "{@code <param>} must be a
+     *       constant or bind variable" at {@code node.position}.</li>
+     * </ul>
+     * {@code cadence} selects the stride wording (else the target-point-count wording).
      */
-    private boolean isConstantUniformTarget(ExpressionNode targetNode, SqlExecutionContext sqlExecutionContext) {
-        if (targetNode == null) {
-            return false;
-        }
+    private void validatePositionTargetOrThrow(ExpressionNode node, boolean cadence, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function func = null;
         try {
-            func = functionParser.parseFunction(targetNode, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            if (!func.isConstant()) {
-                return false;
+            func = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            final boolean constant = func.isConstant();
+            if (!constant && !func.isRuntimeConstant()) {
+                throw SqlException.$(node.position, cadence ? "stride" : "target point count")
+                        .put(" must be a constant or bind variable");
             }
-            final int tag = ColumnType.tagOf(func.getType());
-            if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
-                return false;
+            if (constant) {
+                final int tag = ColumnType.tagOf(func.getType());
+                if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
+                    throw SqlException.$(node.position, cadence ? "integer expected for stride" : "integer expected for target point count");
+                }
+                // Reproduce the cursor's exact range check (message + position) for a constant.
+                if (cadence) {
+                    SqlCodeGenerator.getStride(func, tag, node.position);
+                } else {
+                    SqlCodeGenerator.getTargetPoints(func, tag, node.position);
+                }
             }
-            final long value = func.getLong(null);
-            return value >= 2 && value <= Integer.MAX_VALUE;
-        } catch (Throwable th) {
-            return false;
+            // A bind-variable / runtime-constant target/stride migrates; the window factory range- and
+            // type-validates it per execution with the same messages and positions as the old cursor.
         } finally {
             Misc.free(func);
         }
     }
 
     /**
-     * True only when {@code seedNode} is a compile-time integer constant that is not NULL - the sole
-     * cadence seed shape the window function reproduces byte-for-byte (a deterministic splitmix64 offset).
-     * A literal NULL (random mode), a bind-variable / runtime-constant seed, or a non-integer seed all
-     * return false, leaving the SUBSAMPLE node in place so the custom cursor path handles them (drawing
-     * its own RNG for random, or re-reporting the identical seed-type error).
+     * TOTAL validation for a cadence seed (arg 1). Mirrors the legacy cursor: a literal NULL (random
+     * mode), a non-NULL integer constant (deterministic), and a bind-variable / runtime-constant seed all
+     * MIGRATE - the cadence window factory reproduces the runtime "seed must be set" error for an unset
+     * bind variable. A non-integer constant seed throws "integer or NULL expected for seed", and a seed
+     * that is neither a constant nor a bind variable throws "seed must be a constant, bind variable, or
+     * NULL" - both cursor-identical at {@code node.position}.
      */
-    private boolean isConstantCadenceSeed(ExpressionNode seedNode, SqlExecutionContext sqlExecutionContext) {
-        if (seedNode == null) {
-            return false;
-        }
+    private void validateCadenceSeedOrThrow(ExpressionNode node, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function func = null;
         try {
-            func = functionParser.parseFunction(seedNode, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            if (!func.isConstant()) {
-                return false;
+            func = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (ColumnType.isNull(func.getType())) {
+                return; // literal NULL -> random mode; migrates
             }
-            final int tag = ColumnType.tagOf(func.getType());
-            if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
-                return false;
+            final boolean constant = func.isConstant();
+            if (!constant && !func.isRuntimeConstant()) {
+                throw SqlException.$(node.position, "seed must be a constant, bind variable, or NULL");
             }
-            return func.getLong(null) != Numbers.LONG_NULL;
-        } catch (Throwable th) {
-            return false;
+            if (constant) {
+                final int tag = ColumnType.tagOf(func.getType());
+                if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
+                    throw SqlException.$(node.position, "integer or NULL expected for seed");
+                }
+            }
+            // A constant integer or a bind-variable / runtime-constant seed migrates.
         } finally {
             Misc.free(func);
         }
     }
 
     /**
-     * True only when {@code gapNode} is a compile-time constant string that parses to a valid,
-     * non-overflowing positive interval with a supported unit (s/m/h/d) - the sole lttb gap shape the
-     * {@code lttb(NDls)} gap window function reproduces byte-for-byte. Reproduces the old cursor's /
-     * gap window factory's TimestampSamplerFactory parse. A non-constant, non-string, malformed,
-     * unsupported-unit, or overflowing gap returns false, leaving the SUBSAMPLE node in place so the
-     * custom cursor path re-reports the identical error at its own position.
+     * Resolves a value-inspecting SUBSAMPLE's by-name value column before timestamp validation, matching
+     * legacy codegen error precedence. Projection aliases are followed through their literal ASTs while
+     * descending subqueries, CTEs, aggregation wrappers, and join branches. If a known column's type cannot
+     * be resolved safely, the unresolved QueryColumn is returned so FunctionParser remains authoritative.
      */
-    private boolean isConstantLttbGap(ExpressionNode gapNode, SqlExecutionContext sqlExecutionContext) {
-        if (gapNode == null) {
-            return false;
+    private QueryColumn resolveValueInspectingColumnOrThrow(IQueryModel model, ExpressionNode valueNode) throws SqlException {
+        if (valueNode.type != ExpressionNode.LITERAL) {
+            throw SqlException.$(valueNode.position, "column not found: ").put(valueNode.token);
         }
+        final QueryColumn valueColumn = resolveValueInspectingColumn(model, valueNode.token, 0);
+        if (valueColumn == null) {
+            throw SqlException.$(valueNode.position, "column not found: ").put(valueNode.token);
+        }
+        return valueColumn;
+    }
+
+    private QueryColumn resolveValueInspectingColumn(IQueryModel model, CharSequence token, int depth) {
+        if (model == null || depth > 32) {
+            return null;
+        }
+
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        QueryColumn candidate = getQueryColumn(model, token, dot);
+        CharSequence localToken = token;
+        boolean qualifiedForModel = false;
+        if (candidate == null && dot > -1
+                && model.getName() != null
+                && Chars.equalsIgnoreCase(model.getName(), Chars.toString(token, 0, dot))) {
+            localToken = Chars.toString(token, dot + 1, token.length());
+            qualifiedForModel = true;
+        }
+        if (candidate == null && (dot == -1 || qualifiedForModel)) {
+            candidate = model.getAliasToColumnMap().get(localToken);
+            if (candidate == null) {
+                candidate = findQueryColumnByName(model.getColumns(), localToken);
+            }
+            if (candidate == null) {
+                candidate = findQueryColumnByName(model.getBottomUpColumns(), localToken);
+            }
+        }
+        if (candidate != null && candidate.getColumnType() > ColumnType.UNDEFINED) {
+            return candidate;
+        }
+
+        CharSequence nestedToken = token;
+        if (candidate != null) {
+            final ExpressionNode ast = candidate.getAst();
+            if (ast != null && ast.type == ExpressionNode.LITERAL) {
+                nestedToken = ast.token;
+            } else if (ast != null
+                    && ast.type == ExpressionNode.FUNCTION
+                    && ast.paramCount == 1
+                    && (Chars.equalsIgnoreCase(ast.token, "first") || Chars.equalsIgnoreCase(ast.token, "last"))
+                    && ast.rhs != null
+                    && ast.rhs.type == ExpressionNode.LITERAL) {
+                // first()/last() preserve their input type; follow their sole literal argument through
+                // the aggregation wrapper when column enumeration has not populated the output type yet.
+                nestedToken = ast.rhs.token;
+            }
+        }
+
+        QueryColumn resolved = resolveValueInspectingColumn(model.getNestedModel(), nestedToken, depth + 1);
+        if (resolved != null && resolved.getColumnType() > ColumnType.UNDEFINED) {
+            return resolved;
+        }
+
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            final IQueryModel joinModel = joinModels.getQuick(i);
+            if (joinModel == model) {
+                continue;
+            }
+            final QueryColumn joinColumn = resolveValueInspectingColumn(joinModel, nestedToken, depth + 1);
+            if (joinColumn != null && joinColumn.getColumnType() > ColumnType.UNDEFINED) {
+                return joinColumn;
+            }
+            if (resolved == null) {
+                resolved = joinColumn;
+            }
+        }
+        return resolved != null ? resolved : candidate;
+    }
+
+    private static QueryColumn findQueryColumnByName(ObjList<QueryColumn> columns, CharSequence token) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (Chars.equalsIgnoreCase(column.getAlias(), token)
+                    || Chars.equalsIgnoreCase(column.getName(), token)) {
+                return column;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Completes value-inspecting SUBSAMPLE validation after by-name resolution and timestamp validation.
+     * Known non-numeric types reproduce the legacy cursor's diagnostic. Unknown types are deliberately
+     * deferred to FunctionParser rather than risking a false rejection of a valid derived column.
+     */
+    private void validateValueInspectingArgsOrThrow(
+            QueryColumn valueColumn,
+            ExpressionNode subsample,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final ExpressionNode valueNode = subsample.args.getQuick(0);
+        final int valueType = valueColumn.getColumnType();
+        final int valueTag = ColumnType.tagOf(valueType);
+        if (valueType > ColumnType.UNDEFINED
+                && valueTag != ColumnType.DOUBLE && valueTag != ColumnType.FLOAT
+                && valueTag != ColumnType.INT && valueTag != ColumnType.LONG
+                && valueTag != ColumnType.SHORT && valueTag != ColumnType.BYTE) {
+            throw SqlException.$(valueNode.position, "numeric column expected, got: ")
+                    .put(ColumnType.nameOf(valueType));
+        }
+
+        final ExpressionNode targetNode = subsample.args.getQuick(1);
+        if (!isConstantOrRuntimeConstant(targetNode, sqlExecutionContext)) {
+            throw SqlException.$(targetNode.position, "target point count must be a constant or bind variable");
+        }
+    }
+
+    /**
+     * Validates LTTB's optional gap from the raw SUBSAMPLE expression token, exactly as the legacy
+     * cursor did. In particular, this deliberately rejects constant expressions (concat/cast) that
+     * the window function's constant-string argument would otherwise evaluate and accept.
+     */
+    private void validateLttbGapOrThrow(ExpressionNode gapNode) throws SqlException {
+        final CharSequence gapStr = gapNode.token;
+        final CharSequence interval = Chars.isQuoted(gapStr)
+                ? Chars.toString(gapStr, 1, gapStr.length() - 1)
+                : gapStr;
+        final int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(
+                interval, gapNode.position, "gap threshold"
+        );
+        final long n = TimestampSamplerFactory.parsePositiveInterval(
+                interval, k, gapNode.position, "gap threshold", Numbers.INT_NULL, '?'
+        );
+        final long unitMicros = switch (interval.charAt(k)) {
+            case 's' -> Micros.SECOND_MICROS;
+            case 'm' -> Micros.MINUTE_MICROS;
+            case 'h' -> Micros.HOUR_MICROS;
+            case 'd' -> Micros.DAY_MICROS;
+            default -> throw SqlException.$(gapNode.position + k, "unsupported interval unit: ")
+                    .put(interval.charAt(k)).put(". Supported: s, m, h, d");
+        };
+        if (n > Long.MAX_VALUE / unitMicros) {
+            throw SqlException.$(gapNode.position, "gap threshold overflow");
+        }
+    }
+
+    /**
+     * True when {@code node} parses to a compile-time constant or a runtime constant (bind variable) -
+     * i.e. a target/stride the window factory accepts and range-validates itself. FunctionParser errors
+     * propagate unchanged, as they did on the legacy codegen path; only a successfully parsed non-constant
+     * expression returns false.
+     */
+    private boolean isConstantOrRuntimeConstant(ExpressionNode node, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function func = null;
         try {
-            func = functionParser.parseFunction(gapNode, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            if (!func.isConstant()) {
-                return false;
-            }
-            final int tag = ColumnType.tagOf(func.getType());
-            if (tag != ColumnType.STRING && tag != ColumnType.VARCHAR && tag != ColumnType.CHAR) {
-                return false;
-            }
-            final CharSequence interval = func.getStrA(null);
-            if (interval == null) {
-                return false;
-            }
-            final int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, gapNode.position, "gap threshold");
-            final long n = TimestampSamplerFactory.parsePositiveInterval(
-                    interval, k, gapNode.position, "gap threshold", Numbers.INT_NULL, '?'
-            );
-            final long unitMicros = switch (interval.charAt(k)) {
-                case 's' -> Micros.SECOND_MICROS;
-                case 'm' -> Micros.MINUTE_MICROS;
-                case 'h' -> Micros.HOUR_MICROS;
-                case 'd' -> Micros.DAY_MICROS;
-                default -> 0; // unsupported unit -> fall through to the cursor's exact error
-            };
-            // unsupported unit (unitMicros == 0) or n * unitMicros overflow -> fall through.
-            return unitMicros != 0 && n <= Long.MAX_VALUE / unitMicros;
-        } catch (Throwable th) {
-            return false;
+            func = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            return func.isConstant() || func.isRuntimeConstant();
         } finally {
             Misc.free(func);
         }
@@ -9616,7 +9745,7 @@ public class SqlOptimiser implements Mutable {
     /**
      * True only when {@code compdevNode} is a compile-time numeric constant whose double value is
      * non-negative and finite - the sole sdt compdev shape the {@code sdt(NDd)} keep-flag window
-     * function accepts (it re-validates the same way at runtime). Mirrors {@link #isConstantCadenceSeed}.
+     * function accepts (it re-validates the same way at runtime).
      * A non-constant (bind-variable / runtime), non-numeric, negative, NaN, or infinite compdev returns
      * false, so the total sdt gate throws a specific "constant, non-negative compdev" error instead of
      * migrating (sdt has no cursor fallback).
@@ -9648,8 +9777,8 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * True when {@code model} projects an aggregation (GROUP BY / SAMPLE BY result, DISTINCT, or a
-     * group-by function column). A window keep-flag cannot be injected into such a model, so those
-     * uniform() cases are left on the custom SUBSAMPLE cursor path.
+     * group-by function column). A window keep-flag cannot be injected into such a model, so
+     * {@link #desugarSubsample} adds an outer projection/window wrapper.
      */
     private boolean isAggregationContext(IQueryModel model, IQueryModel nested) {
         if (model.getGroupBy().size() > 0 || model.isDistinct() || nested.getGroupBy().size() > 0) {
@@ -9693,9 +9822,9 @@ public class SqlOptimiser implements Mutable {
             boolean joinOperand
     ) throws SqlException {
         // cadence(stride[, seed]) window call. 1 arg => stride in rhs; 2 args => stride in lhs, seed in
-        // rhs (ExpressionNode 2-arg invariant). The gate has already proved stride is a constant in
-        // [2, MAX_INT] and any seed is a non-NULL integer constant, so both resolve to the deterministic
-        // cadence(L) / cadence(LL) window overloads that reproduce the old cursor byte-for-byte.
+        // rhs (ExpressionNode 2-arg invariant). The gate has proved the stride/seed are constants or bind
+        // variables of accepted types (including stride 1 and a literal NULL random seed); per-execution
+        // range and unset-bind validation is completed by the cadence window factory.
         final ExpressionNode cadence = expressionNodePool.next().of(FUNCTION, "cadence", 0, subsample.position);
         if (subsample.paramCount == 1) {
             cadence.paramCount = 1;
@@ -9746,10 +9875,10 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Method-agnostic tail shared by the uniform and cadence desugarings: wraps the pre-built keep-flag
-     * window call ({@code windowCall}) in an {@code OVER (ORDER BY ts)} window column, filters on it, and
-     * re-projects the original columns. The caller is responsible only for building {@code windowCall}
-     * (the method-specific function node); everything below is identical regardless of algorithm.
+     * Method-agnostic tail shared by all SUBSAMPLE desugarings: wraps the pre-built keep-flag window call
+     * ({@code windowCall}) in an {@code OVER (ORDER BY ts)} window column, filters on it, and re-projects
+     * the original columns. The caller is responsible only for building {@code windowCall}; everything
+     * below is identical regardless of algorithm.
      */
     private IQueryModel desugarSubsample(
             IQueryModel model,

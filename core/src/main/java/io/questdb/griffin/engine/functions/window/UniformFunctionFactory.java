@@ -172,8 +172,14 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
                 // targetFunc.init()+getTargetPoints(): a bind-variable target is re-read (and
                 // range-checked) every run, so re-binding between executions takes effect.
                 long t = targetArg.getLong(null);
-                if (t == Numbers.LONG_NULL || t < 1) {
-                    throw SqlException.$(targetPosition, "target must be a positive constant");
+                if (t == Numbers.LONG_NULL) {
+                    throw SqlException.$(targetPosition, "target point count must be set");
+                }
+                if (t < 2) {
+                    throw SqlException.$(targetPosition, "target points must be at least 2");
+                }
+                if (t > Integer.MAX_VALUE) {
+                    throw SqlException.$(targetPosition, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
                 }
                 target = t;
             }

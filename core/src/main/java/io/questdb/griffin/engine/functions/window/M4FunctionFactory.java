@@ -223,7 +223,12 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                 return 0;
             }
             long target = targetArg.getLong(null);
-            if (target == Numbers.LONG_NULL || target < 2) {
+            // Mirror SqlCodeGenerator.getTargetPoints exactly: a NULL (e.g. unset bind variable)
+            // reports "must be set", distinct from an in-range-typed but too-small value.
+            if (target == Numbers.LONG_NULL) {
+                throw SqlException.$(targetPosition, "target point count must be set");
+            }
+            if (target < 2) {
                 throw SqlException.$(targetPosition, "target points must be at least 2");
             }
             if (target > Integer.MAX_VALUE) {
@@ -321,7 +326,11 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                 // targetFunc.init()+getTargetPoints(): a bind-variable target is re-read (and
                 // range-checked) every run, so re-binding between executions takes effect.
                 long t = targetArg.getLong(null);
-                if (t == Numbers.LONG_NULL || t < 2) {
+                // Mirror SqlCodeGenerator.getTargetPoints: NULL (unset bind var) -> "must be set".
+                if (t == Numbers.LONG_NULL) {
+                    throw SqlException.$(targetPosition, "target point count must be set");
+                }
+                if (t < 2) {
                     throw SqlException.$(targetPosition, "target points must be at least 2");
                 }
                 if (t > Integer.MAX_VALUE) {
