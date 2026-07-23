@@ -114,7 +114,7 @@ public class AsOfJoinAlgorithmBenchmark {
     private static SqlExecutionContext ctx;
     private static WorkerPool pool;
 
-    @Param({"dense_ts", "unique_ts", "dense_sym", "illiquid_sym", "multikey_sym", "nokey", "sparse_tail", "illiquid_idx", "idx_sweep", "noidx_sweep"})
+    @Param({"dense_ts", "unique_ts", "dense_sym", "illiquid_sym", "multikey_sym", "multikey_dense", "nokey", "sparse_tail", "illiquid_idx", "idx_sweep", "noidx_sweep"})
     public String dist;
 
     @Param({"default", "adaptive", "fast", "dense", "linear", "memoized", "index"})
@@ -200,6 +200,13 @@ public class AsOfJoinAlgorithmBenchmark {
         engine.execute("INSERT INTO l_mk SELECT ((x-1)%100)::symbol, (((x-1)/100)%100)::symbol, ((x-1)+1)::timestamp, x-1 FROM long_sequence(" + ROWS + ")", ctx);
         createMultiKey("r_mk");
         engine.execute("INSERT INTO r_mk SELECT ((x-1)%100)::symbol, (((x-1)/100)%100)::symbol, (x-1)::timestamp, x-1 FROM long_sequence(" + ROWS + ")", ctx);
+        // multikey_dense: same two symbol keys but DENSE timestamps (DENSE rows share each ts) - the cliff
+        // shape for multi-key. The old Fast default back-scans the whole equal-ts run per master row; the new
+        // Dense default is O(slave). Quantifies the protection side of the multi-key trade-off.
+        createMultiKey("l_mkd");
+        engine.execute("INSERT INTO l_mkd SELECT ((x-1)%100)::symbol, (((x-1)/100)%100)::symbol, ((x-1)/" + DENSE + "+1)::timestamp, x-1 FROM long_sequence(" + ROWS + ")", ctx);
+        createMultiKey("r_mkd");
+        engine.execute("INSERT INTO r_mkd SELECT ((x-1)%100)::symbol, (((x-1)/100)%100)::symbol, ((x-1)/" + DENSE + ")::timestamp, x-1 FROM long_sequence(" + ROWS + ")", ctx);
         // nokey: no join key at all (single stream ASOF), unique timestamps. The Fast->Dense flip does not
         // touch the no-key path, so this is a control: new default must equal the old behaviour.
         createLong("l_nk");
@@ -352,6 +359,9 @@ public class AsOfJoinAlgorithmBenchmark {
             case "multikey_sym":
                 // two symbol keys, realistic unique ts: new default is general Dense, old default was Fast.
                 return "SELECT " + hint + "sum(r.payload) FROM l_mk l ASOF JOIN r_mk r ON (sym1, sym2)";
+            case "multikey_dense":
+                // two symbol keys, DENSE timestamps: the multi-key cliff shape (old Fast back-scans the run).
+                return "SELECT " + hint + "sum(r.payload) FROM l_mkd l ASOF JOIN r_mkd r ON (sym1, sym2)";
             case "nokey":
                 // no join key (single stream ASOF): untouched by the flip. Control shape.
                 return "SELECT " + hint + "sum(r.payload) FROM l_nk l ASOF JOIN r_nk r";
