@@ -26,10 +26,14 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -674,6 +678,7 @@ public class MaxMinWindowFunctionFactoryHelper {
         protected final AbstractWindowFunctionFactory.RingBufferDesc memoryDesc = new AbstractWindowFunctionFactory.RingBufferDesc();
         protected final long minDiff;
         protected final String name;
+        protected final RingRestoreSink ringRestore = new RingRestoreSink();
         protected final int timestampIndex;
         // current max value
         protected long maxMin;
@@ -1021,6 +1026,50 @@ public class MaxMinWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long frameSize = source.getFrameSize();
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint max/min RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            // Rebuild the monotonic deque from the ring's in-frame prefix - the first
+            // frameSize rows. Replaying the same pop-and-push the runtime uses over the
+            // same in-frame value sequence reproduces the deque values; the deque indexes
+            // rebase to zero, which the frame-local contract permits, and the front - the
+            // emitted max/min - matches exactly.
+            final long dequeCapacity = Math.max(frameSize, dequeInitialBufferSize);
+            final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+            long dequeEndIndex = 0;
+            for (long i = 0; i < frameSize; i++) {
+                final long v = memory.getLong(newStartOffset + i * RECORD_SIZE + Long.BYTES);
+                while (dequeEndIndex > 0
+                        && comparator.compare(v, dequeMemory.getLong(newDequeStartOffset + (dequeEndIndex - 1) * DEQUE_RECORD_SIZE))) {
+                    dequeEndIndex--;
+                }
+                dequeMemory.putLong(newDequeStartOffset + dequeEndIndex * DEQUE_RECORD_SIZE, v);
+                dequeEndIndex++;
+            }
+            value.putLong(0, frameSize);
+            value.putLong(1, newStartOffset);
+            value.putLong(2, size);
+            value.putLong(3, capacity);
+            value.putLong(4, 0L);
+            value.putLong(5, newDequeStartOffset);
+            value.putLong(6, dequeCapacity);
+            value.putLong(7, 0L);
+            value.putLong(8, dequeEndIndex);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
@@ -1067,8 +1116,35 @@ public class MaxMinWindowFunctionFactoryHelper {
         }
 
         @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_LONG;
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
-            return 1;
+            return 2;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame ring (timestamp, value) rows - the same
+            // shape first_value/last_value/nth_value share - so adjacent roots reference
+            // the same pages. The scalar slot is unused (0): the emitted max/min is the
+            // deque front, which restore recomputes, and frameSize carries the in-frame
+            // count the deque reconstruction replays.
+            final long frameSize = value.getLong(0);
+            final long startOffset = value.getLong(1);
+            final long size = value.getLong(2);
+            final long capacity = value.getLong(3);
+            final long firstIdx = value.getLong(4);
+            sink.putScalarState(0L, frameSize);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putRow(
+                        memory.getLong(startOffset + idx * RECORD_SIZE),
+                        memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES)
+                );
+            }
         }
 
         @Override
@@ -1094,6 +1170,11 @@ public class MaxMinWindowFunctionFactoryHelper {
                 final long idx = (dequeStartIndex + i) % dequeCapacity;
                 sink.putLong(dequeMemory.getLong(dequeStartOffset + idx * DEQUE_RECORD_SIZE));
             }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
         }
 
         @Override
@@ -1133,6 +1214,30 @@ public class MaxMinWindowFunctionFactoryHelper {
             dequeFreeList.clear();
             if (dequeMemory != null) {
                 dequeMemory.truncate();
+            }
+        }
+
+        /**
+         * Writes restored frame-ring rows straight into the partition's freshly
+         * sized slab, rebasing firstIdx to zero. Reused across partitions so a
+         * restore that walks thousands of them allocates nothing per partition. The
+         * value column is a raw 64-bit word - the argument's long/date/timestamp
+         * payload; max/min skip NULL rows, so a stored value is never LONG_NULL.
+         */
+        protected class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            protected long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                memory.putLong(startOffset + rows * RECORD_SIZE, timestamp);
+                memory.putLong(startOffset + rows * RECORD_SIZE + Long.BYTES, valueBits);
+                rows++;
+            }
+
+            protected void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
             }
         }
     }

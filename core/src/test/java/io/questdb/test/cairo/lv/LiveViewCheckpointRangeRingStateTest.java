@@ -145,6 +145,28 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDequePageKindsShareChunksAndRoundTripSortedOracle() throws Exception {
+        // The max/min monotonic-deque family stores the same (ts, value) frame ring
+        // as the value functions but tags its value pages with the deque page kinds,
+        // so a deque root's pages stay distinct from a value-ring root's. Feed each
+        // kind a strictly decreasing value run at increasing timestamps - a max
+        // deque snapshot, the sorted oracle - and prove the tail chunk shares, the
+        // value pages self-identify as the deque kind, and every row round-trips.
+        assertMemoryLeak(() -> {
+            assertDequeRingSharesAndRoundTrips(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_LONG,
+                    LiveViewCheckpointRangeRingStateReader.DEQUE_LONG_VALUE_PAGE_KIND,
+                    true
+            );
+            assertDequeRingSharesAndRoundTrips(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_DOUBLE,
+                    LiveViewCheckpointRangeRingStateReader.DEQUE_DOUBLE_VALUE_PAGE_KIND,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testLongValueRingRoundTripsRawBits() throws Exception {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPartitionMapEntry root = new LiveViewCheckpointPartitionMapEntry();
@@ -335,6 +357,89 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static void assertDequeRingSharesAndRoundTrips(int valueKind, int expectedPageKind, boolean longColumn) {
+        final int initialRows = 4_106;
+        final int dropRows = 5;
+        final int appendRows = 3;
+        final long firstSegment = longColumn ? 60 : 62;
+        final long secondSegment = firstSegment + 1;
+        final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+        final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
+        final LongList firstTimestamps = new LongList();
+        final LongList firstValues = new LongList();
+        try (Catalogue directory = new Catalogue()) {
+            try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                 LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                 Path dir = new Path()) {
+                builder.ofEmpty(valueKind);
+                writer.of(checkpointsDir(dir), firstSegment);
+                for (int i = 0; i < initialRows; i++) {
+                    final long ts = i * 1_000L;
+                    // Strictly decreasing candidate values, greatest at the front: a
+                    // monotonic max deque snapshot, which is the sorted oracle.
+                    final long valueBits = dequeValueBits(initialRows - i, longColumn);
+                    builder.append(writer, ts, valueBits);
+                    firstTimestamps.add(ts);
+                    firstValues.add(valueBits);
+                }
+                builder.freeze(writer, KEY, 0L, initialRows, first);
+                directory.addSegment(firstSegment, writer.commit());
+            }
+
+            final LongList secondTimestamps = new LongList();
+            final LongList secondValues = new LongList();
+            try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                 LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                 Path dir = new Path()) {
+                builder.of(first, valueKind);
+                builder.dropHeadRows(dropRows);
+                writer.of(checkpointsDir(dir), secondSegment);
+                for (int i = dropRows; i < initialRows; i++) {
+                    secondTimestamps.add(firstTimestamps.getQuick(i));
+                    secondValues.add(firstValues.getQuick(i));
+                }
+                for (int i = 0; i < appendRows; i++) {
+                    final long ts = (initialRows + i) * 1_000L;
+                    final long valueBits = dequeValueBits(-i - 1, longColumn);
+                    builder.append(writer, ts, valueBits);
+                    secondTimestamps.add(ts);
+                    secondValues.add(valueBits);
+                }
+                builder.freeze(writer, KEY, 0L, secondTimestamps.size(), second);
+                directory.addSegment(secondSegment, writer.commit());
+            }
+
+            // Every value page self-identifies as the deque page kind, distinct from
+            // the value-ring kinds.
+            Assert.assertEquals(expectedPageKind, first.getStatePageRef(1).getPageKind());
+            for (int i = 1; i < second.getStatePageCount(); i += 2) {
+                Assert.assertEquals(expectedPageKind, second.getStatePageRef(i).getPageKind());
+            }
+            // The second root references at least one chunk the first root sealed
+            // rather than re-encoding it, which is the whole point of sharing.
+            boolean shared = false;
+            for (int i = 0; i < second.getStatePageCount(); i++) {
+                if (second.getStatePageRef(i).getSegmentId() == firstSegment) {
+                    shared = true;
+                    break;
+                }
+            }
+            Assert.assertTrue("deque ring did not share any chunk from the first root", shared);
+
+            assertRestored(first, directory, firstTimestamps, firstValues);
+            assertRestored(second, directory, secondTimestamps, secondValues);
+            try (LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir), directory.reader, second);
+                Assert.assertEquals(valueKind, reader.getValueKind());
+            }
+        }
+    }
+
+    private static long dequeValueBits(long value, boolean longColumn) {
+        return longColumn ? value : Double.doubleToRawLongBits((double) value);
     }
 
     private static void assertInvalid(

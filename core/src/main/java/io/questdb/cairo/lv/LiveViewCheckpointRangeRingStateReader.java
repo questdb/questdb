@@ -40,14 +40,24 @@ import java.io.Closeable;
  * Restores the persistent chunked ring shared by the partitioned window functions
  * over a bounded RANGE frame whose per-row value fits a 64-bit word:
  * {@code avg}/{@code sum} carry a running aggregate, {@code first_value}/
- * {@code last_value}/{@code nth_value} carry the frame value they emit. Each logical
- * chunk is a timestamp page followed by a value page. A DOUBLE value page stores
- * exact IEEE-754 bits (raw or XOR-compressed); a LONG/DATE/TIMESTAMP value page
- * stores the raw 64-bit payload, because an arbitrary integer has no floating-point
- * structure to compress and reinterpreting it as a double could canonicalize a NaN
- * bit pattern. The reader delivers every value as raw 64-bit bits and leaves the
- * function to interpret them. The partition entry's checksummed scalar payload owns
- * the logical head offset and the exact scalar continuation state.
+ * {@code last_value}/{@code nth_value} carry the frame value they emit, and
+ * {@code max}/{@code min} carry the frame ring their monotonic deque is rebuilt from
+ * on restore. Each logical chunk is a timestamp page followed by a value page. A
+ * DOUBLE value page stores exact IEEE-754 bits (raw or XOR-compressed); a
+ * LONG/DATE/TIMESTAMP value page stores the raw 64-bit payload, because an arbitrary
+ * integer has no floating-point structure to compress and reinterpreting it as a
+ * double could canonicalize a NaN bit pattern. The reader delivers every value as
+ * raw 64-bit bits and leaves the function to interpret them. The partition entry's
+ * checksummed scalar payload owns the logical head offset and the exact scalar
+ * continuation state.
+ * <p>
+ * A {@code max}/{@code min} root stores the same {@code (timestamp, value)} frame ring
+ * as the value functions, but tags its value pages with the monotonic-deque page kinds
+ * ({@link #DEQUE_DOUBLE_VALUE_PAGE_KIND} / {@link #DEQUE_LONG_VALUE_PAGE_KIND}) so a
+ * deque-family root's pages stay self-identifying and never resolve as a value-ring
+ * root's. The pages carry the frame ring; the monotonic deque itself is a runtime
+ * acceleration structure the function replays out of that ring at restore, so it is
+ * never persisted.
  * <p>
  * Ring values may be non-finite: a base {@code first_value}/{@code last_value}
  * over a frame whose oldest/newest row is NULL emits NaN and stores it. The
@@ -64,11 +74,15 @@ import java.io.Closeable;
  */
 public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveViewCheckpointRingStateSource {
 
+    public static final int DEQUE_DOUBLE_VALUE_PAGE_KIND = 0x24;
+    public static final int DEQUE_LONG_VALUE_PAGE_KIND = 0x25;
     public static final int DOUBLE_VALUE_PAGE_KIND = 0x22;
     public static final int FORMAT_VERSION = 1;
     public static final int LONG_VALUE_PAGE_KIND = 0x23;
     public static final int SCALAR_STATE_BYTES = 5 * Long.BYTES;
     public static final int TIMESTAMP_PAGE_KIND = 0x21;
+    public static final int VALUE_KIND_DEQUE_DOUBLE = 2;
+    public static final int VALUE_KIND_DEQUE_LONG = 3;
     public static final int VALUE_KIND_DOUBLE = 0;
     public static final int VALUE_KIND_LONG = 1;
     private static final int FLAGS = 0;
@@ -148,8 +162,9 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     }
 
     /**
-     * @return the ring's value kind, one of {@link #VALUE_KIND_DOUBLE} or
-     * {@link #VALUE_KIND_LONG}. An empty ring reports {@link #VALUE_KIND_DOUBLE}
+     * @return the ring's value kind, one of {@link #VALUE_KIND_DOUBLE},
+     * {@link #VALUE_KIND_LONG}, {@link #VALUE_KIND_DEQUE_DOUBLE} or
+     * {@link #VALUE_KIND_DEQUE_LONG}. An empty ring reports {@link #VALUE_KIND_DOUBLE}
      * because it has no value page to identify a kind from.
      */
     public int getValueKind() {
@@ -328,15 +343,49 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
                 from.getPageKind(), from.getCodec(), from.getRowCount(), from.getFlags());
     }
 
+    /**
+     * @return whether {@code valueKind}'s value column stores a raw 64-bit payload
+     * (LONG/DATE/TIMESTAMP, ring or deque) rather than exact IEEE-754 double bits
+     */
+    static boolean isLongColumn(int valueKind) {
+        return valueKind == VALUE_KIND_LONG || valueKind == VALUE_KIND_DEQUE_LONG;
+    }
+
+    /**
+     * @return the value page kind {@code valueKind} writes: the value-ring kinds for
+     * {@code avg}/{@code sum}/{@code first_value}/{@code last_value}/{@code nth_value},
+     * the deque kinds for a {@code max}/{@code min} frame ring
+     */
+    static int valuePageKind(int valueKind) {
+        switch (valueKind) {
+            case VALUE_KIND_DOUBLE:
+                return DOUBLE_VALUE_PAGE_KIND;
+            case VALUE_KIND_LONG:
+                return LONG_VALUE_PAGE_KIND;
+            case VALUE_KIND_DEQUE_DOUBLE:
+                return DEQUE_DOUBLE_VALUE_PAGE_KIND;
+            case VALUE_KIND_DEQUE_LONG:
+                return DEQUE_LONG_VALUE_PAGE_KIND;
+            default:
+                throw CairoException.critical(0)
+                        .put("live view checkpoint RANGE ring value kind invalid [kind=").put(valueKind).put(']');
+        }
+    }
+
     private static int detectValueKind(LiveViewCheckpointStatePageRef firstValueRef) {
         final int pageKind = firstValueRef.getPageKind();
-        if (pageKind == DOUBLE_VALUE_PAGE_KIND) {
-            return VALUE_KIND_DOUBLE;
+        switch (pageKind) {
+            case DOUBLE_VALUE_PAGE_KIND:
+                return VALUE_KIND_DOUBLE;
+            case LONG_VALUE_PAGE_KIND:
+                return VALUE_KIND_LONG;
+            case DEQUE_DOUBLE_VALUE_PAGE_KIND:
+                return VALUE_KIND_DEQUE_DOUBLE;
+            case DEQUE_LONG_VALUE_PAGE_KIND:
+                return VALUE_KIND_DEQUE_LONG;
+            default:
+                throw invalid("RANGE ring value page kind invalid [kind=").put(pageKind).put(']');
         }
-        if (pageKind == LONG_VALUE_PAGE_KIND) {
-            return VALUE_KIND_LONG;
-        }
-        throw invalid("RANGE ring value page kind invalid [kind=").put(pageKind).put(']');
     }
 
     private static long getLong(byte[] bytes, int offset) {
@@ -366,10 +415,11 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
 
     private static void validateValueRef(LiveViewCheckpointStatePageRef ref, int valueKind) {
         LiveViewCheckpointMetadata.validateStateRef(ref, false, "RANGE ring value chunk");
-        final boolean isKindValid = valueKind == VALUE_KIND_LONG
-                ? ref.getPageKind() == LONG_VALUE_PAGE_KIND
+        final int expectedPageKind = valuePageKind(valueKind);
+        final boolean isKindValid = isLongColumn(valueKind)
+                ? ref.getPageKind() == expectedPageKind
                 && ref.getCodec() == LiveViewCheckpointStateCodec.LONG_RAW_64
-                : ref.getPageKind() == DOUBLE_VALUE_PAGE_KIND
+                : ref.getPageKind() == expectedPageKind
                 && (ref.getCodec() == LiveViewCheckpointStateCodec.DOUBLE_RAW_64
                 || ref.getCodec() == LiveViewCheckpointStateCodec.DOUBLE_XOR);
         if (!isKindValid) {
@@ -401,15 +451,14 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     }
 
     private void decodeValues(LiveViewCheckpointStatePageRef ref, long targetAddress) {
+        openPage(ref, valuePageKind(valueKind));
         final int consumed;
-        if (valueKind == VALUE_KIND_LONG) {
-            openPage(ref, LONG_VALUE_PAGE_KIND);
+        if (isLongColumn(valueKind)) {
             consumed = LiveViewCheckpointStateCodec.decodeLongs(
                     dataReader.getPageAddress(), dataReader.getPageStoredLength(), ref.getCodec(), ref.getRowCount(),
                     targetAddress, LiveViewCheckpointStateCodec.CHUNK_ROWS
             );
         } else {
-            openPage(ref, DOUBLE_VALUE_PAGE_KIND);
             consumed = LiveViewCheckpointStateCodec.decodeDoubles(
                     dataReader.getPageAddress(), dataReader.getPageStoredLength(), ref.getCodec(), ref.getRowCount(),
                     targetAddress, LiveViewCheckpointStateCodec.CHUNK_ROWS

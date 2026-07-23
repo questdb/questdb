@@ -631,11 +631,15 @@ public interface WindowFunction extends Function {
 
     /**
      * The value kind this function's checkpoint ring stores per row, one of
-     * {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DOUBLE}
-     * or {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader#VALUE_KIND_LONG}.
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DOUBLE},
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader#VALUE_KIND_LONG},
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DEQUE_DOUBLE}
+     * or {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DEQUE_LONG}.
      * A DOUBLE ring stores exact IEEE-754 bits (raw or XOR-compressed); a LONG/DATE/TIMESTAMP
      * ring stores the raw 64-bit payload, which an integer value keeps out of a double so a
-     * NaN bit pattern is never canonicalized. Read only for a
+     * NaN bit pattern is never canonicalized. The {@code DEQUE_*} kinds carry the same payload
+     * but tag the value pages as a {@code max}/{@code min} monotonic-deque root's frame ring,
+     * keeping it distinct from a value-ring root. Read only for a
      * {@link #supportsCheckpointRingState() ring-shaped} function.
      */
     default int checkpointRingValueKind() {

@@ -42,7 +42,9 @@ import java.util.Arrays;
  * into the shared head, and only the rows this boundary appended are encoded.
  * The value column holds a 64-bit word per row: a DOUBLE ring stores exact
  * IEEE-754 bits (raw or XOR-compressed), a LONG/DATE/TIMESTAMP ring stores the
- * raw payload; {@link #of} configures which kind the seal writes.
+ * raw payload; {@link #of} configures which kind the seal writes. A {@code max}/
+ * {@code min} frame ring uses the same payload but tags its value pages with the
+ * deque page kinds so a deque-family root stays distinct from a value-ring root.
  * <p>
  * The tail a boundary appends is always a fresh chunk, so a chunk boundary sits
  * at every checkpoint boundary and a sealed chunk is never rewritten. That is
@@ -251,8 +253,10 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
      * kind across every boundary - so a mismatch means the caller wired the ring to
      * the wrong function.
      *
-     * @param valueKind one of {@link LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DOUBLE}
-     *                  or {@link LiveViewCheckpointRangeRingStateReader#VALUE_KIND_LONG}
+     * @param valueKind one of {@link LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DOUBLE},
+     *                  {@link LiveViewCheckpointRangeRingStateReader#VALUE_KIND_LONG},
+     *                  {@link LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DEQUE_DOUBLE}
+     *                  or {@link LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DEQUE_LONG}
      */
     public void of(@NotNull LiveViewCheckpointPartitionMapEntry previous, int valueKind) {
         previousReader.ofMetadata(previous);
@@ -326,14 +330,14 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
                 LiveViewCheckpointRangeRingStateReader.TIMESTAMP_PAGE_KIND,
                 timestampCodec, tailCount, 0
         );
-        if (valueKind == LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG) {
+        final int valuePageKind = LiveViewCheckpointRangeRingStateReader.valuePageKind(valueKind);
+        if (LiveViewCheckpointRangeRingStateReader.isLongColumn(valueKind)) {
             LiveViewCheckpointStateCodec.encodeLongs(
                     writer.beginPage(), scratch.valuesAddress(), tailCount, LiveViewCheckpointStateCodec.LONG_RAW_64
             );
             writer.endPage(
                     refs[refCount + 1], tailCount * Long.BYTES,
-                    LiveViewCheckpointRangeRingStateReader.LONG_VALUE_PAGE_KIND,
-                    LiveViewCheckpointStateCodec.LONG_RAW_64, tailCount, 0
+                    valuePageKind, LiveViewCheckpointStateCodec.LONG_RAW_64, tailCount, 0
             );
         } else {
             final int doubleCodec = LiveViewCheckpointStateCodec.selectDoubleCodec(scratch.valuesAddress(), tailCount);
@@ -342,8 +346,7 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
             );
             writer.endPage(
                     refs[refCount + 1], tailCount * Long.BYTES,
-                    LiveViewCheckpointRangeRingStateReader.DOUBLE_VALUE_PAGE_KIND,
-                    doubleCodec, tailCount, 0
+                    valuePageKind, doubleCodec, tailCount, 0
             );
         }
         refCount += 2;
