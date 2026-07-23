@@ -649,6 +649,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Reports whether this node refreshes off the APPLIED base table rather than the raw base WAL.
+     * <p>
+     * The primary default is {@code false}: a primary owns its base WAL, so the raw-WAL drain
+     * ({@link #drainBaseWal}) is the fresh, settled source. A read-only replica overrides this to
+     * {@code true}: it downloads and applies its base WAL asynchronously, so the raw segments can still
+     * be settling (mid-download / post-apply purge) when the sequencer head already advertises the
+     * commit -- a raw read would transiently miss applied rows. Under symmetric local refresh
+     * (LIVE_VIEW_REPLICATION_LOCAL_REFRESH_DESIGN) the replica runs the full refresh + flush locally, so
+     * {@link #refreshInstance} routes it through the coupled applied-base drain
+     * ({@link #drainAppliedBase}), which pins the applied base reader behind the cooperative apply-lag
+     * gate and routes any timestamp overlap through {@code o3Replay} -- the same well-tested path a
+     * DEDUP base already uses, just selected by node role instead of by dedup.
+     */
+    protected boolean prefersAppliedBaseRefresh() {
+        return false;
+    }
+
+    /**
      * Reconciles a read-only replica's in-RAM lead against the on-disk tier the global apply job
      * advances asynchronously from replicated WAL. The primary default is a no-op (the primary owns
      * every disk advance, so its lead never trails an external flush); EntLiveViewRefreshJob overrides it.
@@ -2551,33 +2569,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return Math.max(deleteLo, Numbers.LONG_NULL + 1);
     }
 
-    // The refresh job runs on a worker pool an in-place primary-to-replica demote never halts: it
-    // acquires the LV WalWriter while PRIMARY (getWalWriter's eager read-only check passes), pumps the
-    // window, then externalizes a replicated LV seqTxn with no in-lock read-only re-check between the
-    // acquire and the commit. A demote flips the read-only flag at the front of the cascade
-    // (prepareForRoleSwitch) but tears the uploader down only later, so a commit that lands in that window
-    // mints a local-only LV seqTxn the closing uploader never ships -- the new primary never sees it, and
-    // the ex-primary's on-disk tier / _lv.s advances past what replicated (silent loss). Route every LV
-    // commit family (flushLead, the in-WAL-order and applied-base drains, the o3Replay REPLACE_RANGE
-    // corrections, and the seed sweep) through this fence: hold the role-switch READ lock across an
-    // authoritative in-lock isReadOnlyMode() re-check and the commit, so the mint is atomic against the
-    // role flip. Either the flip ran first (refuse -- the commit throws the read-only authorization error,
-    // which handleRefreshFailure treats as retry-later, never invalidate; a live view is derived state so
-    // the new primary recomputes the lead forward) or the mint lands fully as PRIMARY while the flip's
-    // WRITE acquire waits for this read hold and replicates. This fences the WAL externalization only; the
-    // in-mem tier publish, the inline apply and the _lv.s watermark advance are local recovery state the
-    // demote can safely leave behind. Mirrors MatViewRefreshJob.fencedMatViewCommit. A strict no-op for
-    // non-replicating deployments: the read lock is uncontended and the read-only flag is static.
+    // Under symmetric local refresh (LIVE_VIEW_REPLICATION_LOCAL_REFRESH_DESIGN) the live-view table is
+    // node-local derived data: every node -- primary AND replica -- refreshes and flushes its own LV
+    // table locally, and LV WAL is never uploaded or downloaded. So the read-only fence this method once
+    // held (refuse an LV mint on a read-only node, to stop a demoting primary externalizing a local-only
+    // LV seqTxn the closing uploader never ships) is obsolete: a node-local LV mint has no upstream to
+    // lose to, and a read-only replica legitimately originates its own LV WAL. The read lock + mint
+    // observer are retained (uncontended, harmless) so the seam stays a single choke point for every LV
+    // commit family -- flushLead, the in-WAL-order and applied-base drains, the o3Replay REPLACE_RANGE
+    // corrections, and the seed sweep -- pending the Phase 5 cleanup that folds it away entirely.
     private void fencedLiveViewCommit(Runnable commit) {
-        if (engine.isReadOnlyMode()) {
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
-        }
         final Lock lock = engine.getRoleSwitchReadLock();
         lock.lock();
         try {
-            if (engine.isReadOnlyMode()) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
-            }
             engine.fireRoleSwitchMintObserver();
             commit.run();
             // Rows are durable now, so the accumulators no longer lead durable state;
@@ -8236,7 +8240,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // isDedupBase re-derives each cycle (mutable via ALTER). A dedup base
                 // additionally reads the applied (post-dedup) base instead of raw WAL.
                 final boolean dedupBase = isDedupBase(instance);
-                final boolean leadEligible = ensureLeadEligible(instance) && !dedupBase;
+                // A read-only replica reads the applied base (see prefersAppliedBaseRefresh) via the
+                // coupled drainAppliedBase path, exactly like a DEDUP base: no un-flushed in-RAM lead,
+                // the tier stays a subset of disk. So it is never lead-eligible.
+                final boolean appliedBase = prefersAppliedBaseRefresh();
+                final boolean leadEligible = ensureLeadEligible(instance) && !dedupBase && !appliedBase;
                 final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
                 final long lastFlushUs = instance.getLastFlushTimeUs();
                 final long flushEveryMicros = instance.getDefinition().getFlushEveryMicros();
@@ -8317,7 +8325,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // pass lastSeqTxn directly. The cursor's getTxn() returns entries with
                         // seqTxn > lastSeqTxn.
                         attempted = true;
-                        if (dedupBase) {
+                        if (appliedBase) {
+                            // Read-only replica: the raw base WAL races its own async download/apply, so
+                            // always read the applied, post-apply base table. drainAppliedBase pins it
+                            // behind the cooperative apply-lag gate and routes any timestamp overlap
+                            // through o3Replay -- the replica owns and rewrites its own LV disk under
+                            // symmetric refresh. Deliberately bypasses the dedup isRangeProvablyClean
+                            // raw-WAL shortcut: a replica has no settled raw WAL to fast-path against.
+                            drainAppliedBase(instance, lastSeqTxn, seqTxn);
+                        } else if (dedupBase) {
                             if (isRangeProvablyClean(instance.getDefinition().getBaseTableToken(), lastSeqTxn, seqTxn)) {
                                 // The applied base provably equals the raw WAL over this
                                 // range (nothing deduped / skipped / removed). Take the
