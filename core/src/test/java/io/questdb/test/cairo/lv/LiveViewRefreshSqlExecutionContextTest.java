@@ -1,0 +1,103 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo.lv;
+
+import io.questdb.cairo.lv.LiveViewRefreshSqlExecutionContext;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Test;
+
+/**
+ * A live view is only well-defined if its result is a pure function of the base table and
+ * its definition, so every refresh cycle - and, under symmetric replica refresh, every
+ * node - converges on the same rows. {@code CREATE LIVE VIEW} rejects non-deterministic
+ * functions in the body, but the refresh job recompiles the view's SELECT on its own
+ * ({@code LiveViewRefreshJob.ensureCompiledFactory}, reached on a restart that rebuilds the
+ * factory straight from the persisted definition), a path the CREATE gate never runs.
+ * {@link LiveViewRefreshSqlExecutionContext} therefore forces
+ * {@link LiveViewRefreshSqlExecutionContext#allowNonDeterministicFunctions()} off so that
+ * recompile rejects a non-deterministic function too, mirroring
+ * {@code MatViewRefreshSqlExecutionContext}. These tests pin that defense-in-depth guard.
+ */
+public class LiveViewRefreshSqlExecutionContextTest extends AbstractCairoTest {
+
+    @Test
+    public void testRefreshContextDoesNotOverRejectDeterministicSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final LiveViewRefreshSqlExecutionContext ctx = new LiveViewRefreshSqlExecutionContext(engine, 0);
+            // The guard must not disturb an ordinary deterministic body: the refresh recompile
+            // of a legitimate view compiles exactly as it does today.
+            ctx.setLiveViewCompile(true);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(
+                        "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base",
+                        ctx
+                );
+                Misc.free(cq.getRecordCursorFactory());
+            } finally {
+                ctx.setLiveViewCompile(false);
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshContextForbidsNonDeterministicFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final LiveViewRefreshSqlExecutionContext ctx = new LiveViewRefreshSqlExecutionContext(engine, 0);
+            Assert.assertFalse(
+                    "live view refresh must forbid non-deterministic functions",
+                    ctx.allowNonDeterministicFunctions()
+            );
+
+            // Compile the SELECT straight through the refresh context, the way the refresh
+            // job's ensureCompiledFactory does, so the CREATE-time gate is out of the picture.
+            // With setLiveViewCompile armed the reject names the "live view" kind, not the mat
+            // view, and identifies the offending function - here now(), in the projection.
+            ctx.setLiveViewCompile(true);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery cq = null;
+                try {
+                    cq = compiler.compile("SELECT ts, x, now() AS r FROM base", ctx);
+                    Misc.free(cq.getRecordCursorFactory());
+                    Assert.fail("refresh recompile must reject a non-deterministic function");
+                } catch (SqlException e) {
+                    Assert.assertTrue(
+                            "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                            Chars.contains(e.getFlyweightMessage(), "non-deterministic function cannot be used in live view: now")
+                    );
+                }
+            } finally {
+                ctx.setLiveViewCompile(false);
+            }
+        });
+    }
+}

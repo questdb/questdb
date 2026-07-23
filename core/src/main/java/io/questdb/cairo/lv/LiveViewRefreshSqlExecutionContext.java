@@ -59,6 +59,24 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
     }
 
+    /**
+     * Live-view refresh must be a deterministic function of (base table contents, view
+     * definition) so every refresh cycle converges on the same result - and, under
+     * symmetric replica refresh, so every node does. {@code CREATE LIVE VIEW} already
+     * rejects {@code now()}/{@code sysdate()}/{@code systimestamp()}/{@code rnd_*}/etc.
+     * ({@code CairoEngine.createLiveView} arms the same guard while compiling the body),
+     * but {@link LiveViewRefreshJob} recompiles the view's SELECT on its own
+     * ({@code ensureCompiledFactory}), a path the CREATE gate never runs - a restart, for
+     * instance, rebuilds the factory straight from the persisted definition. Forcing the
+     * guard off here makes {@code FunctionParser} reject a non-deterministic function on
+     * that recompile too, as defense in depth, mirroring
+     * {@code MatViewRefreshSqlExecutionContext}.
+     */
+    @Override
+    public boolean allowNonDeterministicFunctions() {
+        return false;
+    }
+
     public void clearReader() {
         this.baseTableReader = null;
     }
