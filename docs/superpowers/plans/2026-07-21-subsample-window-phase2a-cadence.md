@@ -1,5 +1,7 @@
 # SUBSAMPLE-as-window Phase 2a: `cadence`
 
+> **Historical phase plan:** This body records assumptions at the start of Phase 2a. The authoritative final state is the completed [Phase 5 plan](2026-07-22-subsample-window-phase5-delete-cursor.md): SUBSAMPLE is window-only and the legacy cursor/configuration are deleted.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Add a user-visible `cadence(stride [, seed])` boolean keep-flag window function and migrate `SUBSAMPLE cadence(...)` to it, byte-identically to the old cursor, with javier's cadence SUBSAMPLE tests as the oracle. Reuses the `uniform` (Phase 1) TWO_PASS pattern and desugaring.

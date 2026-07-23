@@ -1,5 +1,7 @@
 # SUBSAMPLE-as-window Phase 3: `sdt` (Swinging Door Trending)
 
+> **Historical phase plan:** This body records assumptions at the start of Phase 3. The authoritative final state is the completed [Phase 5 plan](2026-07-22-subsample-window-phase5-delete-cursor.md): SUBSAMPLE is window-only and the legacy cursor/configuration are deleted.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Bring the already-built, already-reviewed `sdt(ts, value, compdev)` keep-flag window function from branch `feat/swinging-door` into `subsample-fixes` (making it user-visible alongside uniform/cadence/m4/minmax/lttb), then add `SUBSAMPLE sdt(value, compdev)` as a desugaring to it. Completes the six-algorithm keep-flag family.

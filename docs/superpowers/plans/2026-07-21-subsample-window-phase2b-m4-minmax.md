@@ -1,5 +1,7 @@
 # SUBSAMPLE-as-window Phase 2b: `m4` + `minmax`
 
+> **Historical phase plan:** This body records assumptions at the start of Phase 2b. The authoritative final state is the completed [Phase 5 plan](2026-07-22-subsample-window-phase5-delete-cursor.md): SUBSAMPLE is window-only and the legacy cursor/configuration are deleted.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Add user-visible `m4(ts, value, target)` and `minmax(ts, value, target)` boolean keep-flag window functions and migrate `SUBSAMPLE m4/minmax(value, target)` to them, byte-identically, with javier's m4/minmax SUBSAMPLE tests as the oracle. Establishes the **value-inspecting** window-function pattern (reads a value column) and the **value-column desugaring** (3-arg call node).

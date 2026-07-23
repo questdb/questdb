@@ -1,5 +1,7 @@
 # SUBSAMPLE-as-window Phase 4a: kill-switch + window-vs-cursor benchmark
 
+> **Historical phase plan:** This body records the temporary A/B decision phase. The authoritative final state is the completed [Phase 5 plan](2026-07-22-subsample-window-phase5-delete-cursor.md): the cursor, kill-switch, max-row property, and obsolete A/B benchmarks are deleted.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Get the missing evidence to decide whether to delete the old `SubsampleRecordCursorFactory`: (1) add a default-on kill-switch config `cairo.subsample.window.enabled` gating the keep-flag-window migration (a genuine production safety valve AND the benchmark lever), then (2) benchmark the window-migrated path vs the old cursor end-to-end on identical queries. **No cursor is deleted in this phase** — the user chose "benchmark first, then decide."

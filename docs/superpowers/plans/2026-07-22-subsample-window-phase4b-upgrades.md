@@ -1,5 +1,7 @@
 # SUBSAMPLE-as-window Phase 4b: window-framework upgrades to narrow the cursor gap
 
+> **Historical phase plan:** This body records the pre-retirement optimization work. The authoritative final state is the completed [Phase 5 plan](2026-07-22-subsample-window-phase5-delete-cursor.md): SUBSAMPLE is window-only; the former-cursor comparison survives only as historical benchmark evidence.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Narrow the measured ~2.7–3.9× gap between the keep-flag window path and the old SUBSAMPLE cursor by two general `CachedWindowLight` upgrades — (#1) eliminate `pass2`'s redundant per-row base re-read, and (#3) fuse the `WHERE __keep` filter so the window cursor emits only the selected rows. Each upgrade is benchmarked in isolation (decompose harness) before the next. Then (Phase 4c, separate) pursue full parity (#4 row-selecting mode) if a material gap remains.

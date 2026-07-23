@@ -1,5 +1,7 @@
 # SUBSAMPLE-as-window Phase 1: desugaring spine + `uniform`
 
+> **Historical phase plan:** This body records assumptions at the start of Phase 1. The authoritative final state is the completed [Phase 5 plan](2026-07-22-subsample-window-phase5-delete-cursor.md): SUBSAMPLE is window-only and the legacy cursor/configuration are deleted.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prove the "SUBSAMPLE → keep-flag window function" pattern end-to-end by (1) adding a user-visible `uniform(N)` boolean keep-flag window function and (2) rewriting `SUBSAMPLE uniform(N)` into a windowed subquery + filter, with javier's existing `uniform` SUBSAMPLE tests as the regression oracle. Other SUBSAMPLE methods stay on the old cursor untouched.

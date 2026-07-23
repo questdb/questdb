@@ -1,10 +1,22 @@
 # SUBSAMPLE as keep-flag window functions
 
 **Date:** 2026-07-21
-**Status:** Design approved, pending implementation plan
+**Status:** Implemented; final state recorded 2026-07-23
 **Branch:** `subsample-fixes` (off `jv/lttb` / PR #7013)
 
-## Summary
+## Authoritative final state
+
+- `SUBSAMPLE` is desugared through total migrate-or-throw routing and executes only through keep-flag window functions; the bespoke cursor and codegen dispatch are deleted.
+- `uniform`, `cadence`, `m4`, `minmax`, `lttb`, and `sdt` use TWO_PASS window implementations. A designated timestamp is required.
+- `SubsampleRecordCursorFactory`, cursor-only `UniformAlgorithm`/`CadenceAlgorithm`, the kill-switch/max-row properties, and obsolete cursor-comparison benchmarks are deleted.
+- `SubsampleAlgorithm`, `M4Algorithm`, `MinMaxAlgorithm`, and `LttbAlgorithm` remain because the value-inspecting window factories use them; `SwingingDoor` remains for `sdt`.
+- Selection is computed in timestamp order, while output preserves incoming cursor order. Ascending input stays ascending; descending input is not force-sorted.
+- Verification: the required 2,139-test suite passes with no failures/errors (4 skips), and the benchmark module packages without the deleted A/B harnesses.
+- Deferred performance work is explicit: uniform/cadence measured about 1.2–1.3× the former cursor, while value-inspecting methods remain around the ~1.9× generic pass1-dispatch ceiling.
+
+The remainder of this document preserves the original proposal and intermediate assumptions for design history. Where it conflicts with the section above, the authoritative final state wins.
+
+## Original design summary (historical)
 
 Re-implement QuestDB's `SUBSAMPLE` downsampling clause as a family of
 **boolean keep-flag window functions** plus a thin **desugaring** rewrite, instead
@@ -141,12 +153,15 @@ to this branch's window API.
 
 - `SubsampleRecordCursorFactory` and its cursor glue (the 660-line cursor, the
   native buffer, `nativeSortBufferByTimestamp`, the fast/fallback split).
-- The `SubsampleAlgorithm` interface and the per-method dispatch in
-  `SqlCodeGenerator`/`SubsampleRecordCursorFactory` (name→method switch, arity,
-  `isValueInspectingMethod`, the algorithm-construction switch, `toPlan`).
+- The per-method cursor dispatch in `SqlCodeGenerator`/`SubsampleRecordCursorFactory`
+  (name→method switch, arity, `isValueInspectingMethod`, the algorithm-construction
+  switch, `toPlan`).
+- Cursor-only `UniformAlgorithm` and `CadenceAlgorithm` helpers; their selection
+  rules now live directly in the window factories.
 
-The algorithm **math** survives inside the window functions; only the bespoke
-cursor/dispatch machinery is deleted.
+The value-inspecting algorithm **math** and shared `SubsampleAlgorithm` buffer
+contract remain because the M4/MinMax/LTTB window functions use them. Only the
+bespoke cursor/dispatch machinery is deleted.
 
 ## Components / file structure
 
@@ -156,8 +171,10 @@ cursor/dispatch machinery is deleted.
 - `core/.../engine/functions/window/SwingingDoor.java` — ported pure state machine.
 - `core/.../griffin/SqlOptimiser.java` — the `SUBSAMPLE` → window-subquery rewrite
   (replacing the custom-cursor generation path).
-- Deleted: `SubsampleRecordCursorFactory.java`, `SubsampleAlgorithm.java`,
-  `{Lttb,M4,MinMax,Uniform,Cadence}Algorithm.java` (math re-homed).
+- Deleted: `SubsampleRecordCursorFactory.java`, `UniformAlgorithm.java`, and
+  `CadenceAlgorithm.java`.
+- Retained: `SubsampleAlgorithm.java` and `{Lttb,M4,MinMax}Algorithm.java`, which
+  are the shared selection implementations used by the window factories.
 
 ## Testing
 
@@ -168,10 +185,10 @@ cursor/dispatch machinery is deleted.
   routing (EXPLAIN plan shows the expected cursor per pass class).
 - **`sdt`:** the ported `SwingingDoorTest` golden vectors + new SQL-level tests,
   plus `SUBSAMPLE sdt(value, compdev)`.
-- **Performance:** `SubsampleSortFusionBenchmark` re-pointed to compare the old
-  custom cursor (git-stashed reference) vs the window implementation at 1M–20M
-  rows; the window path must be neutral-or-better (expected: better at scale via
-  the parallel sort; verify no small-N regression from the cached-light cursor).
+- **Performance:** the Phase 4 cursor/window benchmarks established the retirement
+  baseline before deletion. Uniform/cadence ended around 1.2–1.3× the cursor;
+  value-inspecting methods plateaued around 1.9× at generic pass1 dispatch. The
+  obsolete cursor-comparison benchmark sources were deleted with the cursor.
 
 ## Phasing (each phase ships green)
 
@@ -180,8 +197,9 @@ cursor/dispatch machinery is deleted.
 2. **Count-based:** `cadence` (ZERO_PASS streaming), `m4`, `minmax`, `lttb`
    (TWO_PASS) as keep-flag functions; their existing SUBSAMPLE tests pass.
 3. **`sdt`:** port `SwingingDoor` + `sdt`; add `SUBSAMPLE sdt(value, compdev)`.
-4. **Retire + verify:** delete the old cursor/interface/dispatch; full SUBSAMPLE
-   suite green; benchmark old-vs-new.
+4. **Retire + verify:** delete the old cursor/dispatch and cursor-only helpers;
+   retain the shared value-inspecting algorithm interface/classes; full SUBSAMPLE
+   suite green; record the final old-vs-new baseline before deleting A/B harnesses.
 
 ## Open items (resolved during planning)
 

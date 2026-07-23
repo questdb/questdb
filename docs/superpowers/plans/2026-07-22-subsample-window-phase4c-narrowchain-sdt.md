@@ -1,5 +1,7 @@
 # SUBSAMPLE-as-window Phase 4c: narrowChain elimination + fuse sdt
 
+> **Historical phase plan:** This body records the final pre-retirement optimization phase. The authoritative final state is the completed [Phase 5 plan](2026-07-22-subsample-window-phase5-delete-cursor.md): SUBSAMPLE is window-only and further pass1 optimization is deferred.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Push the fused keep-flag window path closer to cursor parity by (Task 1) skipping the per-row `narrowChain` materialization on the fused path — the last per-row overhead the value-inspecting m4/minmax/lttb still pay — and (Task 2) giving `sdt` a row-selecting exposure so `SUBSAMPLE sdt` also fuses (it is currently unfused, ~3×).
