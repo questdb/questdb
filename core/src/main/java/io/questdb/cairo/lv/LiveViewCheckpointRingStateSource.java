@@ -44,7 +44,7 @@ public interface LiveViewCheckpointRingStateSource {
     void forEachRow(@NotNull RowConsumer consumer);
 
     /**
-     * @return the number of ring rows the stored aggregate covers
+     * @return the number of ring rows the stored scalar covers
      */
     long getFrameSize();
 
@@ -54,9 +54,11 @@ public interface LiveViewCheckpointRingStateSource {
     long getRowCount();
 
     /**
-     * @return the exact stored aggregate, by the bits the seal captured
+     * @return the exact stored scalar continuation state, by the bits the seal
+     * captured (the running aggregate for avg/sum, the emitted frame value for
+     * first_value/last_value/nth_value)
      */
-    double getSum();
+    double getScalar();
 
     @FunctionalInterface
     interface RowConsumer {

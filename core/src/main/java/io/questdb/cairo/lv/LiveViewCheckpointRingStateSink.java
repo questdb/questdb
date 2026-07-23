@@ -39,19 +39,21 @@ package io.questdb.cairo.lv;
 public interface LiveViewCheckpointRingStateSink {
 
     /**
-     * Records the exact aggregate continuation state, restored verbatim rather
-     * than recomputed so a re-accumulated sum cannot drift from the one the
-     * runtime carried. Called once per partition, before the first
-     * {@link #putRow}.
+     * Records the exact scalar continuation state, restored verbatim rather than
+     * recomputed so it cannot drift from the one the runtime carried: the running
+     * aggregate for {@code avg}/{@code sum}, or the frame value {@code first_value}/
+     * {@code last_value}/{@code nth_value} emits. Called once per partition, before
+     * the first {@link #putRow}. May be non-finite - a base first/last/nth value
+     * over a NULL row is NaN.
      *
-     * @param sum       the running aggregate over the frame, by raw bits
-     * @param frameSize the number of rows the aggregate covers. It is the
-     *                  function's own cardinality, not a ring index: a frame whose
-     *                  high bound trails the current row covers a prefix of the
-     *                  ring, and one whose low bound is unbounded covers rows the
-     *                  ring has already expired
+     * @param scalar    the function's scalar continuation state, by raw bits
+     * @param frameSize the number of rows the scalar covers. It is the function's
+     *                  own cardinality, not a ring index: a frame whose high bound
+     *                  trails the current row covers a prefix of the ring, and one
+     *                  whose low bound is unbounded covers rows the ring has already
+     *                  expired
      */
-    void putAggregateState(double sum, long frameSize);
+    void putScalarState(double scalar, long frameSize);
 
     /**
      * Appends one live ring row. Timestamps must not decrease across a

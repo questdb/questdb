@@ -841,7 +841,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
                         .put(", actual=").put(ringRestore.rows).put(']');
             }
-            value.putDouble(0, source.getSum());
+            value.putDouble(0, source.getScalar());
             value.putLong(1, source.getFrameSize());
             value.putLong(2, newStartOffset);
             value.putLong(3, size);
@@ -880,7 +880,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
-            sink.putAggregateState(value.getDouble(0), value.getLong(1));
+            sink.putScalarState(value.getDouble(0), value.getLong(1));
             final long startOffset = value.getLong(2);
             final long size = value.getLong(3);
             final long capacity = value.getLong(4);
@@ -917,6 +917,15 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             @Override
             public void accept(long timestamp, double value) {
+                // The avg/sum ring never stores a null (computeNext excludes them),
+                // so a non-finite value here is a corrupt value page. The shared
+                // reader admits non-finite values for first/last/nth, so avg
+                // re-asserts the invariant it relies on rather than fold garbage
+                // into the running sum.
+                if (!Numbers.isFinite(value)) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is not finite");
+                }
                 memory.putLong(startOffset + rows * RECORD_SIZE, timestamp);
                 memory.putDouble(startOffset + rows * RECORD_SIZE + Long.BYTES, value);
                 rows++;

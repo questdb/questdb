@@ -26,10 +26,13 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -1686,6 +1689,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         protected final MemoryARW memory;
         protected final RingBufferDesc memoryDesc = new RingBufferDesc();
         protected final long minDiff;
+        protected final RingRestoreSink ringRestore = new RingRestoreSink();
         protected final int timestampIndex;
         protected double lastValue = Double.NaN;
 
@@ -1930,6 +1934,27 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint last_value RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, newStartOffset);
+            value.putLong(1, size);
+            value.putLong(2, capacity);
+            value.putLong(3, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long size = source.getLong(offset);
             offset += Long.BYTES;
@@ -1953,7 +1978,28 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
 
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
+            return 2;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // last_value carries no running aggregate and slot 0 is the start
+            // offset, not a frame count, so the scalar slot is unused (NaN) and
+            // frameSize carries the row count. The ring holds every buffered row
+            // including nulls, which the shared reader now admits (a last_value over
+            // a NULL newest row is legitimately NaN).
+            final long startOffset = value.getLong(0);
+            final long size = value.getLong(1);
+            final long capacity = value.getLong(2);
+            final long firstIdx = value.getLong(3);
+            sink.putScalarState(Double.NaN, size);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putRow(
+                        memory.getLong(startOffset + idx * RECORD_SIZE),
+                        memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES)
+                );
+            }
         }
 
         @Override
@@ -1968,6 +2014,11 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                 sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
                 sink.putDouble(memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES));
             }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
         }
 
         @Override
@@ -2011,6 +2062,29 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             freeList.clear();
             lastValue = Double.NaN;
             tombstoneCount = 0;
+        }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab. Reused across partitions so a restore that walks thousands of them
+         * allocates nothing per partition. Unlike avg/sum it admits non-finite
+         * values: a last_value ring row can be a NULL argument.
+         */
+        protected class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            protected long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, double value) {
+                memory.putLong(startOffset + rows * RECORD_SIZE, timestamp);
+                memory.putDouble(startOffset + rows * RECORD_SIZE + Long.BYTES, value);
+                rows++;
+            }
+
+            protected void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
         }
     }
 

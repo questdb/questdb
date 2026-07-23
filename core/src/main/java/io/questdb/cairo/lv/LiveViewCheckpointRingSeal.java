@@ -72,17 +72,17 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
      */
     public static final int MIN_SHARED_CHUNK_ROWS = 64;
 
-    private final LiveViewCheckpointAvgDoubleRangeStateBuilder builder;
+    private final LiveViewCheckpointDoubleRangeRingStateBuilder builder;
     private long frameSize;
-    private boolean hasAggregateState;
+    private boolean hasScalarState;
     private boolean isAppending;
     private boolean isRebuildRequired;
     private long lastSurvivorTimestamp;
     private long previousLastTimestamp;
     private long previousRowCount;
     private long rowsStreamed;
+    private double scalar;
     private long splitTimestamp;
-    private double sum;
     private long survivorCount;
     private LiveViewCheckpointDataSegmentWriter writer;
 
@@ -90,7 +90,7 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
             @NotNull CairoConfiguration configuration,
             @Nullable MemoryTracker memoryTracker
     ) {
-        builder = new LiveViewCheckpointAvgDoubleRangeStateBuilder(configuration, memoryTracker);
+        builder = new LiveViewCheckpointDoubleRangeRingStateBuilder(configuration, memoryTracker);
     }
 
     /**
@@ -109,10 +109,10 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
     }
 
     @Override
-    public void putAggregateState(double sum, long frameSize) {
-        this.sum = sum;
+    public void putScalarState(double scalar, long frameSize) {
+        this.scalar = scalar;
         this.frameSize = frameSize;
-        this.hasAggregateState = true;
+        this.hasScalarState = true;
     }
 
     @Override
@@ -187,15 +187,15 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
                             .put("live view checkpoint ring state rebuild did not converge");
                 }
             }
-            if (!hasAggregateState) {
-                // NaN is a legitimate stored sum, so a function that never
-                // published its aggregate would otherwise seal a plausible-looking
-                // partition whose continuation state is invented.
+            if (!hasScalarState) {
+                // NaN is a legitimate stored scalar, so a function that never
+                // published its continuation state would otherwise seal a
+                // plausible-looking partition whose scalar is invented.
                 throw CairoException.critical(0)
-                        .put("live view checkpoint ring state published no aggregate state");
+                        .put("live view checkpoint ring state published no scalar state");
             }
-            builder.freeze(writer, key, sum, frameSize, out);
-            return LiveViewCheckpointAvgDoubleRangeStateReader.SCALAR_STATE_BYTES
+            builder.freeze(writer, key, scalar, frameSize, out);
+            return LiveViewCheckpointDoubleRangeRingStateReader.SCALAR_STATE_BYTES
                     + rowsStreamed * 2 * Long.BYTES;
         } finally {
             writer = null;
@@ -215,11 +215,11 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
         }
         isAppending = !isShared;
         frameSize = 0;
-        hasAggregateState = false;
+        hasScalarState = false;
         lastSurvivorTimestamp = 0;
         isRebuildRequired = false;
         rowsStreamed = 0;
-        sum = Double.NaN;
+        scalar = Double.NaN;
         survivorCount = 0;
     }
 

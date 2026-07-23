@@ -73,7 +73,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     private final LiveViewStatePageReader keyPageReader = new LiveViewStatePageReader();
     private final LiveViewCheckpointMetaStore metaStore;
     private final LiveViewCheckpointPartitionMapReader partitionReader;
-    private final LiveViewCheckpointAvgDoubleRangeStateReader ringStateReader;
+    private final LiveViewCheckpointDoubleRangeRingStateReader ringStateReader;
     private final LiveViewCheckpointRoot root;
     private final LiveViewCheckpointSegmentDirectoryReader segmentDirectory;
     private final LiveViewCheckpointSegmentDirectoryEntry segmentDirectoryEntry = new LiveViewCheckpointSegmentDirectoryEntry();
@@ -91,7 +91,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         keyMemory = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
         metaStore = new LiveViewCheckpointMetaStore(configuration);
         partitionReader = new LiveViewCheckpointPartitionMapReader(configuration);
-        ringStateReader = new LiveViewCheckpointAvgDoubleRangeStateReader(configuration);
+        ringStateReader = new LiveViewCheckpointDoubleRangeRingStateReader(configuration);
         root = new LiveViewCheckpointRoot(configuration);
         segmentDirectory = new LiveViewCheckpointSegmentDirectoryReader(configuration);
         timelineReader = new LiveViewCheckpointTimelineReader(configuration);
