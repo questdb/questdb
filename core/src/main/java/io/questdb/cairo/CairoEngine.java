@@ -156,6 +156,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
@@ -584,8 +585,16 @@ public class CairoEngine implements Closeable, WriterSource {
      * (tableNameRegistry, sequencers), so the enterprise engine additionally quiesces an
      * in-flight hydration, bounded, before teardown frees those. The per-token isClosing()
      * poll below is the promptness half of that contract.
+     *
+     * @throws NullPointerException if {@code target} is null. Checked up front rather than left
+     *                               to fail implicitly: with zero views on disk nothing ever
+     *                               dereferences {@code target}, and with any view present the
+     *                               per-view {@code catch (Throwable)} further down would swallow
+     *                               the resulting NPE, so a null target could otherwise look like
+     *                               a silent no-op hydrate.
      */
     public void hydrateMatViewStateStore(MatViewStateStore target) {
+        Objects.requireNonNull(target, "target");
         if (isClosing()) {
             // Same abort as the per-token poll below, taken BEFORE the first engine-state read
             // (getTableTokens walks the tableNameRegistry): a close that already won the race
