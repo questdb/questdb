@@ -54,15 +54,14 @@ import io.questdb.std.Unsafe;
  * cadence(stride) window function.
  * <p>
  * Boolean "keep this row?" flag that marks a stride-spaced subset of the ordered partition, using
- * the same selection rule as SUBSAMPLE's cadence algorithm ({@code CadenceAlgorithm.select}, re-homed
- * here over row ordinals 0..totalRows-1 rather than native buffer positions): ordinal 0 is always
+ * SUBSAMPLE's cadence selection rule over row ordinals 0..totalRows-1: ordinal 0 is always
  * kept; when {@code stride == 1} every row is kept; when {@code stride > totalRows} only ordinal 0
  * is kept (no last-row pin); otherwise ordinals {@code stride+offset, 2*stride+offset, ...} are kept
  * and the last ordinal is pinned unless already selected.
  * <p>
  * The optional second argument (see {@link CadenceSeedFunctionFactory}, signature {@code cadence(LL)})
- * supplies the stride offset's seed, mirroring {@code SubsampleRecordCursorFactory}'s cadence seed
- * modes: no second argument -&gt; offset 0; a literal {@code NULL} second argument -&gt; a fresh random
+ * supplies the stride offset's seed: no second argument -&gt; offset 0; a literal {@code NULL} second
+ * argument -&gt; a fresh random
  * offset drawn from the execution's {@link Rnd} on every execution; any other constant (or bind
  * variable / runtime constant) -&gt; a deterministic offset derived from the seed value via a
  * splitmix64 mix, computed fresh every execution (so a bind-variable seed can change between runs).
@@ -127,9 +126,8 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         if (!strideArg.isConstant() && !strideArg.isRuntimeConstant()) {
             throw SqlException.$(stridePosition, "stride must be a constant or bind variable");
         }
-        // Mirrors SqlCodeGenerator.generateSubsample's target/stride handling: resolve an UNDEFINED
-        // bind variable to LONG, and reject anything not convertible to LONG (e.g. a bind variable
-        // already bound to a non-numeric type).
+        // Preserve SUBSAMPLE stride handling: resolve an UNDEFINED bind variable to LONG and reject
+        // anything not convertible to LONG (e.g. a bind variable already bound to a non-numeric type).
         coerceRuntimeConstantType(strideArg, ColumnType.LONG, sqlExecutionContext, "stride must be an integer", stridePosition);
         final short strideTypeTag = ColumnType.tagOf(strideArg.getType());
         if (strideTypeTag != ColumnType.INT && strideTypeTag != ColumnType.LONG
@@ -269,8 +267,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             super.init(symbolTableSource, executionContext);
             strideFunc.init(symbolTableSource, executionContext);
             if (!strideFunc.isConstant()) {
-                // Resolve stride for THIS execution. Mirrors SubsampleRecordCursorFactory.getCursor's
-                // targetFunc.init()+getStride(): a bind-variable stride is re-read (and range-checked)
+                // Resolve stride for THIS execution: a bind-variable stride is re-read (and range-checked)
                 // every run, so re-binding between executions takes effect.
                 long s = strideFunc.getLong(null);
                 if (s == Numbers.LONG_NULL) {
@@ -353,13 +350,12 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             // Always keep the first row.
             selected.add(0);
             if (stride > totalRows) {
-                // Only the first row, no last-row pin (mirrors CadenceAlgorithm.select).
+                // Only the first row, no last-row pin.
                 return;
             }
             long offset = computeOffset();
             // long running index: stride + offset can exceed Integer.MAX_VALUE, which is why this
-            // (and totalRows/pos) are long rather than int - see CadenceAlgorithm.select's comment
-            // on the same overflow.
+            // and totalRows/pos are long rather than int.
             for (long pos = stride + offset; pos < totalRows; pos += stride) {
                 selected.add(pos);
             }
@@ -426,8 +422,8 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             selected.clear();
         }
 
-        // Re-homed from SubsampleRecordCursorFactory.computeCadenceOffset (splitmix64 mix +
-        // Math.floorMod), computed fresh every execution (called from preparePass2, after init()
+        // Splitmix64 mix + Math.floorMod preserve SUBSAMPLE's deterministic offset, computed fresh
+        // every execution (called from preparePass2, after init()
         // has refreshed seedFunc/contextRnd for this run) rather than once at newInstance/parse
         // time - required so SEED_MODE_RANDOM re-randomizes per run and a bind-variable seed under
         // SEED_MODE_DETERMINISTIC picks up its current value.

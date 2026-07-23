@@ -101,9 +101,8 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         if (!targetArg.isConstant() && !targetArg.isRuntimeConstant()) {
             throw SqlException.$(targetPosition, "target must be a constant or bind variable");
         }
-        // Mirrors SqlCodeGenerator.generateSubsample's target/stride handling: resolve an UNDEFINED
-        // bind variable to LONG, and reject anything not convertible to LONG (e.g. a bind variable
-        // already bound to a non-numeric type).
+        // Preserve SUBSAMPLE target handling: resolve an UNDEFINED bind variable to LONG and reject
+        // anything not convertible to LONG (e.g. a bind variable already bound to a non-numeric type).
         coerceRuntimeConstantType(targetArg, ColumnType.LONG, sqlExecutionContext, "target point count must be an integer", targetPosition);
         final short targetTypeTag = ColumnType.tagOf(targetArg.getType());
         if (targetTypeTag != ColumnType.INT && targetTypeTag != ColumnType.LONG
@@ -168,8 +167,7 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
             super.init(symbolTableSource, executionContext);
             targetArg.init(symbolTableSource, executionContext);
             if (!targetArg.isConstant()) {
-                // Resolve target for THIS execution. Mirrors SubsampleRecordCursorFactory.getCursor's
-                // targetFunc.init()+getTargetPoints(): a bind-variable target is re-read (and
+                // Resolve target for THIS execution: a bind-variable target is re-read (and
                 // range-checked) every run, so re-binding between executions takes effect.
                 long t = targetArg.getLong(null);
                 if (t == Numbers.LONG_NULL) {

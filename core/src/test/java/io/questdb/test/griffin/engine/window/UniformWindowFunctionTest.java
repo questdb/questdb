@@ -215,10 +215,9 @@ public class UniformWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testBindVariableWrongTypeRejectedWithFriendlyMessage() throws Exception {
         // A bind variable already bound to a non-numeric type before this query compiles (e.g. reused
-        // across differently-shaped statements) must be rejected with the same "integer expected for
-        // target point count" message SqlCodeGenerator.generateSubsample's cursor produces for a
-        // wrongly-typed target/stride - not a generic "no matching function" overload error, and not
-        // an uncaught cast failure surfacing later inside init()/pass1.
+        // across differently-shaped statements) must be rejected with SUBSAMPLE's friendly "integer
+        // expected for target point count" message, not a generic "no matching function" overload
+        // error or an uncaught cast failure surfacing later inside init()/pass1.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
             BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();

@@ -188,9 +188,8 @@ public class M4WindowFunctionTest extends AbstractCairoTest {
         // SYMBOL is not implicitly castable to DOUBLE, so the overload resolver itself rejects this
         // before newInstance() ever runs (it never gets a chance to raise our own "numeric column
         // expected" message here) - matching the FunctionParser's own type-mismatch diagnostic is the
-        // correct outcome for a genuinely non-numeric argument type on a real function call, unlike
-        // the bespoke SUBSAMPLE grammar in SqlCodeGenerator.generateSubsample, which has no signature
-        // resolution to lean on and does this check by hand.
+        // correct outcome for a genuinely non-numeric argument type on a real function call. The
+        // bespoke SUBSAMPLE grammar has no signature resolution to lean on and validates this explicitly.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, s symbol) timestamp(ts)");
             assertQuery("select ts, m4(ts, s, 8) over (order by ts) from t")
@@ -238,7 +237,7 @@ public class M4WindowFunctionTest extends AbstractCairoTest {
         // M4Algorithm.select seeds a bucket's min/max from the first row it sees, and NaN
         // comparisons are always false, so if that seed row is NaN the real min/max in the
         // bucket would never be detected - nor would the null row itself ever be excluded from
-        // first/last. The old SUBSAMPLE cursor (SubsampleRecordCursorFactory.bufferInput())
+        // first/last. SUBSAMPLE's input buffering
         // drops NULL ts / null-or-NaN value rows before bucketing; m4() must match it exactly.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");

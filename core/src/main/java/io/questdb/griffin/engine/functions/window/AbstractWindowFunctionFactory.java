@@ -62,12 +62,11 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         return copy;
     }
 
-    // Mirrors SqlCodeGenerator's private coerceRuntimeConstantType, which the legacy SUBSAMPLE cursor's
-    // generateSubsample uses to validate its target/stride Function: resolve a still-UNDEFINED
-    // bind-variable arg to `type`, otherwise require the arg to already be a constant/runtime-constant
-    // whose type is convertible to `type` (message/pos on mismatch). Shared by the keep-flag window
-    // factories (uniform/cadence/m4/minmax/lttb/lttb-gap) so their target/stride handling stays in
-    // lockstep with the cursor they replace.
+    // Mirrors SqlCodeGenerator's private coerceRuntimeConstantType and preserves the former SUBSAMPLE
+    // target/stride validation contract: resolve a still-UNDEFINED bind-variable arg to `type`, otherwise
+    // require the arg to already be a constant/runtime-constant whose type is convertible to `type`
+    // (message/pos on mismatch). Shared by the keep-flag window factories
+    // (uniform/cadence/m4/minmax/lttb/lttb-gap).
     static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
         if (ColumnType.isUndefined(func.getType())) {
             func.assignType(type, context.getBindVariableService());

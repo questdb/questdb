@@ -109,8 +109,8 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
         final Function valueArg = args.getQuick(1);
         final Function targetArg = args.getQuick(2);
 
-        // Reproduce SqlCodeGenerator.generateSubsample's numeric-column check (same message) so
-        // SUBSAMPLE lttb(...) and this window function reject the same columns identically.
+        // Preserve SUBSAMPLE's numeric-column check and message so the SQL clause and direct window
+        // function reject the same columns identically.
         final short valueTag = ColumnType.tagOf(valueArg.getType());
         if (valueTag != ColumnType.DOUBLE && valueTag != ColumnType.FLOAT
                 && valueTag != ColumnType.INT && valueTag != ColumnType.LONG
@@ -139,12 +139,10 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
         return new LttbBucketSelectWindowFunction(tsArg, valueArg, targetArg, targetPosition, resolvedTarget, new LttbAlgorithm(gapThresholdMicros), NAME);
     }
 
-    // Reproduces SqlCodeGenerator.generateSubsample's gap-threshold parse (~line 7157): same
-    // TimestampSamplerFactory calls, same supported units/errors/positions. The original operates on
-    // the raw (possibly quoted) ExpressionNode token from the bespoke SUBSAMPLE grammar and strips
-    // quotes by hand; here arg is already a compiled STRING constant Function (guaranteed constant by
-    // the lowercase 's' in "lttb(NDls)" - FunctionParser disqualifies non-constant candidates before
-    // newInstance runs), so getStrA() hands back the unquoted content directly.
+    // Preserves SUBSAMPLE's gap-threshold parsing contract: the same TimestampSamplerFactory calls,
+    // supported units, errors, and positions. The optimiser validates the raw (possibly quoted)
+    // SUBSAMPLE token; here the direct window function receives an already-compiled STRING constant
+    // (guaranteed by the lowercase 's' in "lttb(NDls)"), so getStrA() returns unquoted content.
     private static long parseGapThreshold(Function gapArg, int gapPosition) throws SqlException {
         final CharSequence interval = gapArg.getStrA(null);
         int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, gapPosition, "gap threshold");
@@ -162,8 +160,8 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
         };
     }
 
-    // Reproduces SqlCodeGenerator.generateSubsample's private safeMultiplyMicros (~line 7312) exactly:
-    // n * unitMicros can overflow long for large n (e.g. many days), so guard before multiplying.
+    // Preserve the gap-threshold overflow contract: n * unitMicros can overflow long for large n
+    // (e.g. many days), so guard before multiplying.
     private static long safeMultiplyMicros(long n, long unitMicros, int pos) throws SqlException {
         if (n > Long.MAX_VALUE / unitMicros) {
             throw SqlException.$(pos, "gap threshold overflow");
@@ -174,12 +172,10 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
     // lttb(ts, value, target[, gap]) over (order by xxx) - no partition by, no framing.
     //
     // Thin subclass of the shared M4FunctionFactory.BucketSelectWindowFunction purely to release
-    // LttbAlgorithm's native scratch lists on close(). M4Algorithm/MinMaxAlgorithm/UniformAlgorithm are
-    // stateless singletons, so the shared base's close() has nothing algorithm-specific to free - but
-    // LttbAlgorithm owns two DirectLongList/DirectIntList fields (lazily allocated only in gap mode; see
-    // LttbAlgorithm.selectGapPreserving) that the old SubsampleRecordCursorFactory.destroy() freed
-    // explicitly via LttbAlgorithm.close(). This mirrors that lifecycle without adding
-    // algorithm-specific cleanup to the shared base class.
+    // LttbAlgorithm's native scratch lists on close(). M4Algorithm and MinMaxAlgorithm are stateless
+    // singletons, so the shared base's close() has nothing algorithm-specific to free - but LttbAlgorithm
+    // owns two DirectLongList/DirectIntList fields (lazily allocated only in gap mode; see
+    // LttbAlgorithm.selectGapPreserving) and must be closed explicitly.
     static class LttbBucketSelectWindowFunction extends M4FunctionFactory.BucketSelectWindowFunction {
         private final LttbAlgorithm lttbAlgorithm;
 

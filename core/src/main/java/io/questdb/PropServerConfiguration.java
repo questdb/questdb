@@ -557,8 +557,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlSortValueMaxBytes;
     private final int sqlSortValuePageSize;
     private final int sqlStrFunctionBufferMaxSize;
-    private final long subsampleMaxRows;
-    private final boolean subsampleWindowEnabled;
     private final int sqlTimerShardCount;
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
@@ -1805,15 +1803,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rndFunctionMemoryPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_RND_MEMORY_PAGE_SIZE, 8192));
             this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 128));
             this.sqlStrFunctionBufferMaxSize = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, Numbers.SIZE_1MB));
-            this.subsampleMaxRows = getLong(properties, env, PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS, 100_000_000L);
-            if (this.subsampleMaxRows < 1 || this.subsampleMaxRows > Integer.MAX_VALUE) {
-                throw new ServerConfigurationException(
-                        PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath()
-                                + " must be between 1 and " + Integer.MAX_VALUE
-                );
-            }
             this.sqlWindowCachedLightEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
-            this.subsampleWindowEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SUBSAMPLE_WINDOW_ENABLED, true);
             this.sqlWindowMaxRecursion = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 128);
             int sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE, Numbers.SIZE_1MB));
             this.sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, sqlWindowStorePageSize));
@@ -4974,11 +4964,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSubsampleMaxRows() {
-            return subsampleMaxRows;
-        }
-
-        @Override
         public long getSymbolTableMaxAllocationPageSize() {
             return symbolTableMaxAllocationPageSize;
         }
@@ -5399,11 +5384,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlWindowCachedLightEnabled() {
             return sqlWindowCachedLightEnabled;
-        }
-
-        @Override
-        public boolean isSubsampleWindowEnabled() {
-            return subsampleWindowEnabled;
         }
 
         @Override

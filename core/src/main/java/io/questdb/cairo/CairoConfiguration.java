@@ -859,10 +859,6 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
-    default long getSubsampleMaxRows() {
-        return 100_000_000L;
-    }
-
     long getSymbolTableMaxAllocationPageSize();
 
     long getSymbolTableMinAllocationPageSize();
@@ -1120,17 +1116,6 @@ public interface CairoConfiguration {
     boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isSqlWindowCachedLightEnabled();
-
-    /**
-     * Kill-switch for the SUBSAMPLE keep-flag-window migration (uniform/cadence/m4/minmax/lttb only).
-     * Default true. When false, those five SUBSAMPLE methods fall through to the pre-migration
-     * custom cursor path instead of desugaring into a keep-flag window function. The {@code sdt}
-     * SUBSAMPLE method has no cursor fallback and is unaffected by this flag - it always migrates.
-     *
-     * @return true (the default) to allow the keep-flag-window migration, false to force the old
-     * custom SUBSAMPLE cursor path for uniform/cadence/m4/minmax/lttb.
-     */
-    boolean isSubsampleWindowEnabled();
 
     boolean isTableTypeConversionEnabled();
 

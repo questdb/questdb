@@ -3926,7 +3926,7 @@ public class SubsampleTest extends AbstractCairoTest {
         });
     }
 
-    // Mirrors the splitmix64 hash used in SubsampleRecordCursorFactory
+    // Mirrors the splitmix64 hash used by the cadence window function.
     // for deterministic cadence offset computation.
     @Test
     public void testSubsampleOnNonFinalUnionArmRejected() throws Exception {

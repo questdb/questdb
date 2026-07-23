@@ -84,8 +84,8 @@ public class MinMaxFunctionFactory extends AbstractWindowFunctionFactory {
         final Function valueArg = args.getQuick(1);
         final Function targetArg = args.getQuick(2);
 
-        // Reproduce SqlCodeGenerator.generateSubsample's numeric-column check (same message) so
-        // SUBSAMPLE minmax(...) and this window function reject the same columns identically.
+        // Preserve SUBSAMPLE's numeric-column check and message so the SQL clause and direct window
+        // function reject the same columns identically.
         final short valueTag = ColumnType.tagOf(valueArg.getType());
         if (valueTag != ColumnType.DOUBLE && valueTag != ColumnType.FLOAT
                 && valueTag != ColumnType.INT && valueTag != ColumnType.LONG

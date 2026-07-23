@@ -240,7 +240,7 @@ public class MinMaxWindowFunctionTest extends AbstractCairoTest {
         // MinMaxAlgorithm.select seeds a bucket's min/max from the first row it sees, and NaN
         // comparisons are always false, so if that seed row is NaN the real min/max in the
         // bucket would never be detected. The old SUBSAMPLE cursor
-        // (SubsampleRecordCursorFactory.bufferInput()) drops NULL ts / null-or-NaN value rows
+        // SUBSAMPLE drops NULL ts / null-or-NaN value rows
         // before bucketing; minmax() must match it exactly.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");

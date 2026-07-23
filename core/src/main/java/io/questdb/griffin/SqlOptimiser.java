@@ -9380,9 +9380,9 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
                 // TOTAL count/value + sdt gates. Every SUBSAMPLE shape either MIGRATES to a keep-flag
-                // window function or THROWS a cursor-identical SqlException here; none reaches the legacy
-                // SUBSAMPLE cursor (deleted in a follow-up). Structural rejects (wrong arity, non-literal
-                // value, target/stride/seed that is neither a constant nor a bind variable, an invalid
+                // window function or THROWS a cursor-compatible SqlException here. Structural rejects
+                // (wrong arity, non-literal value, target/stride/seed that is neither a constant nor a
+                // bind variable, an invalid
                 // CONSTANT target/stride/seed, unknown method) throw at rewrite with the cursor's exact
                 // message and position. Range/type errors for a bind-variable target/stride MIGRATE and
                 // are re-reported cursor-identically by the window factory at runtime; LTTB's raw gap
@@ -9502,11 +9502,10 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * TOTAL validation for a position-only SUBSAMPLE target/stride (uniform/cadence). Mirrors the legacy
-     * cursor's {@code generateSubsample} so the deleted-in-a-follow-up cursor path is unreachable:
+     * TOTAL validation for a position-only SUBSAMPLE target/stride (uniform/cadence), preserving the
+     * legacy validation contract:
      * <ul>
-     *   <li>a valid CONSTANT (cursor range via {@link SqlCodeGenerator#getTargetPoints}/{@link
-     *       SqlCodeGenerator#getStride}) migrates (returns normally);</li>
+     *   <li>a valid CONSTANT (using the legacy target/stride range contract) migrates;</li>
      *   <li>a bind-variable / runtime constant migrates - the window factory re-validates its range and
      *       type per execution, cursor-identically;</li>
      *   <li>an INVALID constant (NULL, out of range, non-integer type) throws the cursor-identical
@@ -9530,17 +9529,61 @@ public class SqlOptimiser implements Mutable {
                 if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
                     throw SqlException.$(node.position, cadence ? "integer expected for stride" : "integer expected for target point count");
                 }
-                // Reproduce the cursor's exact range check (message + position) for a constant.
+                // Reproduce the legacy cursor's exact range check (message + position) for a constant.
                 if (cadence) {
-                    SqlCodeGenerator.getStride(func, tag, node.position);
+                    validateStride(func, tag, node.position);
                 } else {
-                    SqlCodeGenerator.getTargetPoints(func, tag, node.position);
+                    validateTargetPoints(func, tag, node.position);
                 }
             }
             // A bind-variable / runtime-constant target/stride migrates; the window factory range- and
             // type-validates it per execution with the same messages and positions as the old cursor.
         } finally {
             Misc.free(func);
+        }
+    }
+
+    private static void validateStride(Function targetFunc, int targetType, int position) throws SqlException {
+        final long value;
+        if (targetType == ColumnType.LONG) {
+            value = targetFunc.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "stride must be set");
+            }
+        } else {
+            final int intValue = targetFunc.getInt(null);
+            if (intValue == Numbers.INT_NULL) {
+                throw SqlException.$(position, "stride must be set");
+            }
+            value = intValue;
+        }
+        if (value < 1) {
+            throw SqlException.$(position, "stride must be at least 1");
+        }
+        if (value > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+    }
+
+    private static void validateTargetPoints(Function targetFunc, int targetType, int position) throws SqlException {
+        final long value;
+        if (targetType == ColumnType.LONG) {
+            value = targetFunc.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "target point count must be set");
+            }
+        } else {
+            final int intValue = targetFunc.getInt(null);
+            if (intValue == Numbers.INT_NULL) {
+                throw SqlException.$(position, "target point count must be set");
+            }
+            value = intValue;
+        }
+        if (value < 2) {
+            throw SqlException.$(position, "target points must be at least 2");
+        }
+        if (value > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
         }
     }
 
@@ -9912,7 +9955,7 @@ public class SqlOptimiser implements Mutable {
         final ExpressionNode orderByTs = expressionNodePool.next().of(LITERAL, windowTsToken, 0, timestamp.position);
         keepCol.addOrderBy(orderByTs, IQueryModel.ORDER_DIRECTION_ASCENDING);
 
-        // The SUBSAMPLE clause is now expressed by the window + filter; drop it so the cursor path is skipped.
+        // The SUBSAMPLE clause is now expressed by the window + filter; no residual clause reaches codegen.
         nested.setSubsample(null, 0);
 
         // The model that the keep-flag window is projected alongside, and the model the keep filter

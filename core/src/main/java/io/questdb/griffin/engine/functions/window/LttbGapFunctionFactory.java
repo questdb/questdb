@@ -36,7 +36,7 @@ import io.questdb.std.ObjList;
  * LttbFunctionFactory}. See that class for the shared implementation, and {@link
  * io.questdb.griffin.engine.table.LttbAlgorithm} for the gap-preserving segment-splitting semantics;
  * this factory only adds the gap threshold argument (a constant interval string such as {@code '1h'},
- * parsed the same way {@code SqlCodeGenerator.generateSubsample} parses SUBSAMPLE lttb's gap argument).
+ * parsed with the same interval rules as SUBSAMPLE lttb's gap argument).
  */
 public class LttbGapFunctionFactory extends AbstractWindowFunctionFactory {
 

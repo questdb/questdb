@@ -284,7 +284,7 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFiltersNullAndNaNRows() throws Exception {
         // A NULL/NaN value must be dropped before bucketing, exactly like m4/minmax: the old SUBSAMPLE
-        // cursor (SubsampleRecordCursorFactory.bufferInput()) drops NULL ts / null-or-NaN value rows
+        // SUBSAMPLE drops NULL ts / null-or-NaN value rows
         // before ever handing the buffer to the algorithm. Non-null count(3) <= target(4) here, so this
         // also exercises the keepAll short-circuit on top of the null filter (matches
         // M4WindowFunctionTest.testFiltersNullAndNaNRows's shape, function swapped to lttb).

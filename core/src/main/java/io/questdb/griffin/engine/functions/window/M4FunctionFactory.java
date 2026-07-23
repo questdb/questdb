@@ -108,8 +108,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         final Function valueArg = args.getQuick(1);
         final Function targetArg = args.getQuick(2);
 
-        // Reproduce SqlCodeGenerator.generateSubsample's numeric-column check (same message) so
-        // SUBSAMPLE m4(...) and this window function reject the same columns identically.
+        // Preserve SUBSAMPLE's numeric-column check and message so the SQL clause and direct window
+        // function reject the same columns identically.
         final short valueTag = ColumnType.tagOf(valueArg.getType());
         if (valueTag != ColumnType.DOUBLE && valueTag != ColumnType.FLOAT
                 && valueTag != ColumnType.INT && valueTag != ColumnType.LONG
@@ -165,8 +165,7 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long count;          // running non-null row counter during pass1; becomes bufferSize.
         // Rows with a NULL ts or a null/NaN value are dropped from the buffer entirely (never
-        // appended, never counted), mirroring SubsampleRecordCursorFactory.bufferInput()/
-        // getValueAsDouble() - a null seeding a bucket's min/max would otherwise poison it forever
+        // appended, never counted) - a null seeding a bucket's min/max would otherwise poison it forever
         // (NaN comparisons are always false, so minVal/maxVal, once NaN, never update again).
         private boolean lastKeep;    // last keep-flag computed in pass2; see getBool() below
         private ObjList<ExpressionNode> orderBy;
@@ -185,8 +184,7 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         private long selIdx;         // monotonic cursor into `selected` during pass2
         private long target;         // resolved in init() from targetArg for the current execution
         // Resolved once at construction (valueArg's type never changes across rows), used by
-        // readValue() to replicate SubsampleRecordCursorFactory.getValueAsDouble()'s per-type
-        // null -> NaN mapping.
+        // readValue() for the per-type null -> NaN mapping.
         private final short valueTag;
 
         BucketSelectWindowFunction(Function tsArg, Function valueArg, Function targetArg, int targetPosition, long resolvedTarget, SubsampleAlgorithm algorithm, String name) {
@@ -204,14 +202,11 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             this.name = name;
         }
 
-        // Shared by M4FunctionFactory/MinMaxFunctionFactory/LttbFunctionFactory's newInstance(0):
-        // mirrors SqlCodeGenerator.generateSubsample's target/stride handling for the non-CADENCE
-        // (target point count) case - coerce an UNDEFINED bind variable to LONG, reject anything not
-        // convertible to LONG, reject a non-integer tag, and - for a CONSTANT target only - validate
-        // its range right here at compile time (byte-identical message/position to the
-        // pre-bind-var-support factories). A bind-variable target is range-validated per-execution in
-        // init() instead; see there. Returns the resolved value for a constant target, or 0 (unused
-        // placeholder) for a bind variable.
+        // Shared by M4FunctionFactory/MinMaxFunctionFactory/LttbFunctionFactory's newInstance(0).
+        // Preserves the SUBSAMPLE target-point contract: coerce an UNDEFINED bind variable to LONG,
+        // reject anything not convertible to LONG or with a non-integer tag, and validate a CONSTANT
+        // target at compile time. A bind-variable target is range-validated per execution in init();
+        // see there. Returns the resolved constant value, or 0 (unused placeholder) for a bind variable.
         static long coerceAndValidateConstantTarget(Function targetArg, int targetPosition, SqlExecutionContext sqlExecutionContext) throws SqlException {
             coerceRuntimeConstantType(targetArg, ColumnType.LONG, sqlExecutionContext, "target point count must be an integer", targetPosition);
             final short targetTypeTag = ColumnType.tagOf(targetArg.getType());
@@ -223,8 +218,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                 return 0;
             }
             long target = targetArg.getLong(null);
-            // Mirror SqlCodeGenerator.getTargetPoints exactly: a NULL (e.g. unset bind variable)
-            // reports "must be set", distinct from an in-range-typed but too-small value.
+            // Preserve the target-point contract: NULL reports "must be set", distinct from a
+            // correctly typed but too-small value.
             if (target == Numbers.LONG_NULL) {
                 throw SqlException.$(targetPosition, "target point count must be set");
             }
@@ -322,11 +317,10 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             valueArg.init(symbolTableSource, executionContext);
             targetArg.init(symbolTableSource, executionContext);
             if (!targetArg.isConstant()) {
-                // Resolve target for THIS execution. Mirrors SubsampleRecordCursorFactory.getCursor's
-                // targetFunc.init()+getTargetPoints(): a bind-variable target is re-read (and
+                // Resolve target for THIS execution: a bind-variable target is re-read (and
                 // range-checked) every run, so re-binding between executions takes effect.
                 long t = targetArg.getLong(null);
-                // Mirror SqlCodeGenerator.getTargetPoints: NULL (unset bind var) -> "must be set".
+                // Preserve the target-point contract: an unset bind variable reports "must be set".
                 if (t == Numbers.LONG_NULL) {
                     throw SqlException.$(targetPosition, "target point count must be set");
                 }
@@ -412,14 +406,10 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             pass2Ordinal = 0;
             pass2Row = 0;
             if (count <= target) {
-                // Mirror SubsampleRecordCursorFactory.bufferAndSelect's
-                // `bufferSize <= targetPoints -> selectAll()` short-circuit: when the buffered
-                // (non-null) row count already fits the target, keep every buffered row rather than
-                // bucketing. Running algorithm.select here would dedup first/min/max/last and can drop
-                // rows (e.g. a monotonic run collapses to just {first,last}), diverging from the old
-                // SUBSAMPLE cursor which returns ALL rows in this case. Null rows stay dropped - they
-                // were never appended to the buffer, so keeping all buffered rows keeps only non-nulls,
-                // exactly as selectAll() over bufferInput()'s null-filtered buffer does.
+                // When the buffered row count already fits the target, keep every buffered row rather
+                // than bucketing. Running algorithm.select here would dedup first/min/max/last and can drop
+                // rows (e.g. a monotonic run collapses to just {first,last}). Null rows stay dropped
+                // because they were never appended to the buffer.
                 selected.clear();
                 for (long i = 0; i < count; i++) {
                     selected.add(i);
@@ -518,8 +508,7 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
          * order: {@code true} for a dropped (NULL ts / null-or-NaN value) row, {@code false} for a
          * buffered row. pass1 is called once per row in order, so this is O(1) amortised. pass2
          * reads the same bits back via {@link #nullFlag(long)} instead of re-deriving null-ness from
-         * a random-access base re-read (mirrors the old {@code isNullRow(record)}: a NULL timestamp,
-         * or a null/NaN value, per SubsampleRecordCursorFactory.bufferInput()).
+         * a random-access base re-read: a NULL timestamp or a null/NaN value is dropped.
          */
         private void appendNullFlag(boolean isNull) {
             final long wordIndex = rowCount >>> 6;
@@ -542,8 +531,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         /**
-         * Reads the value column as a double, mapping each type's NULL sentinel to NaN - mirrors
-         * SubsampleRecordCursorFactory.getValueAsDouble() (SHORT/BYTE have no null sentinel).
+         * Reads the value column as a double, mapping each type's NULL sentinel to NaN
+         * (SHORT/BYTE have no null sentinel).
          */
         private double readValue(Record record) {
             switch (valueTag) {

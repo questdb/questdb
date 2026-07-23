@@ -1324,11 +1324,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getSubsampleMaxRows() {
-        return 100_000_000L;
-    }
-
-    @Override
     public long getSymbolTableMaxAllocationPageSize() {
         return 8 * 1024 * 1024;
     }
@@ -1724,11 +1719,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlWindowCachedLightEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean isSubsampleWindowEnabled() {
         return true;
     }
 
