@@ -95,7 +95,7 @@ public class ReplicaOnlyIndexPlannerTest extends AbstractCairoTest {
     public void testMultiColumnLatestByFullScansCorrectly() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table z (s1 symbol index replica only, s2 symbol index replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into z values ('a','x',1,0),('a','x',2,1000000),('a','y',3,2000000),('b','y',4,3000000)");
+            execute("insert into z values ('a','x',1,0),('a','x',2,1_000_000),('a','y',3,2_000_000),('b','y',4,3_000_000)");
             drainWalQueue();
 
             assertQuery("select s1, s2, v, ts from z latest on ts partition by s1, s2")

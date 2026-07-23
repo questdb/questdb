@@ -559,7 +559,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             skip = false; // non-skipping node: the index IS materialized and used
             execute("create table x (s symbol index capacity 32 replica only, v double, ts timestamp) timestamp(ts) partition by day bypass wal");
             // day0 (older) + day1 (current)
-            execute("insert into x values ('a', 1, 0), ('b', 2, 3600000000), ('a', 3, 86400000000)");
+            execute("insert into x values ('a', 1, 0), ('b', 2, 3_600_000_000), ('a', 3, 86_400_000_000)");
             engine.releaseAllWriters();
             Assert.assertTrue("index files must exist on a non-skipping node", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
