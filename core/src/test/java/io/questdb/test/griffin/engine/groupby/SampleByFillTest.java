@@ -14,7 +14,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -915,8 +914,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
                             final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                                     engine,
-                                    circuitBreakerConfiguration,
-                                    MemoryTag.NATIVE_DEFAULT
+                                    circuitBreakerConfiguration
                             );
                             try {
                                 engine.execute(
