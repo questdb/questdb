@@ -133,6 +133,7 @@ public final class WhereClauseParser implements Mutable {
     private int reentryDepth;
     private long resolvedBoundConst;
     private Function resolvedBoundFunc;
+    private boolean skipReplicaOnlyIndexes;
     private CharSequence timestamp;
 
     @Override
@@ -248,6 +249,7 @@ public final class WhereClauseParser implements Mutable {
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.noIndex = noIndex;
         this.preferredKeyColumn = preferredKeyColumn;
+        this.skipReplicaOnlyIndexes = executionContext.getCairoEngine().getConfiguration().skipReplicaOnlyIndexes();
 
         IntrinsicModel model = models.next();
         int timestampType = reader.getMetadata().getTimestampType();
@@ -2475,7 +2477,7 @@ public final class WhereClauseParser implements Mutable {
         return !latestByMultiColumn &&
                 (
                         Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
-                                || (preferredKeyColumn == null && !noIndex && m.isColumnIndexed(m.getColumnIndex(columnName)))
+                                || (preferredKeyColumn == null && !noIndex && m.isColumnIndexActive(m.getColumnIndex(columnName), skipReplicaOnlyIndexes))
                 );
     }
 

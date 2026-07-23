@@ -118,6 +118,10 @@ public interface TableStructure {
         return false;
     }
 
+    default boolean isReplicaOnlyIndex(int columnIndex) {
+        return false;
+    }
+
     default boolean isView() {
         return false;
     }

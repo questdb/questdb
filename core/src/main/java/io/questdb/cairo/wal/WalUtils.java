@@ -90,6 +90,7 @@ public class WalUtils {
     public static final long SEQ_META_TABLE_ID = SEQ_META_OFFSET_TIMESTAMP_INDEX + Integer.BYTES;
     public static final long SEQ_META_SUSPENDED = SEQ_META_TABLE_ID + Integer.BYTES;
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_SUSPENDED + Byte.BYTES;
+    public static final long SEQ_META_REPLICA_ONLY_CHECKSUM_SALT = 0x52504C59; // RPLY
     public static final String TABLE_REGISTRY_NAME_FILE = "tables.d";
     public static final String TXNLOG_FILE_NAME = "_txnlog";
     public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
@@ -425,6 +426,20 @@ public class WalUtils {
                     metaMem.putInt(indices.getQuick(j));
                 }
             }
+        }
+
+        // Optional section: replica-only index flags (backward compatible), mirrors the index-type
+        // section. Written last so older readers ignore the trailing bytes and newer readers find it
+        // after the covering-columns section.
+        long replicaOnlyCheckSum = checkSum * 31 + SEQ_META_REPLICA_ONLY_CHECKSUM_SALT;
+        replicaOnlyCheckSum = replicaOnlyCheckSum * 31 + columnCount;
+        for (int i = 0; i < columnCount; i++) {
+            replicaOnlyCheckSum = replicaOnlyCheckSum * 31 + (metadata.getColumnMetadata(i).isReplicaOnlyIndex() ? 1 : 0);
+        }
+        metaMem.putLong(replicaOnlyCheckSum);
+        metaMem.putInt(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            metaMem.putByte((byte) (metadata.getColumnMetadata(i).isReplicaOnlyIndex() ? 1 : 0));
         }
     }
 

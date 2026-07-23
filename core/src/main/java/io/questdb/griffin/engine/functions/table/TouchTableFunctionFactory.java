@@ -161,6 +161,11 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
         private void touchTable() {
             clearCounters();
+            // Read the replication role live at execution rather than capturing it at construction:
+            // the role can flip (hot promote/demote) while this function instance is retained in a
+            // cached/prepared plan, and index eligibility must follow the CURRENT role, not the one
+            // in effect when the factory was compiled.
+            final boolean skipReplicaOnlyIndexes = sqlExecutionContext.getCairoEngine().getConfiguration().skipReplicaOnlyIndexes();
             final long pageSize = Files.PAGE_SIZE;
             // factory belongs to the function, do not close
             final RecordCursorFactory recordCursorFactory = arg.getRecordCursorFactory();
@@ -174,7 +179,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                         final long columnBaseAddress = frame.getPageAddress(columnIndex);
                         dataPages += touchMemory(pageSize, columnBaseAddress, columnMemorySize);
 
-                        if (metadata.isColumnIndexed(columnIndex)) {
+                        if (metadata.isColumnIndexActive(columnIndex, skipReplicaOnlyIndexes)) {
                             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
 
                             final long keyBaseAddress = indexReader.getKeyBaseAddress();

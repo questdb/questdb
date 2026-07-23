@@ -67,6 +67,7 @@ import static io.questdb.cairo.TableUtils.iFile;
 
 public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private static final Log LOG = LogFactory.getLog(UpdateOperatorImpl.class);
+    private final CairoConfiguration configuration;
     private final long dataAppendPageSize;
     private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
     private final FilesFacade ff;
@@ -86,6 +87,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             int rootLen,
             PurgingOperator purgingOperator
     ) {
+        this.configuration = configuration;
         this.tableWriter = tableWriter;
         this.rootLen = rootLen;
         this.purgingOperator = purgingOperator;
@@ -783,7 +785,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         indexBuilder.of(path.trimTo(rootLen));
         for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
             int columnIndex = updateColumnIndexes.get(i);
-            if (tableMetadata.isColumnIndexed(columnIndex)) {
+            if (tableMetadata.isColumnIndexActive(columnIndex, configuration.skipReplicaOnlyIndexes())) {
                 CharSequence colName = tableMetadata.getColumnName(columnIndex);
                 indexBuilder.reindexAfterUpdate(ff, partitionTimestamp, colName, tableWriter);
             }

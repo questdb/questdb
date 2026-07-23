@@ -2201,7 +2201,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
+        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames, boolean replicaOnly) {
             // Validation only checks the indexed column exists. INCLUDE
             // column validity (existence, no self-reference, no duplicates)
             // is enforced at SQL compile time in
@@ -2344,11 +2344,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
+        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames, boolean replicaOnly) {
             // ADD INDEX (with or without INCLUDE) is non-structural for the
             // WAL writer's local metadata — see comment on the 3-arg
             // override. Sequencer metadata captures the INCLUDE list via
-            // SequencerMetadataService.addIndex's 4-arg override.
+            // SequencerMetadataService.addIndex's 5-arg override.
             addIndex(columnName, indexValueBlockSize, indexType);
         }
 

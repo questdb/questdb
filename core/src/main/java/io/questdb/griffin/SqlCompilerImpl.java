@@ -75,6 +75,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.RoleGenerationRecordCursorFactory;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -144,6 +145,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.locks.Lock;
+import java.util.function.IntConsumer;
 
 import static io.questdb.cairo.TableUtils.TABLE_KIND_REGULAR_TABLE;
 import static io.questdb.griffin.SqlKeywords.*;
@@ -213,6 +215,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
+    private IntConsumer roleGenerationPlanObserver;
+    private IntConsumer roleGenerationPrePlanObserver;
 
     public SqlCompilerImpl(CairoEngine engine) {
         try {
@@ -547,6 +551,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
                 }
                 LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).I$();
+                // generateSelectOneShot() owns and frees the completed factory before raising a
+                // role-generation retry. sharedFactoryCache only holds non-owning references into
+                // that factory graph, so clear the map before query-model pools are reset/reused.
+                // ObjObjHashMap.clear() does not free values and therefore cannot double-free the
+                // already-released factory.
+                codeGenerator.clear();
                 clearExceptSqlText();
                 lexer.restart();
                 if (insertModel != null) {
@@ -589,6 +599,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     public void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
+    }
+
+    @TestOnly
+    public void setRoleGenerationPlanObserver(IntConsumer observer) {
+        roleGenerationPlanObserver = observer;
+    }
+
+    @TestOnly
+    public void setRoleGenerationPrePlanObserver(IntConsumer observer) {
+        roleGenerationPrePlanObserver = observer;
     }
 
     @TestOnly
@@ -1165,7 +1185,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int indexValueBlockSize,
             byte indexType,
             @Nullable ObjList<CharSequence> coveringColumnNames,
-            @Nullable IntList coveringColumnPositions
+            @Nullable IntList coveringColumnPositions,
+            boolean replicaOnly
     ) throws SqlException {
         final int columnIndex = metadata.getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
@@ -1234,7 +1255,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnName,
                 Numbers.ceilPow2(indexValueBlockSize),
                 indexType,
-                coveringColumnNames
+                coveringColumnNames,
+                replicaOnly
         );
         // Authorize against the indexed column only. Covering INCLUDE columns
         // are not part of the ADD INDEX privilege; passing them here would let
@@ -2098,7 +2120,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             indexValueBlockSize,
                             indexType,
                             null,
-                            null
+                            null,
+                            false
                     );
                 } else if (SqlKeywords.isDropKeyword(tok)) {
                     expectKeyword(lexer, "index");
@@ -2430,6 +2453,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         int indexValueCapacity = -1;
                         byte indexType = configuration.getDefaultSymbolIndexType();
                         boolean indexTypeExplicit = false;
+                        boolean replicaOnly = false;
                         ObjList<CharSequence> coveringColumnNames = null;
                         IntList coveringColumnPositions = null;
 
@@ -2485,10 +2509,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 }
                                 tok = SqlUtil.fetchNext(lexer);
                             }
-                            if (tok != null && !isSemicolon(tok)) {
-                                if (!isCapacityKeyword(tok)) {
-                                    throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
-                                }
+                            // Optional CAPACITY clause (BITMAP only).
+                            if (tok != null && !isSemicolon(tok) && isCapacityKeyword(tok)) {
                                 if (!indexTypeExplicit) {
                                     indexType = IndexType.BITMAP;
                                 } else if (indexType != IndexType.BITMAP) {
@@ -2503,6 +2525,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 } catch (NumericException e) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "positive integer literal expected as index capacity");
                                 }
+                                tok = SqlUtil.fetchNext(lexer);
+                            }
+                            // Optional trailing REPLICA ONLY modifier.
+                            if (tok != null && !isSemicolon(tok) && SqlKeywords.isReplicaKeyword(tok)) {
+                                expectKeyword(lexer, "only");
+                                replicaOnly = true;
+                                tok = SqlUtil.fetchNext(lexer);
+                            }
+                            if (tok != null && !isSemicolon(tok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'capacity' or 'replica only' expected");
                             }
                         }
 
@@ -2516,7 +2548,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 indexValueCapacity,
                                 indexType,
                                 coveringColumnNames,
-                                coveringColumnPositions
+                                coveringColumnPositions,
+                                replicaOnly
                         );
                     } else if (isDropKeyword(tok)) {
                         tok = expectToken(lexer, "'index'");
@@ -5502,7 +5535,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException {
+        final long roleGeneration = engine.getRoleGeneration();
+        final IntConsumer prePlanObserver = roleGenerationPrePlanObserver;
+        if (prePlanObserver != null) {
+            prePlanObserver.accept(codeGenerator.getSharedFactoryCacheSize());
+        }
         RecordCursorFactory factory = codeGenerator.generate(selectQueryModel, executionContext);
+        final IntConsumer planObserver = roleGenerationPlanObserver;
+        if (planObserver != null) {
+            planObserver.accept(codeGenerator.getSharedFactoryCacheSize());
+        }
+        if (codeGenerator.isRoleSensitive()) {
+            if (roleGeneration != engine.getRoleGeneration()) {
+                Misc.free(factory);
+                throw TableReferenceOutOfDateException.of("node role");
+            }
+            factory = new RoleGenerationRecordCursorFactory(factory, engine, roleGeneration);
+        }
         ObjList<ViewDefinition> views = selectQueryModel.getReferencedViews();
         if (views.size() > 0) {
             factory = new StaleViewCheckFactory(factory, views, engine);

@@ -42,7 +42,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
+    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames, boolean replicaOnly) {
         throw CairoException.critical(0).put("add index does not update sequencer metadata");
     }
 

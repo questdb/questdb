@@ -183,7 +183,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                         assertQuery("show columns from bah")
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
-                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\tfalse\nx\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse\n");
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -201,7 +201,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                         assertQuery("show columns from foo")
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
-                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\tfalse\nx\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse\n");
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -302,7 +302,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                         assertQuery("show columns from bah")
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
-                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\tfalse\nx\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse\n");
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -324,7 +324,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                         assertQuery("show columns from foo")
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
-                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\tfalse\nx\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse\n");
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {

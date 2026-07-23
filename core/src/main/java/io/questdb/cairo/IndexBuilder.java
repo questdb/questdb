@@ -301,6 +301,9 @@ public class IndexBuilder extends RebuildColumnBase {
 
     @Override
     protected boolean isSupportedColumn(RecordMetadata metadata, int columnIndex) {
-        return metadata.isColumnIndexed(columnIndex);
+        return metadata.isColumnIndexed(columnIndex)
+                // A skipping primary must not (re)build a replica-only index during REINDEX;
+                // such columns are owned by replicas. Mirrors the write-path active-index gate.
+                && !(metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes());
     }
 }

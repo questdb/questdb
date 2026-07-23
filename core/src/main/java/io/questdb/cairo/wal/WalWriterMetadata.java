@@ -103,7 +103,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             boolean isDedupKey,
             boolean symbolIsCached,
             int symbolCapacity,
-            @Transient IntList coveringColumnIndices
+            @Transient IntList coveringColumnIndices,
+            boolean replicaOnlyIndex
     ) {
         if (fullSequencerMetadata) {
             addFullSequencerColumn(
@@ -116,7 +117,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                     isDedupKey,
                     symbolIsCached,
                     symbolCapacity,
-                    coveringColumnIndices
+                    coveringColumnIndices,
+                    replicaOnlyIndex
             );
         } else {
             // WAL segment _meta stays lightweight; checkpointed txn_seq/_meta uses fullSequencerMetadata.
@@ -374,7 +376,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             boolean isDedupKey,
             boolean symbolCacheFlag,
             int symbolCapacity,
-            @Transient IntList coveringColumnIndices
+            @Transient IntList coveringColumnIndices,
+            boolean replicaOnlyIndex
     ) {
         final String name = columnName.toString();
         if (columnType > 0) {
@@ -396,6 +399,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         if (coveringColumnIndices != null) {
             columnMetadata.setCoveringColumnIndices(new IntList(coveringColumnIndices));
         }
+        columnMetadata.setReplicaOnlyIndex(replicaOnlyIndex);
         this.columnMetadata.add(columnMetadata);
         columnCount++;
     }

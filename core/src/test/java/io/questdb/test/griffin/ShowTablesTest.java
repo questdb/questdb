@@ -85,10 +85,10 @@ public class ShowTablesTest extends AbstractCairoTest {
                     .ddl(null)
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t4\tfalse\tfalse\t\t
-                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t4\tfalse\tfalse\t\t\tfalse
+                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
         });
     }
@@ -122,11 +122,11 @@ public class ShowTablesTest extends AbstractCairoTest {
                     .ddl(null)
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            ccx\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t
-                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
-                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            ccx\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t\tfalse
+                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t\tfalse
+                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
         });
     }

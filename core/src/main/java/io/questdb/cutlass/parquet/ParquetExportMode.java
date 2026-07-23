@@ -26,11 +26,14 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PriorityMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.RoleGenerationRecordCursorFactory;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.std.ObjList;
@@ -83,7 +86,7 @@ public enum ParquetExportMode {
         if (factory.hasParquetConvertedColumns(executionContext)) {
             return TEMP_TABLE;
         }
-        RecordCursorFactory unwrapped = unwrapFactory(factory);
+        RecordCursorFactory unwrapped = unwrapFactoryShape(factory);
         // A metadata-only page-frame producer (the covering-index single-key scan) emits
         // placeholder covered-column addresses that only the async covered-decode framework
         // fills; a DIRECT_PAGE_FRAME reader would ship all-null covered columns. Fall through
@@ -115,6 +118,19 @@ public enum ParquetExportMode {
         return CURSOR_BASED;
     }
 
+    public static PageFrameCursor getPageFrameBackedCursor(
+            RecordCursorFactory factory,
+            SqlExecutionContext executionContext,
+            int order
+    ) throws SqlException {
+        RecordCursorFactory executionFactory = unwrapFactory(factory);
+        if (executionFactory instanceof RoleGenerationRecordCursorFactory roleFactory) {
+            roleFactory.validateRoleGeneration();
+        }
+        VirtualRecordCursorFactory virtualFactory = (VirtualRecordCursorFactory) unwrapFactoryShape(factory);
+        return virtualFactory.getBaseFactory().getPageFrameCursor(executionContext, order);
+    }
+
     /**
      * Checks whether a VirtualRecordCursorFactory has any computed BINARY columns.
      * Computed BINARY columns cannot be materialized into buffers for Parquet export.
@@ -139,9 +155,21 @@ public enum ParquetExportMode {
     }
 
     /**
-     * Unwraps a QueryProgress wrapper to access the underlying factory.
+     * Unwraps a QueryProgress wrapper for execution. Role-generation wrappers remain in place so
+     * cursor acquisition cannot bypass stale-plan validation.
      */
     public static RecordCursorFactory unwrapFactory(RecordCursorFactory factory) {
         return factory instanceof QueryProgress qp ? qp.getBaseFactory() : factory;
+    }
+
+    /**
+     * Unwraps transparent wrappers for factory-shape inspection only. Callers must acquire cursors
+     * through the execution wrapper or {@link #getPageFrameBackedCursor(RecordCursorFactory, SqlExecutionContext, int)}.
+     */
+    public static RecordCursorFactory unwrapFactoryShape(RecordCursorFactory factory) {
+        RecordCursorFactory unwrapped = unwrapFactory(factory);
+        return unwrapped instanceof RoleGenerationRecordCursorFactory roleFactory
+                ? roleFactory.getDelegate()
+                : unwrapped;
     }
 }

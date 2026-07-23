@@ -8398,10 +8398,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .noRandomAccess()
                             .returns("""
-                                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                                    f0\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                                    штиблет\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                                    f2\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                                    f0\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                                    штиблет\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                                    f2\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                                     """);
                 }
         );

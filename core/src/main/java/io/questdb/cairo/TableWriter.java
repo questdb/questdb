@@ -317,6 +317,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
+    // Column indices of replica-only indexes whose on-disk files were ABSENT when the writer opened,
+    // captured before configureAppendPosition fabricates empty index files. Consulted once by the
+    // open-time reconcile, then cleared. Empty during runtime (role-flip) reconciles.
+    private final IntList replicaOnlyIndexAbsentAtOpen = new IntList();
+    // Scratch buffer used to snapshot/restore the shared Path.PATH thread-local content around a
+    // covering-POSTING replica-only reconcile BUILD (see reconcileReplicaOnlyIndexes); the build's
+    // covered-column read helpers clobber that thread-local, which the very next WAL-segment mmap
+    // reuses as its walPath. Single-threaded under the writer lock, so a single shared buffer is safe.
+    private final Utf8StringSink replicaOnlyReconcileWalPathSnapshot = new Utf8StringSink();
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private ObjList<? extends MemoryA> activeColumns;
@@ -329,6 +338,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long attachMinTimestamp;
     private long attachPartitionTimestamp;
     private final FindVisitor attachPartitionPinColumnVersionsRef = this::attachPartitionPinColumnVersions;
+    // Dedicated, writer-lifetime index builder for the non-skipping-ATTACH replica-only self-heal.
+    // Kept separate from attachIndexBuilder (which attachPrepare frees in its finally) so it can be
+    // reused safely after attachPrepare returns; freed only when the writer closes.
+    private IndexBuilder attachReplicaOnlyIndexBuilder;
     private TxReader attachTxReader;
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
@@ -349,11 +362,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean hasPostingIndexers;
     private int indexCount;
     private boolean isInCtorRecovery;
+    private boolean isReplicaOnlyIndexPresenceSnapshotted;
     private int lastErrno;
     private boolean lastOpenPartitionIsReadOnly;
     private long lastOpenPartitionTs = Long.MIN_VALUE;
     private long lastOpenPartitionTxnName = -1;
     private long lastPartitionTimestamp;
+    // Role generation last observed when replica-only indexes were reconciled. When the engine's
+    // role generation advances (hot promote/demote), the next WAL apply reconciles and updates this.
+    private long lastReconciledRoleGen;
     private long lastWalCommitTimestampMicros;
     private LifecycleManager lifecycleManager;
     private long lockFd = -2;
@@ -582,11 +599,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 this.partitionDirFmt = null;
             }
 
+            // Snapshot which replica-only indexes are genuinely absent on disk BEFORE
+            // configureColumnMemory/configureAppendPosition run: openPartition (fired by
+            // configureAppendPosition) fabricates an EMPTY key file and wires an append-only
+            // indexer for a missing index, which would otherwise fool reconcile into thinking the
+            // index is materialized. The snapshot records pre-open truth so reconcile rebuilds it.
+            snapshotReplicaOnlyIndexAbsenceAtOpen();
             configureColumnMemory();
             configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
             configureAppendPosition();
             purgeUnusedPartitions();
+            // configureColumnMemory wired indexers per the current skip flag, but it cannot
+            // build/purge on-disk index files. Reconcile now so a freshly opened writer honors
+            // the role invariant (e.g. build a replica-only index missing after a restore on a
+            // replica, or purge a stale one on a primary). Record the generation we synced to.
+            this.lastReconciledRoleGen = engine.getRoleGeneration();
+            reconcileReplicaOnlyIndexes();
+            replicaOnlyIndexAbsentAtOpen.clear();
+            isReplicaOnlyIndexPresenceSnapshotted = false;
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
             clearTodoLog();
             this.slaveTxReader = new TxReader(ff);
@@ -752,6 +783,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 isDedupKey,
                 columnNameTxn,
                 -1,
+                false,
                 metadata
         );
 
@@ -806,11 +838,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
-        addIndex(columnName, indexValueBlockSize, indexType, null);
+        addIndex(columnName, indexValueBlockSize, indexType, null, false);
     }
 
     @Override
-    public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
+    public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames, boolean replicaOnly) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
 
         checkDistressed();
@@ -867,19 +899,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // configureCoveringIfNeeded can find them during index rebuild.
         columnMetadata.setCoveringColumnIndices(coveringColumnIndices);
 
-        final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
+        // On a skipping primary, persist the replica-only flag + index type in
+        // metadata but do not build or wire the bitmap index. A replica or a
+        // promoted node (skipReplicaOnlyIndexes() == false) will build it.
+        final boolean skipBuild = replicaOnly && configuration.skipReplicaOnlyIndexes();
+        final SymbolColumnIndexer indexer = skipBuild ? null : new SymbolColumnIndexer(configuration, indexType);
         try {
-            writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
+            if (!skipBuild) {
+                writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
+            }
 
             columnMetadata.setIndexType(indexType);
+            columnMetadata.setReplicaOnlyIndex(replicaOnly);
             columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
             // set the index flag in metadata and create new _meta.swp
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
 
-            indexers.extendAndSet(columnIndex, indexer);
-            populateDenseIndexerList();
+            if (!skipBuild) {
+                indexers.extendAndSet(columnIndex, indexer);
+                populateDenseIndexerList();
+            }
         } catch (Throwable th) {
             Misc.free(indexer);
             throw th;
@@ -888,8 +929,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
-        LOG.info().$("ADDED index to '").$safe(columnName).$('[').$(ColumnType.nameOf(existingType))
-                .$("]' to ").$substr(pathRootSize, path).$();
+        if (skipBuild) {
+            LOG.info().$("registered replica-only index metadata, build skipped on primary [column=").$safe(columnName)
+                    .$(", type=").$(ColumnType.nameOf(existingType))
+                    .$(", path=").$substr(pathRootSize, path).I$();
+        } else {
+            LOG.info().$("ADDED index to '").$safe(columnName).$('[').$(ColumnType.nameOf(existingType))
+                    .$("]' to ").$substr(pathRootSize, path).$();
+        }
     }
 
     public void addPhysicallyWrittenRows(long rows) {
@@ -982,7 +1029,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // final name of partition folder after attachment
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp, getTxn());
+        final long attachedPartitionNameTxn = getTxn();
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp, attachedPartitionNameTxn);
         if (ff.exists(path.$())) {
             // Very unlikely since txn is part of the folder name
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
@@ -1043,6 +1091,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // of the attached partition
                 this.attachPartitionTimestamp = timestamp;
                 ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
+
+                // A backup produced by a skipping primary legitimately lacks replica-only index
+                // sidecars. On a non-skipping node rebuild them synchronously before publishing the
+                // attached partition, now that the directory is at its final table path.
+                if (!configuration.skipReplicaOnlyIndexes()) {
+                    final int attachedPartitionPathLen = path.size();
+                    for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                        if (metadata.isColumnReplicaOnlyIndex(columnIndex)
+                                && metadata.isColumnIndexed(columnIndex)
+                                && ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+                            final CharSequence columnName = metadata.getColumnName(columnIndex);
+                            final long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, columnIndex);
+                            final byte indexType = metadata.getColumnIndexType(columnIndex);
+                            if (!ff.exists(keyFileName(indexType, path.trimTo(attachedPartitionPathLen), columnName, columnNameTxn))) {
+                                path.trimTo(attachedPartitionPathLen);
+                                rebuildReplicaOnlyIndexForAttachedPartition(columnName, columnIndex, timestamp, attachedPartitionNameTxn, partitionSize);
+                            }
+                            path.trimTo(attachedPartitionPathLen);
+                        }
+                    }
+                }
 
                 // The parquet partition might be lacking the _pm file, we need to create it
                 int partitionPathLen = path.size();
@@ -1219,6 +1288,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
 
             boolean isDedupKey = metadata.isDedupKey(existingColIndex);
+            // Carry the replica-only-index flag across the type change: like the covering
+            // schema, this per-column flag would otherwise be dropped when the replacement
+            // column is added, materializing the bitmap index on a skipping primary.
+            boolean isReplicaOnlyIndex = metadata.isColumnReplicaOnlyIndex(existingColIndex);
             int columnIndex = columnCount;
             long columnNameTxn = getTxn();
 
@@ -1255,6 +1328,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     isDedupKey,
                     columnNameTxn,
                     existingColIndex,
+                    // the replica-only flag is only meaningful for an indexed column: carry it only
+                    // when the replacement column is itself indexed
+                    isReplicaOnlyIndex && IndexType.isIndexed(indexType),
                     metadata
             );
 
@@ -1271,8 +1347,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // write index if necessary or remove the old one
             // index must be created before column is initialised because
-            // it uses the primary column object as a temporary tool
-            if (IndexType.isIndexed(indexType)) {
+            // it uses the primary column object as a temporary tool.
+            // On a skipping primary a replica-only index has no wired indexer
+            // (configureColumn skipped it), so gate the build like addIndex does.
+            if (IndexType.isIndexed(indexType)
+                    && !(isReplicaOnlyIndex && configuration.skipReplicaOnlyIndexes())) {
                 SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
                 writeIndex(columnName, indexValueBlockCapacity, indexType, columnIndex, indexer);
                 // add / remove indexers
@@ -1405,13 +1484,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     setColumnAppendPosition(columnIndex, transientRowCount, false);
                     path.trimTo(pathSize);
 
-                    if (metadata.isIndexed(columnIndex)) {
-                        ColumnIndexer indexer = indexers.get(columnIndex);
-                        final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
-                        assert indexer != null;
-                        indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
-                        indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, partitionNameTxn);
-                        configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp);
+                    if (metadata.isIndexed(columnIndex)
+                            && !(metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes())) {
+                        // getQuiet() is bounds- and null-safe: on a skipping primary the
+                        // indexers list can be shorter than columnCount (or hold a null slot).
+                        ColumnIndexer indexer = indexers.getQuiet(columnIndex);
+                        if (indexer != null) {
+                            final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
+                            indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
+                            indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, partitionNameTxn);
+                            configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp);
+                        }
                     }
                 }
             } catch (Throwable th) {
@@ -1531,6 +1614,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commitTxWriterAndPublishPendingPostingSealPurges();
     }
 
+    /**
+     * Best-effort, role-switch-driven reconcile trigger for the cold-table sweep.
+     * <p>
+     * Mirrors EXACTLY the gen-check the WAL-apply hook performs (and the apply hook now delegates
+     * here). Safe to call on an already-open / pooled writer that is NOT mid-transaction: it only
+     * (re)materializes or purges replica-only index sidecars via {@link #reconcileReplicaOnlyIndexes()},
+     * which reuses the writeIndex / removeIndexFilesInPartition paths and never calls commit(). It is
+     * a cheap no-op when the role generation is unchanged or the table has no replica-only columns.
+     */
+    public void reconcileReplicaOnlyIndexesIfRoleChanged() {
+        final long gen = engine.getRoleGeneration();
+        if (gen != lastReconciledRoleGen) {
+            reconcileReplicaOnlyIndexes();
+            lastReconciledRoleGen = gen;
+        }
+    }
+
     public void commitWalInsertTransactions(
             @Transient Path walPath,
             long seqTxn,
@@ -1542,6 +1642,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             distressed = true;
             throw CairoException.critical(0).put("cannot process WAL while in transaction");
         }
+
+        // Self-heal replica-only indexes on role change (hot promote/demote). This is the single
+        // choke point all WAL applies funnel through and, thanks to the guard above, we are NOT
+        // mid-transaction here, so building/purging index files is safe (no in-progress commit to
+        // corrupt; reconcile never calls commit()). Done before the apply so the freshly
+        // (un)materialized index covers the rows committed by this very apply.
+        reconcileReplicaOnlyIndexesIfRoleChanged();
 
         physicallyWrittenRowsSinceLastCommit.reset();
         dedupRowsRemovedSinceLastCommit.reset();
@@ -2114,11 +2221,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnMetadata.setIndexType(IndexType.NONE);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
             columnMetadata.setCoveringColumnIndices(null);
+            // The index is gone; clear the replica-only flag too, otherwise the
+            // column persists as indexed=false, replicaOnly=true.
+            columnMetadata.setReplicaOnlyIndex(false);
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
 
-            // remove indexer - skip seal since the index is being dropped
-            ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
+            // remove indexer - skip seal since the index is being dropped.
+            // getQuiet() is bounds- and null-safe: on a skipping primary a
+            // replica-only-indexed column has no wired indexer, so the indexers
+            // list can be shorter than columnCount (or hold a null slot).
+            ColumnIndexer columnIndexer = indexers.getQuiet(columnIndex);
             if (columnIndexer != null) {
                 columnIndexer.discardAndClose();
                 indexers.setQuick(columnIndex, null);
@@ -4060,6 +4173,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isDedupKey,
             long columnNameTxn,
             int replaceColumnIndex,
+            boolean replicaOnlyIndex,
             TableWriterMetadata metadata
     ) {
         // Keep the immediate predecessor as replacingIndex, not the
@@ -4076,7 +4190,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 symbolCapacity,
                 isDedupKey,
                 replaceColumnIndex,
-                symbolCacheFlag
+                symbolCacheFlag,
+                replicaOnlyIndex
         );
 
         rewriteAndSwapMetadata(metadata);
@@ -4510,6 +4625,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             byte indexType = metadata.getColumnIndexType(columnIndex);
             if (IndexType.isIndexed(indexType)) {
+                // A replica-only index is never materialized on a skipping primary, so ATTACH must
+                // not require its sidecars there. A non-skipping node remains strict: publishing a
+                // partition with an incomplete index would make an index-selected query unusable.
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex)
+                        && (configuration.skipReplicaOnlyIndexes()
+                        || !ff.exists(keyFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn)))) {
+                    // A skipping node intentionally has no files. A non-skipping node rebuilds a
+                    // missing replica-only index after the partition has been moved to its final
+                    // path; the detached-path validation cannot rebuild it in place reliably.
+                    return;
+                }
                 // Verify .pk exists before trying to resolve sealTxn from it.
                 keyFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(partitionPath.$())) {
@@ -4700,7 +4826,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         removeFileOrLog(ff, detachedPath.$());
                     } else if (isIndexedNow
                             && (!wasIndexedAtDetached || indexValueBlockCapacityNow != indexValueBlockCapacityDetached
-                            || indexTypeNow != indexTypeAtDetached)) {
+                            || indexTypeNow != indexTypeAtDetached)
+                            // A skipping primary must not materialize a replica-only index for the
+                            // attached partition: rebuildAttachedPartitionColumnIndex -> reindexColumn
+                            // bypasses isSupportedColumn and would build .k/.v (or posting) files this
+                            // node never maintains, violating the "indexer wired + files present <=>
+                            // !skipReplicaOnlyIndexes()" invariant and leaving a stale/partial index.
+                            // Mirror the gate in rebuildPartitionIndexFiles.
+                            && !(metadata.isColumnReplicaOnlyIndex(colIdx) && configuration.skipReplicaOnlyIndexes())) {
                         detachedPath.trimTo(detachedPartitionRoot);
                         rebuildAttachedPartitionColumnIndex(partitionTimestamp, partitionSize, columnName);
                     }
@@ -5150,7 +5283,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         configureNullSetters(o3NullSetters1, type, o3DataMem1, o3AuxMem1, index, symbolMapWriters);
         configureNullSetters(o3NullSetters2, type, o3DataMem2, o3AuxMem2, index, symbolMapWriters);
 
-        if (IndexType.isIndexed(indexType) && type > 0) {
+        if (IndexType.isIndexed(indexType) && type > 0
+                && !(metadata.isColumnReplicaOnlyIndex(index) && configuration.skipReplicaOnlyIndexes())) {
             indexers.extendAndSet(index, new SymbolColumnIndexer(configuration, indexType));
         }
         rowValueIsNotNull.add(0);
@@ -5363,13 +5497,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !IndexType.isIndexed(indexType)) {
                     continue;
                 }
-                final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                if (colTop == -1 || colTop >= partitionRowCount) {
-                    continue; // column does not exist or has no data in this partition
+                // A skipping primary never built the .k/.v (or posting) files for a replica-only
+                // index, so on native->parquet conversion there is nothing to hard-link (colTop==0
+                // would throw "index files do not exist") and nothing to rebuild (colTop>0 would
+                // wrongly materialize an index). Mirror the gate in rebuildPartitionIndexFiles /
+                // linkPartitionIndexFiles and skip the column entirely.
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes()) {
+                    continue;
                 }
-
+                final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                 final String columnName = metadata.getColumnName(columnIndex);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+                if (colTop == -1 || colTop >= partitionRowCount) {
+                    // ADD INDEX materializes an empty index for all-top/absent columns. Preserve it
+                    // across native-to-parquet conversion so metadata never points at missing files.
+                    final byte emptyIndexType = metadata.getColumnIndexType(columnIndex);
+                    if (ff.exists(keyFileName(emptyIndexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
+                        linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, emptyIndexType, partitionTimestamp, oldPartitionNameTxn);
+                    }
+                    continue;
+                }
+
+                // A replica-only index may be UNMATERIALIZED on this (non-skipping) node even when
+                // skipReplicaOnlyIndexes()==false: reconcile only (re)builds the index on a WAL
+                // *insert* apply (commitWalInsertTransactions), but a structural ALTER such as
+                // CONVERT PARTITION TO PARQUET does NOT run a reconcile. So when ADD INDEX REPLICA
+                // ONLY ran while skipping (or right after a role flip with no intervening insert),
+                // the .k/.v (or posting .pk/.pv.<sealTxn>) files genuinely do not exist yet for this
+                // partition. The link branch below would then hard-fail with "index files do not
+                // exist" and suspend the table. Tolerate the absence: skip the column for this
+                // partition. Correctness is preserved because the next insert-apply reconcile rebuilds
+                // the index, and indexHistoricPartitions/indexParquetPartition materialize it over the
+                // now-parquet partition exactly as over a native one.
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex)
+                        && !ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
+                    LOG.info().$("skip parquet index copy for unmaterialized replica-only column [table=").$(tableToken)
+                            .$(", column=").$safe(columnName)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp).I$();
+                    continue;
+                }
 
                 if (colTop > 0) {
                     // Column top will be zeroed by zeroColumnTopsAfterParquetRewrite.
@@ -5454,8 +5620,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                                 indexer for this file (constructor recovery, DDL fresh build).
      */
     private void createIndexFiles(CharSequence columnName, long columnNameTxn, int indexValueBlockCapacity, byte indexType, int plen, boolean force, boolean allowDestructiveRecovery) {
+        createIndexFiles(path, columnName, columnNameTxn, indexValueBlockCapacity, indexType, plen, force, allowDestructiveRecovery);
+    }
+
+    private void createIndexFiles(Path targetPath, CharSequence columnName, long columnNameTxn, int indexValueBlockCapacity, byte indexType, int plen, boolean force, boolean allowDestructiveRecovery) {
         try {
-            keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
+            keyFileName(indexType, targetPath.trimTo(plen), columnName, columnNameTxn);
 
             if (IndexType.isPosting(indexType)) {
                 // POSTING preserves chain history across the partition's
@@ -5482,37 +5652,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 //    next chain.openExisting will surface a genuinely
                 //    torn header explicitly.
                 if (allowDestructiveRecovery) {
-                    if (PostingIndexUtils.hasInitialisedKeyFileHeader(ff, path.$())) {
+                    if (PostingIndexUtils.hasInitialisedKeyFileHeader(ff, targetPath.$())) {
                         return;
                     }
-                    ff.removeQuiet(path.$());
+                    ff.removeQuiet(targetPath.$());
                 } else {
-                    if (ff.exists(path.$())) {
+                    if (ff.exists(targetPath.$())) {
                         return;
                     }
                 }
-            } else if (!force && ff.exists(path.$())) {
+            } else if (!force && ff.exists(targetPath.$())) {
                 return;
             } else {
-                ff.removeQuiet(path.$());
+                ff.removeQuiet(targetPath.$());
             }
 
             // reuse memory column object to create index and close it at the end
             try {
-                ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+                ddlMem.smallFile(ff, targetPath.$(), MemoryTag.MMAP_TABLE_WRITER);
                 ddlMem.truncate();
                 IndexFactory.initKeyMemory(indexType, ddlMem, indexValueBlockCapacity);
             } catch (CairoException e) {
                 // looks like we could not create the key file properly;
                 // let's not leave a half-baked file sitting around
                 LOG.error()
-                        .$("could not create index [name=").$(path)
+                        .$("could not create index [name=").$(targetPath)
                         .$(", msg=").$safe(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
-                if (!ff.removeQuiet(path.$())) {
+                if (!ff.removeQuiet(targetPath.$())) {
                     LOG.critical()
-                            .$("could not remove '").$(path).$("'. Please remove MANUALLY.")
+                            .$("could not remove '").$(targetPath).$("'. Please remove MANUALLY.")
                             .$("[errno=").$(ff.errno())
                             .I$();
                 }
@@ -5520,14 +5690,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } finally {
                 ddlMem.close();
             }
-            if (!ff.touch(valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, 0L))) {
-                LOG.error().$("could not create index [name=").$(path)
+            if (!ff.touch(valueFileName(indexType, targetPath.trimTo(plen), columnName, columnNameTxn, 0L))) {
+                LOG.error().$("could not create index [name=").$(targetPath)
                         .$(", errno=").$(ff.errno())
                         .I$();
-                throw CairoException.critical(ff.errno()).put("could not create index [name=").put(path).put(']');
+                throw CairoException.critical(ff.errno()).put("could not create index [name=").put(targetPath).put(']');
             }
         } finally {
-            path.trimTo(plen);
+            targetPath.trimTo(plen);
         }
     }
 
@@ -6469,6 +6639,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(attachMetaMem);
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
+        Misc.free(attachReplicaOnlyIndexBuilder);
         Misc.free(columnVersionWriter);
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
@@ -7300,6 +7471,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexParquetPartition(indexer, columnName, i, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp);
                         } else if (ff.exists(dFile(path.trimTo(plen), columnName, columnNameTxn))) {
                             indexNativePartition(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp);
+                        } else {
+                            createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
                         }
                     }
                 }
@@ -7431,10 +7604,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         int parquetColumnIndex = findParquetColumnIndex(parquetMetadata, columnIndex);
         if (parquetColumnIndex == -1) {
-            path.trimTo(plen);
-            LOG.error().$("could not find symbol column for indexing in parquet, skipping [path=").$substr(pathRootSize, path)
-                    .$(", columnIndex=").$(columnIndex)
-                    .I$();
+            // A re-added column is absent from older parquet schemas. Build an all-NULL index: an
+            // empty key header is not sufficient for POSTING because it has no sealed generation
+            // and can disappear when the writer is reconfigured.
+            final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
+            final IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
+            try {
+                indexWriter.of(path.trimTo(plen), columnName, columnNameTxn, indexValueBlockSize);
+                indexWriter.setNextTxnAtSeal(txWriter.getTxn() + 1);
+                final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
+                for (long row = 0; row < partitionSize; row++) {
+                    indexWriter.add(nullKey, row);
+                }
+                indexWriter.setMaxValue(partitionSize - 1);
+                indexWriter.seal();
+            } finally {
+                Misc.free(indexWriter);
+            }
             return;
         }
 
@@ -7496,7 +7682,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final DirectLongList covSlotMeta = hasCovering ? getTempDirectLongList(4L * coverCount) : null;
             // Mmap-backed temp files for covered column data (+ aux for
             // var-size). Written via mmap in the row-group loop and read
-            // from the same addresses during seal — no write()/re-mmap
+            // from the same addresses during seal - no write()/re-mmap
             // round-trip. The ObjList is closed in the finally block.
             final ObjList<MemoryMARW> covMmaps = hasCovering ? new ObjList<>(2 * coverCount) : null;
             int includedCoveredCount = 0;
@@ -7728,18 +7914,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isIndexed(columnIndex)) {
                     continue;
                 }
+                // A skipping primary never built the .k/.v (or posting) files for a replica-only
+                // index, so there is nothing to hard-link into the parquet partition dir; mirror
+                // the build-side gate in rebuildPartitionIndexFiles to avoid "index files do not exist".
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes()) {
+                    continue;
+                }
                 // Absent (columnTop == -1) or row-less (columnTop >= partition size) columns
                 // have no index files in this partition. Same guard as copyOrRebuildColumnIndexes.
                 final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                 if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
+                final CharSequence columnName = metadata.getColumnName(columnIndex);
+                final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+                final byte indexType = metadata.getColumnIndexType(columnIndex);
+                // A replica-only index can be UNMATERIALIZED on this (non-skipping) node: reconcile
+                // only (re)builds the index on a WAL insert apply, but a structural ALTER (this
+                // parquet partition switch) does NOT reconcile, so an ADD INDEX REPLICA ONLY issued
+                // while skipping -- or right after a role flip with no intervening insert -- leaves
+                // the .k/.v (or posting .pk/.pv.<sealTxn>) absent for this partition. linkColumnIndexFiles
+                // would then hard-fail and suspend the table. Tolerate the absence and skip the column;
+                // the next insert-apply reconcile rebuilds the index over the (now-parquet) partition.
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex)
+                        && !ff.exists(keyFileName(indexType, path.trimTo(partitionDirLen), columnName, columnNameTxn))) {
+                    LOG.info().$("skip parquet index link for unmaterialized replica-only column [table=").$(tableToken)
+                            .$(", column=").$safe(columnName)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp).I$();
+                    continue;
+                }
                 linkColumnIndexFiles(
                         partitionDirLen,
                         newPartitionDirLen,
-                        metadata.getColumnName(columnIndex),
-                        getColumnNameTxn(partitionTimestamp, columnIndex),
-                        metadata.getColumnIndexType(columnIndex),
+                        columnName,
+                        columnNameTxn,
+                        indexType,
                         partitionTimestamp,
                         partitionNameTxn
                 );
@@ -9058,7 +9267,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (metadata.getColumnType(i) > 0) {
                     final CharSequence name = metadata.getColumnName(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, i);
-                    final ColumnIndexer indexer = metadata.isColumnIndexed(i) ? indexers.getQuick(i) : null;
+                    // On a skipping primary the bitmap/posting index for a replica-only column is never
+                    // materialized and no indexer is configured (see configureColumn), so the indexers
+                    // list has no entry for it -- treat it as un-indexed here to avoid an OOB access.
+                    //
+                    // Conversely, on a replica (skipReplicaOnlyIndexes()==false) the column IS index-active,
+                    // yet the indexer slot can still be ABSENT here: the writer was configureColumn'd while
+                    // skipping (skip==true, no indexer wired), the role then flipped to replica, but the
+                    // reconcile self-heal that would have wired the indexer early-returns when the table has
+                    // no partitions (e.g. right after TRUNCATE). The very first partition then opens with the
+                    // slot still missing. Lazily wire a fresh indexer here -- exactly what configureColumn
+                    // would have created had skip been false at open -- instead of an OOB getQuick(i).
+                    final ColumnIndexer indexer;
+                    if (metadata.isColumnIndexActive(i, configuration.skipReplicaOnlyIndexes())) {
+                        ColumnIndexer wired = i < indexers.size() ? indexers.getQuick(i) : null;
+                        if (wired == null) {
+                            wired = new SymbolColumnIndexer(configuration, metadata.getColumnIndexType(i));
+                            indexers.extendAndSet(i, wired);
+                        }
+                        indexer = wired;
+                    } else {
+                        indexer = null;
+                    }
 
                     // prepare index writer if column requires indexing
                     if (indexer != null) {
@@ -9660,7 +9890,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final int colOffset = TableWriter.getPrimaryColumnIndex(i);
                             final boolean notTheTimestamp = i != timestampIndex;
                             final CharSequence columnName = metadata.getColumnName(i);
-                            final int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
+                            // Use role-aware check (mirrors openPartition / O3PartitionJob guards): on a skipping
+                            // primary a replica-only column has no indexer wired (indexers[i] == null), so the
+                            // raw isColumnIndexed() would cause a null-indexer deref in getIndexWriter(i).
+                            final int indexBlockCapacity = metadata.isColumnIndexActive(i, configuration.skipReplicaOnlyIndexes()) ? metadata.getIndexValueBlockCapacity(i) : -1;
                             final IndexWriter indexWriter = indexBlockCapacity > -1 ? getIndexWriter(i) : null;
                             final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
                             final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
@@ -11976,6 +12209,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return todo;
     }
 
+    // Rebuild a single replica-only index for a partition that has already been renamed into its FINAL
+    // table path (the non-skipping-ATTACH self-heal at the top of attachPartition). Unlike
+    // rebuildAttachedPartitionColumnIndex - which runs at attachPrepare time with an EMPTY-rooted builder
+    // and the detached-partition ColumnVersionReader - this roots the builder at the table dir so
+    // reindexColumn writes into the real partition directory, and drives it from the writer's own
+    // columnVersionWriter (attachColumnVersionReader has already been released by this point).
+    private void rebuildReplicaOnlyIndexForAttachedPartition(
+            CharSequence columnName,
+            int columnIndex,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long partitionSize
+    ) {
+        if (attachReplicaOnlyIndexBuilder == null) {
+            attachReplicaOnlyIndexBuilder = new IndexBuilder(configuration);
+        }
+        final int keep = path.size();
+        try {
+            attachReplicaOnlyIndexBuilder.of(path.trimTo(pathSize));
+            attachReplicaOnlyIndexBuilder.reindexColumn(
+                    ff,
+                    columnVersionWriter,
+                    metadata,
+                    columnIndex,
+                    partitionNameTxn,
+                    partitionTimestamp,
+                    partitionBy,
+                    partitionSize
+            );
+            LOG.info().$("attach: rebuilt replica-only index [table=").$(tableToken)
+                    .$(", column=").$safe(columnName)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp).I$();
+        } finally {
+            path.trimTo(keep);
+        }
+    }
+
     private void rebuildAttachedPartitionColumnIndex(long partitionTimestamp, long partitionSize, CharSequence columnName) {
         if (attachIndexBuilder == null) {
             attachIndexBuilder = new IndexBuilder(configuration);
@@ -12008,20 +12278,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             final int columnCount = metadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
+                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)
+                        && !(metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes())) {
                     final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                    if (columnTop == -1 || columnTop >= partitionRowCount) {
-                        continue;
-                    }
-
                     final String columnName = metadata.getColumnName(columnIndex);
                     final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
                     final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
                     final byte indexType = metadata.getColumnIndexType(columnIndex);
-
-                    // Map data file for reading
-                    final long dataSize = (partitionRowCount - columnTop) * Integer.BYTES;
-                    final long dataAddr = TableUtils.mapRO(ff, dFile(other.trimTo(dirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                    // Map data only for the physical suffix. Absent/all-top columns still need an
+                    // all-NULL index because parquet decode normalizes their destination top to 0.
+                    final long physicalTop = columnTop < 0 ? partitionRowCount : Math.min(columnTop, partitionRowCount);
+                    final long dataSize = (partitionRowCount - physicalTop) * Integer.BYTES;
+                    final long dataAddr = dataSize > 0
+                            ? TableUtils.mapRO(ff, dFile(other.trimTo(dirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER)
+                            : 0;
                     IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
                     try {
                         indexWriter.of(other.trimTo(dirLen), columnName, columnNameTxn, indexValueBlockCapacity);
@@ -12029,14 +12299,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // conversion before txWriter.commit; tag the chain
                         // entry with the upcoming committed txn.
                         indexWriter.setNextTxnAtSeal(txWriter.getTxn() + 1);
-                        for (long row = columnTop; row < partitionRowCount; row++) {
-                            int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - columnTop) * Integer.BYTES));
+                        final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
+                        for (long row = 0; row < physicalTop; row++) {
+                            indexWriter.add(nullKey, row);
+                        }
+                        for (long row = physicalTop; row < partitionRowCount; row++) {
+                            int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - physicalTop) * Integer.BYTES));
                             indexWriter.add(key, row);
                         }
                         indexWriter.setMaxValue(partitionRowCount - 1);
                         indexWriter.seal();
                     } finally {
-                        ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                        if (dataAddr != 0) {
+                            ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                        }
                         Misc.free(indexWriter);
                     }
                 }
@@ -12191,6 +12467,255 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Misc.free(mem);
             path.trimTo(pathSize).concat(POSTING_SEAL_PURGE_PENDING_FILE_NAME);
             ff.removeQuiet(path.$());
+            path.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Restores the per-node materialization invariant for replica-only indexed columns:
+     * <pre>indexer wired + index files present  &lt;=&gt;  !skipReplicaOnlyIndexes()</pre>
+     * <p>
+     * The persisted schema flags ({@code indexed}, {@code replicaOnly}) are identical on every
+     * node; whether the index is physically materialized is node-local and follows the skip flag.
+     * The role can flip at runtime (hot promote/demote) without reopening writers, so this runs:
+     * <ul>
+     *     <li>at writer open (the constructor), and</li>
+     *     <li>on the next WAL apply after the engine's role generation advances.</li>
+     * </ul>
+     * It must NOT be called while a transaction/commit is in flight - its callers guarantee a
+     * clean state, and it never calls {@code commit()} itself (unlike {@code addIndex}).
+     * <p>
+     * BUILD reuses {@code addIndex}'s build+wire sequence ({@code writeIndex} + indexer wiring)
+     * minus the metadata rewrite (the {@code indexed}/{@code replicaOnly} flags already live in
+     * {@code _meta}; covering indices were loaded from {@code _meta} too). PURGE removes only the
+     * on-disk index sidecars (.k/.v) via {@code removeIndexFilesInPartition} per partition - the
+     * same primitive {@code rollbackRemoveIndexFiles} uses - and leaves column data and the
+     * metadata flags untouched. A raw sidecar unlink is reader-safe here because (a) a skipping
+     * node's planner treats the column as un-indexed so it never opens an index reader, and (b) a
+     * non-skipping reader tolerates a transiently-absent replica-only index file as "not materialized"
+     * rather than corruption.
+     */
+    private void reconcileReplicaOnlyIndexes() {
+        final boolean wantBuilt = !configuration.skipReplicaOnlyIndexes();
+        // Empty table (e.g. right after TRUNCATE): there are no partitions to build/purge ON DISK.
+        // BUILD has nothing to do -- openPartition (fired on the first future row) wires/creates the
+        // index per the live skip flag. But PURGE must still UNWIRE any stale IN-MEMORY indexer left
+        // over from a prior replica window: openPartition only lazily WIRES an absent indexer when the
+        // column is index-active, it never UNWIRES one when the role has flipped to skipping. A stale
+        // wired indexer would otherwise be picked up by the maintenance path (updateIndexesParallel
+        // over denseIndexers) on the next insert and crash indexing memory that is no longer set up.
+        if (txWriter.getPartitionCount() == 0) {
+            if (!wantBuilt) {
+                boolean changed = false;
+                for (int i = 0; i < columnCount; i++) {
+                    if (!metadata.isColumnReplicaOnlyIndex(i)) {
+                        continue;
+                    }
+                    final ColumnIndexer stale = i < indexers.size() ? indexers.getQuick(i) : null;
+                    if (stale != null) {
+                        stale.discardAndClose();
+                        indexers.extendAndSet(i, null);
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    populateDenseIndexerList();
+                }
+            }
+            return;
+        }
+        int absentAtOpenCursor = 0;
+        boolean hasIndexerChanges = false;
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                if (!metadata.isColumnReplicaOnlyIndex(i)) {
+                    continue;
+                }
+                // A replica-only index is always on a SYMBOL column and flagged indexed in metadata;
+                // guard anyway so a non-symbol or un-indexed column is never touched.
+                if (!ColumnType.isSymbol(metadata.getColumnType(i)) || !metadata.isColumnIndexed(i)) {
+                    continue;
+                }
+                if (wantBuilt) {
+                    // BUILD needs complete sidecars in every partition. The open-time snapshot avoids
+                    // probing present indexes twice while still recording absence before append setup
+                    // can fabricate empty files.
+                    while (absentAtOpenCursor < replicaOnlyIndexAbsentAtOpen.size()
+                            && replicaOnlyIndexAbsentAtOpen.getQuick(absentAtOpenCursor) < i) {
+                        absentAtOpenCursor++;
+                    }
+                    final boolean isAbsentAtOpen = absentAtOpenCursor < replicaOnlyIndexAbsentAtOpen.size()
+                            && replicaOnlyIndexAbsentAtOpen.getQuick(absentAtOpenCursor) == i;
+                    final boolean isMaterialized = !isAbsentAtOpen
+                            && (isReplicaOnlyIndexPresenceSnapshotted || replicaOnlyIndexFilesPresent(i));
+                    if (isMaterialized) {
+                        continue;
+                    }
+                }
+
+                final String columnName = metadata.getColumnName(i);
+                if (wantBuilt) {
+                    // BUILD: materialize like an internal ADD INDEX, reusing writeIndex's build path.
+                    // Discard any stale indexer the open path wired against the (now absent) files so
+                    // writeIndex starts from a clean slate, exactly like a fresh ADD INDEX.
+                    final ColumnIndexer stale = i < indexers.size() ? indexers.getQuick(i) : null;
+                    if (stale != null) {
+                        stale.discardAndClose();
+                        indexers.extendAndSet(i, null);
+                        hasIndexerChanges = true;
+                    }
+                    final byte indexType = metadata.getColumnIndexType(i);
+                    final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(i);
+                    final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
+                    // Snapshot the SHARED thread-local Path (Path.PATH) CONTENT before the build.
+                    //
+                    // Unlike the normal ADD INDEX flow -- a structural ALTER applied OUTSIDE the WAL
+                    // row-mmap sequence -- this reconcile build runs INSIDE commitWalInsertTransactions,
+                    // immediately before processWalCommit() -> TableWriterSegmentFileCache.mmapSegments().
+                    // mmapSegments reuses the very same Path.PATH thread-local as its `walPath`
+                    // ("<table>/wal<id>/<seg>"). The covering-POSTING build's covered-column read setup
+                    // (PostingIndexWriter.ensureCoveredColumnReadMaps -> mapColumnFile) grabs
+                    // Path.getThreadLocal(...) (== Path.PATH) and OVERWRITES it with the last covered
+                    // column's data file ("<partition>/ts.d"). mmapSegments then appends to that stale
+                    // buffer and opens a bogus "<partition>/ts.d/s.d", failing the apply and suspending
+                    // the table. A length-only trimTo is not enough: the build rewrites the buffer
+                    // CONTENT, so we snapshot the full string and restore it. Keeps the build
+                    // path-neutral to its WAL-apply caller; also protects the BITMAP / plain-POSTING
+                    // build paths.
+                    final Path sharedPath = Path.PATH.get();
+                    replicaOnlyReconcileWalPathSnapshot.clear();
+                    replicaOnlyReconcileWalPathSnapshot.put(sharedPath);
+                    try {
+                        LOG.info().$("reconcile: building replica-only index [table=").$(tableToken)
+                                .$(", column=").$safe(columnName).I$();
+                        writeIndex(columnName, indexValueBlockCapacity, indexType, i, indexer);
+                        indexers.extendAndSet(i, indexer);
+                        hasIndexerChanges = true;
+                    } catch (Throwable th) {
+                        Misc.free(indexer);
+                        throw th;
+                    } finally {
+                        // Restore the writer's own path (mirrors writeIndex's finally) AND the shared
+                        // Path.PATH thread-local content the covering build may have clobbered.
+                        path.trimTo(pathSize);
+                        sharedPath.of(replicaOnlyReconcileWalPathSnapshot);
+                    }
+                } else {
+                    // PURGE is deliberately unconditional and idempotent. Incomplete materialization
+                    // can mean a prior purge removed only some partitions, so absence is not proof
+                    // that cleanup finished. Keep the metadata indexed/replicaOnly flags.
+                    // Free the indexer first, then remove sidecars from every partition.
+                    LOG.info().$("reconcile: purging replica-only index [table=").$(tableToken)
+                            .$(", column=").$safe(columnName).I$();
+                    // indexers may be shorter than columnCount (it is only extended for columns that
+                    // had an indexer wired), so bounds-guard the access.
+                    final ColumnIndexer indexer = i < indexers.size() ? indexers.getQuick(i) : null;
+                    if (indexer != null) {
+                        indexer.discardAndClose();
+                        indexers.extendAndSet(i, null);
+                        hasIndexerChanges = true;
+                    }
+                    try {
+                        for (int p = txWriter.getPartitionCount() - 1; p > -1; p--) {
+                            long partitionTimestamp = txWriter.getPartitionTimestampByIndex(p);
+                            long partitionNameTxn = txWriter.getPartitionNameTxn(p);
+                            if (!removeIndexFilesInPartition(columnName, i, partitionTimestamp, partitionNameTxn)) {
+                                throw CairoException.critical(ff.errno())
+                                        .put("could not purge replica-only index [table=").put(tableToken)
+                                        .put(", column=").put(columnName)
+                                        .put(", partition=").ts(timestampDriver, partitionTimestamp)
+                                        .put(']');
+                            }
+                        }
+                    } finally {
+                        path.trimTo(pathSize);
+                    }
+                }
+            }
+        } finally {
+            // Rebuild dense bookkeeping once for the whole reconciliation. The finally keeps it
+            // consistent when an index build or purge fails after changing the sparse list.
+            if (hasIndexerChanges) {
+                populateDenseIndexerList();
+            }
+        }
+    }
+
+    // Records, before configureAppendPosition/openPartition can fabricate empty index files,
+    // which replica-only indexed columns have NO index files on disk. Only meaningful on a
+    // non-skipping node (a skipping primary never wants them materialized, so the snapshot is
+    // irrelevant). Called once from the constructor; the list is cleared after the open reconcile.
+    private void snapshotReplicaOnlyIndexAbsenceAtOpen() {
+        replicaOnlyIndexAbsentAtOpen.clear();
+        isReplicaOnlyIndexPresenceSnapshotted = false;
+        // Only relevant on a non-skipping node with existing partitions to materialize against.
+        if (configuration.skipReplicaOnlyIndexes() || txWriter.getPartitionCount() == 0) {
+            return;
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.isColumnReplicaOnlyIndex(i)
+                    && ColumnType.isSymbol(metadata.getColumnType(i))
+                    && metadata.isColumnIndexed(i)
+                    && !replicaOnlyIndexFilesPresent(i)) {
+                replicaOnlyIndexAbsentAtOpen.add(i);
+            }
+        }
+        isReplicaOnlyIndexPresenceSnapshotted = true;
+    }
+
+    // On-disk materialization probe for a replica-only indexed column. A single key file is not
+    // sufficient: partial restores and interrupted purges can leave older partitions or value and
+    // covering sidecars absent. Reconciliation is cold-path work, so validate every partition.
+    private boolean replicaOnlyIndexFilesPresent(int columnIndex) {
+        final byte indexType = metadata.getColumnIndexType(columnIndex);
+        final CharSequence columnName = metadata.getColumnName(columnIndex);
+        try {
+            for (int p = 0, n = txWriter.getPartitionCount(); p < n; p++) {
+                final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(p);
+                final long partitionNameTxn = txWriter.getPartitionNameTxn(p);
+                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                final int partitionPathLen = path.size();
+                if (!ff.exists(keyFileName(indexType, path, columnName, columnNameTxn))) {
+                    return false;
+                }
+                long sealTxn = columnNameTxn;
+                if (IndexType.isPosting(indexType)) {
+                    sealTxn = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
+                            ff,
+                            path,
+                            partitionPathLen,
+                            columnName,
+                            columnNameTxn,
+                            keyFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn)
+                    );
+                    if (sealTxn < 0) {
+                        sealTxn = 0;
+                    }
+                }
+                if (!ff.exists(valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn, sealTxn))) {
+                    return false;
+                }
+                final IntList coveringColumns = metadata.getCoveringColumnIndices(columnIndex);
+                if (IndexType.isPosting(indexType) && coveringColumns != null) {
+                    for (int c = 0, m = coveringColumns.size(); c < m; c++) {
+                        final int coveredColumnIndex = coveringColumns.getQuick(c);
+                        final long coveredColumnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, coveredColumnIndex);
+                        if (!ff.exists(PostingIndexUtils.coverDataFileName(
+                                path.trimTo(partitionPathLen),
+                                columnName,
+                                c,
+                                columnNameTxn,
+                                coveredColumnNameTxn,
+                                sealTxn
+                        ))) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        } finally {
             path.trimTo(pathSize);
         }
     }
@@ -12387,23 +12912,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
+    private boolean removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
         setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
         long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         byte indexType = metadata.getColumnIndexType(columnIndex);
+        boolean failed = false;
         if (IndexType.isIndexed(indexType)) {
             if (IndexType.isPosting(indexType)) {
                 // Enumerate every sealed .pv / .pc<N> for this column
                 // instance across all on-disk sealTxn generations.
-                PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
+                failed = PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
             }
-            removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+            final LPSZ keyFile = keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
+            failed |= !ff.removeQuiet(keyFile) && ff.exists(keyFile);
             if (!IndexType.isPosting(indexType)) {
-                removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
+                final LPSZ valueFile = valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn);
+                failed |= !ff.removeQuiet(valueFile) && ff.exists(valueFile);
             }
         }
         path.trimTo(pathSize);
+        return !failed;
     }
 
     private void removeMetaFile() {
@@ -12739,7 +13268,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
-                if (!(indexers.getQuick(colIdx) instanceof SymbolColumnIndexer indexer)) {
+                // On a skipping primary a replica-only POSTING column has no wired indexer,
+                // so indexers can be shorter than columnCount; guard the get with
+                // colIdx >= indexers.size() like the fast-lag / O3 posting-seal paths.
+                if (colIdx >= indexers.size()
+                        || !(indexers.getQuick(colIdx) instanceof SymbolColumnIndexer indexer)) {
                     continue;
                 }
                 if (parquetAddr == 0) {
@@ -12845,7 +13378,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long partitionSize = txWriter.getPartitionRowCountByTimestamp(lastOpenPartitionTs);
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                // On a skipping primary a replica-only POSTING column has no wired indexer,
+                // so indexers can be shorter than columnCount (or hold a null slot); guard
+                // the get with colIdx >= indexers.size() like the fast-lag posting path.
                 if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                        || colIdx >= indexers.size()
                         || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
                     continue;
                 }
@@ -12942,6 +13479,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (metadata.isCovering(i)) {
                     flags |= META_FLAG_BIT_COVERING;
+                }
+
+                if (metadata.isColumnReplicaOnlyIndex(i)) {
+                    flags |= META_FLAG_BIT_REPLICA_ONLY;
                 }
 
                 ddlMem.putLong(flags);
@@ -13168,7 +13709,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                // On a skipping primary a replica-only POSTING column has no wired indexer,
+                // so indexers can be shorter than columnCount (or hold a null slot); guard
+                // the getQuick below with colIdx >= indexers.size() like the fast-lag path.
                 if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                        || colIdx >= indexers.size()
                         || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
                     continue;
                 }
@@ -14111,8 +14656,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ColumnType.getDriver(columnType).configureAuxMemMA(auxMem);
                 }
                 if (metadata.isIndexed(i)) {
-                    // Reset indexer column top
-                    indexers.get(i).resetColumnTop();
+                    // Reset indexer column top. On a skipping primary a
+                    // replica-only-indexed column has no wired indexer, so the
+                    // indexers list can be shorter than columnCount (or hold a
+                    // null slot); getQuiet() is bounds- and null-safe.
+                    ColumnIndexer ix = indexers.getQuiet(i);
+                    if (ix != null) {
+                        ix.resetColumnTop();
+                    }
                 }
             }
 

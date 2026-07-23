@@ -435,14 +435,15 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         RecordCursor cursor = null;
         try {
             if (isPageFrameBacked) {
-                VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) factory;
-                pfc = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) ParquetExportMode.unwrapFactoryShape(factory);
+                pfc = ParquetExportMode.getPageFrameBackedCursor(factory, sqlExecutionContext, ORDER_ASC);
                 pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                 streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
                 exporter.setUp(streamBuffers.getAdjustedMetadata(), pfc, streamBuffers.getBaseColumnMap());
             } else {
                 cursor = factory.getCursor(sqlExecutionContext);
-                if (factory instanceof VirtualRecordCursorFactory vf) {
+                RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactoryShape(factory);
+                if (unwrapped instanceof VirtualRecordCursorFactory vf) {
                     streamBuffers.setUpCursorBacked(vf);
                 } else {
                     streamBuffers.setUp(factory.getMetadata());

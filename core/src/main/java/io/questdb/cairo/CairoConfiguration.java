@@ -1177,5 +1177,15 @@ public interface CairoConfiguration {
 
     int maxArrayElementCount();
 
+    /**
+     * When true, this node does NOT build or maintain indexes flagged REPLICA ONLY,
+     * and treats such columns as un-indexed for query planning. OSS default is false
+     * (build everything). Enterprise primaries in a replication setup return true so the
+     * index-build cost is offloaded to replicas. Read dynamically (role can switch at runtime).
+     */
+    default boolean skipReplicaOnlyIndexes() {
+        return false;
+    }
+
     boolean useWithinLatestByOptimisation();
 }

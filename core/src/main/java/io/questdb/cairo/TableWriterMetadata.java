@@ -191,6 +191,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                     TableUtils.isSymbolCached(metaMem, i),
                     origWriterIndex
             );
+            colMeta.setReplicaOnlyIndex(TableUtils.isColumnReplicaOnlyIndex(metaMem, i));
             colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(metaMem, i) : 0);
             columnMetadata.add(colMeta);
             if (type > -1) {
@@ -262,30 +263,35 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             int symbolCapacity,
             boolean isDedupKey,
             int replacingIndex,
-            boolean isSymbolCached
+            boolean isSymbolCached,
+            boolean replicaOnlyIndex
     ) {
         int origWriterIndex = columnIndex;
         if (replacingIndex >= 0 && replacingIndex < columnMetadata.size()) {
             origWriterIndex = columnMetadata.get(replacingIndex).getOriginalWriterIndex();
         }
         String str = name.toString();
-        columnNameIndexMap.put(str, columnMetadata.size());
-        columnMetadata.add(
-                new WriterTableColumnMetadata(
-                        str,
-                        type,
-                        indexType,
-                        indexValueBlockCapacity,
-                        true,
-                        null,
-                        columnIndex,
-                        symbolCapacity,
-                        isDedupKey,
-                        replacingIndex,
-                        isSymbolCached,
-                        origWriterIndex
-                )
+        WriterTableColumnMetadata newColumnMetadata = new WriterTableColumnMetadata(
+                str,
+                type,
+                indexType,
+                indexValueBlockCapacity,
+                true,
+                null,
+                columnIndex,
+                symbolCapacity,
+                isDedupKey,
+                replacingIndex,
+                isSymbolCached,
+                origWriterIndex
         );
+        // Carry the replica-only-index flag so the column is persisted correctly and so the
+        // skip gate in TableWriter.configureColumn (which reads isColumnReplicaOnlyIndex) fires
+        // on a skipping primary. Otherwise a type change on a replica-only indexed column would
+        // drop the flag and materialize the bitmap index that this node must not build.
+        newColumnMetadata.setReplicaOnlyIndex(replicaOnlyIndex);
+        columnNameIndexMap.put(str, columnMetadata.size());
+        columnMetadata.add(newColumnMetadata);
         columnCount++;
         if (ColumnType.isSymbol(type)) {
             symbolMapCount++;
@@ -340,6 +346,12 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         // rewriteAndSwapMetadata() persists a _meta with no covering flag/section
         // and every reader thereafter sees the posting index as non-covering.
         newColumnMetadata.setCoveringColumnIndices(oldMeta.getCoveringColumnIndices());
+        // Preserve the replica-only-index flag across a symbol-capacity change.
+        // Like the covering schema above, this per-column flag lives on the
+        // column metadata; rebuilding the column to change its capacity must
+        // carry it over, otherwise the next rewriteAndSwapMetadata() persists
+        // replicaOnly=false and the flag is lost cluster-wide.
+        newColumnMetadata.setReplicaOnlyIndex(oldMeta.isReplicaOnlyIndex());
         columnMetadata.set(columnIndex, newColumnMetadata);
     }
 

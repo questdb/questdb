@@ -90,7 +90,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
     @Test
     public void testAlterExpectCapacityKeyword() throws Exception {
-        assertFailure("alter table x alter column c add index a", 39, "'capacity' expected");
+        assertFailure("alter table x alter column c add index a", 39, "'capacity' or 'replica only' expected");
     }
 
     @Test

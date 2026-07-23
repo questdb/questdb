@@ -222,6 +222,10 @@ public class CairoEngine implements Closeable, WriterSource {
     // a single static volatile read with no side effect when no test installed a hook.
     @TestOnly
     private static volatile Runnable roleSwitchMintObserver;
+    // Node-local role generation. Bumped by the enterprise role-switch (hot promote/demote)
+    // so that already-open TableWriters can self-heal replica-only indexes on their next
+    // WAL apply (see TableWriter.reconcileReplicaOnlyIndexes).
+    private final AtomicLong roleGeneration = new AtomicLong();
     private final ReentrantReadWriteLock roleSwitchLock = new ReentrantReadWriteLock();
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
@@ -550,6 +554,31 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
         }
+    }
+
+    /**
+     * Bumps the node-local role generation. Called by the enterprise role-switch on each
+     * hot promote/demote so that already-open TableWriters reconcile replica-only indexes
+     * on their next WAL apply.
+     * <p>
+     * Ordering contract: the caller MUST publish the new value of
+     * {@link CairoConfiguration#skipReplicaOnlyIndexes()} for the net-final role BEFORE calling this
+     * method. The bump is the release fence that the reconcile path (which reads the skip flag and then
+     * records {@code lastReconciledRoleGen = getRoleGeneration()}) synchronizes on. If the generation
+     * bump becomes visible before the skip-flag flip, a concurrent WAL apply can reconcile against the
+     * stale flag, stamp the new generation as already reconciled, and never re-fire - leaving the index
+     * built-when-it-should-be-purged (or vice versa) until the writer is reopened.
+     */
+    public long bumpRoleGeneration() {
+        final long generation = roleGeneration.incrementAndGet();
+        // Index eligibility is role-dependent. Cached SELECT factories compiled under the old role
+        // must not survive the transition and try to open a purged index (or retain a full scan after
+        // materialization). Publish the standard cache-flush event after the generation release.
+        final long cursor = messageBus.getQueryCacheEventPubSeq().next();
+        if (cursor > -1) {
+            messageBus.getQueryCacheEventPubSeq().done(cursor);
+        }
+        return generation;
     }
 
     /**
@@ -1147,6 +1176,16 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public RecentWriteTracker getRecentWriteTracker() {
         return recentWriteTracker;
+    }
+
+    /**
+     * Node-local role generation, bumped by {@link #bumpRoleGeneration()} on every hot promote/demote.
+     * A TableWriter re-reconciles its replica-only indexes whenever the value it last reconciled against
+     * differs from this one; see the ordering contract on {@link #bumpRoleGeneration()} (the skip flag
+     * must be published before the bump that releases it).
+     */
+    public long getRoleGeneration() {
+        return roleGeneration.get();
     }
 
     public Lock getRoleSwitchReadLock() {

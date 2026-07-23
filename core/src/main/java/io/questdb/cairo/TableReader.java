@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexFwdNullReader;
@@ -371,6 +372,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
         IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
+        if (indexReader != null
+                && (indexReader instanceof AbstractPostingIndexReader)
+                != IndexType.isPosting(metadata.getColumnIndexType(columnIndex))) {
+            // Metadata transitions can shift dense column slots. Never reopen a cached reader with a
+            // different physical index implementation: it would derive .pk names for a BITMAP index
+            // (or .k names for POSTING) and report false corruption.
+            Misc.free(indexes.getAndSetQuick(index, null));
+            Misc.free(indexes.getAndSetQuick(index + 1, null));
+            indexReader = null;
+        }
         if (indexReader != null) {
             // Single choke point for refreshing the scoreboard pin on cached
             // readers. TableReader.txn advances through several paths
@@ -394,6 +405,27 @@ public class TableReader implements Closeable, SymbolTableSource {
                             columnVersionReader,
                             partitionTimestamp
                     );
+                } catch (CairoException e) {
+                    // Mirror the fresh-create path (createIndexReaderAt): refreshing a CACHED index
+                    // reader onto a partition whose replica-only index sidecars are absent on this
+                    // node (purged on a role flip to a skipping primary, or never materialized for an
+                    // older partition that was written during a skip window) is NOT corruption -- it
+                    // just means "not materialized here yet". Convert the critical file-not-found open
+                    // failure into the same recoverable (non-critical) error so the query degrades
+                    // gracefully instead of crashing. Normal indexed columns are left untouched: a
+                    // missing index file there remains genuine corruption (critical), as does any
+                    // non-file-not-found failure on a replica-only column. As on the fresh-create path,
+                    // this can also mask a partially-materialized index (".pk" present, a ".pv"
+                    // generation missing) as "not materialized"; accepted, bounded by the next
+                    // insert-apply reconcile rebuild.
+                    if (metadata.isColumnReplicaOnlyIndex(columnIndex) && Files.isErrnoFileDoesNotExist(e.getErrno())) {
+                        throw CairoException.nonCritical()
+                                .put("replica-only index not materialized on this node [column=")
+                                .put(metadata.getColumnName(columnIndex))
+                                .put(", partitionTimestamp=").put(partitionTimestamp)
+                                .put("]; transient during restore/promote, retry shortly");
+                    }
+                    throw e;
                 } finally {
                     path.trimTo(plen);
                 }
@@ -1019,8 +1051,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         toColumns.setQuick(toIndex, columns.getAndSetQuick(fromIndex, null));
         toColumns.setQuick(toIndex + 1, columns.getAndSetQuick(fromIndex + 1, null));
         toColumnTops.setQuick(toBase / 2 + toColumnIndex, columnTops.getQuick(fromBase / 2 + fromColumnIndex));
-        toIndexReaders.setQuick(toIndex, indexes.getAndSetQuick(fromIndex, null));
-        toIndexReaders.setQuick(toIndex + 1, indexes.getAndSetQuick(fromIndex + 1, null));
+        // Do not carry cached index-reader implementations across a metadata transition. Dense
+        // columns can shift after DROP/re-ADD, and a cached POSTING reader moved into a BITMAP
+        // column's slot will later reopen the correct column using the wrong filename family (.pk
+        // instead of .k). Index readers are cheap to recreate lazily and retain table-txn pins, so
+        // close them here rather than risking stale type/column identity.
+        Misc.free(indexes.getAndSetQuick(fromIndex, null));
+        Misc.free(indexes.getAndSetQuick(fromIndex + 1, null));
+        toIndexReaders.setQuick(toIndex, null);
+        toIndexReaders.setQuick(toIndex + 1, null);
     }
 
     private TableReaderMetadata copyMeta(TableReaderMetadata srcMeta) {
@@ -1051,23 +1090,53 @@ public class TableReader implements Closeable, SymbolTableSource {
         } else {
             int partitionIndex = getPartitionIndex(columnBase);
             Path path = pathGenNativePartition(partitionIndex, partitionTxn);
+            final int partitionPathLen = path.size();
             try {
                 final byte indexType = metadata.getColumnIndexType(columnIndex);
                 final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
-                reader = IndexFactory.createReader(
-                        indexType,
-                        direction,
-                        configuration,
-                        path,
-                        metadata.getColumnName(columnIndex),
-                        columnNameTxn,
-                        partitionTxn,
-                        getColumnTop(columnBase, columnIndex),
-                        metadata,
-                        columnVersionReader,
-                        partitionTimestamp,
-                        txn
-                );
+                path.trimTo(partitionPathLen);
+                try {
+                    reader = IndexFactory.createReader(
+                            indexType,
+                            direction,
+                            configuration,
+                            path,
+                            metadata.getColumnName(columnIndex),
+                            columnNameTxn,
+                            partitionTxn,
+                            getColumnTop(columnBase, columnIndex),
+                            metadata,
+                            columnVersionReader,
+                            partitionTimestamp,
+                            txn
+                    );
+                } catch (CairoException e) {
+                    // For a replica-only indexed column on a non-skipping node (replica/standalone) the
+                    // planner treats the column as active, so an index scan may be chosen and the reader
+                    // opened. There is a transient window (e.g. right after restoring from a primary's
+                    // backup that lacks index files, before reconcile rebuilds them, or a concurrent
+                    // reconcile-purge on promote unlinking the file mid-open) where the key/value files
+                    // are absent. For a replica-only column a missing index file is NOT corruption - it
+                    // just means "not materialized here yet" - so convert the file-not-found open failure
+                    // to a recoverable (non-critical) error instead of the critical corruption error the
+                    // reader ctor throws. No cheap ff.exists() pre-check is done: this catch is a strict
+                    // superset of it (it also absorbs the TOCTOU unlink race and a missing value file),
+                    // so the pre-check would only add a redundant stat on the happy path.
+                    // Caveat: this tolerance can also mask a PARTIALLY materialized index (e.g. ".pk"
+                    // present but a ".pv" generation missing) as merely "not materialized". That is an
+                    // accepted tradeoff, bounded because the next insert-apply reconcile rebuilds the
+                    // index. Normal indexed columns are left untouched: a missing index file there remains
+                    // genuine corruption (critical), as does any non-file-not-found failure (e.g. unknown
+                    // format) on a replica-only column.
+                    if (metadata.isColumnReplicaOnlyIndex(columnIndex) && Files.isErrnoFileDoesNotExist(e.getErrno())) {
+                        throw CairoException.nonCritical()
+                                .put("replica-only index not materialized on this node [column=")
+                                .put(metadata.getColumnName(columnIndex))
+                                .put(", partitionTimestamp=").put(partitionTimestamp)
+                                .put("]; transient during restore/promote, retry shortly");
+                    }
+                    throw e;
+                }
                 if (direction == IndexReader.DIR_BACKWARD) {
                     indexes.setQuick(globalIndex, reader);
                 } else {
@@ -1861,7 +1930,27 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (metadata.isColumnIndexed(columnIndex)) {
                     IndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader != null) {
-                        indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+                        try {
+                            indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+                        } catch (CairoException e) {
+                            // Re-opening a CACHED index reader onto a partition whose replica-only
+                            // index sidecars are absent on this node (purged on a hot promote to a
+                            // skipping primary, or not yet materialized after restore) is NOT
+                            // corruption -- mirror the getIndexReader()/createIndexReaderAt()
+                            // tolerance. Drop the stale cached reader so the column reads as "not
+                            // materialized here"; a later getIndexReader() then surfaces the
+                            // recoverable non-critical error if a query still tries to use the index.
+                            // Normal indexed columns keep the critical-corruption behaviour, as do
+                            // non-file-not-found failures on replica-only columns. As elsewhere, this
+                            // can mask a partially-materialized index (".pk" present, a ".pv" generation
+                            // missing) as "not materialized"; accepted, bounded by the next insert-apply
+                            // reconcile rebuild.
+                            if (metadata.isColumnReplicaOnlyIndex(columnIndex) && Files.isErrnoFileDoesNotExist(e.getErrno())) {
+                                Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
+                            } else {
+                                throw e;
+                            }
+                        }
                     }
                 } else {
                     Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));

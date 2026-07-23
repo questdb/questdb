@@ -116,8 +116,12 @@ public interface MetadataService {
      * the parameter for any implementation that only overrides the 3-arg
      * variant, which has historically led to subtle metadata-staleness
      * bugs (see PR #6861 review M1).
+     * <p>
+     * {@code replicaOnly} marks the index as a replica-only index: the flag is
+     * persisted on the column metadata so the write path can skip building the
+     * index on the primary while replicas still materialize it.
      */
-    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames);
+    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames, boolean replicaOnly);
 
     AttachDetachStatus attachPartition(long partitionTimestamp);
 

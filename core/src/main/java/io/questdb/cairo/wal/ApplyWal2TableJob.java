@@ -728,7 +728,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 TableToken tableToken = writer.getTableToken();
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, txnDetails.getMinTimestamp(seqTxn), txnDetails.getMaxTimestamp(seqTxn));
                 long skipTxnCount = calculateSkipTransactionCount(tableToken, seqTxn, txnDetails);
-                // Ask TableWriter to skip applying transactions entirely when possible
+                // Ask TableWriter to skip applying transactions entirely when possible.
+                // NOTE: a pure skip bypasses commitWalInsertTransactions(), where the replica-only
+                // index role-generation reconcile hook lives, so the hook does NOT fire on a
+                // skip-only iteration. This is fine: a role-gen change during a skip-only apply is
+                // reconciled on the next real apply (the hook runs in commitWalInsertTransactions),
+                // at reader/writer open, or by the enterprise role-aware sweep. Do not assume the
+                // hook fires on every WAL iteration.
                 boolean skipped = false;
                 if (skipTxnCount > 0) {
                     skipped = writer.trySkipWalTransactions(seqTxn, skipTxnCount);

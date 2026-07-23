@@ -173,11 +173,11 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            k2\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            v\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\tfalse
+                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            k2\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            v\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
 
             LOG.info().$("Cycles detected: ").$(cycleDetectedCount.get())

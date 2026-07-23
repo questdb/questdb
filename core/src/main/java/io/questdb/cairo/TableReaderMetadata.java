@@ -360,6 +360,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         TableUtils.getSymbolCapacity(mem, writerIndex),
                         origWriterIndex
                 );
+                colMeta.setReplicaOnlyIndex(TableUtils.isColumnReplicaOnlyIndex(mem, writerIndex));
                 colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(mem, writerIndex) : 0);
                 columnMetadata.add(colMeta);
                 int denseIndex = columnMetadata.size() - 1;
@@ -418,6 +419,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int newColumnType = TableUtils.getColumnType(newMetaMem, writerIndex);
             int columnType = TableUtils.getColumnType(newMetaMem, writerIndex);
             byte indexType = TableUtils.getColumnIndexType(newMetaMem, writerIndex);
+            boolean replicaOnly = TableUtils.isColumnReplicaOnlyIndex(newMetaMem, writerIndex);
             boolean isDedupKey = TableUtils.isColumnDedupKey(newMetaMem, writerIndex);
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(newMetaMem, writerIndex);
             boolean symbolIsCached = TableUtils.isSymbolCached(newMetaMem, writerIndex);
@@ -456,30 +458,30 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         || existing == null
                         || existing.getWriterIndex() != writerIndex
                         || existing.getIndexType() != indexType
+                        || existing.isReplicaOnlyIndex() != replicaOnly
                         || existing.getIndexValueBlockCapacity() != indexBlockCapacity
                         || existing.isDedupKeyFlag() != isDedupKey
                         || existing.getDenseSymbolIndex() != denseSymbolIndex
                         || existing.getStableIndex() != stableIndex
                 ) {
                     // new
-                    columnMetadata.setQuick(
-                            outIndex,
-                            new TableReaderMetadataColumn(
-                                    newName,
-                                    columnType,
-                                    indexType,
-                                    indexBlockCapacity,
-                                    true,
-                                    null,
-                                    writerIndex,
-                                    isDedupKey,
-                                    denseSymbolIndex,
-                                    stableIndex,
-                                    symbolIsCached,
-                                    symbolCapacity,
-                                    origWriterIndex
-                            )
+                    TableReaderMetadataColumn newColMeta = new TableReaderMetadataColumn(
+                            newName,
+                            columnType,
+                            indexType,
+                            indexBlockCapacity,
+                            true,
+                            null,
+                            writerIndex,
+                            isDedupKey,
+                            denseSymbolIndex,
+                            stableIndex,
+                            symbolIsCached,
+                            symbolCapacity,
+                            origWriterIndex
                     );
+                    newColMeta.setReplicaOnlyIndex(replicaOnly);
+                    columnMetadata.setQuick(outIndex, newColMeta);
                     if (existing != null) {
                         // column deleted at existingIndex
                         transitionIndex.markDeleted(existingIndex);
