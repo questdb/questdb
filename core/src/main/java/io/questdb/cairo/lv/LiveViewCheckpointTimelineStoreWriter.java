@@ -495,6 +495,141 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
     }
 
+    /**
+     * Preserves the timeline's prefix below {@code floorTimestamp} and drops
+     * every logical root at or above it, publishing a new generation over the
+     * surviving prefix. This is the prefix-preserving alternative to a
+     * whole-timeline retire for an out-of-order repair whose influence reaches
+     * the runtime frontier (EOF) or that resumes from a predecessor: the tail
+     * roots the repair is about to rewrite go, but every long-term anchor below
+     * the floor stays addressable and the checkpoint id space carries forward.
+     * <p>
+     * The dropped roots release the data segments they referenced, which retire
+     * at this generation for the purge job to reclaim. The row-position delta
+     * root and the checkpoint-id counter carry forward unchanged, the logical
+     * state total sheds the dropped roots' contribution, and - deliberately - the
+     * base watermark is left where it was. That leaves the superblock momentarily
+     * naming a head the truncate discarded; the caller closes the gap by writing
+     * a {@link LiveViewCheckpointRepairMarker} before calling this, so a crash
+     * before the post-replay seal forces a restart to rebuild from the applied
+     * base rather than trust the truncated head.
+     *
+     * @return a result whose {@link TruncateResult#isPublished()} is false when
+     * no prefix survives below the floor (the whole timeline sits at or above
+     * it); nothing is published and the caller falls back to a full retire
+     */
+    public TruncateResult publishTruncate(
+            @Transient @NotNull Path checkpointsDir,
+            long definitionTxn,
+            long historyEpoch,
+            long floorTimestamp,
+            boolean primaryOwner
+    ) {
+        if (!primaryOwner) {
+            throw CairoException.critical(0).put("replica must not publish a live view checkpoint timeline");
+        }
+        try (
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration);
+                LiveViewCheckpointTimelineReader timelineReader = new LiveViewCheckpointTimelineReader(configuration);
+                LiveViewCheckpointRoot oldCheckpointRoot = new LiveViewCheckpointRoot(configuration);
+                LiveViewCheckpointSegmentDirectoryWriter directoryWriter = new LiveViewCheckpointSegmentDirectoryWriter(configuration);
+                LiveViewCheckpointTimelineWriter timelineWriter = new LiveViewCheckpointTimelineWriter(configuration)
+        ) {
+            metaStore.of(checkpointsDir);
+            timelineReader.of(checkpointsDir);
+            timelineWriter.of(checkpointsDir);
+            directoryWriter.of(checkpointsDir);
+
+            if (!metaStore.isValid()) {
+                throw CairoException.critical(0)
+                        .put("cannot truncate a live view checkpoint timeline with no valid generation");
+            }
+            final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
+            if (superblock.definitionTxn != definitionTxn || superblock.historyEpoch != historyEpoch) {
+                throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                        .put("live view checkpoint truncate definition identity mismatch");
+            }
+
+            final LiveViewCheckpointPageRef oldTimelineRoot = copy(superblock.timelineRootRef);
+            final LiveViewCheckpointPageRef oldDirectoryRoot = copy(superblock.segmentDirectoryRootRef);
+
+            // No boundary below the floor: there is no prefix to preserve, so
+            // publish nothing and let the caller retire the whole timeline.
+            final LiveViewCheckpointTimelineEntry probe = new LiveViewCheckpointTimelineEntry();
+            if (!timelineReader.predecessor(oldTimelineRoot, floorTimestamp, probe)) {
+                return TruncateResult.NOT_PUBLISHED;
+            }
+
+            final long generation = checkedIncrement(superblock.generation, "generation");
+            directoryWriter.begin(oldDirectoryRoot);
+
+            // Release every root at or above the floor: each drops the data
+            // segments it referenced, so a segment no surviving root names retires
+            // at this generation for the purge job to reclaim once no reader can
+            // reach it. Applied per root because repeated references inside one
+            // root count once per side.
+            final LongList removedSegmentIds = new LongList();
+            final long[] droppedAccumulators = new long[2]; // {rootCount, logicalStateBytes}
+            timelineReader.range(oldTimelineRoot, floorTimestamp, Long.MAX_VALUE, entry -> {
+                oldCheckpointRoot.of(checkpointsDir, entry.rootRef);
+                if (oldCheckpointRoot.getCheckpointId() != entry.checkpointId
+                        || oldCheckpointRoot.getMaxTimestamp() != entry.maxTimestamp
+                        || oldCheckpointRoot.getDefinitionTxn() != definitionTxn) {
+                    throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                            .put("live view checkpoint truncate root identity mismatch [checkpointId=")
+                            .put(entry.checkpointId).put(']');
+                }
+                removedSegmentIds.clear();
+                for (int s = 0, n = oldCheckpointRoot.getSegmentIdCount(); s < n; s++) {
+                    removedSegmentIds.add(oldCheckpointRoot.getSegmentId(s));
+                }
+                directoryWriter.applyRootReferenceChanges(removedSegmentIds, emptySegmentIds, generation);
+                droppedAccumulators[0]++;
+                droppedAccumulators[1] = checkedAdd(droppedAccumulators[1], entry.logicalStateBytes);
+            });
+
+            long nextSegmentId = skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId);
+            final LiveViewCheckpointPageRef newTimelineRoot = new LiveViewCheckpointPageRef();
+            final boolean survived = timelineWriter.truncateAbove(oldTimelineRoot, floorTimestamp, nextSegmentId++, newTimelineRoot);
+            // The predecessor probe above proved a prefix key exists below the floor.
+            assert survived;
+            long metadataBytesAdded = timelineWriter.getLastSegmentBytes();
+
+            nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
+            directoryWriter.publish(nextSegmentId++, newDirectoryRoot);
+            metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.getLastSegmentBytes());
+            if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
+                throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
+            }
+
+            superblock.generation = generation;
+            // The base and live-view watermarks carry forward unchanged: this
+            // publication moves no coordinate, and correctness on a mid-repair
+            // crash comes from the repair marker (see the method javadoc), not
+            // from this watermark, which still names the discarded head until the
+            // post-replay seal advances it.
+            superblock.nextSegmentId = nextSegmentId;
+            superblock.metadataBytes = checkedAdd(superblock.metadataBytes, metadataBytesAdded);
+            superblock.logicalStateBytes = checkedAdd(superblock.logicalStateBytes, -droppedAccumulators[1]);
+            // A truncate leaves no mid-sweep resume point behind.
+            superblock.seedCursorOffset = Numbers.LONG_NULL;
+            copy(newTimelineRoot, superblock.timelineRootRef);
+            // The row-position delta root carries forward unchanged: dropping the
+            // suffix moves no surviving prefix key's cumulative recovery position.
+            copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
+            metaStore.publish();
+
+            return new TruncateResult(
+                    generation,
+                    (int) droppedAccumulators[0],
+                    metadataBytesAdded,
+                    metaStore.getWalPurgeFloor(),
+                    new LiveViewCheckpointTimelineStats().of(superblock, metadataBytesAdded)
+            );
+        }
+    }
+
     @TestOnly
     public void setTestFailureStage(int testFailureStage) {
         this.testFailureStage = testFailureStage;
@@ -1203,6 +1338,75 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         public long getWalPurgeFloor() {
             return walPurgeFloor;
+        }
+    }
+
+    /**
+     * Result of one prefix-preserving truncate publication. When
+     * {@link #isPublished()} is false no prefix survived below the floor and
+     * nothing was published; every other field is unset.
+     */
+    public static final class TruncateResult {
+        static final TruncateResult NOT_PUBLISHED = new TruncateResult(-1, 0, 0, -1, null, false);
+        private final long generation;
+        private final long metadataBytesAdded;
+        private final boolean published;
+        private final int rootsDropped;
+        private final LiveViewCheckpointTimelineStats stats;
+        private final long walPurgeFloor;
+
+        private TruncateResult(
+                long generation,
+                int rootsDropped,
+                long metadataBytesAdded,
+                long walPurgeFloor,
+                LiveViewCheckpointTimelineStats stats,
+                boolean published
+        ) {
+            this.generation = generation;
+            this.rootsDropped = rootsDropped;
+            this.metadataBytesAdded = metadataBytesAdded;
+            this.walPurgeFloor = walPurgeFloor;
+            this.stats = stats;
+            this.published = published;
+        }
+
+        private TruncateResult(
+                long generation,
+                int rootsDropped,
+                long metadataBytesAdded,
+                long walPurgeFloor,
+                LiveViewCheckpointTimelineStats stats
+        ) {
+            this(generation, rootsDropped, metadataBytesAdded, walPurgeFloor, stats, true);
+        }
+
+        public long getGeneration() {
+            return generation;
+        }
+
+        public long getMetadataBytesAdded() {
+            return metadataBytesAdded;
+        }
+
+        public int getRootsDropped() {
+            return rootsDropped;
+        }
+
+        /**
+         * @return the shape of the generation this truncate committed, or null
+         * when nothing was published
+         */
+        public LiveViewCheckpointTimelineStats getStats() {
+            return stats;
+        }
+
+        public long getWalPurgeFloor() {
+            return walPurgeFloor;
+        }
+
+        public boolean isPublished() {
+            return published;
         }
     }
 

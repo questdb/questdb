@@ -1182,6 +1182,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Clears the prefix-preservation repair marker once a repair's post-replay
+     * seal has re-anchored the timeline head, so a later restart restores
+     * normally rather than rebuilding from the applied base. Best effort: a
+     * lingering marker only forces one extra rebuild, which a superblock
+     * generation past the recorded base generation makes stale anyway.
+     */
+    private void clearCheckpointRepairMarker(LiveViewInstance instance) {
+        if (engine.isReadOnlyMode()) {
+            return;
+        }
+        path.of(engine.getConfiguration().getDbRoot())
+                .concat(instance.getLiveViewToken())
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+        LiveViewCheckpointRepairMarker.clear(engine.getConfiguration().getFilesFacade(), path);
+    }
+
+    /**
      * Returns {@code true} when {@code node} and its entire subtree carry no reference
      * to a base column - every leaf is a constant, or a literal that does not resolve
      * to a projected column. Used to confirm that a monotone-preserving function's
@@ -2990,6 +3007,102 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Prefix-preserving alternative to {@link #retireCheckpointStateOnO3} for an
+     * out-of-order repair whose influence reaches the runtime frontier (EOF) or
+     * that resumes from a predecessor: rather than retiring the whole timeline
+     * and losing every long-term anchor because of one near-head correction, it
+     * keeps the roots below {@code floorTs} and drops only the tail the repair is
+     * about to rewrite.
+     * <p>
+     * It always clears the in-memory head so the post-replay seal takes its
+     * first-checkpoint path. When a prefix survives below the floor it writes the
+     * durable {@link LiveViewCheckpointRepairMarker} - which forces a mid-repair
+     * crash restart to rebuild from the applied base rather than trust the
+     * truncated head - and truncates the on-disk timeline to that prefix; the
+     * caller clears the marker once the post-replay seal re-anchors the head.
+     * When no prefix survives (or there is no valid timeline) it retires outright,
+     * exactly as before.
+     *
+     * @return true when the prefix was preserved and a marker is now live; false
+     * when the timeline was retired
+     */
+    private boolean truncateOrRetireTimelineOnO3(LiveViewInstance instance, long floorTs) {
+        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        if (engine.isReadOnlyMode()) {
+            retireCheckpointTimeline(instance);
+            return false;
+        }
+        try {
+            path.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            final long baseGeneration;
+            final long definitionTxn;
+            final long historyEpoch;
+            try (LiveViewCheckpointSuperblock superblock = new LiveViewCheckpointSuperblock(engine.getConfiguration())) {
+                superblock.of(path);
+                if (!superblock.isValid()) {
+                    // Nothing to preserve - no valid timeline. Retire (which also
+                    // removes any stale marker) exactly as the old path did.
+                    retireCheckpointTimeline(instance);
+                    return false;
+                }
+                baseGeneration = superblock.generation;
+                definitionTxn = superblock.definitionTxn;
+                historyEpoch = superblock.historyEpoch;
+            }
+            if (checkpointTimelineStoreWriter == null) {
+                checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(engine.getConfiguration());
+                checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
+            }
+            boolean preserved = false;
+            final Lock roleLock = engine.getRoleSwitchReadLock();
+            roleLock.lock();
+            try {
+                // Ordered before the truncate: a crash between the marker and the
+                // post-replay seal must rebuild from the applied base.
+                LiveViewCheckpointRepairMarker.write(
+                        engine.getConfiguration(),
+                        path,
+                        definitionTxn,
+                        historyEpoch,
+                        baseGeneration,
+                        floorTs
+                );
+                final LiveViewCheckpointTimelineStoreWriter.TruncateResult result =
+                        checkpointTimelineStoreWriter.publishTruncate(
+                                path,
+                                definitionTxn,
+                                historyEpoch,
+                                floorTs,
+                                true
+                        );
+                preserved = result.isPublished();
+                if (preserved) {
+                    instance.recordCheckpointTimelineWalPurgeFloor(result.getWalPurgeFloor());
+                    instance.recordCheckpointTimelineStats(result.getStats());
+                } else {
+                    // No prefix survived after all - drop the marker before retiring.
+                    LiveViewCheckpointRepairMarker.clear(engine.getConfiguration().getFilesFacade(), path);
+                }
+            } finally {
+                roleLock.unlock();
+            }
+            if (!preserved) {
+                retireCheckpointTimeline(instance);
+            }
+            return preserved;
+        } catch (Throwable t) {
+            LOG.error().$("could not preserve live view checkpoint timeline prefix, retiring [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", floorTs=").$(floorTs)
+                    .$(", error=").$(t).I$();
+            retireCheckpointTimeline(instance);
+            return false;
+        }
+    }
+
+    /**
      * Reports whether the live view's base table currently has DEDUP UPSERT keys
      * enabled. A dedup base makes the refresh worker route this view onto the
      * coupled, applied-reader path ({@link #drainAppliedBase}) instead of the raw-WAL
@@ -3719,6 +3832,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long appendedRows = 0;
         long o3ScanRows = 0;
         long replayMaxTs = Numbers.LONG_NULL;
+        // Set when this resume preserved the timeline prefix (the anchor and every
+        // earlier root) behind a live marker instead of retiring; the seal below
+        // resolves it.
+        boolean prefixMarkerLive = false;
         try {
             engine.detachReader(reader);
             executionContext.of(reader);
@@ -3781,21 +3898,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 anchorMaxTs,
                                 anchorCheckpointId
                         );
-                        // Retire only after the state is in memory - the timeline
-                        // is what held it. From here the replay owns correctness of
-                        // the durable output and no root describes it any more.
-                        retireCheckpointStateOnO3(instance, true);
                         if (anchorLvRowPosition == Numbers.LONG_NULL) {
                             // The root could not be read, or its format is one this
                             // build cannot restore (which stashed a pending
-                            // invalidation reason). The O3 replay is abandoned here
+                            // invalidation reason). Nothing is in memory, so retire
+                            // the whole timeline: the O3 replay is abandoned here
                             // without advancing the watermark, so the same trigger
                             // re-fires on a later refresh cycle and rebuilds against
                             // the now-retired timeline (one cycle of stale pre-O3
                             // rows in between). try-with-resources closes the cursor
                             // on return.
+                            retireCheckpointStateOnO3(instance, true);
                             return;
                         }
+                        // The state is in memory now - the timeline is what held it,
+                        // and from here the replay owns correctness of the durable
+                        // output. Preserve the roots below the output floor (the
+                        // anchor among them) instead of retiring the whole timeline
+                        // for one predecessor-resume repair; the marker this writes
+                        // forces a mid-repair crash to rebuild from the applied base.
+                        prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs());
                         // Snap the lifetime row counter back to the root's
                         // recorded position: the upcoming REPLACE_RANGE commit
                         // logically truncates rows above replayLowTs, so the
@@ -3871,12 +3993,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", error=").$safe(e.getFlyweightMessage()).I$();
             persistState(instance);
         }
+        boolean headSealed = false;
         if (lvConsumedPersisted && appendedRows > 0) {
-            // Seal the post-replay state, opening a fresh history over the timeline
-            // the retire above dropped. force writes past the cadence gate, though
-            // the cleared head already puts this on the first-checkpoint path:
-            // an O3 resume must advance the boundary or the next replay re-scans
-            // from the stale maxTs.
+            // Seal the post-replay state, appending a fresh head onto the preserved
+            // prefix (or opening a fresh history when the prefix was retired). force
+            // writes past the cadence gate, though the cleared head already puts this
+            // on the first-checkpoint path: an O3 resume must advance the boundary or
+            // the next replay re-scans from the stale maxTs.
             //
             // A zero-row replay seals nothing: the truncating commit above left the
             // LV table holding exactly the rows the anchor covered, and the restore
@@ -3884,6 +4007,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // re-opens the history from there. There is also nothing to seal
             // (replayMaxTs is LONG_NULL).
             maybeWriteHeadCheckpoint(instance, windowFactory, committedSeqTxn, replayMaxTs, appendedRows, true);
+            headSealed = true;
+        }
+        if (prefixMarkerLive) {
+            // Resolve the truncate's live marker: a fresh head now anchors the
+            // preserved prefix, so clear it; or, on a zero-row resume, the truncated
+            // timeline has no head, so retire it (which removes the marker) and let a
+            // restart rebuild.
+            if (headSealed) {
+                clearCheckpointRepairMarker(instance);
+            } else {
+                retireCheckpointTimeline(instance);
+            }
         }
         // The resume replay is "the win": bounded to the tail above the anchor.
         // Counted separately from the boundary rebuild so live_views() can show how
@@ -4158,6 +4293,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         int capturedBoundaries = resuming ? resumed.getCapturedBoundaries() : 0;
         boolean replayCompleted = false;
         boolean timelineSpliced = false;
+        // Set when this turn preserved the timeline prefix instead of retiring it
+        // (an EOF-reaching localized repair). A durable marker is then live and the
+        // post-replay seal must resolve it: clear it once a fresh head is sealed, or
+        // retire the truncated timeline when the repair emitted no rows to seal.
+        boolean prefixMarkerLive = false;
         // Set when the replay stops on its turn budget with the repair unfinished,
         // together with the inclusive timestamp the next turn re-opens the scan at.
         boolean yielded = false;
@@ -4184,7 +4324,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // unsealed, and the timeline it may still splice into is the one its
             // capture pinned.
             if (!resuming) {
-                retireCheckpointStateOnO3(instance, timelineCapture == null);
+                if (timelineCapture == null && localized) {
+                    // Localized repair whose influence reaches the runtime frontier:
+                    // there is no converged suffix to keep, but the roots below R are
+                    // still correct. Preserve them - keeping the long-term anchors and
+                    // the checkpoint id space - instead of retiring the whole timeline
+                    // for one near-head correction. The durable marker this writes
+                    // forces a mid-repair crash to rebuild from the applied base.
+                    prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs);
+                } else {
+                    retireCheckpointStateOnO3(instance, timelineCapture == null);
+                }
             }
 
             engine.detachReader(reader);
@@ -4677,6 +4827,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 instance.setLastProcessedSeqTxn(effectiveSeqTxn);
                 instance.setAppliedWatermark(effectiveSeqTxn);
                 boolean lvConsumedPersisted = false;
+                boolean headSealed = false;
                 try {
                     engine.advanceLiveViewConsumedSeqTxn(
                             instance.getLiveViewToken(),
@@ -4731,6 +4882,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             true,
                             !timelineSpliced
                     );
+                    headSealed = true;
+                }
+                if (prefixMarkerLive) {
+                    // The truncate preserved the prefix behind a live marker. If a
+                    // fresh head was just sealed above it the timeline is consistent
+                    // again, so drop the marker and let a restart restore normally.
+                    // Otherwise the repair emitted nothing to seal (a pure delete to
+                    // EOF), leaving a headless truncated timeline: retire it - which
+                    // removes the marker - and let a restart rebuild.
+                    if (headSealed) {
+                        clearCheckpointRepairMarker(instance);
+                    } else {
+                        retireCheckpointTimeline(instance);
+                    }
                 }
             }
         } finally {
@@ -5929,6 +6094,46 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+
+            // A prefix-preserving repair truncated the timeline head but a crash
+            // reached here before it re-sealed a fresh head: the superblock's
+            // watermark still names the discarded head, so an incremental restore
+            // would rehydrate wrong state. The live marker forces the deterministic
+            // applied-base rebuild instead. It is stale - a harmless leftover a crash
+            // left between the seal and its clear - only when a generation strictly
+            // past the truncate's own was sealed over it, which the base generation
+            // it records lets a restart tell from a live repair.
+            if (LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), checkpointsDir)) {
+                final long markerBaseGeneration = LiveViewCheckpointRepairMarker.readBaseGeneration(
+                        engine.getConfiguration(),
+                        checkpointsDir
+                );
+                long currentGeneration = Numbers.LONG_NULL;
+                try (LiveViewCheckpointSuperblock superblock = new LiveViewCheckpointSuperblock(engine.getConfiguration())) {
+                    superblock.of(checkpointsDir);
+                    if (superblock.isValid()) {
+                        currentGeneration = superblock.generation;
+                    }
+                }
+                final boolean stale = markerBaseGeneration != Numbers.LONG_NULL
+                        && currentGeneration != Numbers.LONG_NULL
+                        && currentGeneration > markerBaseGeneration + 1;
+                if (!stale) {
+                    // Live repair, torn marker, or an unreadable superblock: rebuild.
+                    // The rebuild retires the timeline, which removes the marker.
+                    rebuildTimelineRecoveryFromAppliedBase(
+                            instance,
+                            windowFactory,
+                            durableBaseSeqTxn,
+                            "prefix preservation repair marker present"
+                    );
+                    return;
+                }
+                // The repair completed; the marker is a leftover. Clear it and
+                // restore from the sealed timeline as usual.
+                LiveViewCheckpointRepairMarker.clear(engine.getConfiguration().getFilesFacade(), checkpointsDir);
+            }
+
             if (!engine.getConfiguration().getFilesFacade().exists(timelinePath.$())) {
                 rebuildTimelineRecoveryFromAppliedBase(
                         instance,

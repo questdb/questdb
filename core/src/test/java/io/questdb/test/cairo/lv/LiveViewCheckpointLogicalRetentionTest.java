@@ -29,6 +29,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -61,11 +62,12 @@ import org.junit.Test;
  * Each case then pins one way the count could plausibly drop: ordinary cadence
  * past the ring's former count bound, a localized repair re-versioning a
  * historical interval, and the physical lifecycle - purge and restart - running
- * over a live timeline. The last case is the counterfactual that keeps the other
- * three from being vacuous: a repair whose influence reaches the runtime frontier
- * has no converged suffix to keep, so it retires the timeline and a post-replay
- * seal starts a fresh history. The entry set restarts at zero there, which is a
- * new epoch rather than a pruned tail of the old one.
+ * over a live timeline. A fourth case pins the prefix-preservation rule for a
+ * repair whose influence reaches the runtime frontier: it has no converged suffix
+ * to keep, but the roots below the repair floor are still correct, so a truncate
+ * preserves that prefix and re-seals a fresh head above it rather than retiring
+ * the whole timeline. The generation advances and the id space carries forward -
+ * a pruned tail of the same epoch, not a new one restarting at zero.
  */
 public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest {
 
@@ -125,6 +127,45 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
+    public void testEofRepairPreservedTimelineRestoresAfterRestart() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                // EOF repair: preserves the prefix, re-seals a fresh head, clears the marker.
+                correct(job, instance, SEALS * 10 - 5, 800);
+                Assert.assertTrue("the repair preserved the timeline", generation(instance) > SEALS);
+            }
+
+            // Restart: drop the in-memory registry and rebuild it from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance restored = viewInstance();
+
+            // The cleared marker means a restart restores from the preserved timeline
+            // rather than rebuilding: its advanced generation and prefix survive.
+            Assert.assertTrue("the preserved generation survives the restart", generation(restored) > SEALS);
+            final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
+            Assert.assertTrue(
+                    "the oldest boundary survives the restart",
+                    findsEntry(restored, ts(timestamp(10)), 0, entry)
+            );
+
+            // A refresh after the restart restores from the preserved timeline (no
+            // rebuild would have reset the generation to a fresh epoch) and the view
+            // matches a direct recompute.
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(resumed);
+            }
+            Assert.assertTrue(
+                    "a restore must not reset the generation to a rebuilt epoch",
+                    generation(viewInstance()) > SEALS
+            );
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
     public void testLifecycleCyclesRetainEveryLogicalEntry() throws Exception {
         assertMemoryLeak(() -> {
             createView();
@@ -158,6 +199,38 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
+    public void testLiveRepairMarkerForcesRebuildOnRestart() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                // Simulate a crash in the middle of a prefix-preserving repair: a live
+                // marker (its base generation is the current one, so no later generation
+                // sealed over it) sits on disk with the timeline still present.
+                writeRepairMarker(instance, generation(instance));
+            }
+
+            // Restart and refresh: the live marker must force a rebuild from the applied
+            // base rather than trust a timeline whose head may have been truncated.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(resumed);
+            }
+
+            final LiveViewInstance restored = viewInstance();
+            Assert.assertEquals("a forced rebuild resets the generation", 1, generation(restored));
+            try (Path dir = checkpointsDir(restored)) {
+                Assert.assertFalse(
+                        "the rebuild must remove the repair marker",
+                        LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir)
+                );
+            }
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
     public void testLocalizedRepairsReVersionRootsWithoutDroppingOne() throws Exception {
         assertMemoryLeak(() -> {
             createView();
@@ -186,46 +259,114 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
-    public void testOnlyATimelineRetirementResetsTheLogicalEntrySet() throws Exception {
+    public void testEofRepairPreservesThePrefixInsteadOfRetiring() throws Exception {
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 final LiveViewInstance instance = buildHistory(job);
-                assertEpochRetainsEveryEntry(instance, SEALS, "before the retirement");
+                final long generationBefore = generation(instance);
+                Assert.assertEquals("the epoch allocated one id per seal", SEALS, nextCheckpointId(instance));
 
                 // Five seconds under the head, so the correction's influence reaches the
                 // runtime frontier instead of converging under it. There is no proven
-                // converged suffix to keep, so the repair retires the whole timeline and
-                // the post-replay seal starts a fresh history.
+                // converged suffix, but the roots below the repair floor are still
+                // correct, so a truncate preserves the prefix and re-seals a fresh head.
                 correct(job, instance, SEALS * 10 - 5, 800);
 
-                Assert.assertEquals(
-                        "a retired timeline restarts the generation counter",
-                        1,
-                        generation(instance)
+                // Preserved, not retired: the generation advances rather than restarting
+                // at 1, and the checkpoint id space carries forward rather than resetting.
+                Assert.assertTrue(
+                        "an EOF repair must preserve the timeline, not reset its generation [generation="
+                                + generation(instance) + ']',
+                        generation(instance) > generationBefore
                 );
-                final long entries = assertEpochRetainsEveryEntry(instance, 0, "after the retirement");
-                Assert.assertEquals(
-                        "the post-replay seal is the new epoch's first and only boundary",
-                        1,
-                        entries
+                Assert.assertTrue(
+                        "the checkpoint id space must carry forward, not reset [nextCheckpointId="
+                                + nextCheckpointId(instance) + ']',
+                        nextCheckpointId(instance) > SEALS
                 );
-                // The surviving id 0 sits at the current head rather than at the coordinate
-                // the retired epoch's first boundary held, so this is a new history epoch
-                // and not the old one pruned back to its newest entry.
+
+                // The logical entry set is the preserved prefix plus the newly sealed
+                // head: a contiguous run from id 0 and then the head at the preserved
+                // next id. The tail roots the repair rewrote are gone, so this is a
+                // pruned tail of the same epoch, not a fresh history restarting at zero.
+                final LongList ids = logicalCheckpointIds(instance);
+                Assert.assertTrue("more than the head must survive the repair", ids.size() > 1);
+                Assert.assertEquals("the preserved prefix keeps id 0", 0, ids.getQuick(0));
+                for (int i = 0, n = ids.size() - 1; i < n; i++) {
+                    Assert.assertEquals("the preserved prefix is contiguous from zero", i, ids.getQuick(i));
+                }
+                Assert.assertEquals(
+                        "the sealed head takes the preserved next id",
+                        SEALS,
+                        ids.getQuick(ids.size() - 1)
+                );
+
+                // The oldest boundary keeps the exact coordinate it was sealed at, which
+                // is what makes an old O3 row's predecessor lookup a search rather than a
+                // fallback to the view boundary.
                 final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
-                Assert.assertTrue(findsEntry(instance, ts(timestamp(SEALS * 10)), 0, entry));
-                Assert.assertFalse(
-                        "no boundary of the retired epoch survives into the new history",
+                Assert.assertTrue(
+                        "the oldest boundary must survive the near-head repair",
                         findsEntry(instance, ts(timestamp(10)), 0, entry)
                 );
                 assertViewMatchesRecompute();
 
-                // Monotonic retention resumes immediately inside the new epoch.
-                appendAndRefresh(job, (SEALS + 1) * 10, SEALS + 1);
-                driveRefreshToQuiescence(job);
-                Assert.assertEquals(2, assertEpochRetainsEveryEntry(instance, entries, "after the next commit"));
+                // A subsequent, deeper O3 correction reuses one of the preserved
+                // predecessors: it localizes against the surviving roots (a splice that
+                // re-versions in place and mints no new boundary) instead of falling back
+                // to a full rebuild from the view boundary, which a retired timeline
+                // would have forced.
+                final long generationBeforeDeep = generation(instance);
+                final long nextIdBeforeDeep = nextCheckpointId(instance);
+                correct(job, instance, 103, 700); // between the 100 and 110 groups
+                Assert.assertTrue(
+                        "the deeper repair must advance the generation",
+                        generation(instance) > generationBeforeDeep
+                );
+                Assert.assertEquals(
+                        "a localized repair reusing the preserved prefix mints no new boundary",
+                        nextIdBeforeDeep,
+                        nextCheckpointId(instance)
+                );
+                Assert.assertTrue(
+                        "the preserved prefix stays addressable after the deeper repair",
+                        findsEntry(instance, ts(timestamp(10)), 0, entry)
+                );
+                assertViewMatchesRecompute();
             }
+        });
+    }
+
+    @Test
+    public void testStaleRepairMarkerIsIgnoredOnRestart() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                // A marker a completed repair left behind: a later generation (the
+                // current one) sealed well past the marker's recorded base generation,
+                // so a restart must ignore it and restore normally.
+                writeRepairMarker(instance, generation(instance) - 3);
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(resumed);
+            }
+
+            final LiveViewInstance restored = viewInstance();
+            // The stale marker is ignored and cleared; the timeline restores rather than
+            // rebuilding, so its generation is not reset to a fresh epoch.
+            Assert.assertTrue("a stale marker must not force a rebuild", generation(restored) > 1);
+            try (Path dir = checkpointsDir(restored)) {
+                Assert.assertFalse(
+                        "a stale marker must be cleared on restore",
+                        LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir)
+                );
+            }
+            assertViewMatchesRecompute();
         });
     }
 
@@ -434,5 +575,21 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull("live view 'lv' must be registered", instance);
         return instance;
+    }
+
+    // Stamps a repair marker on disk to stand in for a crash in the middle of a
+    // prefix-preserving repair. The identity fields mirror what the repair writes;
+    // only the base generation drives the restart decision.
+    private void writeRepairMarker(LiveViewInstance instance, long baseGeneration) {
+        try (Path dir = checkpointsDir(instance)) {
+            LiveViewCheckpointRepairMarker.write(
+                    configuration,
+                    dir,
+                    instance.getLiveViewToken().getTableId(),
+                    0,
+                    baseGeneration,
+                    ts(timestamp(10))
+            );
+        }
     }
 }

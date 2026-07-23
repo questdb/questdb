@@ -352,6 +352,17 @@ final class LiveViewCheckpointTimelineNode {
     }
 
     /**
+     * Drops the suffix, retaining only the first {@code newCount} records. Used
+     * by a suffix truncation, which removes a contiguous run of the highest keys
+     * (leaf entries or internal children). The dropped slots keep their stale
+     * values, but {@link #writeTo} and every accessor honor {@link #count}.
+     */
+    void retainPrefix(int newCount) {
+        assert newCount >= 0 && newCount <= count;
+        count = newCount;
+    }
+
+    /**
      * Updates child {@code i}'s minimum key and subtree reference. Used by append,
      * where a child's minimum can drop when a new global minimum is inserted.
      */

@@ -289,6 +289,214 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTruncateAboveDropsSuffixKeepsPrefix() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                final int n = 60;
+                for (int i = 0; i < n; i++) {
+                    h.append(i * 10L, i);
+                }
+                // Drop everything at or above ts 305 (keys 31..59), keep 0..30.
+                Assert.assertTrue(h.truncate(305));
+                Assert.assertEquals(31, h.reader.size(h.root));
+                h.assertIterateAll();
+                for (int i = 0; i <= 30; i++) {
+                    h.assertFindExact(i * 10L, i);
+                }
+                for (int i = 31; i < n; i++) {
+                    h.assertFindExactMissing(i * 10L, i);
+                }
+                // The new head is the greatest surviving key, and lookups past it miss.
+                h.assertPredecessor(305);
+                h.assertSuccessor(305);
+                h.assertFloor(Long.MAX_VALUE);
+                h.assertRange(Long.MIN_VALUE, Long.MAX_VALUE);
+                h.assertRange(280, 1_000);
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateAboveDropsWholeTie() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                h.append(10, 100);
+                h.append(50, 500);
+                h.append(50, 501);
+                h.append(50, 502);
+                h.append(90, 900);
+                // A floor exactly on the tie drops the entire timestamp-50 group.
+                Assert.assertTrue(h.truncate(50));
+                Assert.assertEquals(1, h.reader.size(h.root));
+                h.assertIterateAll();
+                h.assertFindExact(10, 100);
+                h.assertFindExactMissing(50, 500);
+                h.assertFindExactMissing(50, 501);
+                h.assertFindExactMissing(50, 502);
+                h.assertFindExactMissing(90, 900);
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateAboveFloorAboveEveryKeyReusesRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                final int n = 30;
+                for (int i = 0; i < n; i++) {
+                    h.append(i * 10L, i);
+                }
+                final LiveViewCheckpointPageRef before = new LiveViewCheckpointPageRef();
+                before.of(h.root.getSegmentId(), h.root.getOffset(), h.root.getLength());
+                // Floor strictly above the head: nothing drops and the root is reused.
+                Assert.assertTrue(h.truncate((n - 1) * 10L + 1));
+                Assert.assertTrue("floor above every key must reuse the root", sameRef(before, h.root));
+                Assert.assertEquals(n, h.reader.size(h.root));
+                h.assertIterateAll();
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateAboveReusesPrefixSubtrees() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 40; i++) {
+                    h.append(i * 10L, i);
+                }
+                final int childCount = h.reader.rootChildCount(h.root);
+                Assert.assertTrue("expected a multi-level tree", childCount >= 2);
+
+                final LiveViewCheckpointPageRef child0 = new LiveViewCheckpointPageRef();
+                h.reader.rootChildRef(h.root, 0, child0);
+
+                // Drop a suffix from the middle of the key space: the leftmost
+                // subtree sits entirely below the floor and must be kept by
+                // reference, and the truncation copies only the boundary spine.
+                Assert.assertTrue(h.truncate(195)); // keeps ts 0..190
+                final int truncateWrote = h.writer.getLastSegmentPageCount();
+
+                final LiveViewCheckpointPageRef after = new LiveViewCheckpointPageRef();
+                h.reader.rootChildRef(h.root, 0, after);
+                Assert.assertTrue("leftmost subtree must be reused", sameRef(child0, after));
+                Assert.assertTrue(
+                        "truncate copied too many pages: " + truncateWrote,
+                        truncateWrote <= childCount + 4
+                );
+                h.assertIterateAll();
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateAboveSingleChildRootCollapses() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                final int n = 40;
+                for (int i = 0; i < n; i++) {
+                    h.append(i * 10L, i);
+                }
+                Assert.assertTrue("expected a multi-level tree", h.reader.rootChildCount(h.root) >= 2);
+                // Keep only the first key: every internal level above the leftmost
+                // leaf collapses to a single child and must be promoted away, so the
+                // whole tree reduces to that one bare leaf rather than a chain of
+                // one-child internal nodes.
+                Assert.assertTrue(h.truncate(5)); // keeps (0, 0)
+                Assert.assertEquals(1, h.reader.size(h.root));
+                Assert.assertEquals("a single survivor must promote to a bare leaf", 0, h.reader.rootChildCount(h.root));
+                h.assertIterateAll();
+                h.assertFindExact(0, 0);
+                h.assertFindExactMissing(10, 1);
+
+                // A partial collapse still never publishes a single-child root: with
+                // a handful of survivors the promoted root is a leaf or a genuine
+                // multi-child internal node, never a one-child internal.
+                for (int i = 1; i < n; i++) {
+                    h.append(i * 10L, i);
+                }
+                Assert.assertTrue(h.truncate(35)); // keeps (0,0)..(30,3)
+                Assert.assertNotEquals("root must never be a single-child internal", 1, h.reader.rootChildCount(h.root));
+                h.assertIterateAll();
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateAboveThenAppendKeepsOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                final int n = 40;
+                for (int i = 0; i < n; i++) {
+                    h.append(i * 10L, i);
+                }
+                Assert.assertTrue(h.truncate(255)); // keeps 0..25
+                Assert.assertEquals(26, h.reader.size(h.root));
+                // Append a fresh head above the truncated prefix and prove the tree
+                // stays sorted and every lookup is exact.
+                for (int i = 26; i < 34; i++) {
+                    h.append(i * 10L, 1_000 + i);
+                }
+                Assert.assertEquals(34, h.reader.size(h.root));
+                h.assertIterateAll();
+                for (int i = 0; i <= 25; i++) {
+                    h.assertFindExact(i * 10L, i);
+                }
+                for (int i = 26; i < 34; i++) {
+                    h.assertFindExact(i * 10L, 1_000 + i);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateAboveWholeTreeReturnsEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 20; i++) {
+                    h.append(i * 10L, i);
+                }
+                // Floor at or below the minimum key drops the whole tree.
+                Assert.assertFalse(h.truncate(0));
+                Assert.assertEquals(0, h.reader.size(h.root));
+                h.assertIterateAll();
+                Assert.assertFalse(h.reader.predecessor(h.root, 1_000, h.out));
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateRandomAgainstOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = new Rnd(0x51ED5EEDL, 0xC0FFEEL);
+            try (Harness h = new Harness(3, 4)) {
+                for (int i = 0; i < 300; i++) {
+                    h.append(rnd.nextLong(200) - 20, i);
+                }
+                // Repeatedly drop a random suffix and re-verify the shrinking tree
+                // against the oracle: navigation must stay exact over under-full
+                // nodes and collapsed roots left behind by earlier truncations.
+                for (int round = 0; round < 8 && h.reader.size(h.root) > 0; round++) {
+                    final long floor = rnd.nextLong(200) - 20;
+                    h.truncate(floor);
+                    h.assertIterateAll();
+                    for (int q = 0; q < 40; q++) {
+                        final long c = rnd.nextLong(240) - 40;
+                        h.assertPredecessor(c);
+                        h.assertSuccessor(c);
+                        h.assertFloor(c);
+                        final long lo = rnd.nextLong(240) - 40;
+                        h.assertRange(lo, lo + rnd.nextLong(60));
+                    }
+                    for (int i = 0; i < h.oracle.size(); i++) {
+                        final long[] e = h.oracle.get(i);
+                        h.assertFindExact(e[0], e[1]);
+                    }
+                }
+            }
+        });
+    }
+
     private static Path checkpointsDir(Path path) {
         path.of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
         return path;
@@ -425,6 +633,22 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
             }
             writer.splice(root, reps, reps.length, nextSegmentId++, tmpRoot);
             root.of(tmpRoot.getSegmentId(), tmpRoot.getOffset(), tmpRoot.getLength());
+        }
+
+        boolean truncate(long floor) {
+            final boolean survived = writer.truncateAbove(root, floor, nextSegmentId++, tmpRoot);
+            if (survived) {
+                root.of(tmpRoot.getSegmentId(), tmpRoot.getOffset(), tmpRoot.getLength());
+            } else {
+                root.clear();
+            }
+            // Mirror in the oracle: drop every entry at or above the floor.
+            for (int i = oracle.size() - 1; i >= 0; i--) {
+                if (oracle.get(i)[0] >= floor) {
+                    oracle.remove(i);
+                }
+            }
+            return survived;
         }
 
         private void assertEntry(long[] expected, LiveViewCheckpointTimelineEntry actual) {

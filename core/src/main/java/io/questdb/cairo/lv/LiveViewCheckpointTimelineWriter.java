@@ -48,6 +48,13 @@ import java.io.Closeable;
  *     copies only the leaves holding the affected keys and their ancestor
  *     spine, reusing the prefix and suffix subtrees. Keys are preserved, so no
  *     node splits or merges.</li>
+ *     <li>{@link #truncateAbove} drops every entry whose {@code maxTimestamp}
+ *     is at or above a floor - the highest-key suffix - and keeps the surviving
+ *     prefix by page reference. It path-copies only the boundary spine, promotes
+ *     a subtree that collapses to a single child so the published tree stays
+ *     compact, and reuses every prefix subtree below the floor. This is the
+ *     preserve-the-prefix half of an EOF or predecessor-resume out-of-order
+ *     repair: the tail roots go, the long-term anchors stay.</li>
  * </ul>
  * Metadata pages are immutable and never rewritten in place, so a reader of the
  * prior generation keeps walking the old paths. The instance is reusable across
@@ -59,6 +66,7 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     private final int internalCapacity;
     private final int leafCapacity;
     private final LiveViewCheckpointTimelineReader reader;
+    private final LiveViewCheckpointTimelineEntry scratchEntry = new LiveViewCheckpointTimelineEntry();
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
     private long lastSegmentBytes;
     private int lastSegmentPageCount;
@@ -67,6 +75,7 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     private InsertResult[] resultPool = new InsertResult[0];
     private LiveViewCheckpointTimelineNode[] rightPool = new LiveViewCheckpointTimelineNode[0];
     private LiveViewCheckpointPageRef[] spliceRefPool = new LiveViewCheckpointPageRef[0];
+    private LiveViewCheckpointPageRef[] truncateRefPool = new LiveViewCheckpointPageRef[0];
 
     public LiveViewCheckpointTimelineWriter(@NotNull CairoConfiguration configuration) {
         this(configuration, 64, 64);
@@ -175,6 +184,54 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
         final LiveViewCheckpointPageRef rootRef = spliceRefAt(0);
         newRootOut.of(rootRef.getSegmentId(), rootRef.getOffset(), rootRef.getLength());
         commitSegment();
+    }
+
+    /**
+     * Drops every entry whose {@code maxTimestamp} is at or above {@code floor}
+     * (a contiguous suffix of the key space) and fills {@code newRootOut} with
+     * the truncated tree root, reusing every surviving prefix subtree by its
+     * existing page reference and path-copying only the boundary spine. A
+     * subtree that collapses to a single surviving child is promoted by
+     * reference rather than wrapped in a one-child internal node, so the
+     * published tree stays as compact as an append would leave it.
+     * <p>
+     * Returns true when a non-empty prefix survived; returns false - leaving
+     * {@code newRootOut} untouched - when {@code floor} is at or below every key
+     * so the whole tree drops (an empty prefix has nothing to preserve, and the
+     * caller falls back to a full retire). When {@code floor} is above every key
+     * nothing is dropped and {@code oldRoot} is reused as-is without writing a
+     * segment.
+     */
+    public boolean truncateAbove(
+            @NotNull LiveViewCheckpointPageRef oldRoot,
+            long floor,
+            long newSegmentId,
+            @NotNull LiveViewCheckpointPageRef newRootOut
+    ) {
+        if (oldRoot.isNull()) {
+            return false;
+        }
+        // Nothing at or above the floor: the tree is unchanged, reuse it without
+        // rewriting the right spine into a new segment.
+        if (reader.last(oldRoot, scratchEntry) && scratchEntry.maxTimestamp < floor) {
+            newRootOut.of(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength());
+            lastSegmentBytes = 0;
+            lastSegmentPageCount = 0;
+            return true;
+        }
+        // Nothing below the floor: the whole tree drops. Return without opening a
+        // segment so an empty truncation leaves no orphan page behind.
+        if (!reader.predecessor(oldRoot, floor, scratchEntry)) {
+            return false;
+        }
+        beginSegment(newSegmentId);
+        final boolean survived = truncateRec(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength(), floor, 0);
+        commitSegment();
+        // A prefix key exists (predecessor above), so the recursion always keeps it.
+        assert survived;
+        final LiveViewCheckpointPageRef rootRef = truncateRefAt(0);
+        newRootOut.of(rootRef.getSegmentId(), rootRef.getOffset(), rootRef.getLength());
+        return true;
     }
 
     private void beginSegment(long segmentId) {
@@ -320,6 +377,77 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
             }
         }
         writePage(node, spliceRefAt(depth));
+    }
+
+    private LiveViewCheckpointPageRef truncateRefAt(int depth) {
+        if (depth >= truncateRefPool.length) {
+            final LiveViewCheckpointPageRef[] grown = new LiveViewCheckpointPageRef[depth + 1];
+            System.arraycopy(truncateRefPool, 0, grown, 0, truncateRefPool.length);
+            truncateRefPool = grown;
+        }
+        LiveViewCheckpointPageRef ref = truncateRefPool[depth];
+        if (ref == null) {
+            ref = new LiveViewCheckpointPageRef();
+            truncateRefPool[depth] = ref;
+        }
+        return ref;
+    }
+
+    /**
+     * Truncates the subtree rooted at {@code (seg, off, len)} to keys strictly
+     * below {@code floor}, writing the surviving nodes bottom-up. On a non-empty
+     * result the survivor's page reference is left in {@link #truncateRefAt}
+     * ({@code depth}); the boolean says whether anything survived. A node that
+     * keeps exactly one child returns that child's reference directly (inline
+     * collapse), so no single-child internal node is ever written - the reader's
+     * {@code last()} rejects an empty node but tolerates an under-full one.
+     */
+    private boolean truncateRec(long seg, long off, long len, long floor, int depth) {
+        final LiveViewCheckpointTimelineNode node = leftAt(depth);
+        reader.openAndDecode(seg, off, len, node);
+        if (node.isLeaf()) {
+            final int kept = node.leafLowerBoundByTimestamp(floor);
+            if (kept == 0) {
+                return false;
+            }
+            node.retainPrefix(kept);
+            writePage(node, truncateRefAt(depth));
+            return true;
+        }
+        // Every child below the straddle sits entirely under the floor and is
+        // kept by reference; the straddling child is the last one whose subtree
+        // minimum is below the floor; every later child holds only keys at or
+        // above it and is dropped.
+        final int straddle = node.internalLowerBoundByTimestamp(floor) - 1;
+        if (straddle < 0) {
+            return false;
+        }
+        final boolean straddleSurvived = truncateRec(node.childSegmentId[straddle], node.childOffset[straddle], node.childLength[straddle], floor, depth + 1);
+        final int keptChildren = straddleSurvived ? straddle + 1 : straddle;
+        if (keptChildren == 0) {
+            return false;
+        }
+        if (keptChildren == 1) {
+            // Sole surviving child: promote it as this subtree's root by
+            // reference, writing no new internal page.
+            final LiveViewCheckpointPageRef out = truncateRefAt(depth);
+            if (straddleSurvived) {
+                final LiveViewCheckpointPageRef childRef = truncateRefAt(depth + 1);
+                out.of(childRef.getSegmentId(), childRef.getOffset(), childRef.getLength());
+            } else {
+                out.of(node.childSegmentId[0], node.childOffset[0], (int) node.childLength[0]);
+            }
+            return true;
+        }
+        if (straddleSurvived) {
+            final LiveViewCheckpointPageRef childRef = truncateRefAt(depth + 1);
+            node.setChildRef(straddle, childRef.getSegmentId(), childRef.getOffset(), childRef.getLength());
+            node.retainPrefix(straddle + 1);
+        } else {
+            node.retainPrefix(straddle);
+        }
+        writePage(node, truncateRefAt(depth));
+        return true;
     }
 
     private void writePage(LiveViewCheckpointTimelineNode node, LiveViewCheckpointPageRef out) {

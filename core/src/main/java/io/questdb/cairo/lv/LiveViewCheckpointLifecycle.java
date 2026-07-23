@@ -244,6 +244,14 @@ public final class LiveViewCheckpointLifecycle {
                 success = false;
                 logRemoveFailure(ff, path);
             }
+            // The prefix-preservation repair marker is void once the timeline it
+            // guarded is gone: a stale marker left behind would force every restart
+            // to rebuild against the fresh timeline this retire precedes.
+            LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
+            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+                success = false;
+                logRemoveFailure(ff, path);
+            }
             success &= removeTree(ff, LiveViewCheckpointLayout.metaDirPath(path, checkpointsDir));
             success &= removeTree(ff, LiveViewCheckpointLayout.dataDirPath(path, checkpointsDir));
             success &= removeTree(ff, path.of(checkpointsDir).concat(LiveViewCheckpointLayout.REPAIR_DIR_NAME));
@@ -327,12 +335,13 @@ public final class LiveViewCheckpointLifecycle {
 
     /**
      * Reports whether {@code checkpointsDir} holds a top-level entry outside the
-     * current layout. Everything this build writes there is one of four names -
-     * the {@code _timeline} superblock and the {@code meta}, {@code data} and
-     * {@code repair} directories - so anything else came from a build that
-     * arranged checkpoint state differently. Earlier development builds left the
-     * {@code _ring} manifest and per-checkpoint {@code .cp} / {@code .scp} files
-     * at this level, which is what the check most often finds.
+     * current layout. Everything this build writes there is one of five names -
+     * the {@code _timeline} superblock, the {@code _repairing} prefix-preservation
+     * marker, and the {@code meta}, {@code data} and {@code repair} directories -
+     * so anything else came from a build that arranged checkpoint state
+     * differently. Earlier development builds left the {@code _ring} manifest and
+     * per-checkpoint {@code .cp} / {@code .scp} files at this level, which is what
+     * the check most often finds.
      */
     private static boolean hasUnknownEntry(@NotNull FilesFacade ff, @NotNull Path checkpointsDir) {
         if (!ff.exists(checkpointsDir.$())) {
@@ -350,10 +359,13 @@ public final class LiveViewCheckpointLifecycle {
                     continue;
                 }
                 name.clear();
+                // The marker prefix covers both _repairing and a crash-orphaned
+                // _repairing.tmp; nothing else this build writes starts with it.
                 if (!Utf8s.utf8ToUtf16Z(namePtr, name)
                         || Chars.equals(name, ".")
                         || Chars.equals(name, "..")
                         || Chars.equals(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                        || Chars.startsWith(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.META_DIR_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.DATA_DIR_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.REPAIR_DIR_NAME)) {

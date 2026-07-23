@@ -107,6 +107,14 @@ public final class LiveViewCheckpointLayout {
      */
     public static final int PAGE_HEADER_SIZE = PAGE_KIND_OFFSET + Integer.BYTES; // 12
     /**
+     * Top-level marker file naming a prefix-preserving out-of-order repair that
+     * is in progress: {@code _checkpoints/_repairing}. Its presence forces a
+     * restart to rebuild from the applied base table rather than trust a
+     * timeline whose head has been truncated but not yet re-sealed. See
+     * {@link LiveViewCheckpointRepairMarker}.
+     */
+    public static final String REPAIRING_MARKER_FILE_NAME = "_repairing";
+    /**
      * Filename prefix for a repair descriptor: {@code r.<repairId>}.
      */
     public static final String REPAIR_DESCRIPTOR_PREFIX = "r.";
@@ -251,6 +259,13 @@ public final class LiveViewCheckpointLayout {
      */
     public static Path repairDirPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
         return dst.of(checkpointsDir).concat(REPAIR_DIR_NAME);
+    }
+
+    /**
+     * Points {@code dst} at {@code <checkpointsDir>/_repairing}.
+     */
+    public static Path repairingMarkerPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
+        return dst.of(checkpointsDir).concat(REPAIRING_MARKER_FILE_NAME);
     }
 
     /**
