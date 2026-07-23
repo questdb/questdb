@@ -49,6 +49,11 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
                 "('2020-06-03T00:00:00.000000Z', 3)");
         execute("CREATE TABLE b (lo TIMESTAMP)");
         execute("INSERT INTO b VALUES ('2020-06-02T00:00:00.000000Z')");
+        // indexed symbol source: exercises the index-driven row-cursor stability composition
+        execute("CREATE TABLE bi (lo TIMESTAMP, sym SYMBOL INDEX, k INT)");
+        execute("INSERT INTO bi VALUES " +
+                "('2020-06-02T00:00:00.000000Z', 'X', 1), " +
+                "('2020-06-05T00:00:00.000000Z', 'Y', 2)");
     }
 
     // A deterministic single-row sub-query bound MUST still prune to an interval scan
@@ -213,6 +218,97 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
                     "(SELECT k FROM (SELECT rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0) k, count() c " +
                     "FROM (SELECT lo FROM b UNION ALL SELECT lo FROM b)) LIMIT 1)")
+                    .assertsPlanNotContaining("Interval forward scan on: t");
+        });
+    }
+
+    // --- Indexed scalar sub-query bounds -------------------------------------------------------
+    // A sub-query bound that resolves through a symbol INDEX scan is stable within the execution
+    // when its key (and any residual filter) is stable. Previously PageFrameRecordCursorFactory
+    // reported EVERY index-driven cursor unstable, so these prunes were lost to a full outer scan.
+
+    // Fixed-literal indexed symbol lookup: the key is constant, so the bound prunes.
+    @Test
+    public void testIndexedLiteralSymbolBoundPrunes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= (SELECT lo FROM bi WHERE sym = 'X' LIMIT 1)")
+                    .timestamp("ts")
+                    // dateadd('h',1,ts) >= 2020-06-02 => ts >= 2020-06-01T23:00, so row 1 is excluded;
+                    // the pruned interval scan returns exactly the residual-filter rows (no dropped rows).
+                    .withPlanContaining("Interval forward scan on: t")
+                    .returns("ts\tv\n" +
+                            "2020-06-02T00:00:00.000000Z\t2\n" +
+                            "2020-06-03T00:00:00.000000Z\t3\n");
+        });
+    }
+
+    // Bind-variable indexed symbol lookup: non-deterministic across executions yet stable within
+    // one (frozen snapshot), so the deferred index lookup still prunes.
+    @Test
+    public void testIndexedBindSymbolBoundPrunes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "X");
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= (SELECT lo FROM bi WHERE sym = $1 LIMIT 1)")
+                    .assertsPlanContaining("Interval forward scan on: t");
+        });
+    }
+
+    // Deterministic aggregate over an index-filtered scan: max(lo) over a fixed row set is stable,
+    // so the bound prunes even though the aggregate's base is index-driven.
+    @Test
+    public void testIndexedAggregateBoundPrunes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= (SELECT max(lo) FROM bi WHERE sym = 'X')")
+                    .assertsPlanContaining("Interval forward scan on: t");
+        });
+    }
+
+    // BETWEEN with two indexed literal lookups: both ends are stable, so the range prunes.
+    @Test
+    public void testIndexedBetweenBoundPrunes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) BETWEEN " +
+                    "(SELECT lo FROM bi WHERE sym = 'X' LIMIT 1) AND (SELECT lo FROM bi WHERE sym = 'Y' LIMIT 1)")
+                    .assertsPlanContaining("Interval forward scan on: t");
+        });
+    }
+
+    // Stable residual filter on top of the indexed lookup: both the symbol key and the filter are
+    // stable, so the filtered index cursor is stable and the bound prunes.
+    @Test
+    public void testIndexedFilteredStableBoundPrunes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= (SELECT lo FROM bi WHERE sym = 'X' AND k >= 0 LIMIT 1)")
+                    .assertsPlanContaining("Interval forward scan on: t");
+        });
+    }
+
+    // GUARD: a non-deterministic index KEY (rnd_symbol) makes the selected row vary across opens,
+    // so the composition must report unstable and this MUST NOT prune.
+    @Test
+    public void testIndexedRndSymbolKeyBoundNotPruned() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
+                    "(SELECT lo FROM bi WHERE sym = rnd_symbol('X', 'Y') LIMIT 1)")
+                    .assertsPlanNotContaining("Interval forward scan on: t");
+        });
+    }
+
+    // GUARD: a stable index key but a non-deterministic residual FILTER (rnd_*) must also stay
+    // unstable - the filter composition is the second half of the AND.
+    @Test
+    public void testIndexedRndResidualFilterBoundNotPruned() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
+                    "(SELECT lo FROM bi WHERE sym = 'X' AND k >= rnd_int(0, 5, 0) LIMIT 1)")
                     .assertsPlanNotContaining("Interval forward scan on: t");
         });
     }
