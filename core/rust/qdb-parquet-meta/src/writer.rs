@@ -251,6 +251,7 @@ impl ParquetMetaWriter {
         fb.set_bloom_filter_section(bloom_section);
         fb.set_seq_txn(self.seq_txn);
         fb.set_scratchpad_entries(self.scratchpad.clone());
+        fb.validate_scratchpad()?;
         fb.write_to(&mut buf);
 
         // Compute and write CRC32 over [HEADER_CRC_AREA_OFF, checksum_field_offset).
@@ -708,6 +709,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             None => self.prior_scratchpad.clone(),
         };
         fb.set_scratchpad_entries(effective_scratchpad);
+        fb.validate_scratchpad()?;
         fb.write_to(&mut append_buf);
 
         // Resume CRC32 from the committed footer's checksum. The old CRC covers
@@ -1278,6 +1280,21 @@ mod tests {
 
         let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.scratchpad_entry(0xDEAD_BEEF), Some(&b"hello"[..]));
+    }
+
+    #[test]
+    fn finish_rejects_oversized_scratchpad_instead_of_writing_unreadable_footer() {
+        // A scratchpad past MAX_SCRATCHPAD_SIZE would serialize a footer this crate's
+        // reader then refuses to open. finish() must reject it up front (release builds
+        // have no debug_assert), returning the same error the reader would raise --
+        // never emitting the unreadable footer. Payload = 4 + 8 + MAX = MAX + 12 > MAX.
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_scratchpad_entries(vec![(0, vec![0u8; crate::types::MAX_SCRATCHPAD_SIZE])]);
+        let err = w
+            .finish()
+            .expect_err("finish must reject an oversized scratchpad");
+        assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
     }
 
     #[test]

@@ -549,6 +549,38 @@ impl FooterBuilder {
         Ok(self)
     }
 
+    /// Rejects a scratchpad the reader would refuse: a payload larger than
+    /// `MAX_SCRATCHPAD_SIZE` (`parse_scratchpad_size` hard-errors on it) or an entry
+    /// whose length overflows the `u32` length prefix. The sibling `debug_assert!` in
+    /// `write_to` guards the same invariant only in debug builds, so release-mode
+    /// writers call this at the fallible `finish` boundary to stay symmetric with the
+    /// reader instead of emitting a footer that this crate then cannot re-open.
+    pub fn validate_scratchpad(&self) -> ParquetMetaResult<()> {
+        if self.scratchpad.is_empty() {
+            return Ok(());
+        }
+        let mut payload_size: usize = 4;
+        for (_, content) in &self.scratchpad {
+            if content.len() > u32::MAX as usize {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "scratchpad entry length {} exceeds u32::MAX",
+                    content.len()
+                ));
+            }
+            payload_size = payload_size.saturating_add(8 + content.len());
+        }
+        if payload_size > crate::types::MAX_SCRATCHPAD_SIZE {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "scratchpad payload {} exceeds MAX_SCRATCHPAD_SIZE {}",
+                payload_size,
+                crate::types::MAX_SCRATCHPAD_SIZE
+            ));
+        }
+        Ok(())
+    }
+
     /// Writes the footer to `buf` (fixed fields + entries + CRC placeholder + trailer).
     /// The CRC placeholder is written as 0 and must be filled in by the caller.
     /// The trailer stores the footer length (from start through CRC, inclusive).
@@ -1022,6 +1054,34 @@ mod tests {
             Ok(_) => panic!("expected MAX_SCRATCHPAD_SIZE rejection"),
         };
         assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn validate_scratchpad_enforces_reader_cap() {
+        use crate::types::MAX_SCRATCHPAD_SIZE;
+
+        // payload_size = 4 (entry count) + 8 (per-entry code+len) + content.len(),
+        // so a single entry of MAX-12 lands the payload exactly on the cap. That is
+        // accepted; one byte over is rejected with the same error the reader raises,
+        // keeping the release-mode writer symmetric with parse_scratchpad_size.
+        let at_limit_content = MAX_SCRATCHPAD_SIZE - 12;
+
+        let mut fb = FooterBuilder::new(0, 0);
+        fb.set_scratchpad_entries(vec![(0, vec![0u8; at_limit_content])]);
+        assert!(
+            fb.validate_scratchpad().is_ok(),
+            "a payload equal to MAX_SCRATCHPAD_SIZE must be accepted"
+        );
+
+        let mut fb = FooterBuilder::new(0, 0);
+        fb.set_scratchpad_entries(vec![(0, vec![0u8; at_limit_content + 1])]);
+        let err = fb
+            .validate_scratchpad()
+            .expect_err("a payload one byte over MAX_SCRATCHPAD_SIZE must be rejected");
+        assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
+
+        // An empty scratchpad is a no-op.
+        assert!(FooterBuilder::new(0, 0).validate_scratchpad().is_ok());
     }
 
     #[test]
