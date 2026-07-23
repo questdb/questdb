@@ -1992,12 +1992,12 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             final long size = value.getLong(1);
             final long capacity = value.getLong(2);
             final long firstIdx = value.getLong(3);
-            sink.putScalarState(Double.NaN, size);
+            sink.putScalarState(Double.doubleToRawLongBits(Double.NaN), size);
             for (long i = 0; i < size; i++) {
                 final long idx = (firstIdx + i) % capacity;
                 sink.putRow(
                         memory.getLong(startOffset + idx * RECORD_SIZE),
-                        memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES)
+                        Double.doubleToRawLongBits(memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES))
                 );
             }
         }
@@ -2075,9 +2075,9 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             private long startOffset;
 
             @Override
-            public void accept(long timestamp, double value) {
+            public void accept(long timestamp, long valueBits) {
                 memory.putLong(startOffset + rows * RECORD_SIZE, timestamp);
-                memory.putDouble(startOffset + rows * RECORD_SIZE + Long.BYTES, value);
+                memory.putDouble(startOffset + rows * RECORD_SIZE + Long.BYTES, Double.longBitsToDouble(valueBits));
                 rows++;
             }
 

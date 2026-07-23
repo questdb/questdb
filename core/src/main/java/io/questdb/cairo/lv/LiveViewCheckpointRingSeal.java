@@ -72,7 +72,7 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
      */
     public static final int MIN_SHARED_CHUNK_ROWS = 64;
 
-    private final LiveViewCheckpointDoubleRangeRingStateBuilder builder;
+    private final LiveViewCheckpointRangeRingStateBuilder builder;
     private long frameSize;
     private boolean hasScalarState;
     private boolean isAppending;
@@ -81,16 +81,17 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
     private long previousLastTimestamp;
     private long previousRowCount;
     private long rowsStreamed;
-    private double scalar;
+    private long scalarBits;
     private long splitTimestamp;
     private long survivorCount;
+    private int valueKind;
     private LiveViewCheckpointDataSegmentWriter writer;
 
     public LiveViewCheckpointRingSeal(
             @NotNull CairoConfiguration configuration,
             @Nullable MemoryTracker memoryTracker
     ) {
-        builder = new LiveViewCheckpointDoubleRangeRingStateBuilder(configuration, memoryTracker);
+        builder = new LiveViewCheckpointRangeRingStateBuilder(configuration, memoryTracker);
     }
 
     /**
@@ -109,14 +110,14 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
     }
 
     @Override
-    public void putScalarState(double scalar, long frameSize) {
-        this.scalar = scalar;
+    public void putScalarState(long scalarBits, long frameSize) {
+        this.scalarBits = scalarBits;
         this.frameSize = frameSize;
         this.hasScalarState = true;
     }
 
     @Override
-    public void putRow(long timestamp, double value) {
+    public void putRow(long timestamp, long valueBits) {
         rowsStreamed++;
         if (!isAppending) {
             if (timestamp <= splitTimestamp) {
@@ -135,7 +136,7 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
         if (isRebuildRequired) {
             return;
         }
-        builder.append(writer, timestamp, value);
+        builder.append(writer, timestamp, valueBits);
     }
 
     /**
@@ -165,10 +166,11 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
             @NotNull LiveViewCheckpointPartitionMapEntry out
     ) {
         writer = dataWriter;
+        valueKind = function.checkpointRingValueKind();
         try {
             boolean isShared = false;
             if (previous != null) {
-                builder.of(previous);
+                builder.of(previous, valueKind);
                 isShared = builder.getChunkCount() < chunkCap(builder.getRowCount())
                         && builder.getLastTimestamp() <= previousBoundaryMaxTimestamp;
             }
@@ -188,14 +190,15 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
                 }
             }
             if (!hasScalarState) {
-                // NaN is a legitimate stored scalar, so a function that never
-                // published its continuation state would otherwise seal a
+                // Any bit pattern is a legitimate stored scalar (0 for a
+                // value-carrying ring, a NaN for a double aggregate), so a function
+                // that never published its continuation state would otherwise seal a
                 // plausible-looking partition whose scalar is invented.
                 throw CairoException.critical(0)
                         .put("live view checkpoint ring state published no scalar state");
             }
-            builder.freeze(writer, key, scalar, frameSize, out);
-            return LiveViewCheckpointDoubleRangeRingStateReader.SCALAR_STATE_BYTES
+            builder.freeze(writer, key, scalarBits, frameSize, out);
+            return LiveViewCheckpointRangeRingStateReader.SCALAR_STATE_BYTES
                     + rowsStreamed * 2 * Long.BYTES;
         } finally {
             writer = null;
@@ -208,7 +211,7 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
             previousLastTimestamp = builder.getLastTimestamp();
             splitTimestamp = previousBoundaryMaxTimestamp;
         } else {
-            builder.ofEmpty();
+            builder.ofEmpty(valueKind);
             previousRowCount = 0;
             previousLastTimestamp = 0;
             splitTimestamp = Long.MIN_VALUE;
@@ -219,7 +222,7 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
         lastSurvivorTimestamp = 0;
         isRebuildRequired = false;
         rowsStreamed = 0;
-        scalar = Double.NaN;
+        scalarBits = 0;
         survivorCount = 0;
     }
 

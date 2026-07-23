@@ -52,6 +52,7 @@ public final class LiveViewCheckpointStateCodec {
     public static final int CHUNK_ROWS = 4096;
     public static final int DOUBLE_RAW_64 = 2;
     public static final int DOUBLE_XOR = 3;
+    public static final int LONG_RAW_64 = 4;
     public static final int MIN_SAVING_BYTES = 16;
     public static final int TIMESTAMP_DELTA_OF_DELTA_VARINT = 1;
     public static final int TIMESTAMP_RAW_64 = 0;
@@ -146,6 +147,39 @@ public final class LiveViewCheckpointStateCodec {
         }
         bits.assertFullyConsumed();
         return storedLength;
+    }
+
+    /**
+     * Decodes a complete raw 64-bit value stream into {@code targetAddress}. Long,
+     * DATE and TIMESTAMP value rings store their payload verbatim rather than through
+     * the double XOR stream: an arbitrary 64-bit value has no floating-point structure
+     * to exploit, and reinterpreting it as a double could canonicalize a NaN bit
+     * pattern and corrupt the stored value.
+     *
+     * @return bytes consumed, always {@code storedLength} on success
+     */
+    public static int decodeLongs(
+            long sourceAddress,
+            int storedLength,
+            int codec,
+            int rowCount,
+            long targetAddress,
+            int targetCapacity
+    ) {
+        validateDecodeArguments(sourceAddress, storedLength, rowCount, targetAddress, targetCapacity);
+        if (codec != LONG_RAW_64) {
+            throw invalid("unknown long codec tag [codec=").put(codec).put(']');
+        }
+        final int rawLength = rawLength(rowCount);
+        if (storedLength != rawLength) {
+            throw invalid("raw long page length mismatch")
+                    .put(" [storedLength=").put(storedLength)
+                    .put(", expected=").put(rawLength).put(']');
+        }
+        if (rawLength > 0) {
+            Vect.memcpy(targetAddress, sourceAddress, rawLength);
+        }
+        return rawLength;
     }
 
     /**
@@ -251,6 +285,30 @@ public final class LiveViewCheckpointStateCodec {
             encodeDoubleXor(sink, sourceAddress, rowCount);
         } else {
             throw CairoException.critical(0).put("unknown live view checkpoint double codec tag [codec=").put(codec).put(']');
+        }
+        return checkedWrittenLength(sink, start);
+    }
+
+    /**
+     * Encodes a raw 64-bit value stream. Long, DATE and TIMESTAMP value rings store
+     * their payload verbatim; {@link #LONG_RAW_64} is the only codec they use.
+     *
+     * @return bytes appended
+     */
+    public static int encodeLongs(
+            @NotNull MemoryA sink,
+            long sourceAddress,
+            int rowCount,
+            int codec
+    ) {
+        validateEncodeArguments(sourceAddress, rowCount);
+        if (codec != LONG_RAW_64) {
+            throw CairoException.critical(0).put("unknown live view checkpoint long codec tag [codec=").put(codec).put(']');
+        }
+        final long start = sink.getAppendOffset();
+        final int rawLength = rawLength(rowCount);
+        if (rawLength > 0) {
+            sink.putBlockOfBytes(sourceAddress, rawLength);
         }
         return checkedWrittenLength(sink, start);
     }
@@ -565,28 +623,28 @@ public final class LiveViewCheckpointStateCodec {
      * closed before its tracker is released.
      */
     public static final class Scratch implements Closeable {
-        private final DirectLongList doubles = new DirectLongList(CHUNK_ROWS, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
         private final DirectLongList timestamps = new DirectLongList(CHUNK_ROWS, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
+        private final DirectLongList values = new DirectLongList(CHUNK_ROWS, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
 
         public Scratch(@Nullable MemoryTracker memoryTracker) {
-            doubles.setMemoryTracker(memoryTracker);
+            values.setMemoryTracker(memoryTracker);
             timestamps.setMemoryTracker(memoryTracker);
         }
 
         @Override
         public void close() {
-            doubles.close();
+            values.close();
             timestamps.close();
-        }
-
-        public long doublesAddress() {
-            doubles.reopen();
-            return doubles.getAddress();
         }
 
         public long timestampsAddress() {
             timestamps.reopen();
             return timestamps.getAddress();
+        }
+
+        public long valuesAddress() {
+            values.reopen();
+            return values.getAddress();
         }
     }
 

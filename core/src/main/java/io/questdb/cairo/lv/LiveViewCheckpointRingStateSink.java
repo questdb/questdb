@@ -43,21 +43,23 @@ public interface LiveViewCheckpointRingStateSink {
      * recomputed so it cannot drift from the one the runtime carried: the running
      * aggregate for {@code avg}/{@code sum}, or the frame value {@code first_value}/
      * {@code last_value}/{@code nth_value} emits. Called once per partition, before
-     * the first {@link #putRow}. May be non-finite - a base first/last/nth value
-     * over a NULL row is NaN.
+     * the first {@link #putRow}. The value travels as raw 64-bit bits so a function
+     * that carries no aggregate can leave it unused and one carrying a double can
+     * store a non-finite NaN - a base first/last/nth value over a NULL row.
      *
-     * @param scalar    the function's scalar continuation state, by raw bits
-     * @param frameSize the number of rows the scalar covers. It is the function's
-     *                  own cardinality, not a ring index: a frame whose high bound
-     *                  trails the current row covers a prefix of the ring, and one
-     *                  whose low bound is unbounded covers rows the ring has already
-     *                  expired
+     * @param scalarBits the function's scalar continuation state, by raw bits
+     * @param frameSize  the number of rows the scalar covers. It is the function's
+     *                   own cardinality, not a ring index: a frame whose high bound
+     *                   trails the current row covers a prefix of the ring, and one
+     *                   whose low bound is unbounded covers rows the ring has already
+     *                   expired
      */
-    void putScalarState(double scalar, long frameSize);
+    void putScalarState(long scalarBits, long frameSize);
 
     /**
-     * Appends one live ring row. Timestamps must not decrease across a
-     * partition's stream.
+     * Appends one live ring row by its raw 64-bit value bits - IEEE-754 bits for a
+     * DOUBLE ring, the raw payload for a LONG/DATE/TIMESTAMP ring. Timestamps must
+     * not decrease across a partition's stream.
      */
-    void putRow(long timestamp, double value);
+    void putRow(long timestamp, long valueBits);
 }

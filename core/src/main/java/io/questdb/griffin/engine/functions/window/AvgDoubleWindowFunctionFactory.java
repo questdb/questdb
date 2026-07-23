@@ -841,7 +841,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
                         .put(", actual=").put(ringRestore.rows).put(']');
             }
-            value.putDouble(0, source.getScalar());
+            value.putDouble(0, Double.longBitsToDouble(source.getScalarBits()));
             value.putLong(1, source.getFrameSize());
             value.putLong(2, newStartOffset);
             value.putLong(3, size);
@@ -880,7 +880,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
-            sink.putScalarState(value.getDouble(0), value.getLong(1));
+            sink.putScalarState(Double.doubleToRawLongBits(value.getDouble(0)), value.getLong(1));
             final long startOffset = value.getLong(2);
             final long size = value.getLong(3);
             final long capacity = value.getLong(4);
@@ -889,7 +889,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 final long idx = (firstIdx + i) % capacity;
                 sink.putRow(
                         memory.getLong(startOffset + idx * RECORD_SIZE),
-                        memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES)
+                        Double.doubleToRawLongBits(memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES))
                 );
             }
         }
@@ -916,7 +916,8 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             private long startOffset;
 
             @Override
-            public void accept(long timestamp, double value) {
+            public void accept(long timestamp, long valueBits) {
+                final double value = Double.longBitsToDouble(valueBits);
                 // The avg/sum ring never stores a null (computeNext excludes them),
                 // so a non-finite value here is a corrupt value page. The shared
                 // reader admits non-finite values for first/last/nth, so avg

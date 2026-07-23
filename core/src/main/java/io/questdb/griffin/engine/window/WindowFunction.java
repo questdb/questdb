@@ -630,6 +630,19 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * The value kind this function's checkpoint ring stores per row, one of
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DOUBLE}
+     * or {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader#VALUE_KIND_LONG}.
+     * A DOUBLE ring stores exact IEEE-754 bits (raw or XOR-compressed); a LONG/DATE/TIMESTAMP
+     * ring stores the raw 64-bit payload, which an integer value keeps out of a double so a
+     * NaN bit pattern is never canonicalized. Read only for a
+     * {@link #supportsCheckpointRingState() ring-shaped} function.
+     */
+    default int checkpointRingValueKind() {
+        return io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE;
+    }
+
+    /**
      * The negated ROWS look-behind a warm-up must replay to reconstruct this function's state,
      * when that extent is a fixed row count of the function's own rather than the declared
      * frame's low bound. {@code lag(x, K)} reads the row {@code K} back and ignores its frame

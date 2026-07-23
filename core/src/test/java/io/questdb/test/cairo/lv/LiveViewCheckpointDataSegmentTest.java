@@ -77,7 +77,7 @@ public class LiveViewCheckpointDataSegmentTest extends AbstractCairoTest {
                  LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                  Path dir = new Path()) {
                 final long timestampAddress = source.timestampsAddress();
-                final long doubleAddress = source.doublesAddress();
+                final long doubleAddress = source.valuesAddress();
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.putLong(timestampAddress + (long) i * Long.BYTES, 1_000_000L + i * 1_000L);
                     Unsafe.putLong(doubleAddress + (long) i * Long.BYTES, Double.doubleToRawLongBits(42.5));
@@ -118,7 +118,7 @@ public class LiveViewCheckpointDataSegmentTest extends AbstractCairoTest {
                         reader.getPageStoredLength(),
                         doubleCodec,
                         rowCount,
-                        target.doublesAddress(),
+                        target.valuesAddress(),
                         LiveViewCheckpointStateCodec.CHUNK_ROWS
                 );
                 reader.assertFullyConsumed(doubleBytes, rowCount * Long.BYTES, rowCount);
@@ -127,7 +127,7 @@ public class LiveViewCheckpointDataSegmentTest extends AbstractCairoTest {
                     Assert.assertEquals(1_000_000L + i * 1_000L, Unsafe.getLong(target.timestampsAddress() + (long) i * Long.BYTES));
                     Assert.assertEquals(
                             Double.doubleToRawLongBits(42.5),
-                            Unsafe.getLong(target.doublesAddress() + (long) i * Long.BYTES)
+                            Unsafe.getLong(target.valuesAddress() + (long) i * Long.BYTES)
                     );
                 }
             }

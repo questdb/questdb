@@ -54,14 +54,19 @@ public interface LiveViewCheckpointRingStateSource {
     long getRowCount();
 
     /**
-     * @return the exact stored scalar continuation state, by the bits the seal
+     * @return the exact stored scalar continuation state, by the raw bits the seal
      * captured (the running aggregate for avg/sum, the emitted frame value for
-     * first_value/last_value/nth_value)
+     * first_value/last_value/nth_value). The function reinterprets the bits: a
+     * DOUBLE ring reads them as IEEE-754, a LONG/DATE/TIMESTAMP ring as a raw payload
      */
-    double getScalar();
+    long getScalarBits();
 
     @FunctionalInterface
     interface RowConsumer {
-        void accept(long timestamp, double value);
+        /**
+         * Receives one ring row's raw 64-bit value bits - IEEE-754 bits for a DOUBLE
+         * ring, the raw payload for a LONG/DATE/TIMESTAMP ring.
+         */
+        void accept(long timestamp, long valueBits);
     }
 }

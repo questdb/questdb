@@ -37,9 +37,12 @@ import java.io.Closeable;
 import java.util.Arrays;
 
 /**
- * Copy-on-write chunk builder for the partitioned bounded-RANGE double ring.
+ * Copy-on-write chunk builder for the partitioned bounded-RANGE value ring.
  * Sealed chunks are reused by reference, expiration advances a logical offset
  * into the shared head, and only the rows this boundary appended are encoded.
+ * The value column holds a 64-bit word per row: a DOUBLE ring stores exact
+ * IEEE-754 bits (raw or XOR-compressed), a LONG/DATE/TIMESTAMP ring stores the
+ * raw payload; {@link #of} configures which kind the seal writes.
  * <p>
  * The tail a boundary appends is always a fresh chunk, so a chunk boundary sits
  * at every checkpoint boundary and a sealed chunk is never rewritten. That is
@@ -55,55 +58,53 @@ import java.util.Arrays;
  * the previous root's checksummed partition entry, which is what lets a repair
  * chain onto a boundary whose chunks are still in an unpublished segment.
  */
-public class LiveViewCheckpointDoubleRangeRingStateBuilder implements Closeable {
+public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
 
     private int headOffset;
     private boolean initialized;
     private long lastTimestamp;
-    private final LiveViewCheckpointDoubleRangeRingStateReader previousReader;
+    private final LiveViewCheckpointRangeRingStateReader previousReader;
     private int refCount;
     private LiveViewCheckpointStatePageRef[] refs = new LiveViewCheckpointStatePageRef[8];
     private long rowCount;
     private final LiveViewCheckpointStateCodec.Scratch scratch;
     private int tailCount;
+    private int valueKind = LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE;
 
-    public LiveViewCheckpointDoubleRangeRingStateBuilder(@NotNull CairoConfiguration configuration) {
+    public LiveViewCheckpointRangeRingStateBuilder(@NotNull CairoConfiguration configuration) {
         this(configuration, null);
     }
 
-    public LiveViewCheckpointDoubleRangeRingStateBuilder(
+    public LiveViewCheckpointRangeRingStateBuilder(
             @NotNull CairoConfiguration configuration,
             @Nullable MemoryTracker memoryTracker
     ) {
-        previousReader = new LiveViewCheckpointDoubleRangeRingStateReader(configuration, memoryTracker);
+        previousReader = new LiveViewCheckpointRangeRingStateReader(configuration, memoryTracker);
         scratch = new LiveViewCheckpointStateCodec.Scratch(memoryTracker);
     }
 
     /**
-     * Appends one row in designated-timestamp order. The value may be non-finite:
-     * a base first_value/last_value/nth_value over a frame whose row is NULL emits
-     * and stores NaN, which the exact-bits value codec round-trips. avg/sum never
-     * append non-finite values, so relaxing the check does not weaken them.
+     * Appends one row in designated-timestamp order. The value arrives as raw
+     * 64-bit bits: a DOUBLE ring passes IEEE-754 bits (a NULL first/last/nth row
+     * is a legitimate NaN), a LONG/DATE/TIMESTAMP ring passes the raw payload. The
+     * value codec round-trips whatever bits it is handed, so no value is rejected.
      */
     public void append(
             @NotNull LiveViewCheckpointDataSegmentWriter writer,
             long timestamp,
-            double value
+            long valueBits
     ) {
         ensureInitialized();
         if (rowCount > 0 && timestamp < lastTimestamp) {
             throw CairoException.critical(0)
-                    .put("live view checkpoint double RANGE ring timestamps must be non-decreasing")
+                    .put("live view checkpoint RANGE ring timestamps must be non-decreasing")
                     .put(" [previous=").put(lastTimestamp).put(", timestamp=").put(timestamp).put(']');
         }
         if (tailCount == LiveViewCheckpointStateCodec.CHUNK_ROWS) {
             sealTail(writer);
         }
         Unsafe.putLong(scratch.timestampsAddress() + (long) tailCount * Long.BYTES, timestamp);
-        Unsafe.putLong(
-                scratch.doublesAddress() + (long) tailCount * Long.BYTES,
-                Double.doubleToRawLongBits(value)
-        );
+        Unsafe.putLong(scratch.valuesAddress() + (long) tailCount * Long.BYTES, valueBits);
         tailCount++;
         rowCount++;
         lastTimestamp = timestamp;
@@ -125,7 +126,7 @@ public class LiveViewCheckpointDoubleRangeRingStateBuilder implements Closeable 
         ensureInitialized();
         if (count < 0 || count > rowCount) {
             throw CairoException.critical(0)
-                    .put("live view checkpoint double RANGE ring head drop out of bounds")
+                    .put("live view checkpoint RANGE ring head drop out of bounds")
                     .put(" [count=").put(count).put(", rowCount=").put(rowCount).put(']');
         }
         long remaining = count;
@@ -147,21 +148,21 @@ public class LiveViewCheckpointDoubleRangeRingStateBuilder implements Closeable 
             // in scratch rather than in a page, so the head advances by moving them
             // down instead of by an offset.
             if (refCount != 0 || headOffset != 0 || remaining > tailCount) {
-                throw CairoException.critical(0).put("live view checkpoint double RANGE ring mutable head state inconsistent");
+                throw CairoException.critical(0).put("live view checkpoint RANGE ring mutable head state inconsistent");
             }
             final int kept = tailCount - (int) remaining;
             if (kept > 0) {
                 final long bytes = (long) kept * Long.BYTES;
                 final long dropped = remaining * Long.BYTES;
                 Vect.memmove(scratch.timestampsAddress(), scratch.timestampsAddress() + dropped, bytes);
-                Vect.memmove(scratch.doublesAddress(), scratch.doublesAddress() + dropped, bytes);
+                Vect.memmove(scratch.valuesAddress(), scratch.valuesAddress() + dropped, bytes);
             }
             rowCount -= remaining;
             tailCount = kept;
             remaining = 0;
         }
         if (remaining != 0 || rowCount < 0) {
-            throw CairoException.critical(0).put("live view checkpoint double RANGE ring head drop state inconsistent");
+            throw CairoException.critical(0).put("live view checkpoint RANGE ring head drop state inconsistent");
         }
         if (rowCount == 0) {
             lastTimestamp = 0;
@@ -174,13 +175,13 @@ public class LiveViewCheckpointDoubleRangeRingStateBuilder implements Closeable 
     /**
      * Freezes the candidate descriptor. The exact scalar continuation state (the
      * running aggregate for avg/sum, the emitted frame value for first_value/
-     * last_value/nth_value) and the frame size are stored, rather than recomputed,
-     * to preserve floating-point state bits.
+     * last_value/nth_value) is stored by raw bits, and the frame size is stored
+     * rather than recomputed, to preserve the exact continuation state.
      */
     public void freeze(
             @NotNull LiveViewCheckpointDataSegmentWriter writer,
             @NotNull byte[] key,
-            double scalar,
+            long scalarBits,
             long frameSize,
             @NotNull LiveViewCheckpointPartitionMapEntry out
     ) {
@@ -189,7 +190,7 @@ public class LiveViewCheckpointDoubleRangeRingStateBuilder implements Closeable 
         // then expires them from the ring, so frameSize may exceed the live rows.
         if (frameSize < 0) {
             throw CairoException.critical(0)
-                    .put("live view checkpoint double RANGE ring frame size out of bounds")
+                    .put("live view checkpoint RANGE ring frame size out of bounds")
                     .put(" [frameSize=").put(frameSize).put(", rowCount=").put(rowCount).put(']');
         }
         if (tailCount > 0) {
@@ -207,10 +208,10 @@ public class LiveViewCheckpointDoubleRangeRingStateBuilder implements Closeable 
         }
         out.of(
                 key,
-                LiveViewCheckpointDoubleRangeRingStateReader.encodeScalar(
+                LiveViewCheckpointRangeRingStateReader.encodeScalar(
                         headOffset,
                         rowCount,
-                        Double.doubleToRawLongBits(scalar),
+                        scalarBits,
                         frameSize,
                         lastTimestamp
                 ),
@@ -243,13 +244,24 @@ public class LiveViewCheckpointDoubleRangeRingStateBuilder implements Closeable 
     }
 
     /**
-     * Carries the previous root's chunk references forward. Reads no data page:
-     * {@code previous} is the checksummed partition entry, and everything the
-     * builder needs is in it.
+     * Carries the previous root's chunk references forward under the given value
+     * kind. Reads no data page: {@code previous} is the checksummed partition
+     * entry, and everything the builder needs is in it. The kind must match the
+     * pages the previous root wrote - a function seals a partition under one value
+     * kind across every boundary - so a mismatch means the caller wired the ring to
+     * the wrong function.
+     *
+     * @param valueKind one of {@link LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DOUBLE}
+     *                  or {@link LiveViewCheckpointRangeRingStateReader#VALUE_KIND_LONG}
      */
-    public void of(@NotNull LiveViewCheckpointPartitionMapEntry previous) {
+    public void of(@NotNull LiveViewCheckpointPartitionMapEntry previous, int valueKind) {
         previousReader.ofMetadata(previous);
         final LiveViewCheckpointStatePageRef[] previousRefs = previousReader.copyStatePageRefs();
+        if (previousRefs.length > 0 && previousReader.getValueKind() != valueKind) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint RANGE ring value kind mismatch")
+                    .put(" [configured=").put(valueKind).put(", previous=").put(previousReader.getValueKind()).put(']');
+        }
         ensureRefCapacity(previousRefs.length);
         System.arraycopy(previousRefs, 0, refs, 0, previousRefs.length);
         refCount = previousRefs.length;
@@ -257,21 +269,23 @@ public class LiveViewCheckpointDoubleRangeRingStateBuilder implements Closeable 
         headOffset = previousReader.getHeadOffset();
         lastTimestamp = previousReader.getLastTimestamp();
         tailCount = 0;
+        this.valueKind = valueKind;
         initialized = true;
     }
 
-    public void ofEmpty() {
+    public void ofEmpty(int valueKind) {
         refCount = 0;
         rowCount = 0;
         headOffset = 0;
         lastTimestamp = 0;
         tailCount = 0;
+        this.valueKind = valueKind;
         initialized = true;
     }
 
     private void ensureInitialized() {
         if (!initialized) {
-            throw CairoException.critical(0).put("live view checkpoint double RANGE ring state builder is not initialized");
+            throw CairoException.critical(0).put("live view checkpoint RANGE ring state builder is not initialized");
         }
     }
 
@@ -299,7 +313,7 @@ public class LiveViewCheckpointDoubleRangeRingStateBuilder implements Closeable 
         ensureRefCapacity(refCount + 2);
         if (refCount > LiveViewCheckpointMetadata.MAX_STATE_PAGE_REFS - 2) {
             throw CairoException.critical(0)
-                    .put("live view checkpoint double RANGE ring state page reference count exceeds format limit");
+                    .put("live view checkpoint RANGE ring state page reference count exceeds format limit");
         }
         refs[refCount] = new LiveViewCheckpointStatePageRef();
         refs[refCount + 1] = new LiveViewCheckpointStatePageRef();
@@ -309,18 +323,29 @@ public class LiveViewCheckpointDoubleRangeRingStateBuilder implements Closeable 
         );
         writer.endPage(
                 refs[refCount], tailCount * Long.BYTES,
-                LiveViewCheckpointDoubleRangeRingStateReader.TIMESTAMP_PAGE_KIND,
+                LiveViewCheckpointRangeRingStateReader.TIMESTAMP_PAGE_KIND,
                 timestampCodec, tailCount, 0
         );
-        final int doubleCodec = LiveViewCheckpointStateCodec.selectDoubleCodec(scratch.doublesAddress(), tailCount);
-        LiveViewCheckpointStateCodec.encodeDoubles(
-                writer.beginPage(), scratch.doublesAddress(), tailCount, doubleCodec
-        );
-        writer.endPage(
-                refs[refCount + 1], tailCount * Long.BYTES,
-                LiveViewCheckpointDoubleRangeRingStateReader.VALUE_PAGE_KIND,
-                doubleCodec, tailCount, 0
-        );
+        if (valueKind == LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG) {
+            LiveViewCheckpointStateCodec.encodeLongs(
+                    writer.beginPage(), scratch.valuesAddress(), tailCount, LiveViewCheckpointStateCodec.LONG_RAW_64
+            );
+            writer.endPage(
+                    refs[refCount + 1], tailCount * Long.BYTES,
+                    LiveViewCheckpointRangeRingStateReader.LONG_VALUE_PAGE_KIND,
+                    LiveViewCheckpointStateCodec.LONG_RAW_64, tailCount, 0
+            );
+        } else {
+            final int doubleCodec = LiveViewCheckpointStateCodec.selectDoubleCodec(scratch.valuesAddress(), tailCount);
+            LiveViewCheckpointStateCodec.encodeDoubles(
+                    writer.beginPage(), scratch.valuesAddress(), tailCount, doubleCodec
+            );
+            writer.endPage(
+                    refs[refCount + 1], tailCount * Long.BYTES,
+                    LiveViewCheckpointRangeRingStateReader.DOUBLE_VALUE_PAGE_KIND,
+                    doubleCodec, tailCount, 0
+            );
+        }
         refCount += 2;
         tailCount = 0;
     }
@@ -334,7 +359,7 @@ public class LiveViewCheckpointDoubleRangeRingStateBuilder implements Closeable 
                 || (rowCount > 0 && (refCount == 0 || headOffset < 0
                 || headOffset >= refs[0].getRowCount() || physicalRows - headOffset != rowCount))) {
             throw CairoException.critical(0)
-                    .put("live view checkpoint double RANGE ring logical chunk bounds inconsistent")
+                    .put("live view checkpoint RANGE ring logical chunk bounds inconsistent")
                     .put(" [physicalRows=").put(physicalRows)
                     .put(", headOffset=").put(headOffset)
                     .put(", rowCount=").put(rowCount).put(']');

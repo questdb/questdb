@@ -72,7 +72,7 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
                         LiveViewCheckpointStateCodec.selectTimestampCodec(timestampAddress, 2)
                 );
 
-                final long doubleAddress = scratch.doublesAddress();
+                final long doubleAddress = scratch.valuesAddress();
                 final Rnd rnd = new Rnd(0x1234, 0x5678);
                 for (int i = 0; i < LiveViewCheckpointStateCodec.CHUNK_ROWS; i++) {
                     Unsafe.putLong(doubleAddress + (long) i * Long.BYTES, rnd.nextLong());
@@ -149,7 +149,7 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (LiveViewCheckpointStateCodec.Scratch scratch = new LiveViewCheckpointStateCodec.Scratch(null);
                  MemoryCARW encoded = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                final long target = scratch.doublesAddress();
+                final long target = scratch.valuesAddress();
 
                 assertDoubleDecodeFails(encoded, target, 99, 0, "unknown double codec");
                 assertDoubleDecodeFails(encoded, target, LiveViewCheckpointStateCodec.DOUBLE_RAW_64, -1, "row count out of bounds");
@@ -355,10 +355,10 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
                 Assert.assertEquals(0, tracker.getUsed());
                 final long timestamps = scratch.timestampsAddress();
                 Assert.assertEquals((long) LiveViewCheckpointStateCodec.CHUNK_ROWS * Long.BYTES, tracker.getUsed());
-                final long doubles = scratch.doublesAddress();
+                final long doubles = scratch.valuesAddress();
                 Assert.assertEquals(2L * LiveViewCheckpointStateCodec.CHUNK_ROWS * Long.BYTES, tracker.getUsed());
                 Assert.assertEquals(timestamps, scratch.timestampsAddress());
-                Assert.assertEquals(doubles, scratch.doublesAddress());
+                Assert.assertEquals(doubles, scratch.valuesAddress());
                 Assert.assertEquals(2L * LiveViewCheckpointStateCodec.CHUNK_ROWS * Long.BYTES, tracker.getUsed());
             }
             Assert.assertEquals(0, tracker.getUsed());
@@ -415,8 +415,8 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
         try (LiveViewCheckpointStateCodec.Scratch source = new LiveViewCheckpointStateCodec.Scratch(null);
              LiveViewCheckpointStateCodec.Scratch target = new LiveViewCheckpointStateCodec.Scratch(null);
              MemoryCARW encoded = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            final long sourceAddress = source.doublesAddress();
-            final long targetAddress = target.doublesAddress();
+            final long sourceAddress = source.valuesAddress();
+            final long targetAddress = target.valuesAddress();
             put(sourceAddress, values);
             final int written = LiveViewCheckpointStateCodec.encodeDoubles(encoded, sourceAddress, values.length, codec);
             Assert.assertEquals(encoded.getAppendOffset(), written);
@@ -495,7 +495,7 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
             int codec
     ) {
         encoded.truncate();
-        final long sourceAddress = scratch.doublesAddress();
+        final long sourceAddress = scratch.valuesAddress();
         put(sourceAddress, values);
         return LiveViewCheckpointStateCodec.encodeDoubles(encoded, sourceAddress, values.length, codec);
     }

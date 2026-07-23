@@ -26,10 +26,14 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -1019,6 +1023,27 @@ public class FirstValueWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint first_value RANGE ignore nulls ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, newStartOffset);
+            value.putLong(1, size);
+            value.putLong(2, capacity);
+            value.putLong(3, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             // Logical-ring image: only the bounded-lo frame reaches a live view, so
             // firstIdx carries no capture flag and the ring rebases onto index 0.
@@ -1041,6 +1066,22 @@ public class FirstValueWindowFunctionFactoryHelper {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // IGNORE NULLS: the ring holds only non-null rows (computeNext drops
+            // nulls) and slot 0 is the start offset, not a frame count, so the scalar
+            // slot is unused (0) and frameSize carries the row count.
+            final long startOffset = value.getLong(0);
+            final long size = value.getLong(1);
+            final long capacity = value.getLong(2);
+            final long firstIdx = value.getLong(3);
+            sink.putScalarState(0L, size);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(memory.getLong(rec), memory.getLong(rec + Long.BYTES));
+            }
         }
 
         @Override
@@ -1918,6 +1959,7 @@ public class FirstValueWindowFunctionFactoryHelper {
         protected final MemoryARW memory;
         protected final AbstractWindowFunctionFactory.RingBufferDesc memoryDesc = new AbstractWindowFunctionFactory.RingBufferDesc();
         protected final long minDiff;
+        protected final RingRestoreSink ringRestore = new RingRestoreSink();
         protected final int timestampIndex;
         protected long firstValue;
 
@@ -2234,6 +2276,28 @@ public class FirstValueWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint first_value RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, source.getFrameSize());
+            value.putLong(1, newStartOffset);
+            value.putLong(2, size);
+            value.putLong(3, capacity);
+            value.putLong(4, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
@@ -2266,8 +2330,35 @@ public class FirstValueWindowFunctionFactoryHelper {
         }
 
         @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG;
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
-            return 1;
+            return 2;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // first_value carries no running aggregate, so the scalar slot goes
+            // unused - restore recomputes the emitted value from the ring - and it
+            // stores 0. frameSize is the in-frame count restore needs. The ring holds
+            // every buffered row including nulls; a first_value over a NULL oldest row
+            // is LONG_NULL, which the raw 64-bit value column round-trips.
+            final long frameSize = value.getLong(0);
+            final long startOffset = value.getLong(1);
+            final long size = value.getLong(2);
+            final long capacity = value.getLong(3);
+            final long firstIdx = value.getLong(4);
+            sink.putScalarState(0L, frameSize);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putRow(
+                        memory.getLong(startOffset + idx * RECORD_SIZE),
+                        memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES)
+                );
+            }
         }
 
         @Override
@@ -2293,6 +2384,11 @@ public class FirstValueWindowFunctionFactoryHelper {
             // Only a bounded frame start declares a finite extent; an unbounded start never
             // reaches a live view, so frameLoBounded gates it.
             return frameLoBounded;
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
         }
 
         @Override
@@ -2341,6 +2437,29 @@ public class FirstValueWindowFunctionFactoryHelper {
             super.toTop();
             memory.truncate();
             freeList.clear();
+        }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab. Reused across partitions so a restore that walks thousands of them
+         * allocates nothing per partition. The value column is a raw 64-bit word: a
+         * first_value ring row can be a NULL argument (LONG_NULL).
+         */
+        protected class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            protected long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                memory.putLong(startOffset + rows * RECORD_SIZE, timestamp);
+                memory.putLong(startOffset + rows * RECORD_SIZE + Long.BYTES, valueBits);
+                rows++;
+            }
+
+            protected void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
         }
     }
 
