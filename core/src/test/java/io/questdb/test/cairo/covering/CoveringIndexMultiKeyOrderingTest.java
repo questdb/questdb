@@ -139,6 +139,11 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
             Assert.assertFalse("linear ground truth errored:\n" + linear, linear.startsWith("ERROR"));
             Assert.assertTrue(linearObserver.hasRecordLinearMerge);
             Assert.assertFalse(linearObserver.hasRecordHeapMerge);
+            Assert.assertEquals(0, linearObserver.recordHeapOperations);
+            Assert.assertTrue(linearObserver.recordLinearComparisons >= 5_000L * 8);
+            // Four daily partitions add at most one empty min-scan per transition,
+            // plus the scans before the first frame and after exhaustion.
+            Assert.assertTrue(linearObserver.recordLinearComparisons <= (5_000L + 5) * 8);
 
             // Force the heap branch (crossover 2 < 8 keys) and require identity.
             CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(2);
@@ -148,6 +153,12 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
                 io.questdb.test.tools.TestUtils.assertEquals(linear, heap);
                 Assert.assertTrue(heapObserver.hasRecordHeapMerge);
                 Assert.assertFalse(heapObserver.hasRecordLinearMerge);
+                Assert.assertEquals(0, heapObserver.recordLinearComparisons);
+                // Every row performs one heap peek and one poll/replacement. At
+                // most eight initial adds occur in each of four partitions.
+                Assert.assertTrue(heapObserver.recordHeapOperations >= 2L * 5_000);
+                Assert.assertTrue(heapObserver.recordHeapOperations <= 2L * 5_000 + 4L * 8);
+                Assert.assertTrue(heapObserver.recordHeapOperations < linearObserver.recordLinearComparisons);
             } finally {
                 CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(-1);
             }
@@ -175,6 +186,10 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
             Assert.assertFalse("linear ground truth errored:\n" + linear, linear.startsWith("ERROR"));
             Assert.assertTrue(linearObserver.hasPageFrameLinearMerge);
             Assert.assertFalse(linearObserver.hasPageFrameHeapMerge);
+            Assert.assertEquals(0, linearObserver.pageFrameHeapOperations);
+            // One eight-key min-scan per emitted row, plus the final scan that
+            // discovers the partition is drained.
+            Assert.assertEquals((5_000L + 1) * 8, linearObserver.pageFrameLinearComparisons);
             // 8 symbol groups must produce 8 data rows (header + 8); proves results are non-trivial.
             Assert.assertTrue("expected at least 9 lines (header + 8 groups), got:\n" + linear, linear.split("\n").length >= 9);
 
@@ -186,6 +201,12 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
                 io.questdb.test.tools.TestUtils.assertEquals(linear, heap);
                 Assert.assertTrue(heapObserver.hasPageFrameHeapMerge);
                 Assert.assertFalse(heapObserver.hasPageFrameLinearMerge);
+                Assert.assertEquals(0, heapObserver.pageFrameLinearComparisons);
+                // The single partition performs two heap operations per row and
+                // no more than eight initial adds.
+                Assert.assertTrue(heapObserver.pageFrameHeapOperations >= 2L * 5_000);
+                Assert.assertTrue(heapObserver.pageFrameHeapOperations <= 2L * 5_000 + 8);
+                Assert.assertTrue(heapObserver.pageFrameHeapOperations < linearObserver.pageFrameLinearComparisons);
                 Assert.assertEquals(0, heapObserver.lastPageFrameLo);
                 Assert.assertEquals(5_000, heapObserver.lastPageFrameHi);
             } finally {
@@ -684,6 +705,28 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
         private boolean hasRecordLinearMerge;
         private long lastPageFrameHi = -1;
         private long lastPageFrameLo = -1;
+        private long pageFrameHeapOperations;
+        private long pageFrameLinearComparisons;
+        private long recordHeapOperations;
+        private long recordLinearComparisons;
+
+        @Override
+        public void onHeapOperations(long operationCount, boolean isPageFrame) {
+            if (isPageFrame) {
+                pageFrameHeapOperations += operationCount;
+            } else {
+                recordHeapOperations += operationCount;
+            }
+        }
+
+        @Override
+        public void onLinearComparisons(long comparisonCount, boolean isPageFrame) {
+            if (isPageFrame) {
+                pageFrameLinearComparisons += comparisonCount;
+            } else {
+                recordLinearComparisons += comparisonCount;
+            }
+        }
 
         @Override
         public void onMergeStrategy(boolean isHeapMerge, boolean isPageFrame) {

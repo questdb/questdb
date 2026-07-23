@@ -77,8 +77,6 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     public static final AtomicLong testCoveringInvocations = new AtomicLong();
     @TestOnly
     public static final AtomicLong testScanInvocations = new AtomicLong();
-    private static final ThreadLocal<CloseObserver> TEST_CLOSE_OBSERVER = new ThreadLocal<>();
-    private final CloseObserver closeObserver;
     private final IntList columnIndexes;
     private final RecordCursorFactory coveringDelegate;
     private final PartitionFrameCursorFactory dfcFactory;
@@ -105,7 +103,6 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
             @NotNull RecordCursorFactory scanDelegate
     ) {
         super(metadata);
-        this.closeObserver = TEST_CLOSE_OBSERVER.get();
         this.dfcFactory = dfcFactory;
         this.columnIndexes = columnIndexes;
         this.effectiveKeys = effectiveKeys;
@@ -169,19 +166,9 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     }
 
     @TestOnly
-    public static void clearCloseObserverForTesting() {
-        TEST_CLOSE_OBSERVER.remove();
-    }
-
-    @TestOnly
     public static void resetTestCounters() {
         testCoveringInvocations.set(0);
         testScanInvocations.set(0);
-    }
-
-    @TestOnly
-    public static void setCloseObserverForTesting(CloseObserver observer) {
-        TEST_CLOSE_OBSERVER.set(observer);
     }
 
     @Override
@@ -218,9 +205,6 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         Misc.free(coveringDelegate);
         Misc.free(indexDelegate);
         Misc.free(scanDelegate);
-        if (closeObserver != null) {
-            closeObserver.onPartitionFrameFactoryClose();
-        }
         Misc.free(dfcFactory);
     }
 
@@ -311,11 +295,6 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         if (symbolTable.containsNullValue()) {
             effectiveKeys.add(SymbolTable.VALUE_IS_NULL);
         }
-    }
-
-    @TestOnly
-    public interface CloseObserver {
-        void onPartitionFrameFactoryClose();
     }
 
     public static final class NonOwningPartitionFrameCursorFactory implements PartitionFrameCursorFactory {

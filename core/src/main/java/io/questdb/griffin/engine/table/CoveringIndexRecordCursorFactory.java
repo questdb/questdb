@@ -2338,6 +2338,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @TestOnly
     public interface MergeObserver {
+        void onHeapOperations(long operationCount, boolean isPageFrame);
+
+        void onLinearComparisons(long comparisonCount, boolean isPageFrame);
+
         void onMergeStrategy(boolean isHeapMerge, boolean isPageFrame);
 
         void onPageFrame(long lo, long hi);
@@ -2426,6 +2430,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             bestRow = h;
                         }
                     }
+                    if (mergeObserver != null) {
+                        mergeObserver.onLinearComparisons(n, false);
+                    }
                     if (best >= 0) {
                         selectedKeyIdx = best;
                         coveringRecord.of(keyCursors[best]);
@@ -2449,12 +2456,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             keyHeads[selectedKeyIdx] = NO_ROW;
                             heap.pollValue(); // key exhausted this partition: pop the min
                         }
+                        if (mergeObserver != null) {
+                            mergeObserver.onHeapOperations(1, false);
+                        }
                         selectedKeyIdx = -1;
                     }
                     if (heap.hasNext()) {
                         // Emit the min WITHOUT polling, so keyCursors[best]'s covered
                         // values stay readable; defer the poll to the next hasNext().
                         int best = heap.peekIndex();
+                        if (mergeObserver != null) {
+                            mergeObserver.onHeapOperations(1, false);
+                        }
                         selectedKeyIdx = best;
                         coveringRecord.of(keyCursors[best]);
                         coveringRecord.setSymbolKey(multiKeys.getQuick(best));
@@ -2576,6 +2589,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             if (keyHeads[i] != NO_ROW) {
                                 heap.add(i, keyHeads[i]);
                             }
+                        }
+                        if (mergeObserver != null) {
+                            mergeObserver.onHeapOperations(heap.size(), false);
                         }
                     }
                     return true;
@@ -2723,6 +2739,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             bestRow = h;
                         }
                     }
+                    if (mergeObserver != null) {
+                        mergeObserver.onLinearComparisons(n, true);
+                    }
                     if (best < 0) {
                         break; // partition drained
                     }
@@ -2764,6 +2783,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             if (count == 0) {
                 return null;
+            }
+            if (mergeObserver != null && isHeapMerge) {
+                // Each emitted row performs one peek and one poll or replacement.
+                mergeObserver.onHeapOperations(2L * count, true);
             }
             // Multi-key frames interleave keys per row, so there is no single
             // resolved symbol key for the frame; report VALUE_NOT_FOUND. The
@@ -2834,6 +2857,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     if (mergeHeads[i] != NO_ROW) {
                         heap.add(i, mergeHeads[i]);
                     }
+                }
+                if (mergeObserver != null) {
+                    mergeObserver.onHeapOperations(heap.size(), true);
                 }
             }
             return any;

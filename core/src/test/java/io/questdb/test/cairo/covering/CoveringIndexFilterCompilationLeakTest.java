@@ -25,12 +25,12 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
-import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -100,7 +100,7 @@ public class CoveringIndexFilterCompilationLeakTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPatternAdaptiveOwnerClosesPartitionFactoryExactlyOnceOnThrow() throws Exception {
+    public void testWrapAdaptiveSymbolPatternWithFilterClosesPartitionFactoryExactlyOnceOnThrow() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE tab (
@@ -119,7 +119,10 @@ public class CoveringIndexFilterCompilationLeakTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             final int[] partitionFactoryCloseCount = new int[1];
-            AdaptiveSymbolPatternRecordCursorFactory.setCloseObserverForTesting(() -> partitionFactoryCloseCount[0]++);
+            // Install the observer on the concrete partition-frame factory before compilation.
+            // This counts actual close() invocations on the factory transferred to the adaptive
+            // owner, rather than inferring them from AdaptiveSymbolPatternRecordCursorFactory.close().
+            FullPartitionFrameCursorFactory.setCloseObserverForTesting(factory -> partitionFactoryCloseCount[0]++);
             try {
                 final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 4) {
                     @Override
@@ -137,7 +140,7 @@ public class CoveringIndexFilterCompilationLeakTest extends AbstractCairoTest {
                     }
                 }
             } finally {
-                AdaptiveSymbolPatternRecordCursorFactory.clearCloseObserverForTesting();
+                FullPartitionFrameCursorFactory.clearCloseObserverForTesting();
             }
             Assert.assertEquals(1, partitionFactoryCloseCount[0]);
         });
