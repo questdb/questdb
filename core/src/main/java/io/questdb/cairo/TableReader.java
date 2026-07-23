@@ -356,7 +356,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             return 0;
         }
         if (partitionFrameStateFactory == null) {
-            partitionFrameStateFactory = configuration.newPartitionFrameStateFactory();
+            partitionFrameStateFactory = configuration.newPartitionFrameStateFactory(tableToken);
             if (partitionFrameStateFactory == null) {
                 return 0;
             }
@@ -1347,6 +1347,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         indexes.setPos(capacity + 2);
 
         openPartitionInfo = initOpenPartitionInfo();
+        // Resolve the table-scoped partition registry once for a reader whose
+        // snapshot contains delta. This lets a pre-drop reader lazily open any
+        // of its partitions from the detached table state without another
+        // process-wide table lookup. Pure-base readers retain the zero-JNI path.
+        for (int i = 0; i < partitionCount; i++) {
+            if (txFile.getPartitionHasDelta(i)) {
+                partitionFrameStateFactory = configuration.newPartitionFrameStateFactory(tableToken);
+                break;
+            }
+        }
         columnTops = new LongList(capacity / 2);
         columnTops.setPos(capacity / 2);
     }

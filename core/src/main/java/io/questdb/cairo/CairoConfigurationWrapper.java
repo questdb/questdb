@@ -1801,8 +1801,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public PartitionFrameStateFactory newPartitionFrameStateFactory() {
-        return getDelegate().newPartitionFrameStateFactory();
+    public PartitionFrameStateFactory newPartitionFrameStateFactory(TableToken tableToken) {
+        return getDelegate().newPartitionFrameStateFactory(tableToken);
     }
 
     public void setDelegate(CairoConfiguration delegate) {

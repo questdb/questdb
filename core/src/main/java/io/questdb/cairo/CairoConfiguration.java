@@ -1190,7 +1190,7 @@ public interface CairoConfiguration {
     }
 
     @Nullable
-    default PartitionFrameStateFactory newPartitionFrameStateFactory() {
+    default PartitionFrameStateFactory newPartitionFrameStateFactory(TableToken tableToken) {
         return null;
     }
 
