@@ -3878,6 +3878,31 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnByteLongKey() throws Exception {
+        // https://github.com/questdb/questdb/issues/1679
+        // BYTE and LONG are more than one "step" apart in the numeric widening chain
+        // (ColumnType.isBuiltInWideningCast0 allows BYTE -> ... -> LONG directly), so this checks
+        // the fix isn't limited to adjacent-width pairs like INT/LONG.
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    key\tbyte_val\tlong_val
+                    1\t10\t100
+                    2\t20\t200
+                    3\t30\t300
+                    4\t40\t400
+                    5\t50\t500
+                    """;
+
+            execute("create table byte_tbl as (select x::byte key, x*10 val from long_sequence(5))");
+            execute("create table long_tbl as (select x key, x*100 val from long_sequence(5))");
+
+            assertQuery("select byte_tbl.key, byte_tbl.val byte_val, long_tbl.val long_val from byte_tbl join long_tbl on (key) order by byte_tbl.key")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testJoinOnDecimalFailureMixedScale() throws Exception {
         // We don't support implicit casting between different decimals during join resolution
         assertMemoryLeak(() -> {
@@ -4063,6 +4088,108 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnIntLongKey() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    key\tlong_val\tint_val
+                    1\t10\t100
+                    2\t20\t200
+                    3\t30\t300
+                    4\t40\t400
+                    5\t50\t500
+                    """;
+
+            execute("create table long_tbl as (select x key, x*10 val from long_sequence(5))");
+            execute("create table int_tbl as (select x::int key, x*100 val from long_sequence(5))");
+
+            assertQuery("select long_tbl.key, long_tbl.val long_val, int_tbl.val int_val from long_tbl join int_tbl on (key) order by long_tbl.key")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testJoinOnIntLongKeyMasterInt() throws Exception {
+        // https://github.com/questdb/questdb/issues/1679
+        // same bug as testJoinOnIntLongKey, but with the INT-keyed table as the join master
+        // (left side) and the LONG-keyed table as the slave (right side), to make sure the
+        // fix isn't direction-dependent.
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    key\tint_val\tlong_val
+                    1\t100\t10
+                    2\t200\t20
+                    3\t300\t30
+                    4\t400\t40
+                    5\t500\t50
+                    """;
+
+            execute("create table int_tbl as (select x::int key, x*100 val from long_sequence(5))");
+            execute("create table long_tbl as (select x key, x*10 val from long_sequence(5))");
+
+            assertQuery("select int_tbl.key, int_tbl.val int_val, long_tbl.val long_val from int_tbl join long_tbl on (key) order by int_tbl.key")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testJoinOnIntLongKeyNulls() throws Exception {
+        // https://github.com/questdb/questdb/issues/1679
+        // Numbers.INT_NULL (Integer.MIN_VALUE) and Numbers.LONG_NULL (Long.MIN_VALUE) are NOT the
+        // same bit pattern once widened -- a naive int->long widen of INT_NULL does not produce
+        // LONG_NULL. Any fix must route the widen through the same cast used for expressions
+        // (which already maps INT_NULL -> LONG_NULL) so that a null key on one side still matches
+        // a null key on the other, per the existing "null=null is true" join-key semantics (see
+        // testMultiTableEqualityOuterJoinedTableStaysPostJoin above).
+        assertMemoryLeak(() -> {
+            execute("create table int_tbl (key INT, val INT)");
+            execute("insert into int_tbl values (1, 100), (2, 200), (NULL, 300), (4, 400), (5, 500)");
+            execute("create table long_tbl (key LONG, val INT)");
+            execute("insert into long_tbl values (1, 10), (2, 20), (NULL, 30), (4, 40), (5, 50)");
+
+            final String expected = """
+                    key\tint_val\tlong_val
+                    1\t100\t10
+                    2\t200\t20
+                    null\t300\t30
+                    4\t400\t40
+                    5\t500\t50
+                    """;
+
+            assertQuery("select int_tbl.key, int_tbl.val int_val, long_tbl.val long_val from int_tbl join long_tbl on (key) order by int_val")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testJoinOnIntLongKeySanity() throws Exception {
+        // Control test: identical shape to testJoinOnIntLongKey, but both join keys are LONG.
+        // This must pass today, unmodified, proving the query/table shape used by the other
+        // testJoinOnIntLongKey* tests is correct on its own -- isolating their failures purely to
+        // the type-mismatch check. Safe to delete once the #1679 fix lands and those tests are
+        // trusted to fail/pass for the right reason.
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    key\tlong_val\tother_val
+                    1\t10\t100
+                    2\t20\t200
+                    3\t30\t300
+                    4\t40\t400
+                    5\t50\t500
+                    """;
+
+            execute("create table long_tbl as (select x key, x*10 val from long_sequence(5))");
+            execute("create table long_tbl2 as (select x key, x*100 val from long_sequence(5))");
+
+            assertQuery("select long_tbl.key, long_tbl.val long_val, long_tbl2.val other_val from long_tbl join long_tbl2 on (key) order by long_tbl.key")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testJoinOnLong256() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select x.i, y.i, x.hash from x join x y on y.hash = x.hash";
@@ -4086,6 +4213,59 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .noRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testJoinOnLongDoubleKey() throws Exception {
+        // https://github.com/questdb/questdb/issues/1679
+        // LONG->DOUBLE is an integer-to-floating-point widening pair, not integer-to-integer like
+        // INT/LONG. QuestDB represents a null LONG as Long.MIN_VALUE but a null DOUBLE as NaN --
+        // a completely different sentinel mechanism -- so this exercises a different code path
+        // than the other testJoinOnIntLongKey* tests above. Values here are small enough
+        // (single digits x100) to be represented exactly in a double, so this test intentionally
+        // does not probe double's precision limits for very large LONG values.
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    key\tlong_val\tdouble_val
+                    1\t10\t100.0
+                    2\t20\t200.0
+                    3\t30\t300.0
+                    4\t40\t400.0
+                    5\t50\t500.0
+                    """;
+
+            execute("create table long_tbl as (select x key, x*10 val from long_sequence(5))");
+            execute("create table double_tbl as (select x::double key, x*100.0 val from long_sequence(5))");
+
+            assertQuery("select long_tbl.key, long_tbl.val long_val, double_tbl.val double_val from long_tbl join double_tbl on (key) order by long_tbl.key")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testJoinOnShortIntKey() throws Exception {
+        // https://github.com/questdb/questdb/issues/1679
+        // SHORT vs INT: the smallest, most "adjacent" widening pair, complementing the wider
+        // gaps covered by testJoinOnByteLongKey (BYTE/LONG) and testJoinOnLongDoubleKey
+        // (LONG/DOUBLE).
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    key\tshort_val\tint_val
+                    1\t10\t100
+                    2\t20\t200
+                    3\t30\t300
+                    4\t40\t400
+                    5\t50\t500
+                    """;
+
+            execute("create table short_tbl as (select x::short key, x*10 val from long_sequence(5))");
+            execute("create table int_tbl as (select x::int key, x*100 val from long_sequence(5))");
+
+            assertQuery("select short_tbl.key, short_tbl.val short_val, int_tbl.val int_val from short_tbl join int_tbl on (key) order by short_tbl.key")
+                    .noLeakCheck()
                     .returns(expected);
         });
     }
