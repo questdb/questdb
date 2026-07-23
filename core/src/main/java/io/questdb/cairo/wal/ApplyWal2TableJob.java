@@ -819,38 +819,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         }
                     }
                 }
-                // On a primary the lvConsumedSeqTxn advance for LV tokens lives in
-                // LiveViewRefreshJob, which runs immediately after applyWalDirect returns and
-                // amortises a reusable BlockFileWriter + Path across FLUSH cycles; doRun skips
-                // LV tokens there, so this branch never fires. On a read-only replica the
-                // refresh worker is quiesced (isRefreshEnabled() false) and this global apply
-                // job owns the LV apply, so it must also advance the view's state -- mirror the
-                // mat-view branch above: find the latest applied LIVE_VIEW_DATA block and push
-                // its in-band maxBaseSeqTxn into _lv.s + the in-memory instance, so a later
-                // promote resumes refresh consistent with the replicated rows.
-                if (writer.getTableToken().isLiveView() && !engine.getLiveViewStateStore().isRefreshEnabled()) {
-                    for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
-                        if (txnDetails.getWalTxnType(s) == LIVE_VIEW_DATA) {
-                            // The reused blockFileWriter is opened (and self-closed) by
-                            // of() inside applyLiveViewData and freed when the job closes,
-                            // matching advanceLiveViewConsumedSeqTxn's caller-reuse contract.
-                            try {
-                                engine.applyLiveViewData(
-                                        writer.getTableToken(),
-                                        txnDetails.getLiveViewMaxBaseSeqTxn(s),
-                                        blockFileWriter,
-                                        Path.PATH2.get()
-                                );
-                            } catch (CairoException e) {
-                                LOG.error().$("could not update state for live view [view=").$(writer.getTableToken())
-                                        .$(", msg=").$safe(e.getFlyweightMessage())
-                                        .$(", errno=").$(e.getErrno())
-                                        .I$();
-                            }
-                            break; // latest LV state found, earlier transactions are stale
-                        }
-                    }
-                }
+                // The lvConsumedSeqTxn advance for LV tokens lives in LiveViewRefreshJob, which
+                // runs the inline apply immediately after applyWalDirect returns and amortises a
+                // reusable BlockFileWriter + Path across FLUSH cycles. Under symmetric local refresh
+                // every node (primary or replica) runs that refresh-enabled worker and owns its own
+                // LV state, so doRun drops LV notifications and this global apply job never advances
+                // LV state itself; LV WAL is never replicated either.
 
                 return (int) (lastCommittedSeqTxn - seqTxn + 1);
             case SQL:

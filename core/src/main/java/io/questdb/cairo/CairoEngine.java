@@ -588,56 +588,29 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * Advances a live view's {@code _lv.s} and in-memory instance to {@code maxBaseSeqTxn}
-     * after the global {@link io.questdb.cairo.wal.ApplyWal2TableJob} applied a
-     * {@code LIVE_VIEW_DATA} block on a read-only replica. On a primary the refresh worker
-     * owns the inline apply and advances state via {@link #advanceLiveViewConsumedSeqTxn};
-     * on a replica that worker is quiesced (the live-view state store is NoOp,
-     * {@code isRefreshEnabled()} is false), so the apply job is the only thing touching the
-     * view and must mirror that state advance itself. Keeping {@code lastProcessedSeqTxn}
-     * consistent with the replicated rows lets a later promote resume refresh from the right
-     * base seqTxn without re-deriving already-applied output.
+     * after {@code reconcileAppliedFloorAfterRestart} re-applied the view's pending LV WAL on
+     * restart -- reconciling a durable floor left behind by a crash between the inline apply and
+     * the trailing {@code _lv.s} persist. The steady-state advance runs through
+     * {@link #advanceLiveViewConsumedSeqTxn}; this is the restart-recovery variant.
      * <p>
-     * {@code maxBaseSeqTxn} is the single in-band watermark the primary fed to
+     * {@code maxBaseSeqTxn} is the single in-band watermark the refresh cycle fed to
      * {@code WalWriter.commitLiveView} and to {@code lastProcessedSeqTxn} /
      * {@code appliedWatermark} / {@code lvConsumedSeqTxn} in one refresh cycle, so all three
      * coincide here. Persists {@code _lv.s} before publishing in-memory, matching the
      * durability rule in {@link #advanceLiveViewConsumedSeqTxn}: the durable state never
      * sits ahead of the applied LV WAL, so a crash between apply and persist leaves a
      * trailing (never a leading) {@code _lv.s}, which a later cycle re-advances.
+     * <p>
+     * The only caller ({@code reconcileAppliedFloorAfterRestart}) runs while the refresh worker
+     * holds the refresh latch, so the {@code startCheckpoint} latch handshake already serialises
+     * this rewrite against a concurrent checkpoint copy -- no {@code waitForUnfrozen()} park is
+     * needed (and parking while holding the latch would deadlock the agent against it).
      */
     public void applyLiveViewData(
             TableToken liveViewToken,
             long maxBaseSeqTxn,
             BlockFileWriter blockFileWriter,
             Path path
-    ) {
-        // The replica apply job (ApplyWal2TableJob) holds no refresh latch, so it must
-        // wait out any in-progress checkpoint freeze itself before rewriting _lv.s.
-        applyLiveViewData(liveViewToken, maxBaseSeqTxn, blockFileWriter, path, true);
-    }
-
-    /**
-     * As {@link #applyLiveViewData(TableToken, long, BlockFileWriter, Path)}, but with an
-     * explicit choice of whether to park on {@link LiveViewInstance#waitForUnfrozen()}
-     * before the {@code _lv.s} rewrite.
-     * <p>
-     * Pass {@code waitForUnfrozen == true} from the out-of-band replica apply job, which
-     * holds no refresh latch: it must serialise its rewrite against a concurrent checkpoint
-     * copy the same way {@link #invalidateLiveView} does.
-     * <p>
-     * Pass {@code waitForUnfrozen == false} from the in-band refresh-worker caller
-     * ({@code reconcileAppliedFloorAfterRestart}), which runs while the worker holds the
-     * refresh latch. There the {@code startCheckpoint} latch handshake already serialises
-     * this rewrite against the agent's copy, and parking on {@code waitForUnfrozen()} while
-     * holding the latch would deadlock -- the agent spins for the latch this worker holds,
-     * and only {@code endCheckpoint} (never reached) clears the freeze.
-     */
-    public void applyLiveViewData(
-            TableToken liveViewToken,
-            long maxBaseSeqTxn,
-            BlockFileWriter blockFileWriter,
-            Path path,
-            boolean waitForUnfrozen
     ) {
         if (maxBaseSeqTxn < 0) {
             return;
@@ -647,11 +620,6 @@ public class CairoEngine implements Closeable, WriterSource {
             return;
         }
         synchronized (instance) {
-            if (waitForUnfrozen) {
-                // Off-latch caller: queue this _lv.s rewrite behind any in-progress checkpoint
-                // freeze so the snapshot agent's raw file copy is not raced by the rewrite below.
-                instance.waitForUnfrozen();
-            }
             LiveViewStateReader reader = instance.getStateReader();
             if (maxBaseSeqTxn <= reader.getLastProcessedSeqTxn()) {
                 return;

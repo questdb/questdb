@@ -471,181 +471,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return walFrameCursor;
     }
 
-    // Read-only-replica lead-reconstruction seam. The primary refresh loop maintains an un-flushed
-    // in-RAM lead as a normal part of live-view operation; a read-only replica has no primary-side
-    // WAL to drain, so it reconstructs that same lead off the applied base table for freshness parity.
-    // That reconstruction is an enterprise concern: EntLiveViewRefreshJob (questdb-ent) overrides the
-    // hooks below and composes over the accessors/helpers here. The defaults are primary behaviour --
-    // isLeadReconstruction() is false, the drain/o3/publish-stall hooks decline (return false) so the
-    // caller runs the primary path, and reconcileLeadWithDisk is a no-op. This job never runs a replica
-    // path itself; only the enterprise subclass does.
-
-    /**
-     * Reports whether a read-only replica must hold this view's lead work back this tick -- an O3
-     * symbol catch-up barrier, or a publish-stall / refresh-failure retry floor. Called twice per
-     * tick, and the distinction matters:
-     * <ul>
-     *     <li>{@code authoritative == false} -- the {@link #scanForLaggingViews} pre-check, which runs
-     *     OUTSIDE the refresh latch purely so a gated view costs a clock read instead of a re-drain.
-     *     It must be side-effect free: with one job per live-view worker and every worker scanning
-     *     every view, a pre-latch clear could erase a gate another worker armed under the latch
-     *     microseconds earlier.</li>
-     *     <li>{@code authoritative == true} -- the {@link #refreshInstance} check, which runs UNDER
-     *     the refresh latch and is the one that decides. A gate satisfied here is cleared here, so
-     *     the check-and-clear is atomic against the workers that arm gates (all of which arm under
-     *     the same latch).</li>
-     * </ul>
-     * The primary default declines both. EntLiveViewRefreshJob overrides it.
-     */
-    protected boolean deferReplicaLeadWork(LiveViewInstance instance, boolean authoritative) {
-        return false;
-    }
-
-    /**
-     * Lets a read-only replica supply the lead rows from the applied base table instead of the raw
-     * base WAL. Returns {@code true} when it handled the drain (result already in {@link #getDrainResult()});
-     * the primary default returns {@code false}, so {@link #incrementalRefresh} runs {@code drainBaseWal}.
-     */
-    protected boolean drainLeadOverride(
-            LiveViewInstance instance,
-            WindowRecordCursorFactory windowFactory,
-            TableToken baseToken,
-            int cursorTimestampIndex,
-            long viewLowerBoundTimestamp,
-            long fromSeqTxn,
-            boolean populateTier
-    ) throws SqlException {
-        return false;
-    }
-
     protected CairoEngine getEngine() {
         return engine;
-    }
-
-    protected DrainResult getDrainResult() {
-        return drainResult;
-    }
-
-    protected LiveViewRefreshSqlExecutionContext getExecutionContext() {
-        return executionContext;
-    }
-
-    protected LiveViewInMemoryBuffer getStagingBuffer() {
-        return stagingBuffer;
-    }
-
-    protected IntList getStagingSymbolColumnIndexes() {
-        return stagingSymbolColumnIndexes;
-    }
-
-    protected LiveViewStateStore getStateStore() {
-        return stateStore;
-    }
-
-    protected WalEventReader getWalEventReader() {
-        return walEventReader;
-    }
-
-    protected Path getWalPath() {
-        return walPath;
-    }
-
-    /**
-     * Reports whether this worker reconstructs the un-flushed lead in RAM without owning the durable
-     * tier (the read-only-replica mode: refresh disabled, lead reconstruction enabled). The primary
-     * default is {@code false}; EntLiveViewRefreshJob overrides it.
-     */
-    protected boolean isLeadReconstruction() {
-        return false;
-    }
-
-    protected boolean isLeadRollbackSupported(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
-        return false;
-    }
-
-    protected boolean isLeadSlotStale(LiveViewInstance instance) {
-        return false;
-    }
-
-    /**
-     * Handles an out-of-order base commit detected while reconstructing the lead. A read-only replica
-     * overrides this to reset the window state to cold-start and serve disk-only until the primary's
-     * replicated O3 correction lands (it must not rewrite its own on-disk tier); the primary default
-     * returns {@code false}, so {@link #finishLeadRefresh} rewrites disk via {@code o3Replay}.
-     */
-    protected boolean onLeadO3Detected(
-            LiveViewInstance instance,
-            WindowRecordCursorFactory windowFactory,
-            TableToken baseToken,
-            long advanceTo
-    ) {
-        return false;
-    }
-
-    /**
-     * Handles a lead publish that stalled with both in-mem tier slots reader-pinned. A read-only replica
-     * overrides this to roll the window state back and arm a retry back-off (it cannot flush to disk);
-     * the primary default returns {@code false}, so {@link #finishLeadRefresh} flushes the stall to disk.
-     */
-    protected boolean onLeadPublishStalled(
-            LiveViewInstance instance,
-            WindowRecordCursorFactory windowFactory,
-            long advanceTo,
-            long appendedRows
-    ) throws SqlException {
-        return false;
-    }
-
-    /**
-     * Signals the end of one lead-refresh cycle -- drain plus publish, however it ended (published,
-     * stalled, or threw). Runs under the refresh latch. A read-only replica overrides it to release
-     * the native backing of the window-state snapshot it took for the publish-stall rollback: that
-     * snapshot is scoped to exactly this cycle, so a worker that holds onto it retains its largest
-     * ever snapshot for the process lifetime. No-op on a primary, which takes no such snapshot.
-     */
-    protected void onLeadRefreshCycleEnd() {
-    }
-
-    /**
-     * Handles a refresh-cycle failure while a read-only replica reconstructs the lead. A replica must
-     * never invalidate the view on such a failure -- invalidation is durable ({@link CairoEngine#invalidateLiveView}
-     * rewrites {@code _lv.s} via a {@code BlockFileWriter} with no read-only gate) and sticky
-     * ({@link CairoEngine#applyLiveViewData} preserves the local invalid flag as the in-band watermark
-     * advances), so a transient lead-loop fault would leave the view invalid forever even against a
-     * healthy primary, with no replica-side recovery (the documented DROP + CREATE cannot run on a
-     * read-only node). {@link #handleRefreshFailure} routes here and returns {@code null} instead of an
-     * invalidation reason. The base default is unreachable on a primary ({@link #isLeadReconstruction()}
-     * is false there); EntLiveViewRefreshJob overrides it to arm a wall-clock back-off so
-     * {@link #scanForLaggingViews} idles the view instead of re-draining into the same fault every tick.
-     */
-    protected void onReplicaLeadRefreshFailure(LiveViewInstance instance) {
-    }
-
-    /**
-     * Builds the compiled scan pipeline (timestamp lower-bound + optional filter + optional anchor
-     * dispatch + window) over {@code pageCursor}, returning the incremental window cursor. Hides the
-     * package-private cursor helpers from the enterprise subclass, which composes over the returned
-     * {@link RecordCursor}.
-     */
-    protected RecordCursor openLeadScanCursor(
-            RecordCursor pageCursor,
-            int baseTimestampIndex,
-            long scanLowTs,
-            Function filter,
-            LiveViewWindow anchorWindow,
-            WindowRecordCursorFactory windowFactory
-    ) throws SqlException {
-        tsLowerBoundCursor.of(pageCursor, baseTimestampIndex, scanLowTs);
-        RecordCursor source = tsLowerBoundCursor;
-        if (filter != null) {
-            filteringCursor.of(source, filter, executionContext);
-            source = filteringCursor;
-        }
-        if (anchorWindow != null) {
-            anchorDispatchingCursor.of(source, anchorWindow, executionContext);
-            source = anchorDispatchingCursor;
-        }
-        return windowFactory.getIncrementalCursor(source, executionContext);
     }
 
     /**
@@ -664,14 +491,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     protected boolean prefersAppliedBaseRefresh() {
         return false;
-    }
-
-    /**
-     * Reconciles a read-only replica's in-RAM lead against the on-disk tier the global apply job
-     * advances asynchronously from replicated WAL. The primary default is a no-op (the primary owns
-     * every disk advance, so its lead never trails an external flush); EntLiveViewRefreshJob overrides it.
-     */
-    protected void reconcileLeadWithDisk(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
     }
 
     /**
@@ -1541,30 +1360,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // and materialises the lead out of the tier. The tier therefore leads
             // disk by the rows accumulated since the last flush; reads serve them
             // via the seam cut. The lead is in RAM only and recovered by replaying
-            // base WAL forward on restart.
-            //
-            // A read-only replica overrides drainLeadOverride to compute the lead off the APPLIED
-            // base table instead: its raw WAL segments race their own download/apply, so a raw read
-            // can transiently return 0 rows for already-applied data and drop the batch, whereas the
-            // applied reader is consistent. The primary default returns false, so the raw-WAL drain
-            // below runs. Either source lands its result in drainResult, which finishLeadRefresh then
-            // publishes as the un-flushed lead.
-            try {
-                if (!drainLeadOverride(
-                        instance, windowFactory, baseToken, cursorTimestampIndex,
-                        viewLowerBoundTimestamp, fromSeqTxn, populateTier
-                )) {
-                    drainBaseWal(
-                            instance, windowFactory, baseToken, baseMetadata, baseTimestampIndex,
-                            cursorTimestampIndex, viewLowerBoundTimestamp, Long.MAX_VALUE, filter, fromSeqTxn, toSeqTxn,
-                            null, null, populateTier, latestSeenTsSnapshot
-                    );
-                }
-                finishLeadRefresh(instance, windowFactory, baseToken, populateTier);
-            } finally {
-                // The publish decision is made; a replica's rollback snapshot is dead either way.
-                onLeadRefreshCycleEnd();
-            }
+            // base WAL forward on restart. The drain lands its result in drainResult,
+            // which finishLeadRefresh then publishes as the un-flushed lead.
+            drainBaseWal(
+                    instance, windowFactory, baseToken, baseMetadata, baseTimestampIndex,
+                    cursorTimestampIndex, viewLowerBoundTimestamp, Long.MAX_VALUE, filter, fromSeqTxn, toSeqTxn,
+                    null, null, populateTier, latestSeenTsSnapshot
+            );
+            finishLeadRefresh(instance, windowFactory, baseToken, populateTier);
             return;
         }
 
@@ -1979,14 +1782,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 if (populateTier) {
                                     stagingBuffer.copyRowFromRecord(outRecord, appendedRows);
                                     if (internSymbols) {
-                                        // windowMapAuthoritative = !isLeadReconstruction(): the primary
-                                        // resets the window map on every flush, so a live window entry is
-                                        // authoritative and intern can skip the committed keyOf. A replica's
-                                        // externally-flushed lead must stay committed-first.
-                                        final boolean windowMapAuthoritative = !isLeadReconstruction();
+                                        // windowMapAuthoritative = true: this node is the sole writer of its
+                                        // own LV table and resets the window map on every flush (onFlush/onO3),
+                                        // so a live window entry is authoritative and intern can skip the
+                                        // committed keyOf.
                                         for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
                                             final int c = stagingSymbolColumnIndexes.getQuick(si);
-                                            final int symId = symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c), windowMapAuthoritative);
+                                            final int symId = symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c), true);
                                             stagingBuffer.putInt(appendedRows, c, symId);
                                             if (symId == SymbolTable.VALUE_IS_NULL) {
                                                 // The committed disk table may not know this NULL yet;
@@ -2418,13 +2220,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // copyRowFromRecord stored with eager-interned,
                                 // LV-table-consistent ids so the lead resolves from
                                 // RAM and post-flush agrees with disk.
-                                // windowMapAuthoritative = !isLeadReconstruction(): only the primary's
-                                // reset-on-flush window map lets intern skip the committed keyOf; a
-                                // replica's externally-flushed lead must stay committed-first.
-                                final boolean windowMapAuthoritative = !isLeadReconstruction();
+                                // windowMapAuthoritative = true: this node is the sole writer of its own
+                                // LV table and its reset-on-flush window map lets intern skip the committed
+                                // keyOf for a live (not-yet-committed) window entry.
                                 for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
                                     final int c = stagingSymbolColumnIndexes.getQuick(si);
-                                    final int symId = symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c), windowMapAuthoritative);
+                                    final int symId = symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c), true);
                                     stagingBuffer.putInt(appendedRows, c, symId);
                                     if (symId == SymbolTable.VALUE_IS_NULL) {
                                         // The committed disk table may not know this NULL yet;
@@ -2613,13 +2414,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         if (drainResult.o3Detected) {
             // The escape hatches below (o3Replay, emergency flush) both rewrite the LV's on-disk tier.
-            // A read-only replica must never do that -- the primary owns those writes and replicates
-            // the result -- so it overrides onLeadO3Detected to reset the window state to cold-start
-            // and serve disk-only until the primary's replicated O3 correction lands. The primary
-            // default returns false and rewrites disk via o3Replay below.
-            if (onLeadO3Detected(instance, windowFactory, baseToken, advanceTo)) {
-                return;
-            }
             // Gate on base apply BEFORE discarding the lead. o3Replay reads the
             // applied base at o3SeqTxn; if ApplyWal2TableJob has not caught up,
             // ensureBaseApplied unwinds cooperatively with the lead still published
@@ -2640,7 +2434,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         if (advanceTo > instance.getRefreshedUpToSeqTxn()) {
             if (appendedRows > 0 && populateTier) {
-                if (instance.isTierStale() && !isLeadReconstruction()) {
+                if (instance.isTierStale()) {
                     // The tier is stale: a prior both-slots-pinned O3 rebuild-skip
                     // (or an emergency flush) left the published slot inconsistent
                     // with the re-sequenced disk, and disk now holds every row up to
@@ -2658,16 +2452,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // stale marking (or defers to the next cycle if both slots stay
                     // pinned).
                     //
-                    // Gated to the primary via !isLeadReconstruction(): a read-only
-                    // replica ALSO sets tierStale (its reconcileLeadWithDisk arms it on
-                    // a Case B / cold-start reconcile to force a clean tier rebuild), but
-                    // it must never flushLead - that opens a WalWriter on a read-only
-                    // node. The replica instead falls through to publishToInMemoryTier's
-                    // dropRetained path, which resets the slot and rebuilds the pure lead
-                    // from this cycle's re-derived staging in RAM. It has no additive-
-                    // same-ts gap to fix: its reconcile seam already drops the on-disk
-                    // durable band (ts <= diskMaxTs) from staging, so the rebuilt slot is
-                    // seamed strictly above disk and every durable row is served by disk.
                     // instance.leadRowCount is 0 here (both tierStale setters zero it), so
                     // flushLead materialises exactly this cycle's staging rows, not the
                     // stale slot rows. Pin that invariant explicitly rather than trusting
@@ -2703,15 +2487,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     published = false;
                 }
                 if (!published) {
-                    // A read-only replica cannot flush the stalled lead to disk. It overrides
-                    // onLeadPublishStalled to roll the window state back to its pre-drain snapshot and
-                    // arm a retry back-off, leaving refreshedUpToSeqTxn where it was so the next scan
-                    // tick re-drains this exact range once a reader releases a slot; reads fall back to
-                    // disk-only via the seqTxn fence meanwhile. The primary default returns false and
-                    // flushes the stall straight to disk below.
-                    if (onLeadPublishStalled(instance, windowFactory, advanceTo, appendedRows)) {
-                        return;
-                    }
                     // The lead could not enter RAM (both slots reader-pinned, or a
                     // publish error). Flush everything (the prior tier lead plus
                     // this batch's staging rows) straight to disk so no row is lost;
@@ -5748,27 +5523,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean force,
             boolean appendTimelineRoot
     ) {
-        // A read-only replica must never seal a checkpoint root. The primary owns
-        // the durable tier and replicates the result, and no checkpoint state ever
-        // ships (WalEvents.reconstructLiveViewFiles carries _lv alone), so a replica
-        // that sealed one would be minting local resume anchors for window state it
-        // does not own. Every refresh-cycle route here is primary-only already:
-        // incrementalRefresh and drainAppliedBase reach it past the leadMode early
-        // return, flushLead is gated on !isLeadReconstruction(), and runSeedSweep is
-        // skipped outright. But three of those gates are overridable hooks
-        // (drainLeadOverride, onLeadO3Detected, onLeadPublishStalled) that deflect the
-        // replica by dynamic dispatch rather than by structure, so pin the invariant
-        // here rather than re-derive it per site.
-        //
-        // The one route that bypasses every gate is the single-shot restart restore:
-        // it runs before refreshInstance branches on the role, and its
-        // replayToApplied / o3HeadMissReplay both reach this hook. It needs a local
-        // timeline to enter, which a node that has only ever been a replica never
-        // has - checkpoint state does not replicate. A node restarted as a replica
-        // over an ex-primary's files does, and would trip this. That is a static
-        // trace, not a reproduction: no test builds that shape, and it is the assert
-        // doing its job if one ever does.
-        assert !isLeadReconstruction() : "read-only replica must not write a live view checkpoint";
+        // Under symmetric local refresh (LIVE_VIEW_REPLICATION_LOCAL_REFRESH_DESIGN) every node --
+        // primary or replica -- owns and seals its own node-local checkpoint timeline for restart
+        // recovery; nothing replicates. So this seal runs on every role.
         if (!instance.isSnapshotCapabilityComputed()) {
             instance.setSnapshotCapability(computeSnapshotCapability(instance, windowFactory));
         }
@@ -6983,11 +6740,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Rebuilds an ACTIVE primary view's window state from the applied base via
+     * Rebuilds an ACTIVE view's window state from the applied base via
      * {@link #o3HeadMissReplay} (clearWindowState + full recompute + REPLACE_RANGE +
      * watermark advance) and restages the in-mem tier. Idempotent on the written
      * prefix. Shared by the base-metadata-drift and mid-drain-failure recoveries;
-     * the caller has already handled the leadReconstruction / SEEDING states.
+     * the caller has already handled the SEEDING state.
      * Returns {@code null} on success (records a refresh success), else the replay
      * error for the caller's flush-retry accounting.
      */
@@ -7523,18 +7280,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     private boolean processNotifications() {
         if (!stateStore.isRefreshEnabled()) {
-            // Lead-reconstruction (read-only replica, freshness parity): run only the registry
-            // scan, which drives the compute-lead-only path in refreshInstance. Skip the
-            // notification-queue drain -- notifications are a primary-side, in-process signal (the
-            // sequencer fans them out at commit time), never populated on a replica; the replica's
-            // lead follows the applied on-disk watermark via the scan, not a queue.
-            if (stateStore.isLeadReconstructionEnabled()) {
-                return scanForLaggingViews();
-            }
-            // Quiesced store (live views disabled, or a replica before a promote without lead
-            // reconstruction): skip the whole pass, including the registry fallback scan, so refresh
-            // workers never touch a live view. A promote swaps in a real store (see
-            // ForwardingLiveViewStateStore) and this gate reopens.
+            // Quiesced store (live views disabled): skip the whole pass, including the registry
+            // fallback scan, so refresh workers never touch a live view. Enabling live views swaps in
+            // a real store (see ForwardingLiveViewStateStore) and this gate reopens. Under symmetric
+            // local refresh every role runs the refresh-enabled store, so a read-only replica no
+            // longer takes this branch.
             return false;
         }
         // Ahead of the queue drain: a repair parked between turns blocks its view's
@@ -7566,13 +7316,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * is ahead of its last-processed seqTxn. Returns {@code true} if any view advanced.
      */
     private boolean scanForLaggingViews() {
-        // Lead-reconstruction mode (read-only replica): the compute-lead-only path never advances
-        // lastProcessedSeqTxn (that tracks the flushed disk tier, owned by the apply job), so the
-        // "caught up" mark is refreshedUpToSeqTxn -- how far the in-RAM lead has been computed.
-        // Using lastProcessedSeqTxn here would keep the scan reporting work while the base leads
-        // disk, spinning the worker; refreshedUpToSeqTxn goes quiet once the lead reaches the base
-        // head and reopens when new base commits land.
-        final boolean leadOnly = isLeadReconstruction();
         LiveViewRegistry registry = engine.getLiveViewRegistry();
         // Registry sharding: each worker copies (and scans) ONLY the views it owns (by table id),
         // so the idle fallback scan copies and processes each view once across the pool (O(views))
@@ -7609,7 +7352,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // register BEFORE its base table's (object-store ordering), so the registration-time
                 // lookup froze null into the definition. Re-resolve by name each tick; until the
                 // base lands the view serves disk-only, and once it registers the heal below lets
-                // this same tick proceed to reconstruct the lead.
+                // this same tick proceed to refresh.
                 baseToken = engine.getTableTokenIfExists(instance.getDefinition().getBaseTableName());
                 if (baseToken == null) {
                     continue;
@@ -7620,90 +7363,55 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", base=").$(baseToken)
                         .I$();
             }
-            // Replica anti-spin: skip a view whose lead loop armed a publish-stall back-off that has not
-            // elapsed, so the worker idles instead of re-draining into the same stall every tick. This is
-            // a side-effect-free pre-check only -- the gate that decides is the authoritative one
-            // refreshInstance runs under the refresh latch.
-            if (leadOnly && deferReplicaLeadWork(instance, false)) {
+            // Promote-hydrate consistency guard. A role migration onto a partially-uploaded object
+            // store can leave a live view's durable watermark ahead of the base seqTxn that actually
+            // replicated: an ex-primary flushed + uploaded derived rows for base commits whose own
+            // base-table WAL upload lagged and was cut. The base can never reach that seqTxn (it is not
+            // in the downloaded WAL), so the view would otherwise sit active forever serving derived
+            // rows for base commits the promoted primary no longer holds. Invalidate it durably,
+            // mirroring the mat-view "view is ahead of base table and cannot be synchronized" guard in
+            // CairoEngine.loadMatViewIntoStore. A strict no-op on a healthy node, where a view never
+            // outruns the base it derives from.
+            final long baseSeqLastTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
+            if (instance.getLastProcessedSeqTxn() > baseSeqLastTxn) {
+                LOG.error().$("live view is ahead of base table and cannot be synchronized [view=")
+                        .$(instance.getLiveViewToken())
+                        .$(", lastProcessedSeqTxn=").$(instance.getLastProcessedSeqTxn())
+                        .$(", baseTableTxn=").$(baseSeqLastTxn)
+                        .I$();
+                engine.invalidateLiveView(instance, "live view is ahead of base table and cannot be synchronized");
+                didWork = true;
                 continue;
             }
-            // Promote-hydrate consistency guard (primary only). A role migration onto a
-            // partially-uploaded object store can leave a live view's durable watermark ahead of the
-            // base seqTxn that actually replicated: the ex-primary flushed + uploaded derived rows for
-            // base commits whose own base-table WAL upload lagged and was cut, and a replica applies that
-            // LIVE_VIEW_DATA -- advancing _lv.s via applyLiveViewData -- without ever holding the base
-            // beyond what replicated. The base can never reach that seqTxn (it is not in the downloaded
-            // WAL), so the view would otherwise sit active forever serving derived rows for base commits
-            // the promoted primary no longer holds. Invalidate it durably, mirroring the mat-view "view
-            // is ahead of base table and cannot be synchronized" guard in CairoEngine.loadMatViewIntoStore.
-            // Read-only replicas never invalidate (they defer forever; see onReplicaLeadRefreshFailure),
-            // and this is a strict no-op on a healthy primary, where a view never outruns the base it
-            // derives from.
-            if (!leadOnly) {
-                final long baseSeqLastTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
-                if (instance.getLastProcessedSeqTxn() > baseSeqLastTxn) {
-                    LOG.error().$("live view is ahead of base table and cannot be synchronized [view=")
-                            .$(instance.getLiveViewToken())
-                            .$(", lastProcessedSeqTxn=").$(instance.getLastProcessedSeqTxn())
-                            .$(", baseTableTxn=").$(baseSeqLastTxn)
-                            .I$();
-                    engine.invalidateLiveView(instance, "live view is ahead of base table and cannot be synchronized");
-                    didWork = true;
-                    continue;
-                }
-            }
-            // Primary-only: re-drive an LV WAL block whose inline apply never landed. On a
-            // primary the refresh worker owns the LV's TableWriter, so ApplyWal2TableJob.doRun
-            // drops every live-view notification and flushLead's inline applyWalDirect is the
-            // view's ONLY applier. When that apply silently no-ops (the LV writer was busy, or
-            // its memory-pressure control backed off) or fails and suspends the table, the
-            // republish it falls back on goes nowhere: the committed rows stay off disk, and
-            // the flush already re-stamped the slot with a zero lead, so neither tier serves
-            // them - the view under-reports until a later base commit drives another flush. On
+            // Re-drive an LV WAL block whose inline apply never landed. The refresh worker owns the
+            // LV's TableWriter, so ApplyWal2TableJob.doRun drops every live-view notification and
+            // flushLead's inline applyWalDirect is the view's ONLY applier. When that apply silently
+            // no-ops (the LV writer was busy, or its memory-pressure control backed off) or fails and
+            // suspends the table, the republish it falls back on goes nowhere: the committed rows stay
+            // off disk, and the flush already re-stamped the slot with a zero lead, so neither tier
+            // serves them - the view under-reports until a later base commit drives another flush. On
             // a quiescent base that never comes. Retry the apply here instead; it is idempotent
             // (the block is committed, so it lands each row exactly once) and it is what lets
             // ALTER LIVE VIEW ... RESUME WAL on a suspended live view take effect without waiting
             // for the base to move.
-            if (!leadOnly && hasPendingLiveViewApply(instance)) {
+            if (hasPendingLiveViewApply(instance)) {
                 didWork |= retryPendingLiveViewApply(instance);
             }
             long head = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
             // Timeline recovery runs inside refreshInstance on the first cycle
-            // of every ACTIVE primary, even when there are no new base commits.
+            // of every ACTIVE view, even when there are no new base commits.
             // The recovery itself cheaply recognizes an empty identity view;
             // scheduling it once avoids reopening the LV table on every fallback
             // scan merely to decide that no recovery is needed.
             final boolean needsRestore = !instance.isCheckpointRestoreAttempted()
-                    && !leadOnly
                     && instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE;
             // A SEEDING view needs a refresh tick to drive its sweep even when
             // no new base commits have arrived since CREATE - the sweep
             // covers existing history, not future commits.
             final boolean needsSeeding = instance.getStateReader().getSeedState()
                     == LiveViewState.SEED_STATE_SEEDING;
-            final long processedTo = leadOnly ? instance.getRefreshedUpToSeqTxn() : instance.getLastProcessedSeqTxn();
-            // Replica-only: the global apply job advances the on-disk tier (and its seqTxn)
-            // independently of new base commits, so a lead built before a replicated flush landed must
-            // be reconciled even when the base head has not moved. isLeadSlotStale fires when the
-            // on-disk seqTxn has advanced past the slot's stamp -- covering both the fully-subsumed
-            // flush (whole lead now on disk) and the partial-overlap flush (a prefix on disk, a
-            // remainder still lead) -- so reconcileLeadWithDisk re-stamps the slot and trims the
-            // now-durable prefix instead of leaving reads stuck disk-only.
-            //
-            // The slot stamp alone is not enough: the drain reads the on-disk state at the start of a
-            // tick, stages the lead, then publishes it. If the apply job advances the disk past the
-            // loop's frontier BETWEEN the read and the publish, publishToInMemoryTier stamps the slot
-            // with the already-advanced seqTxn, so isLeadSlotStale reads false even though the staged
-            // rows are now fully on disk -- and with the base head not moving either, no trigger fires
-            // and the subsumed lead lingers, over-counting size()/count() by the durable rows. Fire the
-            // reconcile whenever a non-empty lead sits at or below the applied watermark (exact-boundary
-            // or Case B), which reconcileLeadWithDisk resolves by dropping it; the partial-overlap case
-            // (a genuine remainder above disk, applied < refreshedUpTo) is left to isLeadSlotStale.
-            final boolean leadSubsumedByDisk = leadOnly
-                    && instance.getLeadRowCount() > 0
-                    && instance.getAppliedWatermark() >= instance.getRefreshedUpToSeqTxn();
-            final boolean needsLeadReconcile = leadOnly && (isLeadSlotStale(instance) || leadSubsumedByDisk);
-            if (head > processedTo || needsLeadReconcile || needsRestore || needsSeeding) {
+            final long processedTo = instance.getLastProcessedSeqTxn();
+            if (head > processedTo || needsRestore || needsSeeding) {
                 // Only count a turn that actually refreshed. refreshInstance returns false
                 // when it lost the refresh latch to another worker (or backed off), so the
                 // losing workers fall through to the idle backoff instead of rescanning the
@@ -7842,11 +7550,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (appliedMaxBaseSeqTxn >= 0
                 && appliedMaxBaseSeqTxn != instance.getStateReader().getLastProcessedSeqTxn()) {
             try {
-                // waitForUnfrozen=false: this runs on the refresh worker while it holds the
-                // refresh latch, so the startCheckpoint handshake already serialises the
-                // rewrite against the agent's copy. Parking here would deadlock the worker
-                // against a concurrent checkpoint freeze.
-                engine.applyLiveViewData(token, appliedMaxBaseSeqTxn, blockFileWriter, path, false);
+                // This runs on the refresh worker while it holds the refresh latch, so the
+                // startCheckpoint handshake already serialises the rewrite against the agent's
+                // copy. Parking on waitForUnfrozen() here would deadlock the worker against a
+                // concurrent checkpoint freeze, so applyLiveViewData does not.
+                engine.applyLiveViewData(token, appliedMaxBaseSeqTxn, blockFileWriter, path);
                 LOG.info().$("reconciled live view floor to applied state on restart [view=")
                         .$(instance.getDefinition().getViewName())
                         .$(", maxBaseSeqTxn=").$(appliedMaxBaseSeqTxn).I$();
@@ -7871,7 +7579,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     newest root against the recompiled factory (same SQL, so the stored
      *     state stays shape-compatible), or re-sweeps from offset 0 behind the
      *     skip-write floor. Both are idempotent on the already-written prefix.</li>
-     *     <li>ACTIVE on the primary: full head-miss replay over the applied base -
+     *     <li>ACTIVE: full head-miss replay over the applied base -
      *     unconditionally correct and idempotent (mirrors the dedup restart path
      *     and the checkpoint-less restore fallback). The replay resets window
      *     state, recomputes every retained row through the recompiled factory,
@@ -7880,35 +7588,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     dropped first (its rows were computed by the old factory's state) and
      *     {@code refreshedUpToSeqTxn} is pinned back to {@code lastProcessedSeqTxn}
      *     so no phantom lead survives.</li>
-     *     <li>Read-only replica lead reconstruction: cannot rewrite the tier, and
-     *     has no checkpoint state to restore from (it does not replicate).
-     *     Mirrors {@code onLeadO3Detected}'s cold-start reset: clearing
-     *     {@code latestSeenTs} routes the next {@code reconcileLeadWithDisk} tick
-     *     through its unseeded cold-start branch, which arms the catch-up seam at
-     *     the on-disk max ts and re-derives the whole applied history through the
-     *     recompiled factory without staging the durable band.</li>
      * </ul>
      * Returns {@code null} when recovery completed (or was re-armed for the next
      * tick); otherwise the error the recovery replay failed with, which the caller
      * feeds into the standard flush-retry accounting.
      */
-    private Throwable recoverFromBaseMetadataDrift(LiveViewInstance instance, boolean leadReconstruction) {
+    private Throwable recoverFromBaseMetadataDrift(LiveViewInstance instance) {
         final String viewName = instance.getDefinition().getViewName();
         instance.prepareForBaseSchemaRecompile();
-        if (leadReconstruction) {
-            instance.forceSetLatestSeenTs(Numbers.LONG_NULL);
-            instance.setLeadRowCount(0);
-            instance.setTierStale(true);
-            // Rewind so the promised next tick actually happens: if this cycle was triggered by a
-            // slot-stale reconcile (head == refreshedUpTo), leaving refreshedUpTo in place closes
-            // the scanForLaggingViews gate (every other trigger needs the leadRowCount just zeroed)
-            // and the re-derive never runs. Rewinding to lastProcessed reopens it exactly when an
-            // un-flushed lead can exist; the cold-start drain cannot O3 (latestSeenTs is unset).
-            instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
-            LOG.info().$("live view base table metadata changed, lead re-derives on next tick [view=")
-                    .$(viewName).I$();
-            return null;
-        }
         if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
             // The recompiled factory expects the base's NEW metadata; the pinned base
             // snapshot is at the OLD metadata version. Drop it so the next sweep turn
@@ -8030,11 +7717,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         turnCommitsProcessed = 0;
         // No rows fed yet, so the accumulators match the last durable commit.
         windowStateDirty = false;
-        // Lead-reconstruction mode: a read-only replica computes the un-flushed lead into RAM for
-        // freshness parity but must never flush, apply, seed, or advance a durable watermark --
-        // the on-disk tier is fed by the global apply job from replicated WAL. The enterprise
-        // subclass overrides isLeadReconstruction() to select it; the primary default is false.
-        final boolean leadReconstruction = isLeadReconstruction();
         // Bind the view so the shared context's getMemoryTracker() resolves to THIS view's
         // tracker; the window cursor reads it at open() to charge the functions' partition
         // maps. The finally clears it, so the worker's next view cannot charge this one.
@@ -8123,69 +7805,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // output with cold accumulators.
                 // Single-shot per LV lifetime - the flag flips true whether the
                 // restore succeeded, missed, or failed.
-                // An in-process promote keeps the same LiveViewInstance but flips it from replica
-                // lead reconstruction (which already burned checkpointRestoreAttempted) to a writable
-                // primary, so the single-shot restart block below would otherwise be skipped on the
-                // first primary cycle. Detect that role edge here, at the same gate the flag is managed
-                // (both mutate only after the early-return checks above), so a replica cycle that burned
-                // the flag also recorded leadReconstruction=true; the edge survives an intervening early
-                // return because the previous role is not updated until a cycle reaches this point.
-                final boolean promotedSinceLastRefresh =
-                        instance.isLastRefreshLeadReconstruction() && !leadReconstruction;
-                instance.setLastRefreshLeadReconstruction(leadReconstruction);
-                // On that promote edge, re-arm the single-shot restart recovery WHEN (and only when) the
-                // applied floor lags the LV table's applied state -- i.e. the replica's last _lv.s persist
-                // failed and ApplyWal2TableJob swallowed it. The recovery then reconciles the floor to disk
-                // truth AND rebuilds the window accumulators / lead frontier from the applied tier (a
-                // head-miss replay that REPLACE_RANGE-rewrites the tier), so the promoted primary does not
-                // resume from the stale floor/frontier and re-derive (forward-append duplicating) an
-                // already-materialised base range. A clean promote has a consistent floor, so this is a
-                // no-op and never forces a replay.
-                if (promotedSinceLastRefresh
-                        && engine.readLiveViewAppliedMaxBaseSeqTxn(instance.getLiveViewToken())
-                        > instance.getStateReader().getLastProcessedSeqTxn()) {
-                    instance.resetCheckpointRestoreAttempted();
-                }
                 if (!instance.isCheckpointRestoreAttempted()) {
                     instance.setCheckpointRestoreAttempted();
-                    // Durable restart recovery is PRIMARY-ONLY. A read-only replica reconstructs its lead
-                    // purely in RAM from replicated disk (the leadReconstruction branches below) and must
-                    // never do durable recovery here: reconcileAppliedFloorAfterRestart would rewrite
-                    // _lv.s -- which the global apply job owns on a replica, so it would race that write --
-                    // and timeline fallback can REPLACE_RANGE-rewrite the on-disk tier. A node restarted
-                    // read-only over an ex-primary's files may retain a local timeline, but it must not
-                    // consume it until promotion. The flag is still burned above, so a later in-process
-                    // promote re-arms this recovery through the promote-edge branch just above.
-                    if (!leadReconstruction) {
-                        // Reconcile a durable floor left behind by a crash between the
-                        // inline apply and the trailing _lv.s persist, before timeline
-                        // selection reconciles its generation coordinates.
-                        reconcileAppliedFloorAfterRestart(instance);
-                        if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
-                            // Baseline observability: time bounded generation selection,
-                            // root restore, and the (B,F] replay. Recorded once
-                            // per LV lifetime regardless of outcome. Surfaced via
-                            // live_views().checkpoint_last_restore_micros.
-                            final long restoreStartUs = engine.getConfiguration().getMicrosecondClock().getTicks();
-                            tryRestoreFromTimeline(instance, getWindowFactory(instance));
-                            instance.recordCheckpointRestoreMicros(
-                                    engine.getConfiguration().getMicrosecondClock().getTicks() - restoreStartUs
-                            );
-                            if (instance.hasPendingInvalidationReason()) {
-                                // The restore could not rebuild a consistent window
-                                // state (replay-to-applied failed mid-gap leaving the
-                                // accumulators a partial advance over disk, a dedup
-                                // replay failed, or no safe derived-state rebuild was
-                                // possible). Do NOT run the incremental refresh + flush
-                                // below: they would advance and flush the inconsistent
-                                // accumulators, leaving the (about-to-be-invalidated)
-                                // view serving corrupted content off its own on-disk
-                                // tier - an invalid view stays queryable. Break to the
-                                // out-of-latch invalidation, which drains the stashed
-                                // reason and marks the view invalid without a partial
-                                // advance ever reaching disk.
-                                break refreshBody;
-                            }
+                    // Reconcile a durable floor left behind by a crash between the
+                    // inline apply and the trailing _lv.s persist, before timeline
+                    // selection reconciles its generation coordinates.
+                    reconcileAppliedFloorAfterRestart(instance);
+                    if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
+                        // Baseline observability: time bounded generation selection,
+                        // root restore, and the (B,F] replay. Recorded once
+                        // per LV lifetime regardless of outcome. Surfaced via
+                        // live_views().checkpoint_last_restore_micros.
+                        final long restoreStartUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+                        tryRestoreFromTimeline(instance, getWindowFactory(instance));
+                        instance.recordCheckpointRestoreMicros(
+                                engine.getConfiguration().getMicrosecondClock().getTicks() - restoreStartUs
+                        );
+                        if (instance.hasPendingInvalidationReason()) {
+                            // The restore could not rebuild a consistent window
+                            // state (replay-to-applied failed mid-gap leaving the
+                            // accumulators a partial advance over disk, a dedup
+                            // replay failed, or no safe derived-state rebuild was
+                            // possible). Do NOT run the incremental refresh + flush
+                            // below: they would advance and flush the inconsistent
+                            // accumulators, leaving the (about-to-be-invalidated)
+                            // view serving corrupted content off its own on-disk
+                            // tier - an invalid view stays queryable. Break to the
+                            // out-of-latch invalidation, which drains the stashed
+                            // reason and marks the view invalid without a partial
+                            // advance ever reaching disk.
+                            break refreshBody;
                         }
                     }
                 }
@@ -8199,30 +7848,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // governs steady-state publish cadence, and a view should resume incremental
                 // drain immediately after the sweep without an artificial 100ms+ stall.
                 if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
-                    if (leadReconstruction) {
-                        // A replica never runs the seed sweep (it writes disk). Serve disk-only
-                        // while SEEDING. This is NOT the common replica path: _lv.s never
-                        // replicates (only _lv, the definition, ships to the sequencer dir), so
-                        // WalEvents.reconstructLiveViewFiles synthesizes a default _lv.s whose
-                        // seedState is ACTIVE, and CairoEngine.applyLiveViewData preserves that
-                        // local state as it advances the in-band watermark. A replica fed purely by
-                        // replication therefore never sees SEEDING here -- it runs the ordinary
-                        // lead-reconstruction path below, serving the primary's seeded rows off the
-                        // replicated on-disk tier and reconstructing the un-flushed lead on top (see the
-                        // enterprise test testReplicateSeedLiveViewReconstructsLead).
-                        //
-                        // This branch is reachable only for a node whose OWN _lv.s carries SEEDING:
-                        // a primary demoted, or restarted, mid-sweep. Disk-only is the safe choice there
-                        // -- the node cannot reliably detect the sweep's completion from replicated
-                        // state (neither _lv.s nor checkpoint state replicate, and every sweep commit carries the
-                        // same seedTargetSeqTxn watermark), and clearing SEEDING early would
-                        // skip the sweep resume on a later promote and leave pre-CREATE history
-                        // unmaterialised. The state does NOT self-clear from the in-band watermark
-                        // (applyLiveViewData preserves the local seedState), so this view stays
-                        // disk-only until the node promotes (and completes/resumes the sweep) or the
-                        // view is recreated.
-                        return attempted;
-                    }
                     attempted = true;
                     runSeedSweep(instance);
                     instance.setLastRefreshTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
@@ -8250,36 +7875,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final long flushEveryMicros = instance.getDefinition().getFlushEveryMicros();
                 final boolean flushDue = lastFlushUs == Numbers.LONG_NULL || nowUs - lastFlushUs >= flushEveryMicros;
                 if (leadEligible) {
-                    if (leadReconstruction) {
-                        // Authoritative replica lead gate, under the refresh latch. The pre-latch check in
-                        // scanForLaggingViews is a cheap skip only: with one job per live-view worker and
-                        // every worker scanning every view, worker B can clear that check while worker A
-                        // still holds the latch, and A can arm a gate (an O3 symbol catch-up barrier, say)
-                        // before it releases. B would then drain straight through the barrier A just
-                        // raised. Re-check here, where arming and checking serialise on the same latch.
-                        if (deferReplicaLeadWork(instance, true)) {
-                            return attempted;
-                        }
-                        final WindowRecordCursorFactory leadWindowFactory = getWindowFactory(instance);
-                        if (!isLeadRollbackSupported(instance, leadWindowFactory)) {
-                            // The replica cannot safely reconstruct this view's lead: a stalled publish
-                            // would leave the window state advanced with no way to roll it back (the
-                            // primary flushes such a stall to disk; a read-only replica cannot). Serve
-                            // disk-only instead -- correct, at worst one flush cycle stale. Snapshot-capable
-                            // views -- including partitioned and anchored shapes -- round-trip their window
-                            // state through the in-RAM rollback; only non-snapshot-capable windows take this
-                            // branch.
-                            return attempted;
-                        }
-                        // Reconcile the in-RAM lead with the on-disk tier the global apply job
-                        // advances asynchronously (as the primary's flushes replicate). Without this,
-                        // a lead computed while the applied watermark lagged the base would keep rows
-                        // that later landed on disk, double-counting them in size(). The window factory
-                        // lets the reconcile drop and cold re-derive the lead when a replicated flush
-                        // re-sequenced the on-disk symbol id space out from under a kept remainder.
-                        reconcileLeadWithDisk(instance, leadWindowFactory);
-                        attempted = true;
-                    }
                     long refreshFrom = instance.getRefreshedUpToSeqTxn();
                     if (seqTxn > refreshFrom) {
                         // Refresh runs every tick with new base commits, ungated by
@@ -8292,25 +7887,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // base TABLE, not its WAL) lands on the applied-base re-derive there.
                         incrementalRefresh(instance, refreshFrom, seqTxn, true);
                     }
-                    // Flush the accumulated lead on the FLUSH EVERY cadence -- primary only. A
-                    // read-only replica never flushes: its on-disk tier is materialised by the
-                    // global apply job from replicated WAL, and the lead above it stays in RAM,
-                    // rebuilt by the incrementalRefresh above. The refresh may also have flushed
-                    // (emergency, on a tier stall) on the primary, in which case refreshedUpTo ==
-                    // lastProcessed and this is skipped.
-                    if (!leadReconstruction && flushDue && instance.getRefreshedUpToSeqTxn() > instance.getLastProcessedSeqTxn()) {
+                    // Flush the accumulated lead on the FLUSH EVERY cadence. The refresh may also have
+                    // flushed (emergency, on a tier stall), in which case refreshedUpTo == lastProcessed
+                    // and this is skipped.
+                    if (flushDue && instance.getRefreshedUpToSeqTxn() > instance.getLastProcessedSeqTxn()) {
                         attempted = true;
                         flushLead(instance, getWindowFactory(instance), instance.getRefreshedUpToSeqTxn(), 0);
                         instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
                     }
                 } else {
-                    if (leadReconstruction) {
-                        // A non-lead-eligible LV (coupled cadence: a DEDUP base, or a tier-unstorable
-                        // output type) keeps its in-mem tier a strict subset of disk -- no un-flushed
-                        // lead exists, so the replica serves it correctly off the replicated on-disk
-                        // tier. Nothing to reconstruct.
-                        return attempted;
-                    }
                     long lastSeqTxn = instance.getLastProcessedSeqTxn();
                     if (seqTxn > lastSeqTxn) {
                         // FLUSH EVERY rate-limit: skip if the previous commit was within
@@ -8391,7 +7976,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", advanceTo=").$(e.getTargetSeqTxn())
                         .$(", appliedSeqTxn=").$(e.getAppliedSeqTxn()).I$();
             } catch (Throwable t) {
-                invalidationReason = handleRefreshFailure(instance, t, leadReconstruction);
+                invalidationReason = handleRefreshFailure(instance, t);
             }
         } finally {
             // Release the worker's staging buffer under the refresh latch (before unlockAfterRefresh),
@@ -8445,10 +8030,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * returns the reason string so the caller can drive the invalidation
      * outside the refresh latch; otherwise returns null. The view stops
      * refreshing but stays queryable; recovery is operator-driven (DROP +
-     * CREATE). A {@code leadReconstruction} (read-only-replica) failure takes a
-     * separate branch that never invalidates -- see {@link #onReplicaLeadRefreshFailure}.
+     * CREATE).
      */
-    private String handleRefreshFailure(LiveViewInstance instance, Throwable t, boolean leadReconstruction) {
+    private String handleRefreshFailure(LiveViewInstance instance, Throwable t) {
         // Count the fault before any of the branches below decide to swallow it. Most of them do:
         // the read-only-gate refusal, the metadata-drift recompile and the mid-drain rebuild all
         // return null, and the rebuild even calls recordRefreshSuccess(), so nothing else survives to
@@ -8508,7 +8092,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // reader's column layout, so LiveViewRefreshSqlExecutionContext.getReader
             // refused to serve the mismatched reader. Not a refresh failure: recompile
             // and rebuild instead of counting toward the invalidation budget.
-            t = recoverFromBaseMetadataDrift(instance, leadReconstruction);
+            t = recoverFromBaseMetadataDrift(instance);
             if (t == null) {
                 return null;
             }
@@ -8516,12 +8100,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         // Mid-drain fault with the accumulators advanced past the last durable commit:
         // rebuild from the applied base so the retry does not double-advance them. Skip
-        // when the drift path already rebuilt, when nothing was fed (windowStateDirty
-        // false - includes a transient table-absent during CREATE / DROP), or for a
-        // read-only replica (its lead is rebuilt every tick; it backs off below).
+        // when the drift path already rebuilt, or when nothing was fed (windowStateDirty
+        // false - includes a transient table-absent during CREATE / DROP).
         if (windowStateDirty
                 && !wasMetadataDrift
-                && !leadReconstruction
                 && !(t instanceof CairoException dce && dce.isTableDoesNotExist())) {
             Throwable rebuildErr = rebuildWindowStateAfterMidDrainFailure(instance);
             if (rebuildErr == null) {
@@ -8532,22 +8114,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.recordRefreshFailure(nowUs);
-        if (leadReconstruction) {
-            // Read-only-replica lead reconstruction: NEVER invalidate. The lead is derived, in-RAM state
-            // rebuilt every tick off the applied base, and the failure is typically transient (e.g. a
-            // reader failure storm while a large replicated ALTER applies to the base). Invalidation, by
-            // contrast, is durable and sticky with no replica-side recovery (see onReplicaLeadRefreshFailure),
-            // so a transient lead-loop fault must not brick the view locally while the primary stays
-            // healthy. Arm a back-off (the enterprise subclass mirrors the publish-stall floor) so the scan
-            // idles instead of re-draining into the same fault every tick; the view stays active and serves
-            // disk-only via the seqTxn fence, and a later tick past the floor re-drains and resumes once the
-            // fault clears.
-            onReplicaLeadRefreshFailure(instance);
-            LOG.error().$("live view lead reconstruction failed, backing off [view=").$(instance.getDefinition().getViewName())
-                    .$(", retryCount=").$(instance.getFlushRetryCount())
-                    .$(", error=").$(t).I$();
-            return null;
-        }
         // A breach of THIS view's configured limit means its working set does not fit the
         // budget the operator set. Retrying re-allocates into the same ceiling and ends at
         // the generic budget message anyway, throwing away the one diagnostic that says why.
@@ -8596,8 +8162,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the view's rows are all in that table, so re-derive from it rather than brick a view
             // whose data is right there. Spending the budget first is what separates this from a
             // transient read fault, which clears on a retry and never reaches here.
-            if (!leadReconstruction
-                    && t instanceof CairoException walMissing
+            if (t instanceof CairoException walMissing
                     && isBaseWalSegmentFileMissing(walMissing)
                     && rederiveFromAppliedBaseAfterWalLoss(instance, walMissing)) {
                 return null;

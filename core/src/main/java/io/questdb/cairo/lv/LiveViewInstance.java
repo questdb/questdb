@@ -311,20 +311,6 @@ public class LiveViewInstance implements QuietCloseable {
     // ingestion produces batched commits at FLUSH EVERY cadence rather than one
     // commit per base notification.
     private volatile long lastFlushTimeUs = Numbers.LONG_NULL;
-    // The isLeadReconstruction() value the refresh worker observed on this view's
-    // previous cycle, read and updated together with checkpointRestoreAttempted so it
-    // is set exactly when a cycle actually reached the restore/reconcile block. A
-    // true -> false transition marks an in-process promote: a demoted primary, or a
-    // read-only replica that ran lead reconstruction (which burns
-    // checkpointRestoreAttempted), has just become a writable primary on the SAME
-    // instance, so the single-shot first-cycle restart recovery was already spent. The
-    // first primary cycle uses that edge to re-arm that recovery (only when the applied
-    // floor actually lags), which reconciles the floor up to disk truth AND rebuilds the
-    // window accumulators / lead frontier from the applied tier, so it does not re-derive
-    // (and forward-append duplicate) a base range the replica already materialised when
-    // its trailing _lv.s persist failed. Mutated only under the refresh latch; volatile
-    // for the catalogue thread.
-    private volatile boolean lastRefreshLeadReconstruction;
     // Last refresh-worker tick wall-clock (micros). Used by catalogue / lag metrics.
     private volatile long lastRefreshTimeUs = Numbers.LONG_NULL;
     // Maximum base-row timestamp the refresh worker has observed so far, across
@@ -360,40 +346,6 @@ public class LiveViewInstance implements QuietCloseable {
     // it without extra synchronisation; mutated only under the refresh latch.
     private volatile boolean leadEligible;
     private volatile boolean leadEligibilityComputed;
-    // Read-only-replica O3 catch-up floor: the base seqTxn the LV table's applied watermark must reach
-    // before the lead loop resumes staging after an out-of-order base commit reset it to cold start.
-    // The primary handles an O3 base commit with o3Replay, which rewrites the on-disk symbol id space
-    // and replicates the correction as an LV flush. Until that flush applies here (appliedWatermark >=
-    // this seqTxn), a re-derive would re-intern a resequenced value at a fresh lead symbol id above the
-    // still-lagging committed count -- a stranded id the disk never assigns, which breaks the read
-    // path's symbol-table keyOf/valueOf agreement. Deferring staging until the disk catches up serves
-    // reads disk-only meanwhile (correct, at worst one flush cycle stale). LONG_NULL means "not
-    // waiting". In-RAM only; mutated under the refresh latch only.
-    private long leadO3CatchupSeqTxn = Numbers.LONG_NULL;
-    // Read-only-replica lead catch-up seam: the on-disk (LV table) maximum timestamp the lead
-    // loop's window accumulators must reach before the drain resumes staging rows into the lead.
-    // A replicated flush can advance the on-disk tier (and the applied watermark) past the point
-    // the loop has computed -- the loop fell behind, or the LV WAL applied ahead of the base -- so
-    // the accumulators (row_number(), running aggregates) trail disk over the (latestSeenTs,
-    // diskMaxTs] band. reconcileLeadWithDisk arms this seam; drainAppliedBaseForLead drives the
-    // accumulators over that band without staging it (a plain drain would re-stage rows disk
-    // already holds, double-counting size()), then clears the seam once caught up. LONG_NULL means
-    // "not catching up". In-RAM only; mutated under the refresh latch only.
-    // Read-only-replica lead catch-up seam, tie quota: how many rows the on-disk (LV table) tier holds
-    // AT leadReconcileSeamTs. The seam is a single timestamp, but output rows can tie it across the
-    // flush boundary -- the primary flushed some of them and a later base commit produced more at the
-    // same ts. Suppressing every tied row would drop the genuinely un-flushed ones from the replica's
-    // result set until the next flush; staging every tied row would double-count the durable ones.
-    // reconcileLeadWithDisk counts the durable ties off the LV reader when it arms the seam, and
-    // drainAppliedBaseForLead suppresses exactly that many rows at the seam ts and stages the rest.
-    // 0 when no seam is armed. In-RAM only; mutated under the refresh latch only.
-    private long leadReconcileSeamDurableTies;
-    private long leadReconcileSeamTs = Numbers.LONG_NULL;
-    // Read-only-replica publish-stall back-off: a wall-clock retry floor armed when a lead publish
-    // stalls (both in-mem tier slots reader-pinned, so a read-only replica cannot flush the lead).
-    // scanForLaggingViews skips the view until the clock passes it, so the worker does not re-derive
-    // every tick. LONG_NULL means no back-off pending. In-RAM only; mutated under the refresh latch only.
-    private long leadRetryAfterUs = Numbers.LONG_NULL;
     // In-RAM lead row count: the number of output rows refreshed into the in-mem
     // tier but not yet flushed to the LV's on-disk table. Grows with each refresh
     // tick, reset to 0 at flush. Stamped onto the published slot so reads can serve
@@ -1065,42 +1017,6 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * @return the read-only-replica O3 catch-up floor (the base seqTxn the applied watermark must reach
-     * before the lead loop resumes staging after an O3 reset), or {@link Numbers#LONG_NULL} when not
-     * waiting. See {@link #leadO3CatchupSeqTxn}.
-     */
-    public long getLeadO3CatchupSeqTxn() {
-        return leadO3CatchupSeqTxn;
-    }
-
-    /**
-     * @return how many rows the LV's on-disk tier holds at {@link #getLeadReconcileSeamTs()} -- the
-     * number of rows the drain must suppress at the seam ts before staging the rest as genuine lead.
-     * 0 when no seam is armed. See {@link #leadReconcileSeamDurableTies}.
-     */
-    public long getLeadReconcileSeamDurableTies() {
-        return leadReconcileSeamDurableTies;
-    }
-
-    /**
-     * @return the read-only-replica lead catch-up seam (LV on-disk max ts the accumulators must
-     * reach before staging resumes), or {@link Numbers#LONG_NULL} when not catching up. See
-     * {@link #leadReconcileSeamTs}.
-     */
-    public long getLeadReconcileSeamTs() {
-        return leadReconcileSeamTs;
-    }
-
-    /**
-     * @return the read-only-replica publish-stall retry floor (wall-clock micros before which the lead
-     * loop must not retry a both-slots-pinned publish), or {@link Numbers#LONG_NULL} when no back-off is
-     * pending. See {@link #leadRetryAfterUs}.
-     */
-    public long getLeadRetryAfterUs() {
-        return leadRetryAfterUs;
-    }
-
-    /**
      * @return the in-RAM lead row count (output rows refreshed into the tier but
      * not yet flushed to disk). See {@link #leadRowCount}.
      */
@@ -1362,14 +1278,6 @@ public class LiveViewInstance implements QuietCloseable {
 
     public boolean isInvalid() {
         return stateReader.isInvalid();
-    }
-
-    /**
-     * @return the {@code isLeadReconstruction()} value the refresh worker observed on
-     * this view's previous cycle. See {@link #lastRefreshLeadReconstruction}.
-     */
-    public boolean isLastRefreshLeadReconstruction() {
-        return lastRefreshLeadReconstruction;
     }
 
     /**
@@ -1850,10 +1758,6 @@ public class LiveViewInstance implements QuietCloseable {
         stateReader.setLastProcessedSeqTxn(seqTxn);
     }
 
-    public void setLastRefreshLeadReconstruction(boolean leadReconstruction) {
-        this.lastRefreshLeadReconstruction = leadReconstruction;
-    }
-
     public void setLastRefreshTimeUs(long lastRefreshTimeUs) {
         this.lastRefreshTimeUs = lastRefreshTimeUs;
     }
@@ -1888,40 +1792,12 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Sets the read-only-replica O3 catch-up floor. See {@link #leadO3CatchupSeqTxn}.
-     */
-    public void setLeadO3CatchupSeqTxn(long leadO3CatchupSeqTxn) {
-        this.leadO3CatchupSeqTxn = leadO3CatchupSeqTxn;
-    }
-
-    /**
-     * Sets the durable tie count at the lead catch-up seam. See {@link #leadReconcileSeamDurableTies}.
-     */
-    public void setLeadReconcileSeamDurableTies(long leadReconcileSeamDurableTies) {
-        this.leadReconcileSeamDurableTies = leadReconcileSeamDurableTies;
-    }
-
-    /**
-     * Sets the read-only-replica lead catch-up seam. See {@link #leadReconcileSeamTs}.
-     */
-    public void setLeadReconcileSeamTs(long leadReconcileSeamTs) {
-        this.leadReconcileSeamTs = leadReconcileSeamTs;
-    }
-
-    /**
      * Hands the view its per-view {@link MemoryTracker}. The refresh worker acquires it
      * before the window machinery exists, so the maps allocate against it from their first
      * byte. See {@link #memoryTracker}.
      */
     public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
         this.memoryTracker = memoryTracker;
-    }
-
-    /**
-     * Sets the read-only-replica publish-stall retry floor. See {@link #leadRetryAfterUs}.
-     */
-    public void setLeadRetryAfterUs(long leadRetryAfterUs) {
-        this.leadRetryAfterUs = leadRetryAfterUs;
     }
 
     /**
