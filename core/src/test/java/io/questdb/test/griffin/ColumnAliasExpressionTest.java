@@ -42,7 +42,7 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     @Test
     public void testDots() throws Exception {
         assertGeneratedColumnEqual(
-                "\"floor(1.2)\"\t\"'Hello there.'\"\t\"i.o\"\n1.0\tHello there.\t1\n",
+                "floor(1.2)\t'Hello there.'\ti.o\n1.0\tHello there.\t1\n",
                 "select floor(1.2), 'Hello there.', 1 \"i.o\"",
                 0
         );
@@ -51,7 +51,7 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     @Test
     public void testFunctionCalls() throws Exception {
         assertGeneratedColumnEqual(
-                "trim(a)\t\"floor(b * 1.5)\"\n",
+                "trim(a)\tfloor(b * 1.5)\n",
                 "select trim(a), floor(b * 1.5) from tab",
                 "create table tab (a string, b double)",
                 0
@@ -139,6 +139,20 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxSizeTruncationDropsProtectiveQuotes() throws Exception {
+        // A dotted expression auto-alias (longtablename.x+1) is quote-protected, but truncation to
+        // column.alias.generated.max.size cuts the discriminating dot off; the bare remainder needs
+        // no protection, so the surfaced column name must be clean, with no leaked quote - the
+        // integration counterpart to SqlUtilTest#testExprColumnAliasTruncationDropsStaleQuotes.
+        assertGeneratedColumnEqual(
+                "longtab\n",
+                "select longtablename.x + 1 from longtablename",
+                "create table longtablename (x int)",
+                10
+        );
+    }
+
+    @Test
     public void testDuplicates() throws Exception {
         assertGeneratedColumnEqual(
                 "a * b\ta * b_2\ta * b_3\ta * b_4\n",
@@ -146,6 +160,35 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
                 "create table tab (a int, b int)",
                 0
         );
+    }
+
+    @Test
+    public void testQualifiedThenBareOperatorTokenColumnDedups() throws Exception {
+        // Regression (alias-expression feature on, the production default): a column named after an
+        // operator token, referenced qualified and then bare in the same projection, used to throw
+        // "duplicate column [name=in]" under DISTINCT / GROUP BY. The createExprColumnAlias early-exit
+        // returned the bare `in` without checking its already-taken protective-quoted "in" sibling
+        // (both surface as in via toColumnName), so two columns displayed `in` and the projection
+        // metadata build rejected the duplicate. The columns must now dedup cleanly to in / in_2.
+        // Fails without the SqlUtil early-exit fix. Covers the flag-on path the rest of the suite
+        // (DefaultTestCairoConfiguration returns false) does not exercise.
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, \"in\" INT)");
+            execute("INSERT INTO x VALUES (1, 10)");
+
+            // DISTINCT reaches the projection-metadata build before the wildcard re-dedup safety net
+            assertQuery("SELECT DISTINCT x.\"in\", \"in\" FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("in\tin_2\n10\t10\n");
+
+            // implicit GROUP BY (non-aggregate keys + count) hits the same path
+            assertQuery("SELECT x.\"in\", \"in\", count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("in\tin_2\tcount()\n10\t10\t1\n");
+        });
     }
 
     @Test

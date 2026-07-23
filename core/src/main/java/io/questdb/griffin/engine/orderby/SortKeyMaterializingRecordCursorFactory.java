@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -36,8 +37,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 
 public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final SortKeyMaterializingRecordCursor cursor;
+    private RecordCursorFactory base;
+    private SortKeyMaterializingRecordCursor cursor;
 
     public SortKeyMaterializingRecordCursorFactory(
             CairoConfiguration configuration,
@@ -103,7 +104,20 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        cursor.freeBuffers();
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final SortKeyMaterializingRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        try {
+            cursor.freeBuffers();
+        } catch (Throwable th) {
+            if (failure == null) {
+                failure = th;
+            } else if (failure != th) {
+                failure.addSuppressed(th);
+            }
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

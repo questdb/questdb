@@ -50,6 +50,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
@@ -71,9 +72,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
     private static final int LAST_OUT_INDEX = 1;
     private static final int TIMESTAMP_OUT_INDEX = 2;
-    private final RecordCursorFactory base;
     private final LongList crossFrameRow;
-    private final SampleByFirstLastRecordCursor cursor;
     private final int[] firstLastIndexByCol;
     private final int groupBySymbolColIndex;
     private final boolean[] isKeyColumn;
@@ -82,9 +81,15 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private final int[] queryToFrameColumnMapping;
     private final SingleSymbolFilter symbolFilter;
     private final int timestampIndex;
+    private RecordCursorFactory base;
+    private SampleByFirstLastRecordCursor cursor;
     private int groupByTimestampIndex = -1;
+    private Function offsetFunc;
     private DirectLongList rowIdOutAddress;
+    private Function sampleFromFunc;
     private DirectLongList samplePeriodAddress;
+    private Function sampleToFunc;
+    private Function timezoneNameFunc;
 
     public SampleByFirstLastRecordCursorFactory(
             RecordCursorFactory base,
@@ -107,6 +112,12 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         super(groupByMetadata);
         try {
             this.base = base;
+            // adopt the temporal parameter functions first, so close() reaches them if the
+            // remainder of the construction throws
+            this.timezoneNameFunc = timezoneNameFunc;
+            this.offsetFunc = offsetFunc;
+            this.sampleFromFunc = sampleFromFunc;
+            this.sampleToFunc = sampleToFunc;
             groupBySymbolColIndex = symbolFilter.getColumnIndex();
             queryToFrameColumnMapping = new int[columns.size()];
             firstLastIndexByCol = new int[columns.size()];
@@ -138,7 +149,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sampleToFuncPos
             );
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -261,7 +272,10 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 } else {
                     throw SqlException.$(ast.position, "expected first() or last() functions but got ").put(ast.token);
                 }
-                int underlyingColIndex = metadata.getColumnIndex(ast.rhs.token);
+                // Defensive uniformity, not reachable with a protected token: ast.rhs.token names a
+                // physical page-frame column here, which arrives unquoted, so getColumnIndex's
+                // protected-alias strip-retry never fires - no test drives it through this path.
+                int underlyingColIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
                 queryToFrameColumnMapping[i] = underlyingColIndex;
 
                 int underlyingType = metadata.getColumnType(underlyingColIndex);
@@ -274,7 +288,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                             .put(" ");
                 }
             } else {
-                int underlyingColIndex = metadata.getColumnIndex(ast.token);
+                int underlyingColIndex = SqlUtil.getColumnIndex(metadata, ast.token);
                 isKeyColumn[i] = true;
                 queryToFrameColumnMapping[i] = underlyingColIndex;
                 if (underlyingColIndex == timestampIndex) {
@@ -286,10 +300,42 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        Misc.free(base);
-        rowIdOutAddress = Misc.free(rowIdOutAddress);
-        samplePeriodAddress = Misc.free(samplePeriodAddress);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final SampleByFirstLastRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function offsetFunc = this.offsetFunc;
+        this.offsetFunc = null;
+        final DirectLongList rowIdOutAddress = this.rowIdOutAddress;
+        this.rowIdOutAddress = null;
+        final Function sampleFromFunc = this.sampleFromFunc;
+        this.sampleFromFunc = null;
+        final DirectLongList samplePeriodAddress = this.samplePeriodAddress;
+        this.samplePeriodAddress = null;
+        final Function sampleToFunc = this.sampleToFunc;
+        this.sampleToFunc = null;
+        final Function timezoneNameFunc = this.timezoneNameFunc;
+        this.timezoneNameFunc = null;
+
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, base);
+        failure = Misc.freeBestEffort(failure, rowIdOutAddress);
+        failure = Misc.freeBestEffort(failure, samplePeriodAddress);
+        // The factory is the lifetime owner of the temporal parameter functions (timezone,
+        // offset, FROM, TO); the cursor only borrows them across the executions of this cached
+        // factory. The generator accepts runtime-constant expressions here, which may own child
+        // functions, so they must be closed exactly once.
+        failure = Misc.freeBestEffort(failure, timezoneNameFunc);
+        if (offsetFunc != timezoneNameFunc) {
+            failure = Misc.freeBestEffort(failure, offsetFunc);
+        }
+        if (sampleFromFunc != timezoneNameFunc && sampleFromFunc != offsetFunc) {
+            failure = Misc.freeBestEffort(failure, sampleFromFunc);
+        }
+        if (sampleToFunc != timezoneNameFunc && sampleToFunc != offsetFunc && sampleToFunc != sampleFromFunc) {
+            failure = Misc.freeBestEffort(failure, sampleToFunc);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class SampleByFirstLastRecordCursor extends AbstractSampleByCursor {
