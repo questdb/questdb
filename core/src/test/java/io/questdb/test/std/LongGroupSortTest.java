@@ -38,11 +38,16 @@ public class LongGroupSortTest {
     // switched to introsort (median-of-three pivot, sorted-input fast-path, heapsort
     // depth fallback), the fixed last-element pivot made each of these shapes take
     // O(D^2) comparisons - minutes of CPU at this size - while a healthy sort
-    // finishes in milliseconds. No wall-clock assertions: a regression shows up as
-    // a hung test, not a flaky one.
+    // finishes in milliseconds. Each canary carries a generous timeout, orders of
+    // magnitude above the healthy runtime, that turns a complexity regression into a
+    // prompt red failure instead of a CI hang. The adversarial-shape tests also
+    // assert via LongGroupSort.getHeapSortCallCountForTesting() that the heapsort
+    // fallback actually ran, so a regression that quietly disables the fallback
+    // (e.g. a mis-set depth budget) fails even though the output stays sorted.
     private static final int LARGE_GROUP_COUNT = 1_000_000;
+    private static final long LARGE_TEST_TIMEOUT_MS = 300_000;
 
-    @Test
+    @Test(timeout = LARGE_TEST_TIMEOUT_MS)
     public void testAllEqualLarge() {
         LongList list = new LongList(2 * LARGE_GROUP_COUNT);
         for (int i = 0; i < LARGE_GROUP_COUNT; i++) {
@@ -55,7 +60,7 @@ public class LongGroupSortTest {
         Assert.assertEquals(42, list.getQuick(2 * LARGE_GROUP_COUNT - 1));
     }
 
-    @Test
+    @Test(timeout = LARGE_TEST_TIMEOUT_MS)
     public void testAlreadySortedLarge() {
         LongList list = new LongList(2 * LARGE_GROUP_COUNT);
         for (int i = 0; i < LARGE_GROUP_COUNT; i++) {
@@ -100,7 +105,7 @@ public class LongGroupSortTest {
         }
     }
 
-    @Test
+    @Test(timeout = LARGE_TEST_TIMEOUT_MS)
     public void testOrganPipeLarge() {
         // organ-pipe input reliably exhausts the introsort depth budget at this size,
         // exercising the heapsort fallback
@@ -109,7 +114,12 @@ public class LongGroupSortTest {
             long lo = i < LARGE_GROUP_COUNT / 2 ? i : LARGE_GROUP_COUNT - i;
             list.add(lo, lo + 1);
         }
+        long heapSortCallsBefore = LongGroupSort.getHeapSortCallCountForTesting();
         LongGroupSort.quickSort(2, list, 0, LARGE_GROUP_COUNT);
+        Assert.assertTrue(
+                "heapsort fallback did not run on organ-pipe input",
+                LongGroupSort.getHeapSortCallCountForTesting() > heapSortCallsBefore
+        );
         assertSortedByFirstLong(list, 0, LARGE_GROUP_COUNT);
         // 1..(D/2 - 1) appear twice, 0 and D/2 once each
         Assert.assertEquals(0, list.getQuick(0));
@@ -118,7 +128,7 @@ public class LongGroupSortTest {
         Assert.assertEquals(LARGE_GROUP_COUNT / 2, list.getQuick(2 * LARGE_GROUP_COUNT - 2));
     }
 
-    @Test
+    @Test(timeout = LARGE_TEST_TIMEOUT_MS)
     public void testReverseSortedLarge() {
         LongList list = new LongList(2 * LARGE_GROUP_COUNT);
         for (int i = LARGE_GROUP_COUNT; i > 0; i--) {
@@ -131,7 +141,7 @@ public class LongGroupSortTest {
         }
     }
 
-    @Test
+    @Test(timeout = LARGE_TEST_TIMEOUT_MS)
     public void testSawtoothDuplicateHeavy() {
         // 16 distinct keys across 100k groups; this shape also reaches the heapsort fallback
         final int groupCount = 100_000;
@@ -139,7 +149,12 @@ public class LongGroupSortTest {
         for (int i = 0; i < groupCount; i++) {
             list.add(i % 16L, i);
         }
+        long heapSortCallsBefore = LongGroupSort.getHeapSortCallCountForTesting();
         LongGroupSort.quickSort(2, list, 0, groupCount);
+        Assert.assertTrue(
+                "heapsort fallback did not run on sawtooth input",
+                LongGroupSort.getHeapSortCallCountForTesting() > heapSortCallsBefore
+        );
         assertSortedByFirstLong(list, 0, groupCount);
         for (int i = 0; i < groupCount; i++) {
             // each of the 16 keys occupies a contiguous run of groupCount / 16 groups

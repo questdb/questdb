@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 import java.util.Comparator;
@@ -217,6 +218,22 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
             hashCode = 31 * hashCode + (o == null ? 0 : o.hashCode());
         }
         return hashCode;
+    }
+
+    /**
+     * Checks that every backing slot at index size() and beyond is null, i.e.
+     * that removal operations released their references to removed elements.
+     *
+     * @return true if all backing slots beyond size() are null
+     */
+    @TestOnly
+    public boolean hasOnlyNullsBeyondSizeForTesting() {
+        for (int i = pos, n = buffer.length; i < n; i++) {
+            if (buffer[i] != null) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override

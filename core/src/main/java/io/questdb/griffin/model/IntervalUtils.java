@@ -46,6 +46,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 import io.questdb.std.CarrierLocal;
 
 public final class IntervalUtils {
@@ -1276,6 +1277,18 @@ public final class IntervalUtils {
     public static void subtract(LongList intervals, int divider) {
         IntervalUtils.invert(intervals, divider);
         IntervalUtils.intersectInPlace(intervals, divider);
+    }
+
+    /**
+     * Exposes the package-private {@link #unionBracketExpandedIntervals(LongList, int)}
+     * to tests that live outside this package.
+     *
+     * @param out        list of intervals to union in place
+     * @param startIndex index of the first interval to union; earlier intervals stay untouched
+     */
+    @TestOnly
+    public static void unionBracketExpandedIntervalsForTesting(LongList out, int startIndex) {
+        unionBracketExpandedIntervals(out, startIndex);
     }
 
     /**

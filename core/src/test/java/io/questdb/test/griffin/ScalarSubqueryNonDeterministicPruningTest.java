@@ -37,7 +37,7 @@ import org.junit.Test;
  * <p>{@link io.questdb.griffin.WhereClauseParser#analyzeMonotonicTimestamp} therefore skips interval
  * pruning (residual-only) for a non-deterministic {@code ScalarSubQueryTimestampFunction} bound while
  * still pruning for deterministic sub-query bounds and for runtime-constant bounds (bind variables,
- * {@code now()}). Detection uses {@code RecordCursorFactory.isNonDeterministic()}.
+ * {@code now()}). Detection uses {@code RecordCursorFactory.isStableWithinExecution()}.
  */
 public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest {
 
@@ -57,7 +57,7 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
     }
 
     // A deterministic single-row sub-query bound MUST still prune to an interval scan
-    // (the PR's headline feature). isNonDeterministic()==false, so the guard does not fire.
+    // (the PR's headline feature). isStableWithinExecution()==true, so the guard does not fire.
     @Test
     public void testDeterministicSubqueryBoundStillPrunes() throws Exception {
         assertMemoryLeak(() -> {
@@ -114,9 +114,26 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
         });
     }
 
+    // POSITIVE CONTROL for the set-operation shape: the same UNION ALL ... LIMIT 1 sub-query
+    // bound with deterministic aggregates MUST prune. AbstractSetRecordCursorFactory composes
+    // isStableWithinExecution() from both inputs, so only the rnd_* source in the negative twin
+    // below blocks pruning - proving the twin fails for the right reason.
+    @Test
+    public void testDeterministicUnionSubqueryBoundStillPrunes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
+                    "(SELECT max(lo) FROM b " +
+                    "UNION ALL " +
+                    "SELECT max(lo) FROM b " +
+                    "LIMIT 1)")
+                    .assertsPlanContaining("Interval forward scan on: t");
+        });
+    }
+
     // A set-operation sub-query bound holding a non-deterministic aggregate MUST NOT prune.
-    // AbstractSetRecordCursorFactory exposes neither a filter nor a base factory, so only a
-    // fail-safe (prove-determinism) contract keeps this shape out of the pruning path.
+    // AbstractSetRecordCursorFactory composes isStableWithinExecution() from both inputs, so
+    // the rnd_* aggregate arms keep this shape out of the pruning path.
     @Test
     public void testNonDeterministicUnionSubqueryBoundNotPruned() throws Exception {
         assertMemoryLeak(() -> {
@@ -205,6 +222,21 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
                     "(SELECT rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0)) " +
                     "AND (SELECT rnd_timestamp('2020-06-05T00:00:00.000000Z'::timestamp, '2020-06-08T00:00:00.000000Z'::timestamp, 0)))")
                     .assertsPlanNotContaining("Interval forward scan on: t");
+        });
+    }
+
+    // POSITIVE CONTROL for the group-by-key shape: the same serial keyed group-by (forced by the
+    // UNION ALL base) with a deterministic key expression MUST prune. The factory classifies its
+    // key functions, so only the rnd_* key in the negative twin below blocks pruning - proving
+    // the twin fails for the right reason.
+    @Test
+    public void testDeterministicGroupByKeyBoundStillPrunes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
+                    "(SELECT k FROM (SELECT dateadd('h', 0, lo) k, count() c " +
+                    "FROM (SELECT lo FROM b UNION ALL SELECT lo FROM b)) LIMIT 1)")
+                    .assertsPlanContaining("Interval forward scan on: t");
         });
     }
 

@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import org.jetbrains.annotations.TestOnly;
+
 /**
  * Sort a long array which is actually intrusively storing a group (tuple) of N longs.
  * The group is considered ordered (for sorting purposes) from most significant long to least significant.
@@ -37,6 +39,23 @@ public class LongGroupSort {
     // level leaves at most one deferred sibling on the stack. 33 triples need 99 longs;
     // 128 leaves comfortable slack.
     private static final int STACK_CAPACITY = 128;
+    // Test-only observability for the heapsort fallback. heapSort() increments the
+    // counter on entry - a cold path reached only when a partition chain exhausts the
+    // introsort depth budget - so the sort hot path pays nothing. Tests read the
+    // counter on the same thread that ran the sort and assert on deltas, so a plain
+    // non-volatile static suffices; the counter is monotonic and never reset.
+    private static long heapSortCallCount;
+
+    /**
+     * Returns the number of heapsort-fallback activations since class load. The counter
+     * is monotonic: capture it before a sort and assert on the delta afterwards.
+     *
+     * @return count of heapsort-fallback activations
+     */
+    @TestOnly
+    public static long getHeapSortCallCountForTesting() {
+        return heapSortCallCount;
+    }
 
     /**
      * Sort a long list which is actually intrusively storing a group (tuple) of N longs.
@@ -70,6 +89,7 @@ public class LongGroupSort {
     }
 
     private static void heapSort(long[] array, int low, int high, int n) {
+        heapSortCallCount++;
         int count = high - low;
         for (int i = (count >> 1) - 1; i >= 0; i--) {
             siftDown(array, low, i, count, n);

@@ -28,8 +28,6 @@ import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-
 /**
  *
  */
@@ -78,20 +76,16 @@ public class ObjListTest {
     }
 
     @Test
-    public void testRemoveFromToClearsRemovedBackingSlots() throws Exception {
+    public void testRemoveFromToClearsRemovedBackingSlots() {
         final ObjList<Object> list = new ObjList<>();
-        final Field bufferField = ObjList.class.getDeclaredField("buffer");
-        bufferField.setAccessible(true);
-        final Object[] buffer = (Object[]) bufferField.get(list);
-        for (int i = 0; i < buffer.length; i++) {
+        for (int i = 0; i < 32; i++) {
             list.add(new Object());
         }
 
-        list.remove(buffer.length / 2, list.size() - 1);
+        list.remove(16, list.size() - 1);
 
-        for (int i = list.size(); i < buffer.length; i++) {
-            Assert.assertNull("backing slot " + i, buffer[i]);
-        }
+        Assert.assertEquals(16, list.size());
+        Assert.assertTrue("removed backing slots must be cleared", list.hasOnlyNullsBeyondSizeForTesting());
     }
 
     private static <T> ObjList<T> remove(ObjList<T> o, int from, int to) {
