@@ -40,20 +40,24 @@ import java.io.Closeable;
  * Restores the persistent chunked ring shared by the partitioned window functions
  * over a bounded RANGE frame: {@code avg}/{@code sum} carry a running aggregate,
  * {@code first_value}/{@code last_value}/{@code nth_value} carry the frame value they
- * emit, and {@code max}/{@code min} carry the frame ring their monotonic deque is
- * rebuilt from on restore. Each logical chunk is a timestamp page followed by a value
- * page.
+ * emit, {@code max}/{@code min} carry the frame ring their monotonic deque is
+ * rebuilt from on restore, and {@code count} carries the frame's timestamps alone.
+ * A logical chunk is a timestamp page followed by a value page, or a timestamp page
+ * on its own when the ring stores no value.
  * <p>
- * A row's value occupies one, two or four 64-bit words, which the ring's value kind
- * selects. A DOUBLE value page stores exact IEEE-754 bits (raw or XOR-compressed) in
- * one word; a LONG/DATE/TIMESTAMP page and a narrow DECIMAL page (physical width 8, 16,
- * 32 or 64 bits, all of which a signed 64-bit word holds exactly) store the raw payload
- * in one word, because an arbitrary integer has no floating-point structure to compress
- * and reinterpreting it as a double could canonicalize a NaN bit pattern; a DECIMAL128
- * page stores two raw words and a DECIMAL256 page four, most significant first. The
- * reader delivers every value as raw 64-bit words and leaves the function to interpret
- * them. The partition entry's checksummed scalar payload owns the ring's value kind, the
- * logical head offset and the exact scalar continuation state.
+ * A row's value occupies zero, one, two or four 64-bit words, which the ring's value
+ * kind selects. A DOUBLE value page stores exact IEEE-754 bits (raw or XOR-compressed)
+ * in one word; a LONG/DATE/TIMESTAMP page and a narrow DECIMAL page (physical width 8,
+ * 16, 32 or 64 bits, all of which a signed 64-bit word holds exactly) store the raw
+ * payload in one word, because an arbitrary integer has no floating-point structure to
+ * compress and reinterpreting it as a double could canonicalize a NaN bit pattern; a
+ * DECIMAL128 page stores two raw words and a DECIMAL256 page four, most significant
+ * first. {@link #VALUE_KIND_NONE} stores none: {@code count}'s per-row state is the
+ * designated timestamp itself, so its chunk is the timestamp page alone and it carries
+ * no value page to pay for. The reader delivers every value as raw 64-bit words and
+ * leaves the function to interpret them. The partition entry's checksummed scalar
+ * payload owns the ring's value kind, the logical head offset and the exact scalar
+ * continuation state.
  * <p>
  * The scalar continuation state is itself one, two or four words wide, independently of
  * the value width: a {@code decimal(20,4)} {@code avg} holds a 64-bit value per row and a
@@ -104,6 +108,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     public static final int VALUE_KIND_DEQUE_LONG = 3;
     public static final int VALUE_KIND_DOUBLE = 0;
     public static final int VALUE_KIND_LONG = 1;
+    public static final int VALUE_KIND_NONE = 8;
     private static final int FLAGS = 0;
     private static final int SCALAR_FIXED_WORDS = 4;
     private final Path checkpointsDir = new Path();
@@ -139,10 +144,14 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     /**
      * @return the rows one chunk of a {@code valueKind} ring may hold. Dividing the
      * codec's chunk cap by the value width keeps a chunk's value page inside one
-     * scratch buffer at every width
+     * scratch buffer at every width; a valueless ring writes no value page, so the
+     * timestamp page alone bounds it
      */
     public static int maxChunkRows(int valueKind) {
-        return LiveViewCheckpointStateCodec.CHUNK_ROWS / valueWords(valueKind);
+        final int words = valueWords(valueKind);
+        return words == 0
+                ? LiveViewCheckpointStateCodec.CHUNK_ROWS
+                : LiveViewCheckpointStateCodec.CHUNK_ROWS / words;
     }
 
     /**
@@ -155,10 +164,13 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     }
 
     /**
-     * @return the 64-bit words one row's value occupies under {@code valueKind}
+     * @return the 64-bit words one row's value occupies under {@code valueKind}, zero
+     * for a ring whose rows are timestamps alone
      */
     public static int valueWords(int valueKind) {
         switch (valueKind) {
+            case VALUE_KIND_NONE:
+                return 0;
             case VALUE_KIND_DOUBLE:
             case VALUE_KIND_LONG:
             case VALUE_KIND_DEQUE_DOUBLE:
@@ -194,17 +206,22 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
      */
     @Override
     public void forEachRow(@NotNull RowConsumer consumer) {
-        walk(consumer, null, null, 1);
+        walk(null, consumer, null, null, 1);
     }
 
     @Override
     public void forEachRow(@NotNull Decimal128RowConsumer consumer) {
-        walk(null, consumer, null, 2);
+        walk(null, null, consumer, null, 2);
     }
 
     @Override
     public void forEachRow(@NotNull Decimal256RowConsumer consumer) {
-        walk(null, null, consumer, 4);
+        walk(null, null, null, consumer, 4);
+    }
+
+    @Override
+    public void forEachTimestamp(@NotNull TimestampConsumer consumer) {
+        walk(consumer, null, null, null, 0);
     }
 
     @Override
@@ -340,27 +357,30 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         lastTimestamp = getLong(scalar, (3 + scalarWords) * Long.BYTES);
 
         final int refCount = entry.getStatePageCount();
-        if ((refCount & 1) != 0 || refCount > LiveViewCheckpointMetadata.MAX_STATE_PAGE_REFS) {
+        final int pagesPerChunk = pagesPerChunk(valueKind);
+        if (refCount % pagesPerChunk != 0 || refCount > LiveViewCheckpointMetadata.MAX_STATE_PAGE_REFS) {
             throw invalid("RANGE ring state page reference count invalid, count=").put(refCount);
         }
         statePageRefs = new LiveViewCheckpointStatePageRef[refCount];
         long physicalRows = 0;
-        for (int i = 0; i < refCount; i += 2) {
+        for (int i = 0; i < refCount; i += pagesPerChunk) {
             final LiveViewCheckpointStatePageRef timestampRef = entry.getStatePageRef(i);
-            final LiveViewCheckpointStatePageRef valueRef = entry.getStatePageRef(i + 1);
             validateTimestampRef(timestampRef, valueKind);
-            validateValueRef(valueRef, valueKind);
-            if (timestampRef.getRowCount() != valueRef.getRowCount()) {
-                throw invalid("RANGE ring chunk stream row counts differ")
-                        .put(" [timestamps=").put(timestampRef.getRowCount())
-                        .put(", values=").put(valueRef.getRowCount()).put(']');
+            if (pagesPerChunk > 1) {
+                final LiveViewCheckpointStatePageRef valueRef = entry.getStatePageRef(i + 1);
+                validateValueRef(valueRef, valueKind);
+                if (timestampRef.getRowCount() != valueRef.getRowCount()) {
+                    throw invalid("RANGE ring chunk stream row counts differ")
+                            .put(" [timestamps=").put(timestampRef.getRowCount())
+                            .put(", values=").put(valueRef.getRowCount()).put(']');
+                }
+                statePageRefs[i + 1] = LiveViewCheckpointPartitionMapEntry.copyRef(valueRef);
             }
             if (physicalRows > Long.MAX_VALUE - timestampRef.getRowCount()) {
                 throw invalid("RANGE ring physical row count overflow");
             }
             physicalRows += timestampRef.getRowCount();
             statePageRefs[i] = LiveViewCheckpointPartitionMapEntry.copyRef(timestampRef);
-            statePageRefs[i + 1] = LiveViewCheckpointPartitionMapEntry.copyRef(valueRef);
         }
         // frameSize is the function's own aggregate cardinality, not a ring index:
         // a frame whose low bound is unbounded folds rows into the aggregate and
@@ -432,9 +452,19 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     }
 
     /**
+     * @return the state page references one logical chunk of a {@code valueKind} ring
+     * spends: a timestamp page and a value page, or the timestamp page alone when the
+     * ring stores no value
+     */
+    static int pagesPerChunk(int valueKind) {
+        return valueWords(valueKind) == 0 ? 1 : 2;
+    }
+
+    /**
      * @return the value page kind {@code valueKind} writes: the value-ring kinds for
      * {@code avg}/{@code sum}/{@code first_value}/{@code last_value}/{@code nth_value},
-     * the deque kinds for a {@code max}/{@code min} frame ring
+     * the deque kinds for a {@code max}/{@code min} frame ring. A valueless ring writes
+     * no value page, so asking for its kind is a wiring error
      */
     static int valuePageKind(int valueKind) {
         switch (valueKind) {
@@ -477,7 +507,8 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     }
 
     private static boolean isValueKindValid(int valueKind) {
-        return valueKind >= VALUE_KIND_DOUBLE && valueKind <= VALUE_KIND_DEQUE_DECIMAL256;
+        return (valueKind >= VALUE_KIND_DOUBLE && valueKind <= VALUE_KIND_DEQUE_DECIMAL256)
+                || valueKind == VALUE_KIND_NONE;
     }
 
     private static void putLong(byte[] bytes, int offset, long value) {
@@ -541,10 +572,12 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     }
 
     int decodeChunk(int chunkIndex, long timestampAddress, long valueAddress) {
-        final LiveViewCheckpointStatePageRef timestampRef = statePageRefs[chunkIndex * 2];
-        final LiveViewCheckpointStatePageRef valueRef = statePageRefs[chunkIndex * 2 + 1];
+        final int pagesPerChunk = pagesPerChunk(valueKind);
+        final LiveViewCheckpointStatePageRef timestampRef = statePageRefs[chunkIndex * pagesPerChunk];
         decodeTimestamps(timestampRef, timestampAddress);
-        decodeValues(valueRef, valueAddress);
+        if (pagesPerChunk > 1) {
+            decodeValues(statePageRefs[chunkIndex * pagesPerChunk + 1], valueAddress);
+        }
         return timestampRef.getRowCount();
     }
 
@@ -619,6 +652,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
      * corrupt.
      */
     private void walk(
+            @Nullable TimestampConsumer timestamps,
             @Nullable RowConsumer narrow,
             @Nullable Decimal128RowConsumer decimal128,
             @Nullable Decimal256RowConsumer decimal256,
@@ -635,7 +669,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         long rowsRead = 0;
         long previousTimestamp = 0;
         boolean hasPrevious = false;
-        for (int chunk = 0, n = statePageRefs.length / 2; chunk < n; chunk++) {
+        for (int chunk = 0, n = statePageRefs.length / pagesPerChunk(valueKind); chunk < n; chunk++) {
             final int physicalRows = decodeChunk(chunk, scratch.timestampsAddress(), scratch.valuesAddress());
             final int lo = chunk == 0 ? headOffset : 0;
             for (int i = 0; i < physicalRows; i++) {
@@ -652,6 +686,12 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
                 previousTimestamp = timestamp;
                 hasPrevious = true;
                 if (i >= lo) {
+                    if (timestamps != null) {
+                        // A valueless ring decoded no value page; the row is its timestamp.
+                        timestamps.accept(timestamp);
+                        rowsRead++;
+                        continue;
+                    }
                     // The value travels as raw 64-bit words, whatever the ring's value
                     // kind; the function reinterprets them.
                     final long base = scratch.valuesAddress() + (long) i * words * Long.BYTES;

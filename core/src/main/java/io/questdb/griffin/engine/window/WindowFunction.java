@@ -653,7 +653,9 @@ public interface WindowFunction extends Function {
      * pattern is never canonicalized; a DECIMAL128 ring stores two raw words per row and a
      * DECIMAL256 ring four, most significant first. The {@code DEQUE_*} kinds carry the same
      * payload but tag the value pages as a {@code max}/{@code min} monotonic-deque root's frame
-     * ring, keeping it distinct from a value-ring root. Read only for a
+     * ring, keeping it distinct from a value-ring root. {@code VALUE_KIND_NONE} stores no value
+     * at all: {@code count}'s per-row state is the designated timestamp itself, so its chunk is
+     * the timestamp page alone. Read only for a
      * {@link #supportsCheckpointRingState() ring-shaped} function.
      */
     default int checkpointRingValueKind() {
@@ -742,7 +744,7 @@ public interface WindowFunction extends Function {
 
     /**
      * Reports whether this function persists its per-partition state as a ring of
-     * {@code (timestamp, value)} rows plus an exact aggregate tail — the shape
+     * timestamp-ordered rows plus an exact aggregate tail — the shape
      * {@link #freezeCheckpointRingState(LiveViewCheckpointRingStateSink, MapValue)} and
      * {@link #restoreCheckpointRingState(LiveViewCheckpointRingStateSource, MapValue)}
      * carry. The checkpoint seal routes such a function through the persistent chunk
@@ -762,6 +764,17 @@ public interface WindowFunction extends Function {
      * a separate positional chunk model, and since a ROWS frame's live state is already bounded
      * by its declared row count, the ROWS value and aggregate families keep the whole-state image
      * instead - they leave this false and override only the whole-state pair above.
+     * <p>
+     * The running-aggregate families leave it false for a different reason: they hold no ring
+     * to share. {@code ema}/{@code vwema}, {@code stddev}/{@code variance}, the bivariate
+     * stats, {@code ksum}, {@code count} over an unbounded frame, {@code row_number} and
+     * {@code rank} each carry a fixed handful of accumulator words per partition however long
+     * the view has run, so one complete image per root is already the smallest thing a root
+     * can write - a chunk reference costs more metadata than the image it would replace, and
+     * an accumulator has no rows to expire and therefore no suffix to hold in common with the
+     * previous root. {@code lag} does keep a ring, but a positional one of the last
+     * {@code offset} values carrying no timestamp at all, so the ROWS reasoning above covers
+     * it and its own declared offset bounds the image.
      * <p>
      * Implies {@link #supportsCheckpointState()}: the ring shape is an alternative
      * encoding of checkpoint state, not an alternative to having any.

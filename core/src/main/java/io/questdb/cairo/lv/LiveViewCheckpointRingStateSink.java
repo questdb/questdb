@@ -39,6 +39,13 @@ package io.questdb.cairo.lv;
 public interface LiveViewCheckpointRingStateSink {
 
     /**
+     * Appends one live ring row of a valueless ring, whose rows are designated
+     * timestamps alone - the shape {@code count} keeps. See
+     * {@link #putRow(long, long)}.
+     */
+    void putRow(long timestamp);
+
+    /**
      * Appends one live ring row by its raw 64-bit value bits - IEEE-754 bits for a
      * DOUBLE ring, the raw payload for a LONG/DATE/TIMESTAMP or narrow DECIMAL ring.
      * Timestamps must not decrease across a partition's stream.

@@ -51,11 +51,13 @@ import java.io.Closeable;
  * Sharing is worth having only when a chunk descriptor rides on enough rows to
  * pay for itself: two {@link LiveViewCheckpointStatePageRef}s cost 80 bytes of
  * metadata in every later root, against the 16 raw bytes of the narrowest row
- * they replace (a wide decimal row is 24 or 40 and pays for itself sooner).
- * {@link #chunkCap(long)} therefore lets a partition hold one chunk per
- * {@link #MIN_SHARED_CHUNK_ROWS} live rows and rebuilds from empty rather than
- * exceed that, which leaves a small frame writing one complete image per root -
- * the cheapest thing it can do - and lets a large one share almost everything.
+ * they replace (a wide decimal row is 24 or 40 and pays for itself sooner; a
+ * valueless {@code count} row is 8, but its chunk is one page rather than two, so
+ * the ratio holds). {@link #chunkCap(long)} therefore lets a partition hold one
+ * chunk per {@link #MIN_SHARED_CHUNK_ROWS} live rows and rebuilds from empty
+ * rather than exceed that, which leaves a small frame writing one complete image
+ * per root - the cheapest thing it can do - and lets a large one share almost
+ * everything.
  */
 public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpointRingStateSink {
 
@@ -67,9 +69,10 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
     public static final int MAX_LIVE_CHUNKS = 256;
     /**
      * Rows a shared chunk must carry on average. A chunk costs 80 metadata bytes
-     * in every root that references it; at this many rows that is under a tenth
-     * of a byte per row against the raw 16 a row would otherwise cost again in
-     * every root.
+     * in every root that references it - 40 for a valueless ring, whose chunk is
+     * one page - and at this many rows that is under a tenth of a byte per row
+     * against the raw 16 (8 valueless) a row would otherwise cost again in every
+     * root.
      */
     public static final int MIN_SHARED_CHUNK_ROWS = 64;
 
@@ -113,6 +116,13 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
     public void close() {
         Misc.free(builder);
         writer = null;
+    }
+
+    @Override
+    public void putRow(long timestamp) {
+        if (acceptRow(timestamp, 0)) {
+            builder.append(writer, timestamp);
+        }
     }
 
     @Override

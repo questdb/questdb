@@ -26,10 +26,14 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -422,6 +426,7 @@ public class CountFunctionFactoryHelper {
         private final MemoryARW memory;
         private final AbstractWindowFunctionFactory.RingBufferDesc memoryDesc = new AbstractWindowFunctionFactory.RingBufferDesc();
         private final long minDiff;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int timestampIndex;
         private long count;
 
@@ -687,6 +692,35 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachTimestamp(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint count RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, source.getFrameSize());
+            value.putLong(1, newStartOffset);
+            value.putLong(2, size);
+            value.putLong(3, capacity);
+            value.putLong(4, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        /**
+         * The in-RAM whole-state form, used to clone a partition into an out-of-order
+         * repair's scratch overlay. The durable checkpoint uses the chunked ring form
+         * instead, which shares pages across roots - a scratch clone has nothing to
+         * share with. Both carry the same five map slots, so a state-layout change
+         * must move both together.
+         */
+        @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
@@ -710,10 +744,38 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
-        public int checkpointStateFormatVersion() {
-            return 1;
+        public int checkpointRingValueKind() {
+            // count buffers a timestamp per in-window row and nothing else, so its ring
+            // is valueless and a chunk is the timestamp page alone.
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_NONE;
         }
 
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 2;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The frame count is the whole of count's continuation state, and it rides
+            // in the scalar's frameSize slot; the scalar value slot goes unused and
+            // stores 0. The ring holds one timestamp per buffered non-null row.
+            sink.putScalarState(0L, value.getLong(0));
+            final long startOffset = value.getLong(1);
+            final long size = value.getLong(2);
+            final long capacity = value.getLong(3);
+            final long firstIdx = value.getLong(4);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putRow(memory.getLong(startOffset + idx * RECORD_SIZE));
+            }
+        }
+
+        /**
+         * The in-RAM whole-state form. See
+         * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue)}
+         * for why it stands beside the chunked ring form.
+         */
         @Override
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(0));
@@ -729,10 +791,36 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
+        }
+
+        @Override
         public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
                     && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+        }
+
+        /**
+         * Writes restored ring timestamps straight into the partition's freshly sized
+         * slab. Reused across partitions so a restore that walks thousands of them
+         * allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.TimestampConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp) {
+                memory.putLong(startOffset + rows * RECORD_SIZE, timestamp);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
         }
 
         @Override

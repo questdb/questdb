@@ -334,6 +334,97 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampOnlyRingSharesChunksAndRoundTripsSortedOracle() throws Exception {
+        // count's per-row state is the designated timestamp itself, so its ring stores
+        // no value and a chunk is the timestamp page alone. Prove the single-page chunk
+        // shares its sealed prefix by reference like a two-page one, that every page is
+        // a timestamp page, that the whole run round-trips in order, and that the
+        // valued overloads refuse a valueless ring rather than read a value page that
+        // is not there.
+        assertMemoryLeak(() -> {
+            final int initialRows = 4_106;
+            final int dropRows = 5;
+            final int appendRows = 3;
+            final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+            final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
+            final LongList firstTimestamps = new LongList();
+            final long[] secondSegmentBytes = new long[1];
+            try (Catalogue directory = new Catalogue()) {
+                try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                     LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                     Path dir = new Path()) {
+                    builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_NONE, 1);
+                    writer.of(checkpointsDir(dir), 40);
+                    for (int i = 0; i < initialRows; i++) {
+                        // Repeated timestamps too: several base rows may share one
+                        // designated timestamp, and count buffers one ring row each.
+                        final long ts = (i / 2) * 1_000L;
+                        builder.append(writer, ts);
+                        firstTimestamps.add(ts);
+                    }
+                    builder.freeze(writer, KEY, 0L, 0, 0, 0, initialRows, first);
+                    directory.addSegment(40, writer.commit());
+                }
+
+                final LongList secondTimestamps = new LongList();
+                try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                     LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                     Path dir = new Path()) {
+                    builder.of(first, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_NONE, 1);
+                    builder.dropHeadRows(dropRows);
+                    writer.of(checkpointsDir(dir), 41);
+                    for (int i = dropRows; i < initialRows; i++) {
+                        secondTimestamps.add(firstTimestamps.getQuick(i));
+                    }
+                    for (int i = 0; i < appendRows; i++) {
+                        final long ts = (initialRows + i) * 1_000L;
+                        builder.append(writer, ts);
+                        secondTimestamps.add(ts);
+                    }
+                    builder.freeze(writer, KEY, 0L, 0, 0, 0, secondTimestamps.size(), second);
+                    secondSegmentBytes[0] = writer.commit();
+                    directory.addSegment(41, secondSegmentBytes[0]);
+                }
+
+                // One page per chunk: 4106 rows fill a whole chunk plus a partial one,
+                // so the first root holds two pages and the second adds one for its
+                // three appended rows, reusing both of the first root's verbatim.
+                Assert.assertEquals(2, first.getStatePageCount());
+                Assert.assertEquals(3, second.getStatePageCount());
+                for (int i = 0; i < first.getStatePageCount(); i++) {
+                    assertRefEquals(first.getStatePageRef(i), second.getStatePageRef(i));
+                    Assert.assertEquals(
+                            LiveViewCheckpointRangeRingStateReader.TIMESTAMP_PAGE_KIND,
+                            first.getStatePageRef(i).getPageKind()
+                    );
+                }
+                Assert.assertEquals(41, second.getStatePageRef(2).getSegmentId());
+                Assert.assertEquals(appendRows, second.getStatePageRef(2).getRowCount());
+                Assert.assertTrue(
+                        "second root wrote " + secondSegmentBytes[0] + " bytes for three appended rows",
+                        secondSegmentBytes[0] < 128
+                );
+
+                assertTimestampsRestored(first, directory, firstTimestamps);
+                assertTimestampsRestored(second, directory, secondTimestamps);
+                try (LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
+                     Path dir = new Path()) {
+                    reader.of(checkpointsDir(dir), directory.reader, second);
+                    Assert.assertEquals(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_NONE, reader.getValueKind());
+                    Assert.assertEquals(dropRows, reader.getHeadOffset());
+                    try {
+                        reader.forEachRow((timestamp, valueBits) -> {
+                        });
+                        Assert.fail("expected a valueless ring to refuse the one-word overload");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "value width mismatch");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWideDecimalRingsShareChunksAndRoundTripRawWords() throws Exception {
         // A DECIMAL128/DECIMAL256 ring spends two or four raw 64-bit words per row.
         // The chunk row cap shrinks by the same factor so one chunk's value page still
@@ -521,6 +612,24 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 final int i = index[0]++;
                 Assert.assertEquals(expectedTimestamps.getQuick(i), timestamp);
                 Assert.assertEquals(expectedValues.getQuick(i), value);
+            });
+            Assert.assertEquals(expectedTimestamps.size(), index[0]);
+        }
+    }
+
+    private static void assertTimestampsRestored(
+            LiveViewCheckpointPartitionMapEntry entry,
+            Catalogue directory,
+            LongList expectedTimestamps
+    ) {
+        try (LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
+             Path dir = new Path()) {
+            reader.of(checkpointsDir(dir), directory.reader, entry);
+            Assert.assertEquals(expectedTimestamps.size(), reader.getRowCount());
+            final int[] index = {0};
+            reader.forEachTimestamp(timestamp -> {
+                final int i = index[0]++;
+                Assert.assertEquals(expectedTimestamps.getQuick(i), timestamp);
             });
             Assert.assertEquals(expectedTimestamps.size(), index[0]);
         }

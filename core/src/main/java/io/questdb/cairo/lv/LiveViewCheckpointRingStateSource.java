@@ -57,6 +57,12 @@ public interface LiveViewCheckpointRingStateSource {
     void forEachRow(@NotNull Decimal256RowConsumer consumer);
 
     /**
+     * Replays a valueless ring, whose rows are designated timestamps alone - the shape
+     * {@code count} keeps. See {@link #forEachRow(RowConsumer)}.
+     */
+    void forEachTimestamp(@NotNull TimestampConsumer consumer);
+
+    /**
      * @return the number of ring rows the stored scalar covers
      */
     long getFrameSize();
@@ -110,5 +116,13 @@ public interface LiveViewCheckpointRingStateSource {
          * ring, the raw payload for a LONG/DATE/TIMESTAMP or narrow DECIMAL ring.
          */
         void accept(long timestamp, long valueBits);
+    }
+
+    @FunctionalInterface
+    interface TimestampConsumer {
+        /**
+         * Receives one valueless ring row, which is its designated timestamp.
+         */
+        void accept(long timestamp);
     }
 }

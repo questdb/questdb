@@ -41,13 +41,15 @@ import java.util.Arrays;
  * Sealed chunks are reused by reference, expiration advances a logical offset
  * into the shared head, and only the rows this boundary appended are encoded.
  * <p>
- * The value column holds one, two or four 64-bit words per row, which the ring's
- * value kind selects: a DOUBLE ring stores exact IEEE-754 bits (raw or
+ * The value column holds zero, one, two or four 64-bit words per row, which the
+ * ring's value kind selects: a DOUBLE ring stores exact IEEE-754 bits (raw or
  * XOR-compressed), a LONG/DATE/TIMESTAMP or narrow DECIMAL ring stores one raw
- * payload word, and a DECIMAL128/DECIMAL256 ring stores two or four raw words, most
- * significant first. {@link #of} configures which kind the seal writes. A {@code max}/
- * {@code min} frame ring uses the same payload but tags its value pages with the
- * deque page kinds so a deque-family root stays distinct from a value-ring root.
+ * payload word, a DECIMAL128/DECIMAL256 ring stores two or four raw words, most
+ * significant first, and a valueless ring stores none - {@code count}'s per-row state
+ * is the designated timestamp itself, so its chunk is a timestamp page on its own.
+ * {@link #of} configures which kind the seal writes. A {@code max}/{@code min} frame
+ * ring uses the same payload as a value ring but tags its value pages with the deque
+ * page kinds so a deque-family root stays distinct from a value-ring root.
  * <p>
  * The tail a boundary appends is always a fresh chunk, so a chunk boundary sits
  * at every checkpoint boundary and a sealed chunk is never rewritten. That is
@@ -71,6 +73,7 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
     private boolean initialized;
     private long lastTimestamp;
     private int maxChunkRows = LiveViewCheckpointStateCodec.CHUNK_ROWS;
+    private int pagesPerChunk = 2;
     private int refCount;
     private LiveViewCheckpointStatePageRef[] refs = new LiveViewCheckpointStatePageRef[8];
     private long rowCount;
@@ -89,6 +92,17 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
     ) {
         previousReader = new LiveViewCheckpointRangeRingStateReader(configuration, memoryTracker);
         scratch = new LiveViewCheckpointStateCodec.Scratch(memoryTracker);
+    }
+
+    /**
+     * Appends one row of a valueless ring in designated-timestamp order. The row is
+     * its timestamp, and the chunk it lands in carries no value page.
+     */
+    public void append(
+            @NotNull LiveViewCheckpointDataSegmentWriter writer,
+            long timestamp
+    ) {
+        appendWords(writer, timestamp, 0, 0, 0, 0, 0);
     }
 
     /**
@@ -179,11 +193,13 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
                 final long timestampBytes = (long) kept * Long.BYTES;
                 final long droppedTimestamps = remaining * Long.BYTES;
                 Vect.memmove(scratch.timestampsAddress(), scratch.timestampsAddress() + droppedTimestamps, timestampBytes);
-                Vect.memmove(
-                        scratch.valuesAddress(),
-                        scratch.valuesAddress() + droppedTimestamps * valueWords,
-                        timestampBytes * valueWords
-                );
+                if (valueWords > 0) {
+                    Vect.memmove(
+                            scratch.valuesAddress(),
+                            scratch.valuesAddress() + droppedTimestamps * valueWords,
+                            timestampBytes * valueWords
+                    );
+                }
             }
             rowCount -= remaining;
             tailCount = kept;
@@ -263,7 +279,7 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
      */
     public int getChunkCount() {
         ensureInitialized();
-        return refCount / 2 + (tailCount > 0 ? 1 : 0);
+        return refCount / pagesPerChunk + (tailCount > 0 ? 1 : 0);
     }
 
     /**
@@ -346,14 +362,16 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
             sealTail(writer);
         }
         Unsafe.putLong(scratch.timestampsAddress() + (long) tailCount * Long.BYTES, timestamp);
-        final long valueAddress = scratch.valuesAddress() + (long) tailCount * words * Long.BYTES;
-        Unsafe.putLong(valueAddress, word0);
-        if (words > 1) {
-            Unsafe.putLong(valueAddress + Long.BYTES, word1);
-        }
-        if (words > 2) {
-            Unsafe.putLong(valueAddress + 2 * Long.BYTES, word2);
-            Unsafe.putLong(valueAddress + 3 * Long.BYTES, word3);
+        if (words > 0) {
+            final long valueAddress = scratch.valuesAddress() + (long) tailCount * words * Long.BYTES;
+            Unsafe.putLong(valueAddress, word0);
+            if (words > 1) {
+                Unsafe.putLong(valueAddress + Long.BYTES, word1);
+            }
+            if (words > 2) {
+                Unsafe.putLong(valueAddress + 2 * Long.BYTES, word2);
+                Unsafe.putLong(valueAddress + 3 * Long.BYTES, word3);
+            }
         }
         tailCount++;
         rowCount++;
@@ -375,6 +393,7 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
     private void ofShape(int valueKind, int scalarWords) {
         this.valueKind = valueKind;
         this.valueWords = LiveViewCheckpointRangeRingStateReader.valueWords(valueKind);
+        this.pagesPerChunk = LiveViewCheckpointRangeRingStateReader.pagesPerChunk(valueKind);
         this.maxChunkRows = LiveViewCheckpointRangeRingStateReader.maxChunkRows(valueKind);
         this.scalarWords = scalarWords;
         // Rejects an invalid width here rather than at freeze, so a wrongly wired
@@ -384,27 +403,27 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
     }
 
     private void removeFirstChunk() {
-        if (refCount > 2) {
-            System.arraycopy(refs, 2, refs, 0, refCount - 2);
+        if (refCount > pagesPerChunk) {
+            System.arraycopy(refs, pagesPerChunk, refs, 0, refCount - pagesPerChunk);
         }
         // The shift leaves the vacated slots aliasing references that are still
         // live further down. Clear them so nothing can reach a chunk twice.
-        refs[refCount - 1] = null;
-        refs[refCount - 2] = null;
-        refCount -= 2;
+        for (int i = refCount - pagesPerChunk; i < refCount; i++) {
+            refs[i] = null;
+        }
+        refCount -= pagesPerChunk;
     }
 
     private void sealTail(@NotNull LiveViewCheckpointDataSegmentWriter writer) {
         if (tailCount <= 0) {
             return;
         }
-        ensureRefCapacity(refCount + 2);
-        if (refCount > LiveViewCheckpointMetadata.MAX_STATE_PAGE_REFS - 2) {
+        ensureRefCapacity(refCount + pagesPerChunk);
+        if (refCount > LiveViewCheckpointMetadata.MAX_STATE_PAGE_REFS - pagesPerChunk) {
             throw CairoException.critical(0)
                     .put("live view checkpoint RANGE ring state page reference count exceeds format limit");
         }
         refs[refCount] = new LiveViewCheckpointStatePageRef();
-        refs[refCount + 1] = new LiveViewCheckpointStatePageRef();
         final int timestampCodec = LiveViewCheckpointStateCodec.selectTimestampCodec(scratch.timestampsAddress(), tailCount);
         LiveViewCheckpointStateCodec.encodeTimestamps(
                 writer.beginPage(), scratch.timestampsAddress(), tailCount, timestampCodec
@@ -414,6 +433,13 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
                 LiveViewCheckpointRangeRingStateReader.TIMESTAMP_PAGE_KIND,
                 timestampCodec, tailCount, 0
         );
+        if (valueWords == 0) {
+            // A valueless ring's row is its timestamp, so the chunk is that page alone.
+            refCount++;
+            tailCount = 0;
+            return;
+        }
+        refs[refCount + 1] = new LiveViewCheckpointStatePageRef();
         final int valuePageKind = LiveViewCheckpointRangeRingStateReader.valuePageKind(valueKind);
         // A wide value spends several words per row; the page still counts rows, so
         // its decoded length carries the width the reader validates against.
@@ -442,7 +468,7 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
 
     private void validateLogicalBounds() {
         long physicalRows = 0;
-        for (int i = 0; i < refCount; i += 2) {
+        for (int i = 0; i < refCount; i += pagesPerChunk) {
             physicalRows += refs[i].getRowCount();
         }
         if ((rowCount == 0 && (physicalRows != 0 || headOffset != 0))
