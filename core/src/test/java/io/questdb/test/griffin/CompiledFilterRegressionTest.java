@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -2611,6 +2612,16 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // on the correct mixed-size scalar path, so only the sibling-flipped shape
         // regressed. Now serializeColumn sign-extends the narrow leaf (markWidthSemantics),
         // so the four-lane compare runs at i64 width and matches the Java filter.
+        //
+        // The regression manifests ONLY in the four-lane AVX2 compare (compiler.cpp runs the
+        // wide-lane loop only when exec_hint == wide_lane AND has_avx2()); on a non-AVX2 x86 host
+        // or on aarch64 the same predicate runs the always-correct scalar loop, so this test would
+        // pass green there without ever touching the regressed path. Gate it on AVX2 so it either
+        // exercises the four-lane compare or is skipped - never a false pass. The width-semantics
+        // IR itself (both narrow leaves carry sx_i64, exec hint WIDE_LANE) is pinned host-
+        // independently on every CI leg by CompiledFilterIRSerializerTest#
+        // testDirectIntLongColumnComparisonWidensAndUsesWideLane.
+        Assume.assumeTrue("wide-lane regression lives in the four-lane AVX2 path", Vect.getSupportedInstructionSet() >= 8);
         assertMemoryLeak(() -> {
             // Deterministic all-match pin: every row satisfies both conjuncts, so the Java
             // filter keeps all rows; the pre-fix JIT ran i32 < i64 in four-lane mode without

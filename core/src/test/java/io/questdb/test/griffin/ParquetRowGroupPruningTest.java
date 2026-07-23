@@ -5338,6 +5338,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // row a single-storage table keeps if the pushdown disagreed with the row filter on the
         // widened value. The native partition runs the compiled/JIT filter, the parquet partition the
         // Java filter, so this differential pins that they agree for the width-sensitive shapes.
+        //
+        // Each assertion pins the plan node so the differential cannot silently degrade to
+        // Java-vs-Java. The IN shapes compile to the JIT ("Async JIT Filter"); QueryAssertion rewrites
+        // that expectation to "Async Filter" on a JIT-unsupported host, so on such hosts the check
+        // becomes native-Java vs parquet-Java (still a valid pruning/width-agreement check). The
+        // ::long-cast-of-arithmetic shapes are NOT compiled today (the JIT declines that cast, so both
+        // tables run the Java filter): the "Async Filter" pin states that plainly and flags if the JIT
+        // ever starts compiling them, at which point the compiled-vs-Java width agreement would need
+        // re-verifying. The native frames are small, so the compiled filter runs its scalar tail here;
+        // the four-lane AVX2 SIMD-body width class is covered by
+        // CompiledFilterRegressionTest#testWideLaneIntColumnVsLongColumn.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tn (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE tp (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -5355,10 +5366,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             // (a*b) overflows INT for the first row: getInt() wraps, the widened product is 4e9. The
             // parquet partition (day 1) runs the Java filter, the native partition (day 2) the compiled
             // filter, so each differential exercises both within one query.
-            assertIntWidthNativeMatchesParquet("(a * b) IN (4_000_000_000)", "a\n2000000000\n");
-            assertIntWidthNativeMatchesParquet("(a * b) IN (null, 300)", "a\n100\nnull\n");
-            assertIntWidthNativeMatchesParquet("(a * b)::long > 1_000_000_000", "a\n2000000000\n");
-            assertIntWidthNativeMatchesParquet("(a * b)::long = 4_000_000_000", "a\n2000000000\n");
+            assertIntWidthNativeMatchesParquet("(a * b) IN (4_000_000_000)", "Async JIT Filter", "a\n2000000000\n");
+            assertIntWidthNativeMatchesParquet("(a * b) IN (null, 300)", "Async JIT Filter", "a\n100\nnull\n");
+            // JIT declines the ::long cast of an arithmetic subtree, so these run the Java filter on
+            // both tables (see the method comment). The "Async Filter" pin keeps that honest.
+            assertIntWidthNativeMatchesParquet("(a * b)::long > 1_000_000_000", "Async Filter", "a\n2000000000\n");
+            assertIntWidthNativeMatchesParquet("(a * b)::long = 4_000_000_000", "Async Filter", "a\n2000000000\n");
         });
     }
 
@@ -5380,9 +5393,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         });
     }
 
-    private void assertIntWidthNativeMatchesParquet(String whereClause, String expected) throws Exception {
-        assertQuery("SELECT a FROM tn WHERE " + whereClause + " ORDER BY ts").noLeakCheck().returns(expected);
-        assertQuery("SELECT a FROM tp WHERE " + whereClause + " ORDER BY ts").noLeakCheck().returns(expected);
+    // Asserts the all-native tn and the partial-parquet tp return the SAME rows for the width-sensitive
+    // whereClause, and pins the filter plan node so the differential cannot silently become
+    // Java-vs-Java. planNode is "Async JIT Filter" for shapes the JIT compiles (QueryAssertion rewrites
+    // it to "Async Filter" on a JIT-unsupported host) and "Async Filter" for shapes it declines.
+    private void assertIntWidthNativeMatchesParquet(String whereClause, String planNode, String expected) throws Exception {
+        assertQuery("SELECT a FROM tn WHERE " + whereClause + " ORDER BY ts")
+                .noLeakCheck().withPlanContaining(planNode).returns(expected);
+        assertQuery("SELECT a FROM tp WHERE " + whereClause + " ORDER BY ts")
+                .noLeakCheck().withPlanContaining(planNode).returns(expected);
     }
 
     // All-native tn and a partial-parquet sibling tp with identical data. The first daily

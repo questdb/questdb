@@ -498,8 +498,8 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                     // compile-time error rather than a mid-query crash or a wrong rank.
                     if (!(ColumnType.isFixedSize(orderByColumnType) && ColumnType.tagOf(orderByColumnType) != ColumnType.LONG256)
                             && !(ColumnType.isSymbol(orderByColumnType) && src.isSymbolTableStatic())) {
-                        throw SqlException.$(orderBy != null ? orderBy.getQuick(i).position : 0, "unsupported column type in streaming rank() ORDER BY: ")
-                                .put(ColumnType.nameOf(orderByColumnType));
+                        throw SqlException.$(orderBy != null ? orderBy.getQuick(i).position : 0, "unsupported column type in streaming ")
+                                .put(name).put("() ORDER BY: ").put(ColumnType.nameOf(orderByColumnType));
                     }
                     // Synthetic unique names keep duplicate ORDER BY columns from clashing; only the
                     // type and the static-symbol flag matter to the comparator and the rank maps.

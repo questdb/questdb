@@ -338,7 +338,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             } catch (Exception e) {
                 rowsRemaining = Long.MAX_VALUE;
             }
-            if (rowsRemaining > -1) {
+            // A NULL limit means "no limit", exactly as getCursor() treats it. Recognise it before the
+            // sign flip: negating Numbers.LONG_NULL (Long.MIN_VALUE) overflows back to itself, which
+            // would print a bogus "limit: null" line and reverse the scan direction the plan shows.
+            if (rowsRemaining == Numbers.LONG_NULL) {
+                rowsRemaining = Long.MAX_VALUE;
+                order = baseOrder;
+            } else if (rowsRemaining > -1) {
                 order = baseOrder;
             } else {
                 order = reverse(baseOrder);

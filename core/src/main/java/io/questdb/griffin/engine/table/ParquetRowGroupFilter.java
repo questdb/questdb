@@ -687,7 +687,7 @@ public final class ParquetRowGroupFilter {
 
     // Whether the row-level filter calls NO double other than d itself equal to d: its neighbouring
     // doubles must fall outside the DOUBLE_TOLERANCE band around it. That holds once the double
-    // spacing exceeds the tolerance (|d| above roughly 9e5). Below it the band spans many doubles,
+    // spacing (ulp) exceeds the 1e-10 tolerance, i.e. |d| at or above 2^19 (~5.2e5). Below it the band spans many doubles,
     // any of which a row group may hold instead of d, and neither the min/max stats (which would
     // place d outside [min, max]) nor the bloom filter (which hashes the exact bits of d) can see
     // it - so only a certified bound may push as an exact equality. A NULL (NaN) bound is equal to
@@ -933,7 +933,7 @@ public final class ParquetRowGroupFilter {
     // EQ (and the IN list sharing its op code) has no direction to round in - it pushes the nearest
     // float and prunes a group only when that value falls outside [min, max]. That is right exactly
     // while the nearest float is the ONLY one within the tolerance of the bound, which is the case
-    // once the float spacing exceeds the tolerance (|bound| above roughly 8e-4). Below that the band
+    // once the float spacing (ulp) exceeds the 1e-10 tolerance, i.e. |bound| at or above 2^-10 (~9.8e-4). Below that the band
     // holds several floats, the group may hold one that is not the nearest, and pruning drops rows
     // the filter keeps: for "c6 = 0.0005", the floats 4.9999997E-4, 5.0E-4 and 5.000001E-4 are all
     // tolerance-equal to the bound, yet only 5.0E-4 is pushed. So certify EQ too - decline unless

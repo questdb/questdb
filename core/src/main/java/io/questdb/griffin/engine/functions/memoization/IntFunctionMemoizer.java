@@ -78,11 +78,6 @@ public final class IntFunctionMemoizer extends IntFunction implements MemoizerFu
     }
 
     @Override
-    public boolean isIntWidthStable() {
-        return isIntWidthStable;
-    }
-
-    @Override
     public String getName() {
         return "memoize";
     }
@@ -90,6 +85,11 @@ public final class IntFunctionMemoizer extends IntFunction implements MemoizerFu
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         MemoizerFunction.super.init(symbolTableSource, executionContext);
+    }
+
+    @Override
+    public boolean isIntWidthStable() {
+        return isIntWidthStable;
     }
 
     @Override

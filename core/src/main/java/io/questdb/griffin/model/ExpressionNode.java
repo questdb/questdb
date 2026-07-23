@@ -740,6 +740,33 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     /**
+     * Reports whether a numeric-looking {@code token} (one {@link #isNumericConstantToken} accepted)
+     * carries a shape that {@link Numbers#parseInt} and {@link Numbers#parseLong} both reject: a
+     * fractional/exponent character ({@code .}, {@code e}, {@code E}), an {@code f}/{@code F}/{@code m}/
+     * {@code M} suffix (FLOAT / DECIMAL), or a {@code 0x} hex prefix (LONG256). Every such token would
+     * make both integer parses throw, so callers can classify it directly instead of paying for the
+     * doomed throws. It is a strict subset of "not an integer literal": no {@code parseInt}/{@code
+     * parseLong}-acceptable token (digits, underscores, a leading sign, an {@code L} suffix) matches.
+     */
+    private static boolean hasNonIntegerNumericShape(CharSequence token) {
+        final int len = token.length();
+        final char last = token.charAt(len - 1);
+        if (len > 1 && (last == 'f' || last == 'F' || last == 'm' || last == 'M')) {
+            return true;
+        }
+        if (len > 1 && token.charAt(0) == '0' && (token.charAt(1) == 'x' || token.charAt(1) == 'X')) {
+            return true;
+        }
+        for (int i = 0; i < len; i++) {
+            final char c = token.charAt(i);
+            if (c == '.' || c == 'e' || c == 'E') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Screens out a constant token that no numeric parse can accept. Every numeric literal starts
      * with a digit, a sign or a decimal point (see {@link Numbers#parseInt} / {@link Numbers#parseLong}
      * / {@link Numbers#parseDouble}), so a token that starts with anything else - a quoted string, a
@@ -824,6 +851,19 @@ public class ExpressionNode implements Mutable, Sinkable {
                 // INT. Unquoted non-numeric tokens - null, true, false, a geohash, a type keyword -
                 // cannot become an arithmetic operand this way and stay reassociable.
                 isConstFoldWidening = Chars.isQuoted(token);
+                return;
+            }
+            if (hasNonIntegerNumericShape(token)) {
+                // A lexically floating-point / DECIMAL / LONG256 literal - one carrying a '.', an
+                // 'e'/'E' exponent, an 'f'/'F'/'m'/'M' suffix, or a '0x' hex prefix - satisfies
+                // NEITHER parseInt nor parseLong, so the two parses below would only throw. Under -ea
+                // NumericException#instance() allocates and fills a stack trace, and this runs over
+                // every constant of every compiled query, so a constant-heavy filter would throw
+                // thousands of doomed exceptions per compile. Classify it directly as the widening,
+                // non-reassociable leaf the doomed parses would have produced (see the fall-through
+                // block below). Mirrors parseFoldLeaf's floatConstantTypeCode gate on the JIT side.
+                isConstFoldLongValid = false;
+                isConstFoldWidening = true;
                 return;
             }
             try {

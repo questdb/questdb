@@ -39,6 +39,35 @@ import org.junit.Test;
 public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
+    public void testHandwrittenAndOffsetMixedTimestampAndColumnWrapsOnlyTimestamp() throws Exception {
+        // A hand-written and_offset whose predicate mixes the designated timestamp with another column
+        // passes analyzeAndOffset's referencesTimestamp guard (ts IS referenced), so it is not rejected.
+        // The offset must then apply ONLY to the timestamp literal. Before the fix, wrapTimestampLiterals
+        // wrapped every literal, rewriting `and_offset(ts>0 AND s=5, 'h', 1)` to `5=dateadd('h',-1,s)`,
+        // which treats a numeric column as a timestamp (wrong rows) and, for a symbol/string column,
+        // fails with a cast error. Now only the timestamp literal is wrapped and the sibling stays intact.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T05:00:00.000000Z', 5), ('2024-01-01T06:00:00.000000Z', 9)");
+            // the sibling numeric predicate stays s=5 (not dateadd('h',-1,s)=5, which returned no rows)
+            assertQuery("SELECT * FROM t WHERE and_offset(ts > 0 AND s = 5, 'h', 1)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("filter: s=5")
+                    .returns("ts\ts\n2024-01-01T05:00:00.000000Z\t5\n");
+
+            // a symbol sibling used to fail with a cast error; now it is left untouched
+            execute("CREATE TABLE t2 (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t2 VALUES ('2024-01-01T05:00:00.000000Z', 'a'), ('2024-01-01T06:00:00.000000Z', 'b')");
+            assertQuery("SELECT * FROM t2 WHERE and_offset(ts > 0 AND sym = 'a', 'h', 1)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("filter: sym='a'")
+                    .returns("ts\tsym\n2024-01-01T05:00:00.000000Z\ta\n");
+        });
+    }
+
+    @Test
     public void testHandwrittenAndOffsetOverNonTimestampIsRejected() throws Exception {
         // and_offset is an internal pseudo-function SqlOptimiser inserts only over the designated
         // timestamp. A hand-written call over a numeric column, reaching the residual filter via an OR

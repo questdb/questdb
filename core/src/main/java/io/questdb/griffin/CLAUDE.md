@@ -361,15 +361,21 @@ A factory answers `false` only if its cursor hands the base record through — r
 by row id counts. Delegating today: limit, filter, column selection, light sort / top-K,
 latest by, query progress, stale view check, the **master columns of a join** (`JoinRecord`
 hands the master record straight through; the master is never value-materialised), the **base
-columns of an extra-null-column pad**, and **UNION ALL** — a live leg pass-through that
+columns of an extra-null-column pad**, **UNION ALL** — a live leg pass-through that
 delegates a column only when *both* legs are width-unstable, because if either leg is a real INT
-column its `getLong()` would over-read the 4-byte slot, forcing the whole column to INT width.
-Keeping the default `true`: full sort, group by, distinct-over-map, the **slave columns of a
+column its `getLong()` would over-read the 4-byte slot, forcing the whole column to INT width —
+and **`DistinctTimeSeries`**, whose cursor hands the base record straight through and uses its
+`dataMap` only to detect adjacent duplicates, never to materialise the returned value.
+Keeping the default `true`: full sort, group by, **distinct-over-map** (`DistinctRecordCursorFactory`,
+whose cursor copies each row into a 4-byte map slot — not to be confused with the live
+`DistinctTimeSeriesRecordCursorFactory` above), the **slave columns of a
 value-materialised join**, the **aggregate columns of a window join**, other set operations —
 all map- or chain-backed, where the value has already been copied into a 4-byte slot, so the
 wrap has genuinely happened and reading at long width would over-read. A per-column hybrid
 record (`SortKeyMaterializing`, `CachedWindowLight`) must keep the default unless it answers per
-column.
+column. (`DistinctTimeSeries` itself is reachable only with the distinct-to-GROUP BY rewrite
+disabled — a test-only seam — since a running server always rewrites plain `SELECT DISTINCT` to
+GROUP BY; the delegation is a factory-consistency guarantee, not a production store path.)
 
 ### Reading a function at two widths
 

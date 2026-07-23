@@ -3166,7 +3166,7 @@ public final class WhereClauseParser implements Mutable {
         resetIntrinsicMarks(predicate);
         // The stride is invariant across the subtree, so format it once here rather than once
         // per wrapped literal down in the recursion.
-        wrapTimestampLiterals(expressionNodePool, predicate, unitToken, Integer.toString(stride));
+        wrapTimestampLiterals(expressionNodePool, predicate, unitToken, Integer.toString(stride), timestamp);
         node.copyFrom(predicate);
     }
 
@@ -3212,7 +3212,7 @@ public final class WhereClauseParser implements Mutable {
                     final int stride = -Numbers.parseInt(offsetNode.token);
                     rebuildStrandedAndOffsets(pool, predicate, designatedTimestamp);
                     resetIntrinsicMarks(predicate);
-                    wrapTimestampLiterals(pool, predicate, unitNode.token, Integer.toString(stride));
+                    wrapTimestampLiterals(pool, predicate, unitNode.token, Integer.toString(stride), designatedTimestamp);
                     node.copyFrom(predicate);
                     return;
                 } catch (NumericException ignore) {
@@ -3634,20 +3634,29 @@ public final class WhereClauseParser implements Mutable {
     }
 
     /**
-     * If {@code child} is a source-timestamp column literal, replaces it with
+     * If {@code child} is the source-timestamp column literal, replaces it with
      * {@code dateadd(unit, stride, child)}; otherwise descends to wrap nested literals. Returns the
-     * (possibly replaced) child to store back into the parent slot.
+     * (possibly replaced) child to store back into the parent slot. Only a literal that names
+     * {@code timestampName} is wrapped: the optimiser's own shape references only the source timestamp
+     * (referencesOnlyTimestampAlias), but a hand-written and_offset mixing the timestamp with another
+     * column reaches here too, and offsetting a non-timestamp value would apply dateadd to a plain
+     * number - wrong rows for a numeric column, a cast error for a symbol/string one.
      */
     private static ExpressionNode wrapTimestampLiteral(
             ObjectPool<ExpressionNode> pool,
             ExpressionNode child,
             CharSequence unitToken,
-            CharSequence strideToken
+            CharSequence strideToken,
+            CharSequence timestampName
     ) {
         if (child == null) {
             return null;
         }
         if (child.type == ExpressionNode.LITERAL) {
+            if (!Chars.equalsIgnoreCaseNc(child.token, timestampName)) {
+                // Not the source timestamp - leave it untouched.
+                return child;
+            }
             final ExpressionNode strideNode = pool.next().of(
                     ExpressionNode.CONSTANT, strideToken, 0, child.position);
             final ExpressionNode unitNode = pool.next().of(
@@ -3661,30 +3670,32 @@ public final class WhereClauseParser implements Mutable {
             dateadd.args.add(unitNode);
             return dateadd;
         }
-        wrapTimestampLiterals(pool, child, unitToken, strideToken);
+        wrapTimestampLiterals(pool, child, unitToken, strideToken, timestampName);
         return child;
     }
 
     /**
      * Wraps every source-timestamp column literal in the predicate subtree with
-     * {@code dateadd(unit, stride, literal)}. referencesOnlyTimestampAlias (SqlOptimiser) guarantees the
-     * only literals present reference the offset source timestamp column, so wrapping each occurrence
-     * faithfully restores the virtual expression {@code tt = dateadd(unit, stride, source_ts)}.
+     * {@code dateadd(unit, stride, literal)}. Only literals naming {@code timestampName} are wrapped -
+     * referencesOnlyTimestampAlias (SqlOptimiser) guarantees the optimiser's own shape carries only
+     * those, so this faithfully restores {@code tt = dateadd(unit, stride, source_ts)} there, while a
+     * hand-written and_offset that also references another column leaves that column alone.
      */
     private static void wrapTimestampLiterals(
             ObjectPool<ExpressionNode> pool,
             ExpressionNode node,
             CharSequence unitToken,
-            CharSequence strideToken
+            CharSequence strideToken,
+            CharSequence timestampName
     ) {
         if (node == null) {
             return;
         }
-        node.lhs = wrapTimestampLiteral(pool, node.lhs, unitToken, strideToken);
-        node.rhs = wrapTimestampLiteral(pool, node.rhs, unitToken, strideToken);
+        node.lhs = wrapTimestampLiteral(pool, node.lhs, unitToken, strideToken, timestampName);
+        node.rhs = wrapTimestampLiteral(pool, node.rhs, unitToken, strideToken, timestampName);
         final ObjList<ExpressionNode> args = node.args;
         for (int i = 0, n = args.size(); i < n; i++) {
-            args.setQuick(i, wrapTimestampLiteral(pool, args.getQuick(i), unitToken, strideToken));
+            args.setQuick(i, wrapTimestampLiteral(pool, args.getQuick(i), unitToken, strideToken, timestampName));
         }
     }
 

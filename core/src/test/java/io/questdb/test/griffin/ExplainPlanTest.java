@@ -170,6 +170,7 @@ import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
@@ -761,6 +762,50 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Row forward scan
                                         Frame forward scan on: b
                             """);
+        });
+    }
+
+    @Test
+    public void testAsyncFilterNullLimitPrintsNoLimit() throws Exception {
+        // An unset LIMIT :lim bind variable reaches the async filter factory as Numbers.LONG_NULL
+        // (Long.MIN_VALUE). getCursor() treats it as "no limit" and scans forward; toPlan() must agree.
+        // Before the guard, toPlan() took the negative-limit branch (Long.MIN_VALUE > -1 is false),
+        // negated Long.MIN_VALUE back to itself, printed a bogus "limit: null" line and reversed the
+        // scan direction the plan reports - while the query itself correctly returned all rows forward.
+        assertMemoryLeak(() -> {
+            execute("create table y (i int)");
+            final int callerJitMode = sqlExecutionContext.getJitMode();
+            try {
+                // JIT path
+                bindVariableService.clear();
+                bindVariableService.setLong("lim", Numbers.LONG_NULL);
+                assertQuery("select * from y where i > 0 limit :lim")
+                        .noLeakCheck()
+                        .assertsPlan("""
+                                Async JIT Filter workers: 1
+                                  filter: 0<i
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
+                                """);
+                // non-JIT path
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                bindVariableService.clear();
+                bindVariableService.setLong("lim", Numbers.LONG_NULL);
+                assertQuery("select * from y where i > 0 limit :lim")
+                        .noLeakCheck()
+                        .assertsPlan("""
+                                Async Filter workers: 1
+                                  filter: 0<i
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
+                                """);
+            } finally {
+                // Restore the JIT mode: setUp does not reset it, so a leaked JIT_MODE_DISABLED would
+                // silently flip other ExplainPlanTest cases from "Async JIT Filter" to "Async Filter".
+                sqlExecutionContext.setJitMode(callerJitMode);
+            }
         });
     }
 
