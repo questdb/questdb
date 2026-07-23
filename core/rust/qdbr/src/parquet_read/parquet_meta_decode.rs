@@ -445,8 +445,10 @@ pub fn decode_row_group(
 /// it. Each column resets its buffer on the first group of the run and appends the rest;
 /// the var-size sinks write absolute data_vec offsets, so appended chunks stay consistent
 /// without offset fixup. The all-null-chunk fast path is intentionally NOT taken here so
-/// that every group contributes its full row count to the concatenation. Column tops are
-/// always 0 in the `_pm` decode path, so no cross-group top handling is needed.
+/// that every group contributes its full row count to the concatenation. Column-top rows
+/// (def-level-0 nulls for a column added after the partition was written) are counted
+/// across the groups so post_convert stamps the target NULL sentinel over a converted
+/// no-in-band-sentinel source, exactly as decode_row_group does per group.
 pub fn decode_row_group_range(
     ctx: &mut DecodeContext,
     row_group_bufs: &mut RowGroupBuffers,
@@ -501,9 +503,16 @@ pub fn decode_row_group_range(
         )?;
         let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
         let mut col_decoded = 0usize;
+        // Column-top rows (leading def-level-0 nulls for a column added after the partition
+        // was written) sit at the front of the concatenated range. A no-in-band-sentinel
+        // source (Boolean/Byte/Short/Char) cannot carry them in the decoded values, so
+        // accumulate their count across the groups and let post_convert stamp the target
+        // NULL sentinel over them -- matching decode_row_group's per-group handling.
+        let mut leading_nulls = 0usize;
         for rg in row_group_lo_idx..=row_group_hi_idx {
             let rg_block = parquet_meta_reader.row_group(rg)?;
             let chunk = prepare_chunk(&rg_block, column_idx as usize)?;
+            leading_nulls += window_leading_nulls(chunk.col_top, 0, chunk.num_values as usize);
 
             let chunk_data = source.chunk_data(
                 dest_col_idx,
@@ -532,14 +541,14 @@ pub fn decode_row_group_range(
         // DecodeAs::Source conversion (e.g. INT->LONG stays i32 here, decimal narrowing
         // keeps the source width, DATE<->TIMESTAMP stays unscaled); finish the conversion
         // in place exactly as decode_row_group does, so the O3 merge sees target-typed
-        // buffers rather than raw source bytes. Column tops are always 0 on the _pm decode
-        // path (see the doc comment above), so the surfaced top and post_convert's
-        // leading-null count are both 0.
-        column_chunk_bufs.column_top = 0;
+        // buffers rather than raw source bytes. `leading_nulls` (accumulated across the
+        // range above) stamps the target NULL sentinel over the column-top prefix for a
+        // no-in-band-sentinel source, and is surfaced to Java for fixed->var conversions.
+        column_chunk_bufs.column_top = leading_nulls;
         post_convert(
             meta.original_column_type,
             to_column_type,
-            0,
+            leading_nulls,
             column_chunk_bufs,
         )?;
 
@@ -627,7 +636,17 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
             row_group_index,
         )?;
 
-        let leading_nulls = window_leading_nulls(prepared.col_top, row_group_lo, row_group_hi);
+        // Column-top rows fall at the window start. FILL_NULLS keeps every window row, so
+        // the leading-null count is the window column top directly; the compacting
+        // (FILL_NULLS = false) path emits only matched rows, so count just the matched rows
+        // whose window-relative index lands inside the column top. Mirrors the canonical
+        // ParquetDecoder::decode_row_group_filtered in row_groups.rs.
+        let window_column_top = window_leading_nulls(prepared.col_top, row_group_lo, row_group_hi);
+        let leading_nulls = if FILL_NULLS {
+            window_column_top
+        } else {
+            filtered_rows.partition_point(|&r| (r as usize) < window_column_top)
+        };
         // Surface the count to Java (read via chunkColumnTopOffset) for lazy fixed->var
         // conversions, where the source has no in-band null and Java must emit NULL here.
         column_chunk_bufs.column_top = leading_nulls;
@@ -1746,5 +1765,185 @@ mod tests {
                 "expected Err for out-of-bounds range start={start} len={len}",
             );
         }
+    }
+
+    /// Build a parquet + `_pm` with a designated timestamp ("ts", index 0) and a
+    /// SHORT value column ("v", index 1) carrying a `col_top`-row column top. SHORT
+    /// has no in-band null sentinel, so its only NULLs are the column-top rows,
+    /// written as def-level-0 -- exactly the case the surfaced `column_top` and
+    /// post_convert's leading-null stamping exist for. The first `col_top` rows of
+    /// "v" are absent; the remaining `values` rows hold `values`. `row_group_size`
+    /// splits the column across row groups so a range decode can span the top.
+    fn build_col_top_short_parquet_meta(
+        values: &[i16],
+        col_top: usize,
+        row_group_size: usize,
+    ) -> ParquetResult<(Vec<u8>, Vec<u8>, u64)> {
+        use crate::parquet::qdb_metadata::QdbMeta;
+        use crate::parquet::tests::ColumnTypeTagExt;
+        use crate::parquet_metadata::convert::{convert_from_parquet, NoBloomFilterSource};
+        use crate::parquet_write::file::ParquetWriter;
+        use crate::parquet_write::schema::{Column, ParquetEncodingConfig, Partition};
+        use parquet2::compression::CompressionOptions;
+        use parquet2::read::read_metadata_with_size;
+        use parquet2::write::Version;
+        use std::io::Cursor;
+
+        let row_count = values.len() + col_top;
+        let ts_values: Vec<i64> = (0..row_count as i64).collect();
+        let ts_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(ts_values.as_ptr() as *const u8, ts_values.len() * 8)
+        };
+        let ts_static: &'static [u8] = Box::leak(ts_bytes.to_vec().into_boxed_slice());
+        let short_bytes: &[u8] =
+            unsafe { std::slice::from_raw_parts(values.as_ptr() as *const u8, values.len() * 2) };
+        let short_static: &'static [u8] = Box::leak(short_bytes.to_vec().into_boxed_slice());
+
+        let ts_col = Column {
+            name: "ts",
+            data_type: ColumnTypeTag::Timestamp.into_type(),
+            id: 0,
+            row_count,
+            primary_data: ts_static,
+            secondary_data: &[],
+            symbol_offsets: &[],
+            column_top: 0,
+            designated_timestamp: true,
+            not_null_hint: true,
+            strided_timestamp_16: false,
+            designated_timestamp_ascending: true,
+            parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+        };
+        let short_col = Column {
+            name: "v",
+            data_type: ColumnTypeTag::Short.into_type(),
+            id: 1,
+            row_count,
+            primary_data: short_static,
+            secondary_data: &[],
+            symbol_offsets: &[],
+            column_top: col_top,
+            designated_timestamp: false,
+            not_null_hint: false,
+            strided_timestamp_16: false,
+            designated_timestamp_ascending: false,
+            parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+        };
+
+        let partition = Partition {
+            table: "test".to_string(),
+            columns: vec![ts_col, short_col],
+        };
+
+        let mut parquet_buf = Vec::new();
+        ParquetWriter::new(&mut parquet_buf)
+            .with_statistics(true)
+            .with_compression(CompressionOptions::Uncompressed)
+            .with_version(Version::V1)
+            .with_row_group_size(Some(row_group_size))
+            .finish(partition)
+            .unwrap();
+
+        let mut cursor = Cursor::new(&parquet_buf);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_buf.len() as u64).unwrap();
+        let qdb_meta = metadata
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| {
+                kvs.iter()
+                    .find(|kv| kv.key == "questdb")
+                    .and_then(|kv| kv.value.as_deref())
+            })
+            .map(|j| QdbMeta::deserialize(j).unwrap());
+
+        let (parquet_meta_bytes, parquet_meta_file_size) = convert_from_parquet(
+            &metadata,
+            qdb_meta.as_ref(),
+            0,
+            0,
+            &NoBloomFilterSource,
+            None,
+        )?;
+
+        Ok((parquet_buf, parquet_meta_bytes, parquet_meta_file_size))
+    }
+
+    #[test]
+    fn decode_filtered_skip_surfaces_matched_column_top_only() -> ParquetResult<()> {
+        // C1 regression. decode_row_group_filtered::<false> (FilterSkip) compacts to
+        // only the matched rows, so the leading-NULL count it surfaces must be the
+        // matched rows that fall inside the column top
+        // (filtered_rows.partition_point(< window_column_top)), NOT the whole window
+        // column top. post_convert / Java stamp exactly this many leading NULLs over the
+        // compacted buffer, so the buggy full-window count NULLs real matched data rows.
+        // "v" is a no-in-band-sentinel SHORT with a 3-row column top, then [100,200,300,400].
+        let values: [i16; 4] = [100, 200, 300, 400];
+        let (parquet_data, pm_bytes, pm_size) = build_col_top_short_parquet_meta(&values, 3, 7)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size)?;
+        assert_eq!(reader.row_group_count() as usize, 1);
+
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let col_pairs = [(1i32, ColumnType::new(ColumnTypeTag::Short, 0))];
+        // Match rows 1,2 (inside the 3-row top) and 4,6 (real data): 2 matched leading NULLs.
+        let filtered_rows: [i64; 4] = [1, 2, 4, 6];
+
+        let mut ctx = DecodeContext::new(parquet_data.as_ptr(), parquet_data.len() as u64);
+        let mut bufs = RowGroupBuffers::new(allocator);
+        let decoded = decode_row_group_filtered::<false>(
+            &mut ctx,
+            &mut bufs,
+            ColumnChunkSource::File(&parquet_data),
+            &reader,
+            0,
+            &col_pairs,
+            0,
+            0,
+            7,
+            &filtered_rows,
+        )?;
+        assert_eq!(decoded, filtered_rows.len());
+        assert_eq!(
+            bufs.column_bufs[0].column_top, 2,
+            "FilterSkip must surface only the 2 matched rows inside the column top, \
+             not the full window column top (3)"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_range_surfaces_accumulated_column_top() -> ParquetResult<()> {
+        // C2 regression. decode_row_group_range concatenates whole row groups; the
+        // column-top NULLs of a no-in-band-sentinel SHORT sit at the front of the
+        // concatenation and must be surfaced (and stamped by post_convert) as leading
+        // NULLs. The buggy hard-coded 0 drops them, so the column-top rows read back as
+        // 0 instead of NULL. "v" has a 3-row column top, then [100,200,300,400], split
+        // across two row groups (size 4) so the range spans the top.
+        let values: [i16; 4] = [100, 200, 300, 400];
+        let (parquet_data, pm_bytes, pm_size) = build_col_top_short_parquet_meta(&values, 3, 4)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size)?;
+        assert_eq!(reader.row_group_count() as usize, 2);
+
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let col_pairs = [(1i32, ColumnType::new(ColumnTypeTag::Short, 0))];
+
+        let mut ctx = DecodeContext::new(parquet_data.as_ptr(), parquet_data.len() as u64);
+        let mut bufs = RowGroupBuffers::new(allocator);
+        let decoded = decode_row_group_range(
+            &mut ctx,
+            &mut bufs,
+            ColumnChunkSource::File(&parquet_data),
+            &reader,
+            &col_pairs,
+            0,
+            1,
+        )?;
+        assert_eq!(decoded, values.len() + 3);
+        assert_eq!(
+            bufs.column_bufs[0].column_top, 3,
+            "range decode must surface the 3-row column top accumulated across groups, not 0"
+        );
+        Ok(())
     }
 }
