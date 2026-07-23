@@ -64,6 +64,7 @@ import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -182,6 +183,12 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     }
 
     @Override
+    @TestOnly
+    public AsyncGroupByNotKeyedAtom getAtom() {
+        return frameSequence.getAtom();
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }
@@ -289,12 +296,15 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        record.init(frameMemory);
 
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final SimpleMapValue value = atom.getMapValue(slotId);
+        // navigateTo() decodes the frame and can throw, so it must sit inside the try that
+        // releases the slot, see PerWorkerLocks.acquireSlot().
         try {
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            record.init(frameMemory);
+
             record.setRowIndex(0);
             long rowId = record.getRowId();
             for (long r = 0; r < frameRowCount; r++) {
@@ -307,8 +317,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 }
             }
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
@@ -347,13 +360,15 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
 
         final SimpleMapValue value = atom.getMapValue(slotId);
         final int[] batchColumnIndexes = atom.getBatchColumnIndexes();
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final int functionCount = functions.size();
+        // navigateTo() can throw; it must sit inside the try that releases the slot. See
+        // aggregate() for why a leaked slot is permanent.
         try {
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
             if (frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Fall back to row-by-row for the entire frame.
                 record.init(frameMemory);
@@ -418,8 +433,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 }
             }
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
@@ -466,13 +484,6 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
 
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        }
-        record.init(frameMemory);
 
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
         rows.clear();
@@ -481,7 +492,17 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final SimpleMapValue value = atom.getMapValue(slotId);
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
+        // navigateTo() can throw; it must sit inside the try that releases the slot. See
+        // aggregate() for why a leaked slot is permanent.
         try {
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            }
+            record.init(frameMemory);
+
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
@@ -511,8 +532,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             long baseRowId = Rows.toRowID(frameIndex, 0);
             aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
