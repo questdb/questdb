@@ -220,7 +220,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 // This is needed for both incremental and non-incremental backups because
                 // mat view refresh intervals are loaded from _event files during checkpoint creation.
                 final long timeout = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
-                while (!engine.tryLockWalPurgeJob(timeout, TimeUnit.MICROSECONDS)) {
+                while (!engine.tryLockWalPurgeJob(timeout, TimeUnit.MILLISECONDS)) {
                     circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                 }
                 ownsWalPurgeJobRunLock = true;

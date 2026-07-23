@@ -222,7 +222,7 @@ public class SleepFunctionFactory implements FunctionFactory {
 
             // Legacy polling fallback: no continuation gateway, or yield refused.
             while (clock.getTicks() < deadline) {
-                executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
                 Os.sleep(1);
             }
         }

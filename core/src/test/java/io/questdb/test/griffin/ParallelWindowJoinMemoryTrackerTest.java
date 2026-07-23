@@ -29,12 +29,14 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -80,6 +82,28 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // Many small page frames so the master scan fans out across the worker pool.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
+        // A slot-leak test can only observe a leak on a slot a worker actually took. With the default
+        // threshold of 16, WorkStealingStrategyFactory hands a 4-worker pool the
+        // AlwaysWorkStealingStrategy, whose owner never spins before reducing a frame itself, so on
+        // few frames it can win most of them and the workers are left with too few to reliably
+        // acquire. Dropping the threshold to 1 selects the adaptive strategy - the owner steals only
+        // after it has spun - which keeps the acquire off the timing of the box.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        // Selecting the adaptive strategy is necessary but not sufficient: its owner spins for only
+        // 50us before stealing, which a worker often fails to wake up inside, so the acquire the
+        // leak assertions rest on would still ride on the timing of the box. This gate makes the
+        // owner wait for it instead.
+        factoryProvider = SlotGatedWorkStealingStrategy.newFactoryProvider();
+        // The filtering reducers populate the frame while already holding a slot, and only over a
+        // parquet master does that populate charge the per-query tracker, so
+        // testWindowJoinReleasesWorkerSlotsOnBreach runs those eight over a converted partition too.
+        // A parquet scan cuts its page frames on row group boundaries, so the row group size, not
+        // CAIRO_SQL_PAGE_FRAME_MAX_ROWS, is what decides how many frames that master fans out into:
+        // at the default the whole partition would be a single frame for the owner to reduce alone,
+        // and no worker would ever take the slot the test is there to watch. 5_000 gives the 40k-row
+        // master eight frames against four workers. The compression codec is left at its default,
+        // which already compresses.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 5_000);
         super.setUp();
     }
 
@@ -90,18 +114,25 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // owner/per-worker FastGroupByAllocators, which the atom binds to the per-query tracker in
         // reopen(). Combined per-worker reduce growth trips the limit. Without the binding the lists
         // escape and the query completes, firing Assert.fail below.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: on
+        // the combined per-worker reduce growth, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createTrades(engine, sqlExecutionContext, 200_000, 8);
-                        createPrices(engine, sqlExecutionContext, 2_000_000, 8);
+                        createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createPrices(engine, sqlExecutionContext, 400_000, 8);
                         final String query = "SELECT t.ts, array_agg(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 15 seconds PRECEDING AND 15 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncWindowJoinFastRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncWindowJoinFastRecordCursorFactory.class);
                             assertQueryBreaches(factory, sqlExecutionContext);
                         }
                     },
@@ -127,7 +158,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncWindowJoinFastRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncWindowJoinFastRecordCursorFactory.class);
                             assertOpenFailureReleasesAllocations(factory, sqlExecutionContext);
                         }
                     },
@@ -154,7 +185,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncWindowJoinFastRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncWindowJoinFastRecordCursorFactory.class);
                             assertReleasesAllocations(factory, sqlExecutionContext);
                         }
                     },
@@ -170,18 +201,25 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // Every slave row in the window matches, so each master row's list grows through the same
         // FastGroupByAllocators bound in the atom's reopen(). Combined per-worker reduce growth trips
         // the limit; without the binding the query completes and Assert.fail fires.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: on
+        // the combined per-worker reduce growth, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createTrades(engine, sqlExecutionContext, 200_000, 8);
-                        createPrices(engine, sqlExecutionContext, 2_000_000, 8);
+                        createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createPrices(engine, sqlExecutionContext, 400_000, 8);
                         final String query = "SELECT t.ts, array_agg(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p " +
                                 "RANGE BETWEEN 15 seconds PRECEDING AND 15 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncWindowJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncWindowJoinRecordCursorFactory.class);
                             assertQueryBreaches(factory, sqlExecutionContext);
                         }
                     },
@@ -209,14 +247,14 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "SELECT t.ts, array_agg(p.price) FROM trades t WINDOW JOIN prices p " +
                                         "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING",
                                 sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(f, AsyncWindowJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(f, AsyncWindowJoinRecordCursorFactory.class);
                             // intentionally never call getCursor()
                         }
                         try (RecordCursorFactory f = compiler.compile(
                                 "SELECT t.ts, array_agg(p.price) FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                         "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING",
                                 sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(f, AsyncWindowJoinFastRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(f, AsyncWindowJoinFastRecordCursorFactory.class);
                             // intentionally never call getCursor()
                         }
                     },
@@ -241,7 +279,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t WINDOW JOIN prices p " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncWindowJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncWindowJoinRecordCursorFactory.class);
                             assertOpenFailureReleasesAllocations(factory, sqlExecutionContext);
                         }
                     },
@@ -265,7 +303,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t WINDOW JOIN prices p " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncWindowJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncWindowJoinRecordCursorFactory.class);
                             assertReleasesAllocations(factory, sqlExecutionContext);
                         }
                     },
@@ -275,15 +313,221 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertInTree(RecordCursorFactory factory, Class<?> expected) {
-        RecordCursorFactory f = factory;
-        while (f != null) {
-            if (expected.isInstance(f)) {
-                return;
+    @Test
+    public void testWindowJoinReleasesWorkerSlotsOnBreach() throws Exception {
+        // A window join reducer acquires a per-worker slot and only then sizes the temporary row id
+        // and timestamp lists, whose backing chunk is the first thing the reduce charges to the
+        // per-query tracker. With a limit this tight that allocation is the one that throws, so the
+        // acquire must sit inside the try that releases the slot. PerWorkerLocks has no reset and
+        // the atom belongs to the factory, so a slot leaked on a failed reduce is gone for as long
+        // as the factory stays in the SQL cache; once all four have leaked, every worker spins in
+        // acquireSlot for a slot nobody will release.
+        //
+        // There is not one reducer but sixteen, each with its own acquire/release pair, picked by five
+        // compile-time flags: dynamic bounds, INCLUDE/EXCLUDE PREVAILING, a join filter, a vectorizable
+        // aggregate, and a stolen master filter. So every row below pins its reducer by name - covering
+        // one says nothing about the other fifteen, and a re-routed query would still breach, still
+        // release, and cover the wrong method.
+        //
+        // Which master a row needs follows from where in the reducer the breach has to land. The eight
+        // aggregate* reducers size the temporary lists while holding the slot, and the of() chunk
+        // malloc is the first thing they charge to the tracker, so a native master faults them. The
+        // eight filterAndAggregate* ones already sized those lists inside the try before this fix;
+        // what the fix moved in is populateFrameMemory(), which on a native frame decodes nothing and
+        // so charges nothing - a native master cannot fault it at all, and the row would stay green
+        // with the fix reverted. Those eight therefore run twice, once per master: over a parquet
+        // master the populate decodes a real column and the breach lands on the moved call, and over
+        // the native master it lands further down, on the temporary lists, which have to stay inside
+        // the try just as they do in the aggregate* family. Reverting the try/finally in any one
+        // reducer turns exactly the row that names it red.
+        //
+        // 40k master rows over small (1k-row) frames give ~40 page frames, so there is work for the
+        // pool to pick up. assertNoSlotLeakOnBreach coordinates each execution so a worker
+        // acquires a slot before the owner can take over, then verifies that the cached factory
+        // remains reusable.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        // The owner defers to a worker on the reducer's slot-acquire latch only when it reaches the
+        // latch-gated steal branch, and it reaches that branch only once the reduce queue is full.
+        // A queue deeper than the master's page-frame count lets the owner publish every frame and
+        // then drain them itself through the ungated gang-steal loop, so it can reduce the breaching
+        // frame on the owner path - which takes no per-worker slot - before any worker acquires one,
+        // and assertNoSlotLeakOnBreach then fails with "no worker acquired a slot". The native master
+        // fans out into ~40 frames and fills the 32-deep default queue, but the parquet master cuts on
+        // row-group boundaries into only ~8, well under it. Cap the queue below both frame counts so
+        // the gate engages for either master.
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createParquetTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        // A fixed window, and a dynamic one: a bound that reads a master column cannot
+                        // be folded to a constant, which is what makes the window dynamic.
+                        final String fixed = "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
+                        final String dynamic = "RANGE BETWEEN t.qty::long seconds PRECEDING AND 2 seconds FOLLOWING";
+                        // array_agg has no batch computation, so it never vectorizes; sum(p.price) over
+                        // a slave-only column does. A join filter suppresses vectorization outright, and
+                        // so does a dynamic window.
+                        final String scalar = "SELECT t.ts, array_agg(p.price) FROM trades t WINDOW JOIN prices p ";
+                        final String vect = "SELECT t.ts, sum(p.price) FROM trades t WINDOW JOIN prices p ";
+
+                        // Non-dynamic, EXCLUDE PREVAILING.
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                scalar + fixed + " EXCLUDE PREVAILING", "AGGREGATE");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + fixed + " EXCLUDE PREVAILING", "AGGREGATE_VECT");
+                        // Non-dynamic, INCLUDE PREVAILING (the default when the clause is absent).
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                scalar + fixed + " INCLUDE PREVAILING", "AGGREGATE_PREVAILING");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + fixed + " INCLUDE PREVAILING", "AGGREGATE_VECT_PREVAILING");
+                        // A non-symbol ON clause stays with the general factory and becomes the join
+                        // filter. A symbol equality would be extracted into the Fast factory instead.
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + "ON p.price > 0 " + fixed + " INCLUDE PREVAILING",
+                                "AGGREGATE_PREVAILING_JOIN_FILTERED");
+                        // Dynamic bounds: never vectorized, and the join filter is never extracted.
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + dynamic + " EXCLUDE PREVAILING", "AGGREGATE_DYNAMIC");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + dynamic + " INCLUDE PREVAILING", "AGGREGATE_DYNAMIC_PREVAILING");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + "ON t.sym = p.sym " + dynamic + " INCLUDE PREVAILING",
+                                "AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED");
+
+                        // The same eight with a WHERE over the master. The parallel filter factory
+                        // hands it to the atom, which routes the reduce to the filterAndAggregate
+                        // family; without the steal these would cover the eight above a second time.
+                        //
+                        // Each of the eight runs twice, once per master, because the two masters breach
+                        // at different points in the same reducer and neither alone covers it. Over the
+                        // native master the breach lands on the temporary lists, as it does for the
+                        // aggregate* family above; those calls sit inside the try and must stay there.
+                        // Over the parquet master it lands earlier, on populateFrameMemory(), which is
+                        // the call this fix moved in - and the only one a native frame cannot fault,
+                        // since it decodes nothing there and so charges the tracker nothing.
+                        final String where = " WHERE t.qty > 0";
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                scalar + fixed + " EXCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + fixed + " EXCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_VECT");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                scalar + fixed + " INCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_PREVAILING");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + fixed + " INCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_VECT_PREVAILING");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + "ON p.price > 0 " + fixed + " INCLUDE PREVAILING" + where,
+                                "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + dynamic + " EXCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_DYNAMIC");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + dynamic + " INCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + "ON t.sym = p.sym " + dynamic + " INCLUDE PREVAILING" + where,
+                                "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED");
+
+                        // And the same eight over the parquet master. The ts predicate is interval-
+                        // extracted off the designated timestamp, so it pins the scan to the converted
+                        // partition without becoming a master filter of its own; t.s != 'zzz' is the
+                        // master filter that routes to this family. Filtering on the wide VARCHAR is
+                        // belt and braces: the limit is far below any decoded column, so the populate
+                        // would fault on the narrow ones too, but a filter over the widest column keeps
+                        // the row faulting even if that limit is ever loosened.
+                        final String pqScalar = "SELECT t.ts, array_agg(p.price) FROM parquet_trades t WINDOW JOIN prices p ";
+                        final String pqVect = "SELECT t.ts, sum(p.price) FROM parquet_trades t WINDOW JOIN prices p ";
+                        final String pqWhere = " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'";
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqScalar + fixed + " EXCLUDE PREVAILING" + pqWhere, "FILTER_AND_AGGREGATE");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqVect + fixed + " EXCLUDE PREVAILING" + pqWhere, "FILTER_AND_AGGREGATE_VECT");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqScalar + fixed + " INCLUDE PREVAILING" + pqWhere, "FILTER_AND_AGGREGATE_PREVAILING");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqVect + fixed + " INCLUDE PREVAILING" + pqWhere, "FILTER_AND_AGGREGATE_VECT_PREVAILING");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqVect + "ON p.price > 0 " + fixed + " INCLUDE PREVAILING" + pqWhere,
+                                "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqVect + dynamic + " EXCLUDE PREVAILING" + pqWhere, "FILTER_AND_AGGREGATE_DYNAMIC");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqVect + dynamic + " INCLUDE PREVAILING" + pqWhere, "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqVect + "ON t.sym = p.sym " + dynamic + " INCLUDE PREVAILING" + pqWhere,
+                                "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED");
+
+                        // A symbol equality in the ON clause is extracted into the join key, which
+                        // routes to the keyed AsyncWindowJoinFastRecordCursorFactory and its own
+                        // atom. It has ten reducers of its own, on the same five flags minus the
+                        // dynamic window (a dynamic bound keeps the query on the general factory),
+                        // and each owns its own acquire/release pair - so they are pinned by name
+                        // for the reason the sixteen above are.
+                        final String on = "ON t.sym = p.sym ";
+                        // A second ON predicate cannot be folded into the key, so it stays behind as
+                        // the join filter, which also suppresses vectorization.
+                        final String onFiltered = "ON t.sym = p.sym AND p.price > 0 ";
+                        assertFastReducerReleasesSlots(compiler, sqlExecutionContext,
+                                scalar + on + fixed + " EXCLUDE PREVAILING", "AGGREGATE");
+                        assertFastReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + on + fixed + " EXCLUDE PREVAILING", "AGGREGATE_VECT");
+                        assertFastReducerReleasesSlots(compiler, sqlExecutionContext,
+                                scalar + on + fixed + " INCLUDE PREVAILING", "AGGREGATE_PREVAILING");
+                        assertFastReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + on + fixed + " INCLUDE PREVAILING", "AGGREGATE_VECT_PREVAILING");
+                        assertFastReducerReleasesSlots(compiler, sqlExecutionContext,
+                                scalar + onFiltered + fixed + " INCLUDE PREVAILING",
+                                "AGGREGATE_PREVAILING_JOIN_FILTERED");
+
+                        // The same five with a WHERE over the master, which the parallel filter
+                        // factory hands to the atom, routing the reduce to the filtering family.
+                        assertFastReducerReleasesSlots(compiler, sqlExecutionContext,
+                                scalar + on + fixed + " EXCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE");
+                        assertFastReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + on + fixed + " EXCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_VECT");
+                        assertFastReducerReleasesSlots(compiler, sqlExecutionContext,
+                                scalar + on + fixed + " INCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_PREVAILING");
+                        assertFastReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + on + fixed + " INCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_VECT_PREVAILING");
+                        assertFastReducerReleasesSlots(compiler, sqlExecutionContext,
+                                scalar + onFiltered + fixed + " INCLUDE PREVAILING" + where,
+                                "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    /**
+     * The {@link #assertReducerReleasesSlots} of the keyed (Fast) factory: asserts that {@code query}
+     * routes to the named one of its ten reducers, and that the reducer releases every per-worker
+     * slot it takes when the reduce breaches the per-query memory limit.
+     */
+    private static void assertFastReducerReleasesSlots(
+            SqlCompiler compiler,
+            SqlExecutionContext ctx,
+            String query,
+            String expectedReducer
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+            TestUtils.assertFactoryInTree(factory, AsyncWindowJoinFastRecordCursorFactory.class, query);
+            AsyncWindowJoinFastRecordCursorFactory joinFactory = null;
+            for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+                if (f instanceof AsyncWindowJoinFastRecordCursorFactory fastFactory) {
+                    joinFactory = fastFactory;
+                    break;
+                }
             }
-            f = f.getBaseFactory();
+            Assert.assertNotNull(query, joinFactory);
+            Assert.assertEquals(
+                    "query routed to a different reducer: " + query,
+                    expectedReducer,
+                    joinFactory.getReducerName()
+            );
         }
-        Assert.fail("expected " + expected.getSimpleName() + " in the factory tree, but top was " + factory.getClass().getName());
+        TestUtils.assertNoSlotLeakOnBreach(compiler, ctx, query);
     }
 
     private static void assertOpenFailureReleasesAllocations(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
@@ -317,6 +561,37 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Asserts that {@code query} routes to the named reducer, and that the reducer releases every
+     * per-worker slot it takes when the reduce breaches the per-query memory limit. Pinning the name
+     * is the point: a query that drifted to a neighbouring reducer would still breach and still pass
+     * a bare slot-count assertion, leaving the intended one uncovered.
+     */
+    private static void assertReducerReleasesSlots(
+            SqlCompiler compiler,
+            SqlExecutionContext ctx,
+            String query,
+            String expectedReducer
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+            TestUtils.assertFactoryInTree(factory, AsyncWindowJoinRecordCursorFactory.class, query);
+            AsyncWindowJoinRecordCursorFactory joinFactory = null;
+            for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+                if (f instanceof AsyncWindowJoinRecordCursorFactory windowJoinFactory) {
+                    joinFactory = windowJoinFactory;
+                    break;
+                }
+            }
+            Assert.assertNotNull(query, joinFactory);
+            Assert.assertEquals(
+                    "query routed to a different reducer: " + query,
+                    expectedReducer,
+                    joinFactory.getReducerName()
+            );
+        }
+        TestUtils.assertNoSlotLeakOnBreach(compiler, ctx, query);
+    }
+
     private static void assertReleasesAllocations(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
         long expectedRows = -1;
         for (int i = 0; i < 10; i++) {
@@ -332,6 +607,29 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                 Assert.assertTrue("expected rows at iteration " + i, rows > 0);
             }
         }
+    }
+
+    /**
+     * A master whose first partition is parquet, carrying a wide VARCHAR the scan has to decode.
+     * The filtering reducers populate the frame while already holding a per-worker slot, and that
+     * decode is the only tracked allocation they make there - on a native master the same call
+     * charges nothing, so it cannot breach the limit and cannot fault the slot release.
+     */
+    private static void createParquetTrades(CairoEngine engine, SqlExecutionContext ctx, int rows, int symbols) throws Exception {
+        engine.execute(
+                "CREATE TABLE parquet_trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE, s VARCHAR) timestamp(ts) PARTITION BY DAY",
+                ctx
+        );
+        // Same shape as trades, plus a ~256-byte value per row, which is what the filtering queries
+        // filter on: the widest column is the one whose decode a reducer is least likely to skip.
+        engine.execute(
+                "INSERT INTO parquet_trades SELECT (x * 1_000_000)::timestamp, (x % " + symbols + ")::symbol, x::double,"
+                        + " rpad(x::varchar, 256, 'a') FROM long_sequence(" + rows + ")",
+                ctx
+        );
+        // A row in a later partition seals the first one, which is what CONVERT needs.
+        engine.execute("INSERT INTO parquet_trades VALUES ('1970-01-02T00:00:00.000000Z', '0', -1, 'z')", ctx);
+        engine.execute("ALTER TABLE parquet_trades CONVERT PARTITION TO PARQUET LIST '1970-01-01'", ctx);
     }
 
     private static void createPrices(CairoEngine engine, SqlExecutionContext ctx, int rows, int symbols) throws Exception {
@@ -357,4 +655,5 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                 ctx
         );
     }
+
 }
