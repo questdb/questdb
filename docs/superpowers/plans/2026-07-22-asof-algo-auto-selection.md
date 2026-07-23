@@ -385,9 +385,23 @@ git add -A && git commit -m "docs(sql): Phase 1 auto-index confirmed on benchmar
 
 **Design:** `asof_memoized` is 2–25× faster than Dense for sparse-ts single-symbol selective masters but cliffs (3372 ms) when many rows share a timestamp, because `performKeyMatching` back-scans the whole equal-timestamp run. Fix: count the current equal-timestamp run length during the back-scan; once it exceeds threshold **K**, abandon memoization and complete the remaining master rows with a resilient **single-symbol forward scan** (O(slave), never cliffs). Because memoized is single-symbol-only, the fallback needs only a *single-key* forward scan (last matching slave row per the one sought symbol) — much smaller than the general Dense two-map machinery, so we implement it directly in the memoized cursor rather than refactoring the Dense base.
 
-> **START-OF-PHASE-2 CHECK (do first):** read `AsOfJoinDenseSingleSymbolRecordCursorFactory` in full and decide reuse-vs-reimplement for the single-symbol forward scan. If its scan is cleanly extractable into a small helper both cursors share, prefer that (DRY); otherwise implement the compact single-key forward scan inline in the memoized cursor. Record the decision in this plan before coding.
+> **START-OF-PHASE-2 CHECK — DONE (2026-07-22).** Read confirmed: DenseSingleSymbol's resilient scan lives entirely in `AsOfJoinDenseRecordCursorBase.hasNext()`/`scanForward()` and depends on a per-symbol last-row map (`fwdScanKeyToRowId`) — required because a single-symbol join still has a MULTI-symbol master. The memoized cursor extends `AbstractKeyedAsOfJoinRecordCursor`, not the Dense base, so it cannot inherit it. **DECISION (user): Extract & share (structural)** — refactor the Dense resilient forward/backward scan + maps out of `AsOfJoinDenseRecordCursorBase` into a reusable component both the Dense cursor and the memoized cursor drive, behaviour-preserving (guarded by AsOfJoinTest 120 + Fuzz 6). Tasks 8-11 below are re-scoped around this extraction.
 
-### Task 7: Config `cairo.sql.asof.memoized.dense.run.threshold` (int, default 4096)
+### Extraction design (from read-gate)
+
+New abstract class `AbstractDenseScanAsOfJoinRecordCursor extends AbstractKeyedAsOfJoinRecordCursor`
+holding what is today private in `AsOfJoinDenseRecordCursorBase`: the two maps
+(`fwdScanKeyToRowId`, `bwdScanKeyToRowId`), scan state (`forwardRowId`, `backwardRowId`,
+`forwardScanExhausted`, `backwardScanExhausted`, `slaveCursorReadyForForwardScan`), `scanForward`,
+`setupSlaveRec`, `resetDenseScanState`, map lifecycle (close/reopenClear/setMemoryTracker), the five
+abstract hooks (`getSlaveJoinKey`, `joinKeysMatch`, `putSlaveJoinKey`, `putSlaveKeyToFind`,
+`setupSymbolKeyToFind`), and a new callable `boolean resolveViaDenseScan(long masterTimestamp, long
+minSlaveTimestamp, int slaveKeyToFind)` = the body of today's Dense `hasNext()` lines 223-306.
+`AsOfJoinDenseRecordCursorBase.AsOfJoinDenseRecordCursorBase` extends it, keeps the adaptive prelude +
+`performKeyMatching`, and its `hasNext()` becomes: adaptive-prelude wrapper + master iteration +
+`resolveViaDenseScan(...)`. Behaviour-preserving — Dense/Fuzz tests are the guard.
+
+### Task 8: Config `cairo.sql.asof.memoized.dense.run.threshold` (int, default 4096)
 
 **Files:** `PropertyKey.java`, `CairoConfiguration.java`, `CairoConfigurationWrapper.java`, `DefaultCairoConfiguration.java`, `PropServerConfiguration.java` — same 6-site pattern as Task 1.
 
