@@ -99,6 +99,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -12280,6 +12281,11 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return newModel;
+    }
+
+    @TestOnly
+    public static IQueryModel replaceAndTransferDependentsForTesting(IQueryModel oldModel, IQueryModel newModel) {
+        return replaceAndTransferDependents(oldModel, newModel);
     }
 
     @SuppressWarnings({"unused", "RedundantThrows"})

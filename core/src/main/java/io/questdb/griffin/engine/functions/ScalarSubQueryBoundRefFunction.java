@@ -51,6 +51,9 @@ public final class ScalarSubQueryBoundRefFunction extends TimestampFunction {
 
     @Override
     public long getTimestamp(Record rec) {
+        // The owning pruning bound publishes the frozen value in init() at partition-frame open,
+        // which happens-before any residual read; fail fast under -ea if that ordering is violated.
+        assert holder.isPublished() : "scalar sub-query bound read before it was published";
         return holder.value();
     }
 

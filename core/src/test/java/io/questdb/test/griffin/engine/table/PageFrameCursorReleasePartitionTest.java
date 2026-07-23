@@ -99,7 +99,7 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
 
                 // Should still have one partition open (toTop doesn't close partitions)
                 // and releaseOpenPartitions should be a no-op since nothing new is open
-                Assert.assertTrue("Partitions should remain from previous iteration", reader.getOpenPartitionCount() >= 0);
+                Assert.assertEquals("One partition should remain open after toTop() and no-op release", 1, reader.getOpenPartitionCount());
 
                 // Cursor should still work normally
                 int frameCount = 0;
@@ -402,7 +402,7 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
                 pageFrameCursor.releaseOpenPartitions();
 
                 // Should still have one partition open (toTop doesn't close partitions)
-                Assert.assertTrue("Partitions should remain from previous iteration", reader.getOpenPartitionCount() >= 0);
+                Assert.assertEquals("One partition should remain open after toTop() and no-op release", 1, reader.getOpenPartitionCount());
 
                 // Cursor should still work normally
                 int frameCount = 0;

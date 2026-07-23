@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.griffin.SqlOptimiser;
-import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelWrapper;
@@ -33,8 +32,6 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
-
-import java.lang.reflect.Method;
 
 public class LateralJoinTest extends AbstractCairoTest {
 
@@ -280,19 +277,15 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLateralCountModelReplacementLifecycle() throws Exception {
+    public void testLateralCountModelReplacementLifecycle() {
         QueryModel oldModel = QueryModel.FACTORY.newInstance();
         QueryModel newModel = QueryModel.FACTORY.newInstance();
         oldModel.setLateralCountCoalesceRequired(true);
 
-        Method method = SqlOptimiser.class.getDeclaredMethod(
-                "replaceAndTransferDependents",
-                IQueryModel.class,
-                IQueryModel.class
-        );
-        method.setAccessible(true);
-
-        Assert.assertSame(newModel, method.invoke(null, oldModel, newModel));
+        // Exercises the model-replacement flag transfer directly via a @TestOnly accessor (no
+        // reflection). The same regression is also covered black-box by the LATERAL-count
+        // assertQuery tests; this pins the unit-level contract of replaceAndTransferDependents.
+        Assert.assertSame(newModel, SqlOptimiser.replaceAndTransferDependentsForTesting(oldModel, newModel));
         Assert.assertTrue(newModel.isLateralCountCoalesceRequired());
         Assert.assertFalse(oldModel.isLateralCountCoalesceRequired());
     }

@@ -222,7 +222,7 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
         });
     }
 
-    // --- Indexed scalar sub-query bounds -------------------------------------------------------
+    // Indexed scalar sub-query bounds.
     // A sub-query bound that resolves through a symbol INDEX scan is stable within the execution
     // when its key (and any residual filter) is stable. Previously PageFrameRecordCursorFactory
     // reported EVERY index-driven cursor unstable, so these prunes were lost to a full outer scan.
