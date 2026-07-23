@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
+import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -992,6 +994,63 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeferredCommitDroppedTableDoesNotAdvanceWatermark() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE protocol_t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE protocol_u (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setHighestProcessedSequence(2);
+
+                // Drive T through the real QWP decoder and WAL appender as a
+                // deferred frame, exactly as the WebSocket ingress path does.
+                addEncodedRow(state, "protocol_t", 1, QwpConstants.FLAG_DEFER_COMMIT);
+                Assert.assertTrue(state.isDeferCommit());
+                state.processMessage();
+                Assert.assertTrue(state.isOk());
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+                state.markUncommittedDeferredRows();
+                state.clearMessageState();
+
+                addEncodedRow(state, "protocol_t", 2, QwpConstants.FLAG_DEFER_COMMIT);
+                Assert.assertTrue(state.isDeferCommit());
+                state.processMessage();
+                Assert.assertTrue(state.isOk());
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+                state.markUncommittedDeferredRows();
+                state.clearMessageState();
+
+                execute("DROP TABLE protocol_t");
+
+                // A non-deferred U frame closes the group without referencing T.
+                addEncodedRow(state, "protocol_u", 3, (byte) 0);
+                Assert.assertFalse(state.isDeferCommit());
+                state.processMessage();
+                Assert.assertTrue(state.isOk());
+                state.commit();
+
+                Assert.assertFalse("group close must fail after T discards buffered rows", state.isOk());
+                Assert.assertTrue("deferred-row clamp must remain armed", state.hasUncommittedDeferredRows());
+                Assert.assertTrue("U must still commit while the cache evicts dropped T",
+                        state.getPendingAckSeqTxns().get("protocol_u") >= 0);
+
+                state.setHighestProcessedSequence(5);
+                Assert.assertEquals("watermark must not advance over discarded T rows",
+                        2, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testDeferredCommitErrorCausesFullClear() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -1813,7 +1872,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 replaceWriterWithFake(tud, true);
 
                 try {
-                    cache.commitIfMaxUncommittedRowsReached((_, _, _) -> { });
+                    cache.commitIfMaxUncommittedRowsReached((_, _, _) -> {
+                    });
                     Assert.fail("commitIfMaxUncommittedRowsReached must propagate discarded buffered rows");
                 } catch (CairoException e) {
                     Assert.assertTrue(
@@ -3338,6 +3398,23 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         FakeConsumerTudCache fake = new FakeConsumerTudCache(engine, lineConfig);
         f.set(state, fake);
         return fake;
+    }
+
+    private static void addEncodedRow(QwpIngressProcessorState state, String tableName, int value, byte flags) {
+        try (QwpTableBuffer buffer = new QwpTableBuffer(tableName);
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+            QwpTableBuffer.ColumnBuffer valueColumn = buffer.getOrCreateColumn("val", QwpConstants.TYPE_INT, false);
+            QwpTableBuffer.ColumnBuffer timestampColumn =
+                    buffer.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+            valueColumn.addInt(value);
+            timestampColumn.addLong(1_000_000L + value);
+            buffer.nextRow();
+
+            int size = encoder.encode(buffer);
+            long ptr = encoder.getBuffer().getBufferPtr();
+            Unsafe.putByte(ptr + QwpConstants.HEADER_OFFSET_FLAGS, flags);
+            state.addData(ptr, ptr + size);
+        }
     }
 
     private static void addNativeData(QwpIngressProcessorState state, byte[] data) {
