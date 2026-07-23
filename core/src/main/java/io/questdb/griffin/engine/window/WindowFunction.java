@@ -732,6 +732,19 @@ public interface WindowFunction extends Function {
      * other function writes one complete state image per root through
      * {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)}.
      * <p>
+     * Only a bounded RANGE frame answers true today. The chunk layer keys sharing on the
+     * designated timestamp: the seal splits a partition's streamed ring at the previous
+     * boundary's maximum timestamp, treats every row at or below it as a page the previous
+     * root already wrote, and encodes only the rows above it. A RANGE frame expires rows by
+     * timestamp, so its survivors are exactly a timestamp suffix of the previous ring and the
+     * split reproduces them. A ROWS frame keeps a fixed count of rows regardless of timestamp,
+     * and QuestDB admits many rows at one designated timestamp, so a boundary can drop and add
+     * rows that all sit at the split timestamp; the timestamp split cannot tell those survivors
+     * from the new rows and would carry stale pages forward. Sharing a ROWS ring therefore needs
+     * a separate positional chunk model, and since a ROWS frame's live state is already bounded
+     * by its declared row count, the ROWS value and aggregate families keep the whole-state image
+     * instead - they leave this false and override only the whole-state pair above.
+     * <p>
      * Implies {@link #supportsCheckpointState()}: the ring shape is an alternative
      * encoding of checkpoint state, not an alternative to having any.
      */
