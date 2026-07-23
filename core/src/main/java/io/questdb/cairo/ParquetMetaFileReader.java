@@ -814,7 +814,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
 
     /**
      * Computes the absolute memory address of a row group block.
-     * Reads the footer entry for the given row group index and applies the <<3 shift.
+     * Reads the footer entry for the given row group index and applies the {@code <<3} shift.
      */
     private long rowGroupBlockAddr(int rowGroupIndex) {
         long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) rowGroupIndex * ROW_GROUP_ENTRY_SIZE;

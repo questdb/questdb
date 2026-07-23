@@ -36,6 +36,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
@@ -54,11 +55,12 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 
-public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+public class AsyncGroupByNotKeyedAtom implements StatefulAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
     // Sentinel for batch-ineligible functions.
     static final int BATCH_NOT_ELIGIBLE = Integer.MIN_VALUE;
     // Sentinel for batch-eligible no-arg functions (e.g. count(*)).
@@ -262,6 +264,12 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     // Thread-unsafe, should be used by query owner thread only.
     public SimpleMapValue getOwnerMapValue() {
         return ownerMapValue;
+    }
+
+    @Override
+    @TestOnly
+    public PerWorkerLocks getPerWorkerLocks() {
+        return perWorkerLocks;
     }
 
     // Thread-unsafe, should be used by query owner thread only.

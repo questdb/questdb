@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
@@ -57,6 +58,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -70,7 +72,7 @@ import java.io.Closeable;
  * 4. Per-worker x per-slave RecordSinks (RecordSink instances have mutable state and must not be shared)
  * 5. Filter resources (compiled and Java filters, shared across slaves)
  */
-public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
     protected final long bwdScanAbsoluteThreshold;
     protected final long bwdScanMinGap;
     protected final long bwdScanSwitchFactor;
@@ -520,6 +522,12 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
 
     public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
         return ownerGroupByFunctions;
+    }
+
+    @Override
+    @TestOnly
+    public PerWorkerLocks getPerWorkerLocks() {
+        return perWorkerLocks;
     }
 
     public RecordSink getSlaveAsOfJoinMapSink(int slotId, int slaveIndex) {
