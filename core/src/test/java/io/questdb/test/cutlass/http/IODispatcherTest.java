@@ -817,16 +817,16 @@ public class IODispatcherTest extends AbstractTest {
                 Content-Disposition: attachment; filename="questdb-query-0.csv"\r
                 Keep-Alive: timeout=5, max=10000\r
                 \r
-                01ed\r
+                ed\r
                 "QUERY PLAN"\r
                 "VirtualRecord"\r
-                "&nbsp;&nbsp;functions: [1]"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x"\r
+                "  functions: [1]"\r
+                "    Async Filter workers: 2"\r
+                "      limit: 1"\r
+                "      filter: (systimestamp()<f and f<0)"\r
+                "        PageFrame"\r
+                "            Row forward scan"\r
+                "            Frame forward scan on: x"\r
                 \r
                 00\r
                 \r
@@ -931,17 +931,17 @@ public class IODispatcherTest extends AbstractTest {
                 Content-Type: application/json; charset=utf-8\r
                 Keep-Alive: timeout=5, max=10000\r
                 \r
-                0288\r
+                0188\r
                 {"query":"explain select 1 from x where f>systimestamp() and f<0 limit 1","columns":[{"name":"QUERY PLAN","type":"STRING"}],\
                 "timestamp":-1,"dataset":\
                 [["VirtualRecord"],\
-                ["&nbsp;&nbsp;functions: [1]"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x"]],\
+                ["  functions: [1]"],\
+                ["    Async Filter workers: 2"],\
+                ["      limit: 1"],\
+                ["      filter: (systimestamp()<f and f<0)"],\
+                ["        PageFrame"],\
+                ["            Row forward scan"],\
+                ["            Frame forward scan on: x"]],\
                 "count":8}\r
                 00\r
                 \r

@@ -79,7 +79,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
                     if (value != GeoHashes.BYTE_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
-                        if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                        if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getGeoByte(valueIndex + 1) == GeoHashes.BYTE_NULL) {
                             mapValue.putLong(valueIndex, rowId);
                             mapValue.putByte(valueIndex + 1, value);
                         }
@@ -135,7 +135,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
                     if (value != GeoHashes.INT_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
-                        if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                        if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getGeoInt(valueIndex + 1) == GeoHashes.INT_NULL) {
                             mapValue.putLong(valueIndex, rowId);
                             mapValue.putInt(valueIndex + 1, value);
                         }
@@ -191,7 +191,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
                     if (value != GeoHashes.NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
-                        if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                        if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getGeoLong(valueIndex + 1) == GeoHashes.NULL) {
                             mapValue.putLong(valueIndex, rowId);
                             mapValue.putLong(valueIndex + 1, value);
                         }
@@ -247,7 +247,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
                     if (value != GeoHashes.SHORT_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
-                        if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                        if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getGeoShort(valueIndex + 1) == GeoHashes.SHORT_NULL) {
                             mapValue.putLong(valueIndex, rowId);
                             mapValue.putShort(valueIndex + 1, value);
                         }

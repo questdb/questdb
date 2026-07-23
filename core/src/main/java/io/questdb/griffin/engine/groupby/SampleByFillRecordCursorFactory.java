@@ -54,6 +54,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -763,7 +764,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // finding an absent one to fill. Poll the breaker on a
                     // 1024-iteration stride so cancellation does not stall.
                     if ((++skipCount & 0x3FF) == 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     }
                     long lastKnownTs = keysMapRecord.getLong(LAST_KNOWN_TS_SLOT);
                     if (lastKnownTs != currentBucketTimestamp) {
@@ -1190,12 +1191,19 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getArray(col, columnType);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getArray(dispatchSlot[col], columnType);
-                    case DISPATCH_PREV_SLOT ->
-                            hasPrevForCurrentGap ? prevRecord.getArray(dispatchSlot[col], columnType) : null;
+                    case DISPATCH_PREV_SLOT -> {
+                        if (hasPrevForCurrentGap) {
+                            yield prevRecord.getArray(dispatchSlot[col], columnType);
+                        }
+                        // Buckets before a key's first row have nothing to carry forward. Hand out a
+                        // NULL ArrayView, not a Java null: consumers from the array functions to the
+                        // RecordChain an ORDER BY materializes into all read the array unguarded.
+                        yield ArrayConstant.NULL;
+                    }
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getArray(null);
                     default -> {
                         assert false : "unexpected dispatch code: " + currentDispatchCode[col];
-                        yield null;
+                        yield ArrayConstant.NULL;
                     }
                 };
             }
