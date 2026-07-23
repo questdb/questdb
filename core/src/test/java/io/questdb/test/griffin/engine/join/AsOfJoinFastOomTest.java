@@ -54,16 +54,17 @@ public class AsOfJoinFastOomTest extends AbstractCairoTest {
     @Test
     public void testFilteredKeyedAsOfJoinCleansUpWhenCursorRunsOutOfMemory() throws Exception {
         // The slave-side filter routes the plan through FilteredAsOfJoinFastRecordCursorFactory,
-        // whose of() reopens the same pair of sinks.
+        // whose of() reopens the same pair of sinks. The asof_fast hint keeps the plan on the fast
+        // keyed cursor now that the optimiser defaults keyed ASOF to the Dense cursor.
         assertNoLeakOnCursorOom(
-                "SELECT m.k1, m.v, s.v FROM master m ASOF JOIN slave s ON (k1, k2) WHERE s.v > 0"
+                "SELECT /*+ asof_fast(m s) */ m.k1, m.v, s.v FROM master m ASOF JOIN slave s ON (k1, k2) WHERE s.v > 0"
         );
     }
 
     @Test
     public void testKeyedAsOfJoinCleansUpWhenCursorRunsOutOfMemory() throws Exception {
         assertNoLeakOnCursorOom(
-                "SELECT m.k1, m.v, s.v FROM master m ASOF JOIN slave s ON (k1, k2)"
+                "SELECT /*+ asof_fast(m s) */ m.k1, m.v, s.v FROM master m ASOF JOIN slave s ON (k1, k2)"
         );
     }
 

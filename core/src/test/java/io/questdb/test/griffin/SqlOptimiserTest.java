@@ -692,7 +692,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns(String.format(planTemplate, "Fast"));
+                    .returns(String.format(planTemplate, "Dense Single Symbol"));
             // Hint in CTE, must apply
             assertQuery(String.format(queryTemplate, "/*+ asof_dense(left right) */", ""))
                     .noLeakCheck()
@@ -710,7 +710,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns(String.format(planTemplate, "Fast"));
+                    .returns(String.format(planTemplate, "Dense Single Symbol"));
             // Two different hints at top level and CTE. If inherited, top-level hint would override the CTE one.
             // CTE hint must apply.
             assertQuery(String.format(queryTemplate, "/*+ asof_dense(left right) */", "/*+ asof_linear(left right) */"))
@@ -1667,7 +1667,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Encode sort
                                   keys: [s, ts]
                                     SelectedRecord
-                                        AsOf Join Fast
+                                        AsOf Join Dense Single Symbol
                                           condition: t2.s=t1.s
                                             PageFrame
                                                 Row forward scan
@@ -1711,7 +1711,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Encode sort
                                   keys: [ts, s]
                                     SelectedRecord
-                                        AsOf Join Fast
+                                        AsOf Join Dense Single Symbol
                                           condition: t2.s=t1.s
                                             PageFrame
                                                 Row forward scan
@@ -1756,7 +1756,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Encode sort
                                   keys: [s, ts1]
                                     SelectedRecord
-                                        AsOf Join Fast
+                                        AsOf Join Dense Single Symbol
                                           condition: t2.s=t1.s
                                             PageFrame
                                                 Row forward scan
@@ -1800,7 +1800,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Encode sort
                                   keys: [s1, ts1]
                                     SelectedRecord
-                                        AsOf Join Fast
+                                        AsOf Join Dense Single Symbol
                                           condition: t2.s=t1.s
                                             PageFrame
                                                 Row forward scan
@@ -1844,7 +1844,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Encode sort
                                   keys: [s, ts]
                                     SelectedRecord
-                                        AsOf Join Fast
+                                        AsOf Join Dense Single Symbol
                                           condition: t2.s=t1.s
                                             PageFrame
                                                 Row forward scan
