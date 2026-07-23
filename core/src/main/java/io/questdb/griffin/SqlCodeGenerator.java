@@ -219,6 +219,7 @@ import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
 import io.questdb.griffin.engine.join.ArrayUnnestSource;
+import io.questdb.griffin.engine.join.AsOfJoinDenseDualSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
@@ -1326,6 +1327,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return joinColumns.getColumnCount() == 1 &&
                 symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
                 !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
+    }
+
+    // A two-symbol join key where both columns short-circuit to static-symbol mappings: eligible for the
+    // packed-long Dense cursor. The mappings array is built per join column in listColumnFilterA order,
+    // so mappings[i] translates to the symbol space of listColumnFilterA column i.
+    private static boolean isDualSymbolJoin(SymbolShortCircuit symbolShortCircuit, ListColumnFilter joinColumns) {
+        return joinColumns.getColumnCount() == 2 &&
+                symbolShortCircuit instanceof ChainedSymbolShortCircuit &&
+                ((ChainedSymbolShortCircuit) symbolShortCircuit).mappings().length == 2;
+    }
+
+    private AsOfJoinDenseDualSymbolRecordCursorFactory createDualSymbolDenseJoin(
+            JoinRecordMetadata joinMetadata,
+            RecordCursorFactory master,
+            RecordCursorFactory slave,
+            int joinColumnSplit,
+            SymbolShortCircuit symbolShortCircuit,
+            JoinContext slaveContext,
+            long toleranceInterval
+    ) {
+        SymbolJoinKeyMapping[] mappings = ((ChainedSymbolShortCircuit) symbolShortCircuit).mappings();
+        return new AsOfJoinDenseDualSymbolRecordCursorFactory(
+                configuration,
+                joinMetadata,
+                master,
+                slave,
+                joinColumnSplit,
+                listColumnFilterA.getColumnIndexFactored(0),
+                listColumnFilterA.getColumnIndexFactored(1),
+                mappings[0],
+                mappings[1],
+                slaveContext,
+                toleranceInterval
+        );
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -5115,6 +5150,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         toleranceInterval
                                 );
                             }
+                            if (isDualSymbolJoin(symbolShortCircuit, listColumnFilterA)) {
+                                return createDualSymbolDenseJoin(joinMetadata, master, slave, joinColumnSplit, symbolShortCircuit, slaveContext, toleranceInterval);
+                            }
                             int[][] denseSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
                             return new AsOfJoinDenseRecordCursorFactory(
                                     configuration,
@@ -5264,6 +5302,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         } else {
                             // Default multi-key ASOF: forward-scan Dense. Resilient to timestamp density
                             // and key cardinality (O(n), no per-master back-scan cliff).
+                            if (isDualSymbolJoin(symbolShortCircuit, listColumnFilterA)) {
+                                // Two static-symbol keys: pack both into a long map key and skip the generic
+                                // RecordSink/memeq per row (see AsOfJoinDenseDualSymbolRecordCursorFactory).
+                                return createDualSymbolDenseJoin(joinMetadata, master, slave, joinColumnSplit, symbolShortCircuit, slaveContext, toleranceInterval);
+                            }
                             int[][] denseSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
                             return new AsOfJoinDenseRecordCursorFactory(
                                     configuration,

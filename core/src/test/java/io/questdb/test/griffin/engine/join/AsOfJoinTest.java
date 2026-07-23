@@ -6421,4 +6421,50 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertSqlCursors(dense, auto); // identical results
         });
     }
+
+    @Test
+    public void testAutoSelectDualSymbolForTwoSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table quotes (s1 symbol, s2 symbol, ts timestamp, bid double) timestamp(ts) partition by day bypass wal");
+            execute("insert into quotes select ('a'||(x%20))::symbol, ('b'||(x%15))::symbol, (x*100)::timestamp, x::double from long_sequence(50000)");
+            execute("create table trades (s1 symbol, s2 symbol, ts timestamp, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into trades select ('a'||(x%20))::symbol, ('b'||(x%15))::symbol, (x*137)::timestamp, x::double from long_sequence(2000)");
+            printSql("EXPLAIN SELECT t.ts, t.s1, t.s2, q.bid FROM trades t ASOF JOIN quotes q ON (s1, s2)");
+            TestUtils.assertContains(sink, "AsOf Join Dense Dual Symbol");
+        });
+    }
+
+    @Test
+    public void testDualSymbolResultsMatchFast() throws Exception {
+        assertMemoryLeak(() -> {
+            // include NULL symbols and master keys absent in slave to exercise the VALUE_NOT_FOUND path.
+            execute("create table quotes (s1 symbol, s2 symbol, ts timestamp, bid double) timestamp(ts) partition by day bypass wal");
+            execute("insert into quotes select rnd_symbol('a','b','c',null), rnd_symbol('x','y',null), (x*100)::timestamp, x::double from long_sequence(40000)");
+            execute("create table trades (s1 symbol, s2 symbol, ts timestamp, px double) timestamp(ts) partition by day bypass wal");
+            // 'z' and 'w' never appear in quotes -> non-existent key lookups
+            execute("insert into trades select rnd_symbol('a','b','z',null), rnd_symbol('x','w',null), (x*137)::timestamp, x::double from long_sequence(3000)");
+            String dual = "SELECT t.ts, t.s1, t.s2, q.bid FROM trades t ASOF JOIN quotes q ON (s1, s2)";
+            String fast = "SELECT /*+ asof_fast(t q) */ t.ts, t.s1, t.s2, q.bid FROM trades t ASOF JOIN quotes q ON (s1, s2)";
+            printSql("EXPLAIN " + dual);
+            TestUtils.assertContains(sink, "AsOf Join Dense Dual Symbol"); // confirm the packed path is engaged
+            assertSqlCursors(fast, dual); // dual cursor agrees with the independent Fast algorithm
+        });
+    }
+
+    @Test
+    public void testDualSymbolDoNoHarm() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table q3 (s1 symbol, s2 symbol, s3 symbol, k long, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into q3 select 'a','b','c',1, (x*100)::timestamp from long_sequence(1000)");
+            execute("create table t3 (s1 symbol, s2 symbol, s3 symbol, k long, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into t3 select 'a','b','c',1, (x*137)::timestamp from long_sequence(100)");
+            // three symbol keys -> not eligible for the dual-symbol packing, must stay general Dense
+            printSql("EXPLAIN SELECT t.ts FROM t3 t ASOF JOIN q3 q ON (s1, s2, s3)");
+            TestUtils.assertContains(sink, "AsOf Join Dense");
+            TestUtils.assertNotContains(sink, "Dual Symbol");
+            // two NON-symbol keys -> not eligible either
+            printSql("EXPLAIN SELECT t.ts FROM t3 t ASOF JOIN q3 q ON (s1, k)");
+            TestUtils.assertNotContains(sink, "Dual Symbol");
+        });
+    }
 }
