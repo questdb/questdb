@@ -188,6 +188,10 @@ public final class LiveViewCheckpointFunctionCompiler {
         // live-view window expression, so such a frame is known to be ordered by the
         // designated timestamp ascending and its width is safe to read as a timestamp offset.
         final boolean isRange = kind == DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI;
+        // A fixed row-count state extent the function declares for itself, independent of its
+        // frame - lag's offset. Long.MIN_VALUE means it has none and the frame decides the extent.
+        final long rowsStateExtentOverride = function.checkpointRowsStateExtentOverride();
+        final boolean hasRowsStateExtentOverride = rowsStateExtentOverride != Long.MIN_VALUE;
         final long frameLo;
         final long frameHi;
         final long stateExtentLo;
@@ -198,6 +202,16 @@ public final class LiveViewCheckpointFunctionCompiler {
             frameLo = 0;
             frameHi = 0;
             stateExtentLo = 0;
+        } else if (hasRowsStateExtentOverride && !isRange) {
+            // lag ignores its frame outright: it reads the row `offset` back and emits at the
+            // current row, whatever ROWS frame it was written over. Describe it as exactly that -
+            // low bound and extent both -offset, high bound the current row - so the ROWS
+            // discovery bounds it the way it bounds an accumulator over
+            // ROWS BETWEEN offset PRECEDING AND CURRENT ROW. The declared frame's own bounds (a
+            // lagging high bound, an EXCLUDE clause) are decorative for lag and are not carried.
+            frameLo = rowsStateExtentOverride;
+            frameHi = 0;
+            stateExtentLo = rowsStateExtentOverride;
         } else {
             frameLo = isRange
                     ? rangeFrameLo(function.getName(), window, timestampType)
@@ -211,12 +225,17 @@ public final class LiveViewCheckpointFunctionCompiler {
                     : effectiveRowsHi(window);
             // An accumulator's state is the frame's own contents, so the look-behind that feeds
             // the frame is also the one a warm-up replays and the extent is the frame's low
-            // bound. last_value reads a single row instead, the one its high bound names, so
-            // its extent is that lag however far back the frame nominally starts.
+            // bound. last_value reads a single row instead, the one its high bound names, so its
+            // extent is that lag however far back the frame nominally starts.
             stateExtentLo = hasHighBoundStateExtent(function.getName(), window, frameHi)
                     ? frameHi
                     : frameLo;
         }
+        // A function whose extent is a fixed row count (lag) cannot bound a RANGE frame, whose
+        // repair works in timestamp width: decline the frame-local claim there so rangePlan
+        // falls back to the from-boundary rebuild rather than localize against wrong units.
+        final boolean hasFrameLocalState = function.hasFrameLocalCheckpointState()
+                && !(hasRowsStateExtentOverride && isRange);
         final LiveViewCheckpointDependency dependency = new LiveViewCheckpointDependency(
                 kind,
                 partitionSignature,
@@ -225,7 +244,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                 frameHi,
                 stateExtentLo,
                 timestampType,
-                function.hasFrameLocalCheckpointState(),
+                hasFrameLocalState,
                 keyed,
                 keyed && anchored,
                 StructuralConvergence.EXACT,

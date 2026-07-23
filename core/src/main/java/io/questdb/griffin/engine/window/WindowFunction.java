@@ -630,6 +630,23 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * The negated ROWS look-behind a warm-up must replay to reconstruct this function's state,
+     * when that extent is a fixed row count of the function's own rather than the declared
+     * frame's low bound. {@code lag(x, K)} reads the row {@code K} back and ignores its frame
+     * entirely, so its state extent is {@code -K} however the frame is written - in particular
+     * it can reach further back than the frame does, which the frame's own low bound never
+     * describes. Returns {@link Long#MIN_VALUE} to defer to the frame, which is what every
+     * function but {@code lag} does.
+     * <p>
+     * The compiler reads this only for ROWS framing. A RANGE frame's repair works in timestamp
+     * width, which a fixed row count cannot express, so a function carrying this override
+     * declines a RANGE frame rather than localize against an extent in the wrong units.
+     */
+    default long checkpointRowsStateExtentOverride() {
+        return Long.MIN_VALUE;
+    }
+
+    /**
      * @return the checkpoint state layout version this build writes. The compiler folds it into
      * the function's state codec identity, and the checkpoint timeline records it in the function
      * root. Bump on any state-layout change: the bump changes the identity, so a root written under

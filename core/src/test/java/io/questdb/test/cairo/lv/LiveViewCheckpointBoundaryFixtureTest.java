@@ -173,15 +173,14 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
 
     @Test
     public void testAnchorSegmentDeclinesAViewWithAnUncoveredFunction() throws Exception {
-        // The safety boundary of the union. Two shapes bounding two functions is only a
-        // bound over the view while every function sits inside one of them, and lag()
-        // sits inside neither: it counts predecessors by its own offset - five here,
-        // through a frame that promises three - so the ROWS plan declines it and the
-        // anchor does not reset it either. The replacement over [R, H) is
-        // timestamp-global and re-emits its column from the same replay, so one
-        // uncovered function costs the whole view its localization rather than only its
-        // own arm.
-        final String slidingWindow = "lag(x, 5) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS r";
+        // The safety boundary of the union. Two shapes bounding two functions is only a bound
+        // over the view while every function sits inside one of them, and a RANGE-framed lag
+        // sits in neither: lag is frame-local over ROWS - its extent is its own offset - but that
+        // extent is a fixed row count, which cannot bound a RANGE frame's timestamp-width repair,
+        // and the anchor does not reset lag either. So the RANGE lag declines, and the
+        // replacement over [R, H) being timestamp-global, one uncovered function costs the whole
+        // view its localization rather than only its own arm.
+        final String slidingWindow = "lag(x, 5) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' SECOND PRECEDING AND CURRENT ROW) AS r";
         final String viewSql = "SELECT ts, sym, sum(x) OVER w AS s, " + slidingWindow + " FROM base "
                 + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + LOCALIZATION_ANCHOR_EXPRESSION + ")";
         final String oracleSql = "SELECT ts, sym, sum(x) OVER (PARTITION BY sym, " + LOCALIZATION_ANCHOR_EXPRESSION
@@ -564,26 +563,29 @@ public class LiveViewCheckpointBoundaryFixtureTest extends AbstractLiveViewTest 
     }
 
     @Test
-    public void testRowsDependencyDeclinesAFunctionReachingOutsideItsFrame() throws Exception {
-        // The other safety boundary of the ROWS bound, and the one the frame shape alone
-        // cannot see. The bound is the frame's own extent, so it only describes a function
-        // whose state that extent determines. lag() counts predecessors by its own offset -
-        // five here, through a frame that promises three - so a repair localized on the
-        // frame would warm it up over three rows and emit NULL where the sixth row back
-        // belongs. The whole factory therefore declines the plan and pays the unbounded
-        // rebuild, which reconstructs every function from the START FROM boundary and needs
-        // no dependency floor at all.
+    public void testRowsDependencyLocalizesLagFromItsOffset() throws Exception {
+        // The ROWS bound the frame shape alone cannot see. lag counts predecessors by its own
+        // offset - five here, through a frame that promises three - so a repair bounded on the
+        // frame's three would warm up too few rows and emit NULL where the sixth row back
+        // belongs. The descriptor carries lag's offset rather than the frame's low bound, so the
+        // ROWS discovery warms up five rows per key and localizes correctly. The recompute oracle
+        // inside the helper holds the localized output to the from-base answer, so a bound that
+        // warmed up too few rows would surface as a wrong value rather than a silent pass.
         final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
                 "lag(x, 5)",
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
                 false
         );
         Assert.assertEquals(
-                "a declined plan is reported as no plan, not as the frame's shape",
-                LiveViewInstance.REPAIR_PLAN_NONE,
+                "lag localizes on its own offset rather than declining the plan",
+                LiveViewInstance.REPAIR_PLAN_ROWS,
                 cost.repairPlans
         );
-        assertResumeBoundsAnUnlocalizableRepair(cost);
+        // Localized: the scan is bounded by lag's offset around the change, not the view's age.
+        Assert.assertTrue(
+                "localized to lag's offset [scannedRows=" + cost.scannedRows + "]",
+                cost.scannedRows < 2L * LOCALIZATION_HISTORY_COMMITS
+        );
     }
 
     @Test

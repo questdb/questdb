@@ -269,18 +269,19 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(3, mixed.rowsPlan.getMaxPrecedingRows());
             Assert.assertTrue(mixed.isDependencyComplete);
 
-            // lag() reads outside its declared frame, so the ROWS plan declines - and the
-            // RANGE plan, correct for the function it does describe, covers only half the
-            // factory.
+            // lag is frame-local over ROWS but not over RANGE - its extent is a row count, which
+            // cannot bound a RANGE frame's timestamp-width repair. So a RANGE lag beside a bounded
+            // ROWS sum leaves the ROWS plan correct for its own half and the RANGE plan declined:
+            // half the factory covered, which is not enough to localize.
             final Metadata halfCovered = compileMetadata(
                     "select ts, sym, "
-                            + "avg(x) over (partition by sym order by ts range between 2 seconds preceding and current row) a, "
-                            + "lag(x, 5) over (partition by sym order by ts rows between 3 preceding and current row) l "
+                            + "sum(x) over (partition by sym order by ts rows between 3 preceding and current row) s, "
+                            + "lag(x, 5) over (partition by sym order by ts range between 2 seconds preceding and current row) l "
                             + "from base",
                     0
             );
-            Assert.assertNotNull(halfCovered.rangePlan);
-            Assert.assertNull(halfCovered.rowsPlan);
+            Assert.assertNotNull(halfCovered.rowsPlan);
+            Assert.assertNull(halfCovered.rangePlan);
             Assert.assertFalse(halfCovered.isDependencyComplete);
 
             // A function of a kind no plan bounds - an unbounded cumulative window with no
@@ -311,44 +312,28 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
     public void testFunctionsWithoutFrameLocalStateDeclineThePlan() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
-            // lag() counts predecessors by its own offset and ignores the frame entirely:
-            // the frame promises three rows of look-behind and the function reads five.
-            final Metadata rows = compileMetadata(
-                    "select ts, sym, lag(x, 5) over (partition by sym order by ts "
-                            + "rows between 3 preceding and current row) l from base",
-                    0
-            );
-            Assert.assertTrue(rows.dependency.isFiniteRows());
-            Assert.assertFalse(rows.dependency.hasFrameLocalState());
-            Assert.assertNull(rows.rowsPlan);
-
-            // The same hole on the RANGE side, where the width bounds the frame and not
-            // the offset either.
-            final Metadata range = compileMetadata(
+            // lag is frame-local over ROWS - its extent is its own offset, not the frame - but
+            // that extent is a fixed row count, which cannot bound a RANGE frame's timestamp-width
+            // repair. So a RANGE-framed lag is a finite RANGE dependency that still declines,
+            // rather than localize against an extent in the wrong units.
+            final Metadata rangeLag = compileMetadata(
                     "select ts, sym, lag(x, 5) over (partition by sym order by ts "
                             + "range between 2 seconds preceding and current row) l from base",
                     0
             );
-            Assert.assertTrue(range.dependency.isFiniteRange());
-            Assert.assertFalse(range.dependency.hasFrameLocalState());
-            Assert.assertNull(range.rangePlan);
+            Assert.assertTrue(rangeLag.dependency.isFiniteRange());
+            Assert.assertFalse(rangeLag.dependency.hasFrameLocalState());
+            Assert.assertNull(rangeLag.rangePlan);
 
-            // first_value() holds the frame and nothing else, so it is a candidate - but its
-            // state is not proven to converge yet, and the default fails closed until it is.
-            final Metadata notEnabledYet = compileMetadata(
-                    "select ts, sym, first_value(x) over (partition by sym order by ts "
-                            + "rows between 3 preceding and current row) f from base",
-                    0
-            );
-            Assert.assertTrue(notEnabledYet.dependency.isFiniteRows());
-            Assert.assertFalse(notEnabledYet.dependency.hasFrameLocalState());
-            Assert.assertNull(notEnabledYet.rowsPlan);
-
-            // One function short of the whole factory is enough to decline it.
-            assertNoRowsPlan("select ts, sym, "
-                    + "sum(x) over (partition by sym order by ts rows between 3 preceding and current row) s, "
-                    + "lag(x, 5) over (partition by sym order by ts rows between 3 preceding and current row) l "
-                    + "from base");
+            // One function short of the whole factory is enough to decline it: a bounded RANGE
+            // avg that is frame-local, beside the RANGE lag that is not, over the same domain so
+            // the pair clears the domain check and reaches the frame-local gate.
+            final Metadata mixed = compileMetadata("select ts, sym, "
+                    + "avg(x) over (partition by sym order by ts range between 2 seconds preceding and current row) a, "
+                    + "lag(x, 5) over (partition by sym order by ts range between 2 seconds preceding and current row) l "
+                    + "from base", 0);
+            Assert.assertNull(mixed.rangePlan);
+            Assert.assertFalse(mixed.isDependencyComplete);
 
             // The RANGE domain check runs ahead of the gate, so an incompatible pair is
             // still named at CREATE rather than disappearing into a declined plan.
@@ -390,6 +375,70 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                 assertFrameLocalOverBothFrames("max(" + columns[i] + ")");
                 assertFrameLocalOverBothFrames("min(" + columns[i] + ")");
             }
+        });
+    }
+
+    /**
+     * The value functions that read one row of the frame rather than accumulating over it:
+     * {@code first_value} emits the frame's oldest row and {@code nth_value} the k-th from its
+     * start. Both are members of the frame, so a warm-up over the frame's own extent
+     * reconstructs the ring and reproduces them exactly - {@code EXACT} even over DOUBLE, unlike
+     * the sum/avg families that re-accumulate and carry the section 6.1 floating tolerance.
+     * <p>
+     * Both frame shapes are separate implementations, and every value type reaches a partitioned
+     * bounded frame through its own class (LONG, DATE and TIMESTAMP through the shared helper,
+     * DOUBLE, and each of the six DECIMAL widths), so the whole matrix is pinned here.
+     */
+    @Test
+    public void testFirstValueAndNthValueDeclareFrameLocalStateForEveryTypeAndFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table typed (ts timestamp, sym symbol, l long, d double, other timestamp, dt date, "
+                    + "d8 decimal(2, 0), d16 decimal(4, 1), d32 decimal(9, 2), d64 decimal(18, 3), "
+                    + "d128 decimal(38, 6), d256 decimal(76, 10)) timestamp(ts) partition by day wal");
+            final String[] columns = {"l", "d", "other", "dt", "d8", "d16", "d32", "d64", "d128", "d256"};
+            for (int i = 0; i < columns.length; i++) {
+                assertFrameLocalOverBothFrames("first_value(" + columns[i] + ")");
+                assertFrameLocalOverBothFrames("nth_value(" + columns[i] + ", 2)");
+            }
+            // IGNORE NULLS keeps the same frame-local ring: its first-non-null index is a
+            // rederivable memoization into that ring, not a value locked across the warm-up.
+            assertFrameLocalOverBothFrames("first_value(d) ignore nulls");
+        });
+    }
+
+    /**
+     * lag is the shape whose state extent and frame come apart: it reads the row {@code offset}
+     * back and ignores its frame outright, so its extent is {@code -offset} rather than the
+     * frame's own low bound. Here the frame promises three rows of look-behind and lag reaches
+     * five; the descriptor carries five, so a warm-up of five rebuilds the ring and lag emits
+     * the row five back correctly, where a warm-up of the frame's three would emit NULL. A
+     * RANGE-framed lag declines instead - a row-count extent cannot bound a timestamp-width
+     * repair - which {@link #testFunctionsWithoutFrameLocalStateDeclineThePlan} pins.
+     */
+    @Test
+    public void testLagDeclaresFrameLocalStateFromItsOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            final Metadata rows = compileMetadata(
+                    "select ts, sym, lag(x, 5) over (partition by sym order by ts "
+                            + "rows between 3 preceding and current row) l from base",
+                    0
+            );
+            Assert.assertTrue(rows.dependency.isFiniteRows());
+            Assert.assertTrue(rows.dependency.hasFrameLocalState());
+            Assert.assertEquals(-5, rows.dependency.getStateExtentLo());
+            Assert.assertEquals(5, rows.dependency.getRowsPrecedingCount());
+            Assert.assertNotNull(rows.rowsPlan);
+            Assert.assertEquals(5, rows.rowsPlan.getMaxPrecedingRows());
+
+            // The default offset is one row back.
+            final Metadata defaultOffset = compileMetadata(
+                    "select ts, sym, lag(x) over (partition by sym order by ts "
+                            + "rows between 3 preceding and current row) l from base",
+                    0
+            );
+            Assert.assertEquals(-1, defaultOffset.dependency.getStateExtentLo());
+            Assert.assertEquals(1, defaultOffset.dependency.getRowsPrecedingCount());
         });
     }
 

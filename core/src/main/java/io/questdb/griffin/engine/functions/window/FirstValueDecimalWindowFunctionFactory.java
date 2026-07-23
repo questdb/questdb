@@ -2917,6 +2917,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and first_value emits the oldest of them,
+            // so a warm-up over the frame's timestamp width refills the ring and the value converges
+            // from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
+        }
+
+        @Override
         public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
@@ -3190,6 +3200,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 memory.getDecimal128(startOffset + (long) i * Decimal128.BYTES, scratch);
                 sink.putDecimal128(scratch.getHigh(), scratch.getLow());
             }
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and first_value emits the oldest of them,
+            // so a warm-up over the frame's row look-behind refills the ring and the value converges
+            // from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
         }
 
         @Override
@@ -4894,6 +4914,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and first_value emits the oldest of them,
+            // so a warm-up over the frame's timestamp width refills the ring and the value converges
+            // from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
+        }
+
+        @Override
         public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
@@ -5164,6 +5194,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             for (int i = 0; i < bufferSize; i++) {
                 sink.putShort(memory.getShort(startOffset + (long) i * Short.BYTES));
             }
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and first_value emits the oldest of them,
+            // so a warm-up over the frame's row look-behind refills the ring and the value converges
+            // from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
         }
 
         @Override
@@ -6923,6 +6963,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and first_value emits the oldest of them,
+            // so a warm-up over the frame's timestamp width refills the ring and the value converges
+            // from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
+        }
+
+        @Override
         public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
@@ -7202,6 +7252,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 memory.getDecimal256(startOffset + (long) i * Decimal256.BYTES, scratch);
                 sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
             }
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and first_value emits the oldest of them,
+            // so a warm-up over the frame's row look-behind refills the ring and the value converges
+            // from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
         }
 
         @Override
@@ -8916,6 +8976,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and first_value emits the oldest of them,
+            // so a warm-up over the frame's timestamp width refills the ring and the value converges
+            // from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
+        }
+
+        @Override
         public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
@@ -9186,6 +9256,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             for (int i = 0; i < bufferSize; i++) {
                 sink.putInt(memory.getInt(startOffset + (long) i * Integer.BYTES));
             }
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and first_value emits the oldest of them,
+            // so a warm-up over the frame's row look-behind refills the ring and the value converges
+            // from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
         }
 
         @Override
@@ -10874,6 +10954,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and first_value emits the oldest of them,
+            // so a warm-up over the frame's timestamp width refills the ring and the value converges
+            // from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
+        }
+
+        @Override
         public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
@@ -11144,6 +11234,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             for (int i = 0; i < bufferSize; i++) {
                 sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
             }
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and first_value emits the oldest of them,
+            // so a warm-up over the frame's row look-behind refills the ring and the value converges
+            // from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
         }
 
         @Override
@@ -12832,6 +12932,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and first_value emits the oldest of them,
+            // so a warm-up over the frame's timestamp width refills the ring and the value converges
+            // from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
+        }
+
+        @Override
         public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
@@ -13102,6 +13212,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             for (int i = 0; i < bufferSize; i++) {
                 sink.putByte(memory.getByte(startOffset + (long) i * Byte.BYTES));
             }
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and first_value emits the oldest of them,
+            // so a warm-up over the frame's row look-behind refills the ring and the value converges
+            // from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
         }
 
         @Override

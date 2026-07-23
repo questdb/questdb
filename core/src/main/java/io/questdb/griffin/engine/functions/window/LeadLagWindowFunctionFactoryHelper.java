@@ -499,6 +499,15 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
+        public long checkpointRowsStateExtentOverride() {
+            // lag's state is the ring of the last `offset` values, and lag emits the oldest of
+            // them - the row `offset` back - reading its frame not at all. Its state extent is
+            // therefore -offset, whatever ROWS frame it was declared over, and can reach
+            // further back than the frame does. See WindowFunction.checkpointRowsStateExtentOverride.
+            return -offset;
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
             return 1;
         }
@@ -511,6 +520,18 @@ public class LeadLagWindowFunctionFactoryHelper {
             for (long i = 0; i < offset; i++) {
                 sink.putLong(memory.getLong(startOffset + i * RING_SLOT_BYTES));
             }
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the last `offset` values, so a warm-up that replays `offset`
+            // same-key rows before the output floor refills it and lag emits the row `offset`
+            // back correctly from there on. The ring's rotation and the running count differ
+            // from a whole-history run's - the count only gates the not-yet-full case, which an
+            // `offset`-row warm-up has already cleared - but the emitted values match. The
+            // compiler reads the extent from checkpointRowsStateExtentOverride (offset, not the
+            // frame) and admits this only for ROWS framing.
+            return true;
         }
 
         @Override

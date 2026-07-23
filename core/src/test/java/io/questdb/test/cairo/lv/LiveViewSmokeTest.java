@@ -13785,11 +13785,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "sum(x) OVER (PARTITION BY pg ORDER BY ts RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING) AS s, " +
                     "sum(x) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS r " +
                     "FROM base");
-            // lag() reads five rows back through a frame promising three, so the ROWS
-            // plan declines it and the view is left with no bound at all.
+            // lag is frame-local over ROWS - its extent is its own offset - but a RANGE-framed
+            // lag's row-count extent cannot bound a timestamp-width repair, so no plan claims it
+            // and the view is left with no bound at all.
             execute("CREATE LIVE VIEW lv_none FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, pg, " +
-                    "lag(x, 5) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS l " +
+                    "lag(x, 5) OVER (PARTITION BY pg ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW) AS l " +
                     "FROM base");
 
             // Neither view has compiled its SELECT yet, and "not known" is a different
