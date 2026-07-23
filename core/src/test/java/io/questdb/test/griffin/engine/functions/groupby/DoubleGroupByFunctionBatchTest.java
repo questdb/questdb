@@ -24,9 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.CountDoubleGroupByFunction;
@@ -40,25 +38,17 @@ import io.questdb.griffin.engine.functions.groupby.MinDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.NSumDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class DoubleGroupByFunctionBatchTest {
-    private static final int COLUMN_INDEX = 123;
-    private long lastAllocated;
-    private long lastSize;
-
-    @After
-    public void tearDown() {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-            lastAllocated = 0;
-            lastSize = 0;
+public class DoubleGroupByFunctionBatchTest extends AbstractGroupByFunctionBatchTest {
+    // Stands in for a row whose column is NULL, as a column-top row reads.
+    private static final Record NULL_RECORD = new Record() {
+        @Override
+        public double getDouble(int col) {
+            return Double.NaN;
         }
-    }
+    };
 
     // Verify that computeBatch is consistent with computeNext: when the running sum
     // overflows to +Infinity, it is preserved. AvgDouble's computeNext uses addDouble
@@ -455,6 +445,39 @@ public class DoubleGroupByFunctionBatchTest {
             function.computeBatch(value, ptr, 2, 2);
 
             Assert.assertEquals(6.6, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testLastNotNullDoubleBatchKeepsHigherRowIdNonNull() {
+        LastNotNullDoubleGroupByFunction function = new LastNotNullDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // A stored non-null must survive a batch that arrives at a lower rowId. See the class javadoc.
+            long ptr = allocateDoubles(9.5);
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals(9.5, function.getDouble(value), 0.0);
+
+            ptr = allocateDoubles(4.25);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(9.5, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testLastNotNullDoubleBatchReplacesStoredNull() {
+        LastNotNullDoubleGroupByFunction function = new LastNotNullDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            // computeFirst writes NULL through with a real rowId; a non-null at a lower rowId must still
+            // replace it. See the class javadoc.
+            function.computeFirst(value, NULL_RECORD, 100);
+
+            long ptr = allocateDoubles(4.25);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(4.25, function.getDouble(value), 0.0);
         }
     }
 
@@ -901,27 +924,6 @@ public class DoubleGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             Assert.assertTrue(Double.isNaN(function.getDouble(value)));
         }
-    }
-
-    private long allocateDoubles(double... values) {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        lastSize = (long) values.length * Double.BYTES;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        for (int i = 0; i < values.length; i++) {
-            Unsafe.putDouble(lastAllocated + (long) i * Double.BYTES, values[i]);
-        }
-        return lastAllocated;
-    }
-
-    private SimpleMapValue prepare(GroupByFunction function) {
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        return value;
     }
 
     private Record recordOf(double value) {

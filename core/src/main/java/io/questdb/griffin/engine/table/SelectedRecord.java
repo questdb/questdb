@@ -49,6 +49,18 @@ public class SelectedRecord implements Record {
     }
 
     @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        // Forward, so a page-frame base keeps its direct shape-header read. Record's default would
+        // fall back to getArray() and materialize an ArrayView for every row.
+        return base.getArrayDimLen(getColumnIndex(col), columnType, dim);
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        return base.getArrayDouble1d2d(getColumnIndex(col), columnType, idx0, idx1);
+    }
+
+    @Override
     public BinarySequence getBin(int col) {
         return base.getBin(getColumnIndex(col));
     }

@@ -4890,7 +4890,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " rnd_geohash(12) ageoshort," +
                                         " rnd_char() achar," +
                                         " rnd_int(0,1000,3) anint," +
-                                        " rnd_ipv4() anipv4," +
+                                        " CASE WHEN x % 7 = 0 THEN NULL ELSE rnd_ipv4() END anipv4," +
                                         " rnd_geohash(16) ageoint," +
                                         " rnd_symbol(4,4,4,2) asymbol," +
                                         " rnd_float(3) afloat," +

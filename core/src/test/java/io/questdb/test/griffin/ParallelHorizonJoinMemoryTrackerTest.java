@@ -106,13 +106,13 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                         try (RecordCursorFactory f = compiler.compile(
                                 "SELECT t.sym, array_agg(p.price) FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) RANGE FROM -2s TO 2s STEP 1s AS h",
                                 sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(f, AsyncHorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(f, AsyncHorizonJoinRecordCursorFactory.class);
                             // intentionally never call getCursor()
                         }
                         try (RecordCursorFactory f = compiler.compile(
                                 "SELECT array_agg(p.price) FROM trades t HORIZON JOIN prices p RANGE FROM -2s TO 2s STEP 1s AS h",
                                 sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(f, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(f, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
                             // intentionally never call getCursor()
                         }
                     },
@@ -130,18 +130,25 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // which the base atom binds to the per-query tracker in reopen(). The combined per-worker
         // reduce growth trips the limit and surfaces with isOutOfMemory() set. Without the binding
         // the lists escape the limit and the query would complete, firing Assert.fail below.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: on
+        // the combined per-worker reduce growth, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createTrades(engine, sqlExecutionContext, 200_000, 8);
-                        createPrices(engine, sqlExecutionContext, 2_000_000, 8);
+                        createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createPrices(engine, sqlExecutionContext, 400_000, 8);
                         final String query = "SELECT t.sym, array_agg(p.price) " +
                                 "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) " +
                                 "RANGE FROM -15s TO 15s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncHorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinRecordCursorFactory.class);
                             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                 //noinspection StatementWithEmptyBody
                                 while (cursor.hasNext()) {
@@ -177,7 +184,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncHorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinRecordCursorFactory.class);
                             for (int i = 0; i < 5; i++) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     //noinspection StatementWithEmptyBody
@@ -217,7 +224,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncHorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinRecordCursorFactory.class);
                             for (int i = 0; i < 10; i++) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     long rows = 0;
@@ -242,19 +249,26 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // per-worker allocators and the per-worker x per-slave ASOF maps. array_agg(p0.px0) grows
         // the allocators past the limit and surfaces with isOutOfMemory() set; without the binding
         // it escapes and the query completes, firing Assert.fail below.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: on
+        // the combined per-worker reduce growth, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createMultiHorizonTables(engine, sqlExecutionContext, 200_000);
+                        createMultiHorizonTables(engine, sqlExecutionContext, 40_000);
                         final String query = "SELECT t.sym, array_agg(p0.px0), count(p1.px1) " +
                                 "FROM trades t " +
                                 "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) " +
                                 "HORIZON JOIN prices1 p1 " +
                                 "RANGE FROM -15s TO 15s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncMultiHorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncMultiHorizonJoinRecordCursorFactory.class);
                             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                 //noinspection StatementWithEmptyBody
                                 while (cursor.hasNext()) {
@@ -276,7 +290,11 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedMultiHorizonJoinOpenFailureReleasesAllocations() throws Exception {
-        // Multi-slave keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations.
+        // Multi-slave keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations. The
+        // reducer acquires a per-worker slot before it navigates to the frame, so each breached
+        // execution must also hand its slot back: PerWorkerLocks has no reset and the atom belongs
+        // to the factory, so a slot lost here is lost for as long as the factory stays in the SQL
+        // cache, and once all of them have leaked every worker spins for a slot nobody will release.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -290,7 +308,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "HORIZON JOIN prices1 p1 " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncMultiHorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncMultiHorizonJoinRecordCursorFactory.class);
                             for (int i = 0; i < 5; i++) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     //noinspection StatementWithEmptyBody
@@ -331,7 +349,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "HORIZON JOIN prices1 p1 " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncMultiHorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncMultiHorizonJoinRecordCursorFactory.class);
                             for (int i = 0; i < 10; i++) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     long rows = 0;
@@ -365,7 +383,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                         "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) HORIZON JOIN prices1 p1 " +
                                         "RANGE FROM -2s TO 2s STEP 1s AS h",
                                 sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(f, AsyncMultiHorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(f, AsyncMultiHorizonJoinRecordCursorFactory.class);
                             // intentionally never call getCursor()
                         }
                     },
@@ -383,18 +401,25 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // atom, which binds them to the per-query tracker in reopen(). The combined per-worker
         // reduce growth trips the limit and surfaces with isOutOfMemory() set. Without the binding
         // the list escapes the limit and the query would complete, firing Assert.fail below.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: on
+        // the combined per-worker reduce growth, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createTrades(engine, sqlExecutionContext, 200_000, 8);
-                        createPrices(engine, sqlExecutionContext, 2_000_000, 8);
+                        createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createPrices(engine, sqlExecutionContext, 400_000, 8);
                         final String query = "SELECT array_agg(p.price) " +
                                 "FROM trades t HORIZON JOIN prices p " +
                                 "RANGE FROM -15s TO 15s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
                             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                 //noinspection StatementWithEmptyBody
                                 while (cursor.hasNext()) {
@@ -429,7 +454,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t HORIZON JOIN prices p " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
                             for (int i = 0; i < 5; i++) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     //noinspection StatementWithEmptyBody
@@ -469,7 +494,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t HORIZON JOIN prices p " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
                             for (int i = 0; i < 10; i++) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     long rows = 0;
@@ -494,19 +519,26 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // single growing array_agg(p0.px0) list; the combined per-worker reduce growth trips the limit and
         // surfaces with isOutOfMemory() set. Without the binding it escapes and the query completes, firing
         // Assert.fail below. The drain-to-breach companion the non-keyed multi-slave variant previously lacked.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: on
+        // the combined per-worker reduce growth, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createMultiHorizonTables(engine, sqlExecutionContext, 200_000);
+                        createMultiHorizonTables(engine, sqlExecutionContext, 40_000);
                         final String query = "SELECT array_agg(p0.px0), count(p1.px1) " +
                                 "FROM trades t " +
                                 "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) " +
                                 "HORIZON JOIN prices1 p1 " +
                                 "RANGE FROM -15s TO 15s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
                             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                 //noinspection StatementWithEmptyBody
                                 while (cursor.hasNext()) {
@@ -529,7 +561,9 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testNotKeyedMultiHorizonJoinOpenFailureReleasesAllocations() throws Exception {
         // Multi-slave non-keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations;
-        // dropping the GROUP BY key routes to the non-keyed multi-horizon factory.
+        // dropping the GROUP BY key routes to the non-keyed multi-horizon factory. Its reducer
+        // acquires a per-worker slot before navigating to the frame, so the breached executions
+        // must hand every slot back - see testKeyedMultiHorizonJoinOpenFailureReleasesAllocations.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -543,7 +577,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "HORIZON JOIN prices1 p1 " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
                             for (int i = 0; i < 5; i++) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     //noinspection StatementWithEmptyBody
@@ -584,7 +618,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "HORIZON JOIN prices1 p1 " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
                             for (int i = 0; i < 10; i++) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     long rows = 0;
@@ -600,17 +634,6 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                     LOG
             );
         });
-    }
-
-    private static void assertInTree(RecordCursorFactory factory, Class<?> expected) {
-        RecordCursorFactory f = factory;
-        while (f != null) {
-            if (expected.isInstance(f)) {
-                return;
-            }
-            f = f.getBaseFactory();
-        }
-        Assert.fail("expected " + expected.getSimpleName() + " in the factory tree, but top was " + factory.getClass().getName());
     }
 
     private static void createMultiHorizonTables(io.questdb.cairo.CairoEngine engine, io.questdb.griffin.SqlExecutionContext ctx, int tradeRows) throws Exception {
