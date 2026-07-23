@@ -479,7 +479,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
-        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
+        final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
+        final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
+        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
 
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
