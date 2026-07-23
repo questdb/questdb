@@ -34,6 +34,7 @@ import java.io.Closeable;
 
 public class TableWriterTask implements Closeable {
     public static final int CMD_ALTER_TABLE = 2;
+    public static final int CMD_DELETE_TABLE = 5;
     public static final int CMD_STORAGE_POLICY = 4;
     public static final int CMD_UNUSED = 1;
     public static final int CMD_UPDATE_TABLE = 3;
@@ -63,6 +64,7 @@ public class TableWriterTask implements Closeable {
             case CMD_ALTER_TABLE -> "ALTER TABLE";
             case CMD_STORAGE_POLICY -> "STORAGE POLICY";
             case CMD_UPDATE_TABLE -> "UPDATE TABLE";
+            case CMD_DELETE_TABLE -> "DELETE TABLE";
             default -> "UNKNOWN COMMAND";
         };
     }

@@ -31,7 +31,9 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.pgwire.PGPipelineEntry;
 import io.questdb.griffin.CompiledQuery;
@@ -39,6 +41,7 @@ import io.questdb.griffin.ReadOnlyStatementGate;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.GenericDropOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -125,6 +128,72 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
                 try {
                     dispatcher.execute(fenceProbeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
                     Assert.fail("the async-enqueue fallback must refuse a WAL UPDATE on a read-only node");
+                } catch (CairoException e) {
+                    assertReadOnlyRefusal(e);
+                }
+            }
+        });
+    }
+
+    /**
+     * DELETE is WAL-only and its operation cannot apply against a physical TableWriter. A busy WAL-writer
+     * acquire must therefore remain synchronous even when the protocol supplies an event sequence; routing
+     * it through the generic async-writer fallback would either fail later or bypass WAL replication.
+     */
+    @Test
+    public void testDeleteDoesNotUseAsyncWriterQueueWhenWalWriterBusy() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean asyncBranchEntered = new AtomicBoolean();
+            OperationDispatcher.setAsyncEnqueueObserver(() -> asyncBranchEntered.set(true));
+            try (CairoEngine busyEngine = poolExhaustedWritableEngine()) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(busyEngine, "matrix delete") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(deleteProbeOperation(), TestUtils.createSqlExecutionCtx(busyEngine), new SCSequence(), false);
+                    Assert.fail("busy WAL DELETE must preserve the retryable writer-busy exception");
+                } catch (EntryUnavailableException expected) {
+                    // Expected: the caller retries the WAL submission instead of using the physical-writer queue.
+                }
+                Assert.assertFalse("DELETE must not enter the physical-writer async branch", asyncBranchEntered.get());
+            } finally {
+                OperationDispatcher.setAsyncEnqueueObserver(null);
+            }
+        });
+    }
+
+    /**
+     * Drives a real WAL DELETE through {@code engine.execute()} on an engine whose read-only flag flips
+     * after the table is created -- exercising the DELETE dispatcher fence for real, not merely the
+     * classification map above. Per the http/pg-wire classification, DELETE funnels through the identical
+     * {@code executeDelete -> cq.execute() -> OperationDispatcher.execute} path as UPDATE, and
+     * {@code SqlCompilerImpl.generateDelete} mints no WAL txn at compile time (unlike the parse-time
+     * TRUNCATE mint), so compiling a DELETE against a read-only engine succeeds; the refusal is entirely
+     * {@code OperationDispatcher.applyFenced}'s in-lock {@code isReadOnlyMode()} re-check -- the same
+     * dispatcher fence {@link #testAsyncEnqueueBranchDrivesRealWriteAndIsFenced} drives for the
+     * async-enqueue fallback arm, driven here for the inline-apply success arm through real SQL text,
+     * mirroring {@link #testParseTimeTruncateDrivesRealWriteAndIsFenced}'s toggle-read-only-after-create
+     * structure.
+     */
+    @Test
+    public void testDeleteIsRefusedUnderWriteFence() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean readOnly = new AtomicBoolean(false);
+            try (CairoEngine flipEngine = flipReadOnlyEngine(readOnly)) {
+                SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(flipEngine);
+                flipEngine.execute(
+                        "CREATE TABLE matrix_del (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                        ctx
+                );
+                // Flip read-only after the table exists: the delete's WAL externalization must be
+                // refused by the dispatcher's in-lock re-check before it mints a sequencer txn.
+                readOnly.set(true);
+                try {
+                    flipEngine.execute("DELETE FROM matrix_del WHERE x > 0", ctx);
+                    Assert.fail("a DELETE must be refused on a read-only node");
                 } catch (CairoException e) {
                     assertReadOnlyRefusal(e);
                 }
@@ -316,6 +385,10 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         // replicate-or-refuse across a demote. FENCED. (This is the cell a reviewer's hand-built contract
         // list omitted -- pinned here explicitly.)
         http.put("UPDATE", FENCED);
+        // DELETE routes to executeDelete -> cq.execute() -> OperationDispatcher.execute, the same
+        // role-switch-read-lock + in-lock isReadOnlyMode() re-check fence as UPDATE (the WAL DELETE mints
+        // its sequencer txn under the dispatcher fence exactly like UPDATE). FENCED.
+        http.put("DELETE", FENCED);
         // ALTER routes to executeAlterTable -> the same OperationDispatcher.execute fence as UPDATE.
         http.put("ALTER", FENCED);
         // The parse-time WAL DDL types (TRUNCATE, RENAME_TABLE, ALTER_VIEW, ALTER_STORAGE_POLICY) mint a
@@ -488,6 +561,10 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         // cells take). The parked-writer index < 0 branch of msgExecuteUpdate now holds the same fence
         // around its implicit commit() + apply(). FENCED.
         put(pg, "UPDATE", FENCED);
+        // DELETE -> msgExecuteDelete funnels through OperationDispatcher.execute under the same
+        // role-switch read lock + in-lock isReadOnlyMode() re-check as UPDATE; the parked-writer index < 0
+        // branch of msgExecuteDelete holds the identical inline fence around its commit() + apply(). FENCED.
+        put(pg, "DELETE", FENCED);
         put(pg, "ALTER", FENCED);
         // COMMIT flushes pending writers inside commit(), which holds the role-switch fence around the
         // writer commit (the pg-wire COMMIT fence). Classified ACQUIRE_GATED: it reaches the writer only
@@ -605,6 +682,11 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         return out;
     }
 
+    private static DeleteOperation deleteProbeOperation() {
+        final TableToken token = new TableToken("matrix_del", "matrix_del~1", null, 1, true, false, false);
+        return new DeleteOperation(token, 1, 0, 0, null, true, true, 0, 1, -1, -1);
+    }
+
     private static Operation dropOperation(String tableName) {
         return new GenericDropOperation(OperationCodes.DROP_TABLE, null, tableName, 0, false);
     }
@@ -702,6 +784,22 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
             @Override
             public boolean isReadOnlyMode() {
                 return true;
+            }
+        };
+    }
+
+    private CairoEngine poolExhaustedWritableEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
+                throw EntryUnavailableException.instance("pool size exceeded");
+            }
+
+            @Override
+            public TableWriter getWriterOrPublishCommand(TableToken tableToken, AsyncWriterCommand asyncWriterCommand) {
+                throw new AssertionError("DELETE reached the physical-writer async queue");
             }
         };
     }

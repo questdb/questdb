@@ -3420,7 +3420,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Delete segment 5's event file so loader.load() throws a CairoException when
-            // hasBaseTableTruncateInWalGap tries to open it during the next hydrateMatViewStateStore call.
+            // baseTableBarrierReasonInWalGap tries to open it during the next hydrateMatViewStateStore call.
             final TableToken baseTableToken = engine.getTableTokenIfExists("base");
             Assert.assertNotNull(baseTableToken);
             try (Path path = new Path()) {
@@ -3456,7 +3456,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // Simulate the role-promote hydrate path. The truncate scan's load() will throw because
             // the WAL segment file is missing. The fix catches the exception inside
-            // hasBaseTableTruncateInWalGap and returns false, allowing enqueueIncrementalRefresh to
+            // baseTableBarrierReasonInWalGap and returns null, allowing enqueueIncrementalRefresh to
             // run. Without the fix the view is silently left unscheduled.
             engine.hydrateMatViewStateStore();
 
@@ -8307,6 +8307,44 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidateRetriesAfterConcurrentRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createMatView("mv", "SELECT ts, count() cnt FROM base SAMPLE BY 1h");
+            execute("INSERT INTO base VALUES (1.0, '2024-09-10T12:00')");
+            drainQueues();
+
+            final TableToken viewToken = engine.verifyTableName("mv");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState state = store.getViewState(viewToken);
+            Assert.assertNotNull(state);
+            Assert.assertFalse(state.isInvalid());
+            Assert.assertTrue(state.tryLock());
+            try {
+                store.enqueueInvalidate(viewToken, "concurrent refresh test");
+                try (MatViewRefreshJob job = createMatViewRefreshJob()) {
+                    job.run();
+                }
+                Assert.assertTrue(state.isPendingInvalidation());
+                Assert.assertFalse(state.isInvalid());
+            } finally {
+                state.unlock();
+            }
+
+            try (MatViewRefreshJob job = createMatViewRefreshJob()) {
+                job.run();
+            }
+            Assert.assertFalse(state.isPendingInvalidation());
+            Assert.assertTrue(state.isInvalid());
+            drainWalQueue();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views WHERE view_name = 'mv'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\tinvalidation_reason\ninvalid\tconcurrent refresh test\n");
+        });
+    }
+
+    @Test
     public void testTimerPeriodMatView() throws Exception {
         testPeriodRefresh("every 1h deferred", null, true);
     }
@@ -8459,6 +8497,69 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("view_status\tinvalidation_reason\ninvalid\ttruncate operation\n");
+        });
+    }
+
+    @Test
+    public void testDeleteBarrierDoesNotAdvanceRefreshBaseTxnPastDelete() throws Exception {
+        // D4 (whole-PR level-3): a base-table DELETE in the mat-view refresh gap is an invalidating barrier,
+        // exactly like a TRUNCATE. A DELETE is a deferred non-data SQL txn (WalTxnType.SQL, cmdType
+        // CMD_DELETE_TABLE) that WalTxnRangeLoader's interval scan skips; before the fix the incremental refresh
+        // advanced its base txn past the delete and the view silently kept pre-delete rows (stale-valid). This
+        // clones testTruncateBarrierDoesNotAdvanceRefreshBaseTxnPastTruncate for DELETE, driving the
+        // restart/catch-up BACKSTOP (the refresh run's own barrier detection via WalTxnRangeLoader.hasDelete()),
+        // not the one-shot apply-time INVALIDATE (which is drained first, exactly as the truncate test does).
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv", "select ts, count() cnt from base sample by 1h");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+            drainQueues(); // applies base WAL and converges the view (bucket 12:00 -> cnt 2)
+
+            final TableToken viewToken = engine.verifyTableName("mv");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState state = store.getViewState(viewToken);
+            Assert.assertNotNull(state);
+            final long baseTxnBeforeDelete = state.getLastRefreshBaseTxn();
+            Assert.assertTrue(baseTxnBeforeDelete > -1);
+
+            // Delete a base row the view already aggregated (the barrier) then add a later bucket. Apply only the
+            // base WAL so the delete sits in the gap the next incremental refresh scans, WITHOUT processing
+            // mat-view tasks yet. The delete removes the 12:30 row, so the 12:00 bucket's true cnt is now 1; an
+            // incremental refresh that skipped the delete would advance past it and leave the view showing the
+            // stale cnt 2.
+            execute("delete from base where val = 2.0");
+            execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
+            drainWalQueue();
+
+            // Drain any queued mat-view task (including the apply-time INVALIDATE the delete enqueues) before the
+            // lone refresh run, so the refresh run itself -- not a separately-queued INVALIDATE -- is what must
+            // avoid advancing the watermark past the delete (isolates the load-time hasDelete() backstop).
+            final MatViewRefreshTask discard = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(discard)) {
+                // drop
+            }
+
+            // Drive ONE fresh incremental refresh. The delete in the scanned range must NOT let the no-rows
+            // commit advance the persisted base txn past the delete; the refresh must invalidate instead. The
+            // same drain that runs the refresh also finalizes the barrier's invalidation, so the view ends invalid.
+            store.enqueueIncrementalRefresh(viewToken);
+            try (MatViewRefreshJob job = createMatViewRefreshJob()) {
+                job.run();
+            }
+
+            Assert.assertEquals(
+                    "a delete-barrier refresh must not advance the persisted base txn past the delete",
+                    baseTxnBeforeDelete,
+                    state.getLastRefreshBaseTxn()
+            );
+            // The user-visible half of the barrier: the view must be actually invalid with the delete reason --
+            // not silently valid with stale pre-delete rows.
+            Assert.assertTrue("the delete barrier must invalidate the view", state.isInvalid());
+            drainWalAndMatViewQueues();
+            assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'mv'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\tinvalidation_reason\ninvalid\tdelete operation\n");
         });
     }
 

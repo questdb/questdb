@@ -41,6 +41,8 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -71,11 +73,14 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
@@ -184,6 +189,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
+    @TestOnly
+    private static volatile Runnable replaceRangePostCommitObserver;
     /*
         The most recent logical partition is allowed to have up to cairo.o3.last.partition.max.splits (20 by default) splits.
         Any other partition is allowed to have cairo.o3.mid.partition.max.splits (1 by default) splits.
@@ -361,6 +368,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // A flag that during WAL processing o3MemColumns1 or o3MemColumns2 were
     // set to a "shifted" state and the state has to be cleaned.
     private boolean memColumnShifted;
+    // Superseded partition-version removal candidates accumulated across ALL windows of a windowed replace,
+    // drained once by finishReplaceRange after its single commit00. Each window's processO3Block clears the
+    // live partitionRemoveCandidates at its start, so without this per-window accumulation only the final
+    // window's candidates would survive to housekeep - every earlier window's dropped/trimmed partition
+    // directory would leak on disk. Only meaningful between a begin/finish (or begin/abort) pair.
+    private final LongList replaceRangeRemoveCandidates = new LongList();
+    // Row count captured by beginReplaceRange, read by finishReplaceRange to report rows removed across all
+    // windows of a windowed replace. Only meaningful between a begin/finish pair.
+    private long replaceRangeRowsBefore;
     private int metaPrevIndex;
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
     private int metaSwapIndex;
@@ -939,6 +955,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public long apply(DeleteOperation operation) {
+        // v1: non-WAL DELETE is rejected at compile; a direct TableWriter apply is unsupported.
+        operation.authorize();
+        return operation.apply(this, true); // DeleteOperation.apply throws for the non-WAL path
+    }
+
+    @Override
     public long apply(UpdateOperation operation) {
         operation.authorize();
         return operation.apply(this, true);
@@ -1462,23 +1485,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * partition reopen if the last partition was converted). Empty batch is a no-op. The
      * pending list is cleared regardless of outcome.
      * <p>
-     * This is <b>not</b> a final commit. {@code txWriter.commit} below persists {@code _txn},
-     * but the new native column files written by {@link #produceNativeFromParquet} were closed
-     * without fsync and are not part of the writer's active column set, so no data fsync is
-     * issued here. Real durability is established by the column-conversion final commit
-     * ({@link #commit00}) that the caller (typically
-     * {@link io.questdb.griffin.ConvertOperatorImpl#convertColumn0}) runs after the column
-     * type-conversion phase: that commit's {@code syncColumns} fsyncs both the just-reopened
-     * native partition data and the new column-conversion output before publishing the next
-     * {@code _txn}.
+     * Before this method publishes {@code _txn}, the conversion syncs the reconstructed native
+     * column and index files, plus the partition directory, whenever commit mode requires it.
+     * The caller (typically {@link io.questdb.griffin.ConvertOperatorImpl#convertColumn0}) still
+     * performs its final {@link #commit00} after the column type-conversion phase.
      * <p>
-     * Consequence for error handling: any failure here (the {@code txWriter.commit} itself,
-     * the metadata cache update, or the per-partition close/rmdir/reopen housekeeping) means
-     * the surrounding ALTER as a whole has not completed - the column-conversion phase will
-     * not run, the final commit will not happen, and on crash no part of the operation is
-     * durable. Sub-failures must therefore propagate as ordinary errors, not as the
-     * "data persisted, housekeeping failed" signal of {@link #handleHousekeepingException}:
-     * no data has been persisted in the durable sense at this point.
+     * A failure before {@code commitTxWriter} leaves the on-disk transaction unchanged. A failure
+     * afterward leaves the format conversion durable even if metadata-cache or old-directory
+     * housekeeping has not completed. Callers propagate that failure and a retry observes the native
+     * partition, making the conversion pre-commit idempotent for both ALTER and DELETE.
      */
     public void commitPendingParquetToNativeConversions() {
         if (pendingParquetToNativeConversions.size() == 0) {
@@ -1747,16 +1762,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * <p>
      * When {@code doCommit} is false, performs the partition rewrite and updates in-memory
      * {@code txWriter} state, but does not commit and does not run post-commit housekeeping.
-     * The new native column files are written and closed without fsync. The caller must
-     * invoke {@link #commitPendingParquetToNativeConversions()} once after the batch to
-     * push {@code _txn} to disk and run the deferred housekeeping. Even after that
-     * pre-commit, the new data files are not yet fsynced - the real durability fence is
-     * the caller's subsequent {@link #commit00} (or equivalent {@code syncColumns} +
-     * {@code txWriter.commit}) at the end of the surrounding operation, typically the
-     * column-conversion final commit driven by
-     * {@link io.questdb.griffin.ConvertOperatorImpl#convertColumn0}. If the caller fails
-     * before either of those, the in-memory updates are discarded along with the
-     * (subsequently distressed) writer, leaving the on-disk state unchanged.
+     * The caller must invoke {@link #commitPendingParquetToNativeConversions()} once after
+     * the batch to push {@code _txn} to disk and run the deferred housekeeping. Before that
+     * publication, the conversion syncs native column and index files when commit mode requires
+     * it. If the caller fails before the pre-commit, the in-memory updates are discarded along
+     * with the (subsequently distressed) writer, leaving the on-disk state unchanged.
      */
     public boolean convertPartitionParquetToNative(long partitionTimestamp, boolean doCommit) {
         assert metadata.getTimestampIndex() > -1;
@@ -1809,6 +1819,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             LOG.info().$("rebuilding index files after parquet decode [path=").$substr(pathRootSize, other).I$();
             rebuildPartitionIndexFiles(partitionTimestamp, newPartitionDirLen, parquetRowCount);
+            if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
+                final long dirFd = TableUtils.openRONoCache(ff, other.trimTo(newPartitionDirLen).$(), LOG);
+                if (dirFd != -1) {
+                    ff.fsyncAndClose(dirFd);
+                }
+            }
 
             // used to update txn and bump recordStructureVersion
             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
@@ -2886,6 +2902,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @TestOnly
+    public static void setReplaceRangePostCommitObserver(Runnable observer) {
+        replaceRangePostCommitObserver = observer;
+    }
+
+    @TestOnly
     public void publishDeferredPostingSealPurgesOnFullQueueForTesting() {
         publishDeferredPostingSealPurges(txWriter.getTxn(), true);
     }
@@ -3050,6 +3071,317 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return dropped;
     }
 
+    /**
+     * Replaces every row in {@code [replaceRangeLoTs, replaceRangeHiExclTs)} with the survivor rows from
+     * {@code survivorCursor}, or - when {@code survivorCursor == null} - empties that range in place: rows
+     * outside the range within boundary partitions are kept, fully-covered partitions are dropped, and a
+     * range covering all data truncates the table. Returns the number of rows removed.
+     * <p>
+     * Survivor rows are staged through the ordinary O3 row API and applied with the existing replace-range
+     * machinery. The method owns its transaction boundary: a failure before transaction publication aborts and
+     * rolls back uncommitted state. A failure in post-commit housekeeping is propagated but the published change
+     * remains durable; the writer is marked distressed so its next acquisition rebuilds clean state.
+     *
+     * @param replaceRangeLoTs     inclusive low timestamp of the range to replace
+     * @param replaceRangeHiExclTs exclusive high timestamp of the range to replace
+     * @param survivorCursor       survivor rows to write into the range, or {@code null} to empty it
+     * @param copier               copies a survivor record into a table row (cursor path only)
+     * @param timestampCursorIndex designated-timestamp column index in the cursor (cursor path only)
+     * @param executionContext     context forwarded to {@code copier.copy} (cursor path only); required
+     *                             whenever the survivor row contains a DECIMAL column, since the generated
+     *                             copier unconditionally dereferences it for DECIMAL8..DECIMAL256 destinations
+     *                             (there is no same-type fast path). Ignored on the empty-range path, so
+     *                             {@code null} is fine there.
+     * @return number of rows removed from the range
+     */
+    public long replaceRange(
+            long replaceRangeLoTs,
+            long replaceRangeHiExclTs,
+            @Nullable RecordCursor survivorCursor,
+            @Nullable RecordToRowCopier copier,
+            int timestampCursorIndex,
+            @Nullable SqlExecutionContext executionContext
+    ) {
+        if (replaceRangeLoTs >= replaceRangeHiExclTs) {
+            // Empty or inverted range - nothing to remove. By the replace-range contract every survivor
+            // must fall inside [lo, hiExcl), so an empty range also has nothing to stage. Mirror the
+            // pre-split behaviour: flush pending rows and return without opening a replace transaction.
+            checkDistressed();
+            commit();
+            return 0;
+        }
+        beginReplaceRange();
+        final long txnBeforeReplace = txWriter.getTxn();
+        try {
+            applyReplaceRangeWindow(replaceRangeLoTs, replaceRangeHiExclTs, survivorCursor, copier, timestampCursorIndex, executionContext);
+            return finishReplaceRange();
+        } catch (Throwable th) {
+            if (txWriter.getTxn() == txnBeforeReplace) {
+                abortReplaceRange();
+                try {
+                    rollback();
+                } catch (Throwable rollbackFailure) {
+                    th.addSuppressed(rollbackFailure);
+                }
+            } else {
+                markDistressed();
+            }
+            throw th;
+        }
+    }
+
+    /**
+     * Opens a windowed replace transaction: flushes pending rows and switches the writer into
+     * {@code WAL_DEDUP_MODE_REPLACE_RANGE}. Must be paired with one or more {@link #applyReplaceRangeWindow}
+     * calls - each over a DISJOINT sub-range, applied in ascending timestamp order - and a terminal
+     * {@link #finishReplaceRange} on success or {@link #abortReplaceRange} on failure.
+     * <p>
+     * <b>Crash-safety invariant:</b> no transaction is persisted until {@code finishReplaceRange}'s single
+     * {@code commit00()}. Each {@code applyReplaceRangeWindow} appends partition data + mutates in-memory
+     * {@code txWriter} bookkeeping via {@link #processWalCommitFinishApply}, which never writes {@code _txn}
+     * (that is exclusively {@code commit00} -> {@code txWriter.commit}). So the whole begin/apply.../finish
+     * sequence advances the durable txn (and seqTxn, when driven from WAL apply) exactly once. A crash before
+     * {@code finishReplaceRange} leaves the durable txn at its pre-begin value; the already-applied windows'
+     * on-disk partition data is uncommitted and discarded/overwritten on re-apply, which - because each
+     * finished window then contains only survivor rows - re-applies as a no-op, so a re-run reaches the same
+     * final state (idempotent). Each physical partition may appear in at most one window: O3 names every new
+     * partition version with the transaction number that remains fixed until {@code finishReplaceRange}, so a
+     * second rewrite of that partition would alias its source and destination directory. Callers must align
+     * adjacent windows accordingly; disjoint timestamp ranges alone do not establish this invariant.
+     */
+    public void beginReplaceRange() {
+        checkDistressed();
+
+        // Commit up front to flush any pending rows, so the replace-apply starts from a fully-committed
+        // state with an empty lag (mirrors removePartition).
+        commit();
+
+        assert txWriter.getLagRowCount() == 0;
+        physicallyWrittenRowsSinceLastCommit.reset();
+        dedupRowsRemovedSinceLastCommit.reset();
+        txWriter.beginPartitionSizeUpdate();
+        replaceRangeRowsBefore = txWriter.getRowCount();
+        // Start the cross-window removal-candidate accumulator empty (see the field comment and
+        // applyReplaceRangeWindow / finishReplaceRange).
+        replaceRangeRemoveCandidates.clear();
+        dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+    }
+
+    /**
+     * Applies one window of an open windowed replace (see {@link #beginReplaceRange}): replaces every row in
+     * {@code [loTs, hiExclTs)} with the survivor rows from {@code survivorCursor}, or - when the cursor is
+     * {@code null}/empty - empties that range in place. Stages ONLY this window's survivors into O3 memory and
+     * releases them before returning ({@code finishO3Append}), bounding peak O3 memory to one caller-selected
+     * window. Does NOT commit: the surgery accumulates in-memory into the transaction opened by
+     * {@code beginReplaceRange} and is persisted once by {@link #finishReplaceRange}. Windows must be disjoint,
+     * applied in ascending timestamp order, and must not touch the same physical partition more than once.
+     *
+     * @param loTs                 inclusive low timestamp of the window to replace
+     * @param hiExclTs             exclusive high timestamp of the window to replace
+     * @param survivorCursor       survivor rows to write into the window, or {@code null} to empty it
+     * @param copier               copies a survivor record into a table row (cursor path only)
+     * @param timestampCursorIndex designated-timestamp column index in the cursor (cursor path only)
+     * @param executionContext     context forwarded to {@code copier.copy} (cursor path only); required
+     *                             whenever a survivor row contains a DECIMAL column (the generated copier
+     *                             unconditionally dereferences it for DECIMAL8..DECIMAL256 destinations).
+     */
+    public void applyReplaceRangeWindow(
+            long loTs,
+            long hiExclTs,
+            @Nullable RecordCursor survivorCursor,
+            @Nullable RecordToRowCopier copier,
+            int timestampCursorIndex,
+            @Nullable SqlExecutionContext executionContext
+    ) {
+        if (loTs >= hiExclTs) {
+            // Empty or inverted window - nothing to remove, nothing to stage. Skipped so a windowed sweep
+            // over a range with gaps (empty windows) is a cheap no-op.
+            return;
+        }
+
+        // hi is exclusive on input; the replace apply carries an inclusive max in the tx lag range. Refresh
+        // the current-last-partition view per window: an earlier window may have dropped/trimmed partitions,
+        // so this window's apply must see the up-to-date state rather than begin's snapshot.
+        final long replaceRangeTsHi = hiExclTs - 1;
+        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+        if (isLastPartitionClosed() && isEmptyTable()) {
+            populateDenseIndexerList();
+        }
+
+        // Produce survivor rows through the ordinary O3 row API and drive the same replace-range machinery
+        // used by WAL apply, avoiding an intermediate WAL-segment serialization.
+        //
+        // The replace RANGE is always [lo, hiExcl), carried (as in the empty path) in the tx lag min/max -
+        // NOT the survivors' own min/max. This is load-bearing: the ordinary o3Commit() passes the DATA's
+        // min/max to processO3Block, which in replace mode would delete only [survivorMin, survivorMax] and
+        // leave to-be-deleted rows between a range bound and the nearest survivor alive. We therefore must
+        // NOT route through o3Commit(); we drive processWalCommitFinishApply directly with the true range,
+        // feeding the survivors as the sorted O3 batch.
+        try {
+            // Stage survivors (if any) into O3 memory. Kept inside the try/finally so a mid-drain failure
+            // (cursor IO error, copier cast, distress) is unwound by finishO3Append/clearO3 below rather
+            // than leaking forced-O3 state. dedupMode does not affect the O3 append path.
+            long o3RowCount = 0;
+            if (survivorCursor != null && survivorCursor.hasNext()) {
+                // Force O3 staging up front so every survivor lands in O3 memory uniformly, whether its
+                // timestamp is below or at/above the table's current max. Without this a survivor at/after
+                // maxTimestamp would append in order (into the active partition, not O3 memory) and be
+                // silently dropped by the O3 sort below - matching how the WAL replace path treats ALL
+                // replacement rows as O3. o3OpenColumns() also points activeColumns at O3 memory so the
+                // copier writes there.
+                o3OpenColumns();
+                o3InError = false;
+                // newRowO3 sets o3MasterRef AFTER the first row's newRow bumps masterRef; here we force O3
+                // before the loop (masterRef un-bumped), so pre-add that bump. getO3RowCount0() =
+                // (masterRef-o3MasterRef+1)/2 must then read 0 at the first o3TimestampSetter, i.e. the
+                // stored (timestamp, row-index) entries count 0,1,2,... in lockstep with the physical
+                // column-append order. Off by one here shifts each survivor's payload one row off its ts.
+                o3MasterRef = masterRef + 1;
+                rowAction = ROW_ACTION_O3;
+
+                final Record record = survivorCursor.getRecord();
+                do {
+                    final long ts = record.getTimestamp(timestampCursorIndex);
+                    // Guard (mirrors MatViewRefreshJob.insertAsSelect): a survivor outside [lo, hiExcl)
+                    // violates the replace contract (processWalCommitDedupReplace asserts lo <= o3Min,
+                    // hiExcl > o3Max).
+                    assert ts >= loTs && ts < hiExclTs
+                            : "survivor timestamp out of replace range [ts=" + ts + ", lo=" + loTs + ", hiExcl=" + hiExclTs + ']';
+                    final Row row = newRow(ts);
+                    // executionContext must be a real context, not null: the generated copier
+                    // unconditionally dereferences it for any DECIMAL8..DECIMAL256 destination column
+                    // (RecordToRowCopierUtils has no same-type fast path for decimals), so a null context
+                    // NPEs even for a schema-identical select* copy when the table has a decimal column.
+                    copier.copy(executionContext, record, row);
+                    row.append();
+                } while (survivorCursor.hasNext());
+
+                o3RowCount = getO3RowCount0();
+            }
+
+            txWriter.setLagMinTimestamp(loTs);
+            txWriter.setLagMaxTimestamp(replaceRangeTsHi);
+            if (o3RowCount > 0) {
+                // Sort the staged survivors by timestamp and reshuffle their data columns to match,
+                // mirroring o3Commit()'s sort/dispatch/swap. The O3 timestamp column is a 128-bit
+                // (timestamp, row-index) merge array (o3TimestampSetter), so UNORDERED survivors are
+                // handled here - the sort orders them before the apply; the caller need not pre-sort.
+                final long sortedTimestampsAddr = o3TimestampMem.getAddress();
+                assert o3TimestampMem.getAppendOffset() == o3RowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
+                if (o3RowCount > 600 || !o3QuickSortEnabled) {
+                    o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
+                    Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
+                } else {
+                    Vect.quickSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount);
+                }
+                dispatchColumnTasks(sortedTimestampsAddr, o3RowCount, IGNORE, IGNORE, IGNORE, cthO3SortColumnRef);
+                swapO3ColumnsExcept(metadata.getTimestampIndex());
+
+                // Non-empty O3 batch: sorted survivors + the [lo, hiExcl) range drive the partition
+                // drop/trim/split and the survivor merge (processWalCommitDedupReplace's rowLo < rowHi
+                // branch). copiedToMemory/flattenTimestamp = true: the batch is in O3 memory.
+                processWalCommitFinishApply(0, sortedTimestampsAddr, 0, o3RowCount, TableWriterPressureControl.EMPTY, true, partitionTimestampHi);
+            } else {
+                // Empty O3 batch: the replace range alone (carried in lag min/max) drives the partition
+                // drop/trim over [lo, hiExcl). This is processWalCommitDedupReplace's rowLo >= rowHi branch.
+                processWalCommitFinishApply(0, 0, 0, 0, TableWriterPressureControl.EMPTY, true, partitionTimestampHi);
+            }
+        } finally {
+            finishO3Append(0);
+            o3Columns = o3MemColumns1;
+            // Clear per-window so the next window starts from an unshifted O3 column state - each window is a
+            // self-contained apply. (The single-window path cleared this once at the end; clearing per window
+            // is equivalent there and correct for multiple windows.)
+            if (memColumnShifted) {
+                clearMemColumnShifts();
+            }
+            // Preserve this window's superseded-partition removal candidates for the single post-commit drain
+            // in finishReplaceRange, then clear the live list. The NEXT window's processO3Block clears
+            // partitionRemoveCandidates at its start, so without this only the final window's candidates would
+            // reach housekeep, leaking every earlier window's dropped/trimmed partition directory until the
+            // next writer open. The list stores flattened (timestamp, nameTxn) longs; the bulk LongList.add
+            // append preserves that layout. Not drained here: unlinking a superseded dir before
+            // finishReplaceRange's commit00 persists the txn would delete data the not-yet-durable txn still
+            // references (corrupts crash recovery).
+            replaceRangeRemoveCandidates.add(partitionRemoveCandidates);
+            partitionRemoveCandidates.clear();
+        }
+    }
+
+    /**
+     * Terminal phase of a windowed replace: resets the dedup mode, persists all accumulated window surgeries
+     * with a single {@code commit00()} (the one and only txn/seqTxn advance of the whole replace), reclaims
+     * fully-dropped partition directories, and shrinks O3 memory. Returns the number of rows removed across
+     * all windows since {@link #beginReplaceRange}.
+     */
+    public long finishReplaceRange() {
+        dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
+        if (memColumnShifted) {
+            clearMemColumnShifts();
+        }
+
+        final long rowsAfter = txWriter.getRowCount();
+
+        // Persist and make the change visible; housekeep reclaims fully-dropped partition directories via
+        // processPartitionRemoveCandidates (mirrors the WAL replace apply's post-commit sequence).
+        commit00();
+        final Runnable observer = replaceRangePostCommitObserver;
+        if (observer != null) {
+            observer.run();
+        }
+        // No accumulated removal candidate may collide with a currently live attached partition.
+        assert replaceRemoveCandidatesDisjointFromLivePartitions()
+                : "windowed-replace drain: a partition-removal candidate collides with a live attached partition";
+        // Reclaim partition directories superseded across ALL windows in one drain, AFTER the single commit00
+        // - draining earlier would unlink dirs the not-yet-durable txn still references. Per-window candidates
+        // were accumulated in replaceRangeRemoveCandidates because processO3Block clears partitionRemoveCandidates
+        // per window. The live partitionRemoveCandidates is normally empty here (each window's finally clears it
+        // after accumulating); append rather than replace is a strictly-safe merge that does not depend on that,
+        // then clear the accumulator for the next bracket on this writer.
+        partitionRemoveCandidates.add(replaceRangeRemoveCandidates);
+        replaceRangeRemoveCandidates.clear();
+        housekeep(configuration.getMicrosecondClock().getTicks());
+        shrinkO3Mem();
+
+        return replaceRangeRowsBefore - rowsAfter;
+    }
+
+    /**
+     * Aborts an open windowed replace after a window failure: resets the dedup mode and any shifted mem
+     * columns WITHOUT committing, so the partial (uncommitted) surgery is not persisted. The caller performs
+     * the transaction-level rollback (as {@code OperationExecutor#executeDelete} does).
+     */
+    public void abortReplaceRange() {
+        dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
+        if (memColumnShifted) {
+            clearMemColumnShifts();
+        }
+        // Drop this failed bracket's accumulated removal candidates so they cannot leak into a later bracket on
+        // the same writer. The caller rolls back the uncommitted surgery, so nothing must be unlinked here.
+        replaceRangeRemoveCandidates.clear();
+    }
+
+    // Verifies that a post-commit replace-range drain cannot unlink a directory still backing a live attached
+    // partition. This is assertion-only and therefore has no production-path cost.
+    private boolean replaceRemoveCandidatesDisjointFromLivePartitions() {
+        for (int i = 0, n = replaceRangeRemoveCandidates.size(); i < n; i += 2) {
+            final long candidateTs = replaceRangeRemoveCandidates.getQuick(i);
+            final long candidateNameTxn = replaceRangeRemoveCandidates.getQuick(i + 1);
+            final long liveNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(candidateTs, Long.MIN_VALUE);
+            if (liveNameTxn != Long.MIN_VALUE
+                    && liveNameTxn == candidateNameTxn
+                    && txWriter.getPartitionRowCountByTimestamp(candidateTs) > 0) {
+                LOG.critical().$("windowed-replace drain would unlink a live attached partition [table=").$(tableToken)
+                        .$(", ts=").$ts(timestampDriver, candidateTs)
+                        .$(", nameTxn=").$(candidateNameTxn)
+                        .$(", size=").$(txWriter.getPartitionRowCountByTimestamp(candidateTs))
+                        .I$();
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Override
     public void renameColumn(
             @NotNull CharSequence name,
@@ -3179,6 +3511,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public void rollback() {
         checkDistressed();
+        // Rollback restores _txn/_cv, making the old Parquet directories live again. Never let deferred cleanup
+        // from an abandoned conversion batch run during a later, unrelated batch.
+        pendingParquetToNativeConversions.clear();
         if (o3InError || inTransaction()) {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
@@ -8413,7 +8748,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             txWriter.removeAttachedPartitions(partitionTimestamp);
                             columnVersionWriter.removePartition(partitionTimestamp);
-                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            if (srcNameTxn != txWriter.txn) {
+                                // srcNameTxn == txWriter.txn means this partition's on-disk version was
+                                // already stamped by an EARLIER window of the SAME open windowed replace
+                                // (TableWriter#beginReplaceRange / #applyReplaceRangeWindow / #finishReplaceRange):
+                                // txWriter.txn does not advance until finishReplaceRange's commit00(), so two
+                                // windows touching the same partition within one bracket compute the identical
+                                // "new" nameTxn. Queuing srcNameTxn here would self-referentially mark that
+                                // live, just-written version as a removal candidate; processPartitionRemoveCandidates0
+                                // treats any candidate with txn >= lastCommittedTxn as a safe-to-delete rollback
+                                // orphan (a version stamped but never committed) and cannot tell that apart from
+                                // this same-bracket repeat touch, so it would delete the only copy of the rows an
+                                // earlier window just wrote. Only queue a genuinely prior (pre-bracket) version.
+                                partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            }
                         } else {
                             // Set partition size to 0 and process all 0 size partitions at the end of the method.
                             // It will be removed if there are no readers on the previous partition.
@@ -8455,7 +8803,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
                             txWriter.resetPartitionParquetGeneratedByRawIndex(partitionIndexRaw);
-                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            if (srcNameTxn != txWriter.txn) {
+                                // See the identical guard + comment on the other partitionRemoveCandidates.add
+                                // call above in this method (the "fully removed" branch): srcNameTxn == txWriter.txn
+                                // means an earlier window of this SAME open windowed replace already stamped this
+                                // partition at the current in-progress txn, so there is no genuinely-stale prior
+                                // version to queue - only remove versions that predate this bracket.
+                                partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            }
                         }
                         txWriter.bumpPartitionTableVersion();
                     }
@@ -9728,46 +10083,103 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                         final long dedupColSinkAddr = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
 
-                        long o3TimestampLo, o3TimestampHi;
+                        long o3TimestampLo = 0, o3TimestampHi = 0;
+                        // Approach B (see task 2.2): a fully-covered Parquet partition is dropped INLINE here by
+                        // writing the same partition-update-sink record the async O3PartitionJob writes for a full
+                        // removal, then letting o3ConsumePartitionUpdateSink perform the actual drop. This reuses
+                        // ALL of the downstream drop machinery (split/first/last tracking, columnVersion fixups,
+                        // min/max recompute, truncate-when-empty) instead of duplicating it, and never decodes the
+                        // Parquet data (O(1)). Boundary trims / arbitrary rewrites of a Parquet partition still throw
+                        // (Task 3.1 convert-to-native).
+                        boolean droppedFullyCoveredParquet = false;
                         if (isCommitReplaceMode()) {
                             if (isParquet) {
-                                // Parquet partitions do not support replace commits feature yet
-                                o3PartitionUpdRemaining.decrementAndGet();
-                                latchCount--;
-                                pressureControl.updateInflightPartitions(--inflightPartitions);
-                                throw CairoException.critical(0)
-                                        .put("commit replace mode is not supported for Parquet partitions [table=").put(getTableToken().getTableName())
-                                        .put(", partition=").ts(timestampDriver, partitionTimestamp).put(']');
+                                // A replace commit cannot rewrite a Parquet partition (no in-place row-group merge
+                                // yet), but a partition the range covers ENTIRELY is only DROPPED downstream -- a
+                                // format-agnostic operation that needs no data rewrite, hence Parquet-safe.
+                                //
+                                // Fully covered == every row of this partition is inside the replace range
+                                // [o3TimestampMin, o3TimestampMax] AND no replacement rows are destined for it
+                                // (empty O3 batch: srcOooLo > srcOooHi; a non-empty batch would need a rewrite to
+                                // merge survivors -> throw). We cannot decode the Parquet data, so we bound the
+                                // partition's data extent with values already on the writer:
+                                //  - low: exact for the first partition (getMinTimestamp()), else the partition floor
+                                //    (partitionTimestamp) -- a sound LOWER bound on the partition's min data ts;
+                                //  - high: exact for the last partition (getMaxTimestamp()), else the time-span
+                                //    ceiling getCurrentPartitionMaxTimestamp() -- a sound UPPER bound on its max data ts.
+                                // Using bounds only makes the test STRICTER (it never drops while data survives), so a
+                                // range that covers all data but stops inside a boundary partition's time-span gap
+                                // conservatively falls through to the throw (Task 3.1) rather than dropping.
+                                final long partitionDataMin = (partitionTimestamp == txWriter.getPartitionTimestampByIndex(0))
+                                        ? txWriter.getMinTimestamp()
+                                        : partitionTimestamp;
+                                final long partitionDataMax = (partitionTimestamp == lastPartitionTimestamp)
+                                        ? txWriter.getMaxTimestamp()
+                                        : txWriter.getCurrentPartitionMaxTimestamp(partitionTimestamp);
+                                final boolean fullyCovered = srcOooLo > srcOooHi
+                                        && partitionDataMin >= o3TimestampMin
+                                        && partitionDataMax <= o3TimestampMax;
+                                if (!fullyCovered) {
+                                    // Parquet boundary trim / arbitrary rewrite -> Task 3.1. Undo this partition's
+                                    // in-flight/latch increments (mirrors the pre-existing throw path) and fail.
+                                    o3PartitionUpdRemaining.decrementAndGet();
+                                    latchCount--;
+                                    pressureControl.updateInflightPartitions(--inflightPartitions);
+                                    throw CairoException.critical(0)
+                                            .put("commit replace mode is not supported for Parquet partitions [table=").put(getTableToken().getTableName())
+                                            .put(", partition=").ts(timestampDriver, partitionTimestamp).put(']');
+                                }
+                                // Fully covered: drop inline. Write exactly the sink record O3PartitionJob.updatePartition
+                                // writes for a full removal (timestampMin=Long.MAX_VALUE, newSize=0, partitionMutates=1),
+                                // then settle the counters exactly as a COMPLETED async partition would -- decrement
+                                // o3PartitionUpdRemaining and count the done-latch down (matching the ++ done at
+                                // o3PartitionUpdRemaining.incrementAndGet()/latchCount++ above), NOT the throw path's
+                                // decrements. latchCount and inflightPartitions stay incremented, as for any completed
+                                // async partition (reset by the periodic flush). Skip o3CommitPartitionAsync -> no
+                                // async task, no data decoded/rewritten; the sink record is consumed at loop end by
+                                // o3ConsumePartitionUpdateSink's srcDataNewPartitionSize == 0 drop branch.
+                                Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, Long.MAX_VALUE); // timestampMin: MAX so a removed partition can't lower the table minTimestamp
+                                Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, 0);          // srcDataNewPartitionSize == 0 -> drop
+                                Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, srcDataMax); // srcDataOldPartitionSize (drives the fixedRowCount decrement)
+                                Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, 1);          // partitionMutates == 1
+                                Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0);          // o3SplitPartitionSize
+                                Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1);         // parquetFileSize == -1 -> native drop path
+                                o3ClockDownPartitionUpdateCount();
+                                o3CountDownDoneLatch();
+                                droppedFullyCoveredParquet = true;
+                            } else {
+                                o3TimestampLo = (partitionTimestamp == minO3PartitionTimestamp) ? o3TimestampMin : partitionTimestamp;
+                                o3TimestampHi = (partitionTimestamp == maxO3PartitionTimestamp) ? o3TimestampMax :
+                                        txWriter.getCurrentPartitionMaxTimestamp(partitionTimestamp);
                             }
-                            o3TimestampLo = (partitionTimestamp == minO3PartitionTimestamp) ? o3TimestampMin : partitionTimestamp;
-                            o3TimestampHi = (partitionTimestamp == maxO3PartitionTimestamp) ? o3TimestampMax :
-                                    txWriter.getCurrentPartitionMaxTimestamp(partitionTimestamp);
                         } else {
                             o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
                             o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddr, srcOooHi);
                         }
 
-                        o3CommitPartitionAsync(
-                                columnCounter,
-                                maxTimestamp,
-                                sortedTimestampsAddr,
-                                srcOooLo,
-                                srcOooHi,
-                                srcOooMax,
-                                o3TimestampMin,
-                                partitionTimestamp,
-                                srcDataMax,
-                                last,
-                                srcNameTxn,
-                                o3Basket,
-                                newPartitionSize,
-                                srcDataMax,
-                                partitionUpdateSinkAddr,
-                                dedupColSinkAddr,
-                                isParquet,
-                                o3TimestampLo,
-                                o3TimestampHi
-                        );
+                        if (!droppedFullyCoveredParquet) {
+                            o3CommitPartitionAsync(
+                                    columnCounter,
+                                    maxTimestamp,
+                                    sortedTimestampsAddr,
+                                    srcOooLo,
+                                    srcOooHi,
+                                    srcOooMax,
+                                    o3TimestampMin,
+                                    partitionTimestamp,
+                                    srcDataMax,
+                                    last,
+                                    srcNameTxn,
+                                    o3Basket,
+                                    newPartitionSize,
+                                    srcDataMax,
+                                    partitionUpdateSinkAddr,
+                                    dedupColSinkAddr,
+                                    isParquet,
+                                    o3TimestampLo,
+                                    o3TimestampHi
+                            );
+                        }
                     }
                 } catch (CairoException | CairoError e) {
                     LOG.error().$((Sinkable) e).$();
@@ -11340,6 +11752,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
+            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                for (long i = 0, n = columnFdAndDataSize.size() / 3; i < n; i++) {
+                    final long dstAuxFd = columnFdAndDataSize.get(3L * i);
+                    if (dstAuxFd > -1) {
+                        ff.fsync(dstAuxFd);
+                    }
+                    final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
+                    if (dstDataFd > -1) {
+                        ff.fsync(dstDataFd);
+                    }
+                }
+            }
         } catch (CairoException e) {
             LOG.error().$("could not convert partition to native [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
@@ -12022,8 +12446,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Map data file for reading
                     final long dataSize = (partitionRowCount - columnTop) * Integer.BYTES;
                     final long dataAddr = TableUtils.mapRO(ff, dFile(other.trimTo(dirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
-                    IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
+                    IndexWriter indexWriter = null;
                     try {
+                        // Construct inside the mmap's ownership scope: unsupported/corrupt index metadata or an
+                        // allocation failure in the writer constructor must not strand dataAddr.
+                        indexWriter = IndexFactory.createWriter(indexType, configuration);
                         indexWriter.of(other.trimTo(dirLen), columnName, columnNameTxn, indexValueBlockCapacity);
                         // rebuildPartitionIndexFiles runs during parquet->native
                         // conversion before txWriter.commit; tag the chain
@@ -12034,10 +12461,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexWriter.add(key, row);
                         }
                         indexWriter.setMaxValue(partitionRowCount - 1);
+                        indexWriter.commit();
                         indexWriter.seal();
                     } finally {
-                        ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
-                        Misc.free(indexWriter);
+                        try {
+                            Misc.free(indexWriter);
+                        } finally {
+                            ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                        }
                     }
                 }
             }

@@ -587,6 +587,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalDeleteRowsPerStep() {
+        return 1_000_000L;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }
@@ -1436,6 +1441,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalDataAppendPageSize() {
         return 1024 * 1024;
+    }
+
+    @Override
+    public boolean getWalDeleteDiskBounded() {
+        return false;
     }
 
     @Override

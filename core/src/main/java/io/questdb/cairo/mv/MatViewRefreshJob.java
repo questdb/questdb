@@ -48,6 +48,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -1434,23 +1435,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         );
     }
 
-    private void invalidate(MatViewRefreshTask refreshTask) {
+    private boolean invalidate(MatViewRefreshTask refreshTask) {
         final String invalidationReason = refreshTask.invalidationReason;
         if (refreshTask.isBaseTableTask()) {
-            invalidateDependentViews(refreshTask.baseTableToken, invalidationReason);
-        } else {
-            invalidateView(refreshTask.matViewToken, invalidationReason, true);
+            return invalidateDependentViews(refreshTask.baseTableToken, invalidationReason);
         }
+        return invalidateView(refreshTask.matViewToken, invalidationReason, true);
     }
 
-    private void invalidateDependentViews(TableToken baseTableToken, String invalidationReason) {
+    private boolean invalidateDependentViews(TableToken baseTableToken, String invalidationReason) {
+        boolean isDeferred = false;
         childViewSink.clear();
         graph.getDependentViews(baseTableToken, childViewSink);
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
-            invalidateView(viewToken, invalidationReason, false);
+            isDeferred |= invalidateView(viewToken, invalidationReason, false);
         }
         stateStore.notifyBaseInvalidated(baseTableToken);
+        return isDeferred;
     }
 
     /**
@@ -1468,15 +1470,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return configuration.isMatViewRefreshBlocked(viewToken.getTableName());
     }
 
-    private void invalidateView(TableToken viewToken, String invalidationReason, boolean force) {
+    private boolean invalidateView(TableToken viewToken, String invalidationReason, boolean force) {
         final MatViewState viewState = stateStore.getViewState(viewToken);
-        // Known limitation (tracked follow-up): the pendingInvalidation term skips a view whose earlier
-        // invalidation deferred (read-only node, or the lock was held by a concurrent refresh) and was
-        // re-enqueued -- so a deferred enqueued INVALIDATE that loses the lock race can leave the view
-        // pending in memory while its on-disk state stays valid until a restart, REFRESH FULL, or role
-        // switch rebuilds the store. The truncate barrier no longer relies on this path (it invalidates
-        // inline while holding the lock + writer); the residual is the apply-time INVALIDATE race.
-        if (viewState != null && !viewState.isDropped() && !viewState.isInvalid() && !viewState.isPendingInvalidation()) {
+        if (viewState != null && !viewState.isDropped() && !viewState.isInvalid()) {
             if (engine.isReadOnlyMode()) {
                 // The node is, or just became, a replica: marking the view invalid acquires a WalWriter
                 // through the read-only chokepoint, which throws an authorization error that would escape
@@ -1486,7 +1482,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // deferral. A materialized view is derived state.
                 viewState.markAsPendingInvalidation();
                 stateStore.enqueueInvalidate(viewToken, invalidationReason);
-                return;
+                return true;
             }
             if (isViewWriteSuspended(viewToken)) {
                 // The view is hard-suspended and writes are denied. Acquiring its WAL writer to mint the
@@ -1495,13 +1491,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // cascade -- the view's data is unchanged. Recovery is REFRESH ... FULL after RESUME WAL; a
                 // rebased or dropped base is not picked up by a plain post-resume incremental refresh.
                 LOG.debug().$("skipping materialized view invalidation, view is suspended [view=").$(viewToken).I$();
-                return;
+                viewState.clearPendingInvalidation();
+                return false;
             }
             if (!viewState.tryLock()) {
-                LOG.debug().$("skipping materialized view invalidation, locked by another refresh run [view=").$(viewToken).I$();
+                LOG.debug().$("deferring materialized view invalidation, locked by another refresh run [view=").$(viewToken).I$();
                 viewState.markAsPendingInvalidation();
                 stateStore.enqueueInvalidate(viewToken, invalidationReason);
-                return;
+                return true;
             }
 
             try {
@@ -1526,7 +1523,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 // getWalWriter acquire. Skip without invalidating or cascading; RESUME WAL
                                 // plus REFRESH ... FULL recovers it.
                                 LOG.info().$("skipping materialized view invalidation, view is suspended [view=").$(viewToken).I$();
-                                return;
+                                viewState.clearPendingInvalidation();
+                                return false;
                             }
                             if (ex.isAuthorizationError()) {
                                 // The role flipped read-only after the top-of-method guard (a demote racing
@@ -1546,7 +1544,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestampUs);
                                 viewState.markAsPendingInvalidation();
                                 stateStore.enqueueInvalidate(viewToken, invalidationReason);
-                                return;
+                                return true;
                             }
                             if (!handleErrorRetryRefresh(ex, viewToken, null, null)) {
                                 throw ex;
@@ -1559,9 +1557,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 viewState.tryCloseIfDropped();
                 viewState.tryCloseIfClosed();
             }
+            viewState.clearPendingInvalidation();
             // Invalidate dependent views recursively.
             enqueueInvalidateDependentViews(viewToken, "base materialized view is invalidated");
         }
+        return false;
     }
 
     private boolean isViewWriteSuspended(TableToken viewToken) {
@@ -1605,7 +1605,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     refreshed |= fullRefresh(refreshTask);
                     break;
                 case MatViewRefreshTask.INVALIDATE:
-                    invalidate(refreshTask);
+                    if (invalidate(refreshTask)) {
+                        // A contended/read-only invalidation was re-enqueued. Yield this run so the loop does
+                        // not consume the same task repeatedly before the lock or node role can change.
+                        return refreshed;
+                    }
                     break;
                 case MatViewRefreshTask.UPDATE_REFRESH_INTERVALS:
                     updateRefreshIntervals(refreshTask);
@@ -2276,11 +2280,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             try {
                 intervals.clear();
                 txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, lastRefreshTxn, lastBaseTxn);
-                if (txnRangeLoader.hasTruncate()) {
-                    // The scanned base WAL range contains a TRUNCATE. The loader skips it as a non-data
-                    // txn, so the data intervals alone look like an ordinary advance -- but a truncate
+                if (txnRangeLoader.hasTruncate() || txnRangeLoader.hasDelete()) {
+                    // The scanned base WAL range contains a TRUNCATE or a DELETE. The loader skips it as a
+                    // non-data txn, so the data intervals alone look like an ordinary advance -- but either
                     // invalidates the view (the same way ApplyWal2TableJob invalidates dependents on a
-                    // truncate). Do NOT advance refreshIntervalsBaseTxn past the barrier; finalize the
+                    // truncate or a delete). Do NOT advance refreshIntervalsBaseTxn past the barrier; finalize the
                     // invalidation inline and stop this refresh. This run already holds the view lock AND
                     // the view's WalWriter on a primary (the only role that reaches here -- a replica's
                     // writer acquire already failed upstream), so the invalidation can mint here directly.
@@ -2299,11 +2303,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (viewState.getLastRefreshBaseTxn() != -1) {
                         final long prevRefreshStartTimestampUs = viewState.getLastRefreshStartTimestampUs();
                         final long invalidationTimestamp = microsecondClock.getTicks();
+                        // Accurate reason for both the log line and the persisted invalid state. hasTruncate()
+                        // takes precedence when both a truncate and a delete fall in the same scanned gap
+                        // (either alone is sufficient to invalidate).
+                        final CharSequence barrierReason = txnRangeLoader.hasTruncate() ? "truncate operation" : DeleteOperation.MAT_VIEW_INVALIDATION_REASON;
                         LOG.info().$("marking materialized view as invalid [view=").$(viewToken)
-                                .$(", reason=truncate operation, ts=").$ts(invalidationTimestamp)
+                                .$(", reason=").$(barrierReason).$(", ts=").$ts(invalidationTimestamp)
                                 .I$();
                         try {
-                            setInvalidState(viewState, walWriter, "truncate operation", invalidationTimestamp);
+                            setInvalidState(viewState, walWriter, barrierReason, invalidationTimestamp);
                         } catch (CairoException ex) {
                             // setInvalidState flips the in-memory invalid flag and bumps the in-memory start
                             // timestamp BEFORE the fenced commit. If that commit then fails -- a read-only

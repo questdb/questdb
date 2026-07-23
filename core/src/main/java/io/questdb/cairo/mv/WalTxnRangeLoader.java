@@ -40,12 +40,15 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnRangeLoader implements QuietCloseable {
+    private final LongList intervalSortBuffer = new LongList();
     private final WalEventReader walEventReader;
+    private boolean hasDelete;
     private boolean hasTruncate;
     private long maxTimestamp;
     private long minTimestamp;
@@ -66,6 +69,16 @@ public class WalTxnRangeLoader implements QuietCloseable {
 
     public long getMinTimestamp() {
         return minTimestamp;
+    }
+
+    // True when the last load() scan saw a base-table DELETE in the scanned (txnLo, txnHi] range. A DELETE
+    // deletes base rows via a non-data SQL txn (WalTxnType.SQL, CMD_DELETE_TABLE) that the interval scan
+    // skips, so - exactly like a TRUNCATE - it is an invalidating barrier for an incremental mat-view
+    // refresh: the caller must not advance the refresh base txn past it, or the view keeps pre-delete rows
+    // (stale-valid). DELETE-scoped only; DROP/DETACH PARTITION and rows-affected UPDATE share the same
+    // gap-skip loss class and remain the tracked follow-up documented in loadTransactionDetailsFromWalE.
+    public boolean hasDelete() {
+        return hasDelete;
     }
 
     // True when the last load() scan saw a base-table TRUNCATE in the scanned (txnLo, txnHi] range.
@@ -93,6 +106,60 @@ public class WalTxnRangeLoader implements QuietCloseable {
         }
     }
 
+    private void sortAndMergeNewIntervals(LongList intervals, int intervalStart) {
+        final int intervalCount = (intervals.size() - intervalStart) / 2;
+        if (intervalCount < 1) {
+            return;
+        }
+
+        intervalSortBuffer.setPos(intervalCount * 2);
+        boolean sourceIsIntervals = true;
+        for (int width = 1; width < intervalCount; width = width > intervalCount / 2 ? intervalCount : width * 2) {
+            final LongList source = sourceIsIntervals ? intervals : intervalSortBuffer;
+            final LongList destination = sourceIsIntervals ? intervalSortBuffer : intervals;
+            final int sourceBase = sourceIsIntervals ? intervalStart : 0;
+            final int destinationBase = sourceIsIntervals ? 0 : intervalStart;
+            int write = 0;
+            for (int block = 0; block < intervalCount; block += 2 * width) {
+                int left = block;
+                final int leftHi = Math.min(block + width, intervalCount);
+                int right = leftHi;
+                final int rightHi = Math.min(block + 2 * width, intervalCount);
+                while (left < leftHi || right < rightHi) {
+                    final boolean takeLeft = right >= rightHi
+                            || (left < leftHi
+                            && source.getQuick(sourceBase + 2 * left) <= source.getQuick(sourceBase + 2 * right));
+                    final int read = takeLeft ? left++ : right++;
+                    destination.setQuick(destinationBase + 2 * write, source.getQuick(sourceBase + 2 * read));
+                    destination.setQuick(destinationBase + 2 * write + 1, source.getQuick(sourceBase + 2 * read + 1));
+                    write++;
+                }
+            }
+            sourceIsIntervals = !sourceIsIntervals;
+        }
+        if (!sourceIsIntervals) {
+            for (int i = 0; i < intervalCount * 2; i++) {
+                intervals.setQuick(intervalStart + i, intervalSortBuffer.getQuick(i));
+            }
+        }
+
+        int write = intervalStart;
+        for (int read = intervalStart; read < intervalStart + intervalCount * 2; read += 2) {
+            final long lo = intervals.getQuick(read);
+            final long hi = intervals.getQuick(read + 1);
+            if (write > intervalStart && lo <= intervals.getQuick(write - 1)) {
+                intervals.setQuick(write - 1, Math.max(hi, intervals.getQuick(write - 1)));
+            } else {
+                intervals.setQuick(write++, lo);
+                intervals.setQuick(write++, hi);
+            }
+        }
+        intervals.setPos(write);
+        if (intervalStart > 0 && write > intervalStart) {
+            IntervalUtils.unionInPlace(intervals, intervalStart);
+        }
+    }
+
     private void loadTransactionDetailsFromWalE(
             Path tempPath,
             int rootLen,
@@ -102,9 +169,11 @@ public class WalTxnRangeLoader implements QuietCloseable {
             long txnHi
     ) {
         txnDetails.clear();
+        final int intervalStart = intervals.size();
 
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;
+        hasDelete = false;
         hasTruncate = false;
 
         try (WalEventReader eventReader = walEventReader) {
@@ -147,15 +216,27 @@ public class WalTxnRangeLoader implements QuietCloseable {
                         }
 
                         if (!WalTxnType.isDataType(walEventCursor.getType())) {
-                            // Skip non-inserts for interval computation, but flag a TRUNCATE: it carries
-                            // no data interval yet is an invalidating barrier for an incremental mat-view
-                            // refresh. The caller must not advance the refresh base txn past a truncate.
-                            // Scoped to TRUNCATE only for now: DROP/DETACH PARTITION and rows-affected
-                            // UPDATE also delete base rows and likewise commit as non-data SQL txns the
-                            // interval scan skips, so they share the same gap-skip loss class. Treating any
-                            // invalidating non-data txn in the gap as a barrier is a tracked follow-up.
+                            // Skip non-inserts for interval computation, but flag a TRUNCATE or a DELETE: each
+                            // carries no data interval yet is an invalidating barrier for an incremental
+                            // mat-view refresh. The caller must not advance the refresh base txn past one, or
+                            // the view keeps pre-barrier rows (stale-valid). A DELETE commits as a non-data SQL
+                            // txn (WalTxnType.SQL, cmdType CMD_DELETE_TABLE); getSqlInfo() is valid only when
+                            // getType()==SQL, so guard on the type first.
+                            // NB the barrier keys on the CMD_DELETE_TABLE txn TYPE, not the rows removed: the row
+                            // count is not knowable here (the DELETE may be unapplied within this gap), so a
+                            // 0-row DELETE conservatively flags a barrier too -- unlike the live apply path
+                            // (ApplyWal2TableJob, gated on deleted>0) which skips it. Conservative = never-stale:
+                            // at worst a no-op DELETE forces a needless full refresh; it never leaves a
+                            // stale-valid view.
+                            // Still scoped to TRUNCATE + DELETE only: DROP/DETACH PARTITION and rows-affected
+                            // UPDATE also delete base rows and likewise commit as non-data SQL txns the interval
+                            // scan skips, so they share the same gap-skip loss class. Treating those remaining
+                            // invalidating non-data txns in the gap as barriers is a tracked follow-up.
                             if (walEventCursor.getType() == WalTxnType.TRUNCATE) {
                                 hasTruncate = true;
+                            } else if (walEventCursor.getType() == WalTxnType.SQL
+                                    && walEventCursor.getSqlInfo().getCmdType() == TableWriterTask.CMD_DELETE_TABLE) {
+                                hasDelete = true;
                             }
                             continue;
                         }
@@ -169,10 +250,10 @@ public class WalTxnRangeLoader implements QuietCloseable {
                             maxTimestamp1 = dataInfo.getReplaceRangeTsHi() - 1;
                         }
                         intervals.add(minTimestamp1, maxTimestamp1);
-                        IntervalUtils.unionInPlace(intervals, intervals.size() - 2);
                     }
                 }
 
+                sortAndMergeNewIntervals(intervals, intervalStart);
                 if (intervals.size() > 0) {
                     minTimestamp = intervals.getQuick(0);
                     maxTimestamp = intervals.getQuick(intervals.size() - 1);

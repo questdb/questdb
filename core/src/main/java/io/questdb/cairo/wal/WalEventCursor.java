@@ -570,16 +570,22 @@ public class WalEventCursor {
                         bindVariableService.setChar(i, readChar());
                         break;
                     case ColumnType.INT:
-                    case ColumnType.IPv4:
                         bindVariableService.setInt(i, readInt());
+                        break;
+                    case ColumnType.IPv4:
+                        bindVariableService.setIPv4(i, readInt());
                         break;
                     case ColumnType.FLOAT:
                         bindVariableService.setFloat(i, readFloat());
                         break;
                     case ColumnType.LONG:
-                    case ColumnType.DATE:
-                    case ColumnType.TIMESTAMP:
                         bindVariableService.setLong(i, readLong());
+                        break;
+                    case ColumnType.DATE:
+                        bindVariableService.setDate(i, readLong());
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        bindVariableService.setTimestampWithType(i, type, readLong());
                         break;
                     case ColumnType.DOUBLE:
                         bindVariableService.setDouble(i, readDouble());
@@ -676,9 +682,17 @@ public class WalEventCursor {
                         bindVariableService.setFloat(name, readFloat());
                         break;
                     case ColumnType.LONG:
-                    case ColumnType.DATE:
-                    case ColumnType.TIMESTAMP:
                         bindVariableService.setLong(name, readLong());
+                        break;
+                    case ColumnType.DATE:
+                        bindVariableService.setDate(name, readLong());
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        if (ColumnType.isTimestampNano(type)) {
+                            bindVariableService.setTimestampNano(name, readLong());
+                        } else {
+                            bindVariableService.setTimestamp(name, readLong());
+                        }
                         break;
                     case ColumnType.DOUBLE:
                         bindVariableService.setDouble(name, readDouble());

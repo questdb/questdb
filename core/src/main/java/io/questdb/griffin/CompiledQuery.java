@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
@@ -74,7 +75,8 @@ public interface CompiledQuery {
     short ALTER_VIEW = COMPILE_VIEW + 1; // 36
     short ALTER_STORAGE_POLICY = ALTER_VIEW + 1; // 37
     short TABLE_REBASE = ALTER_STORAGE_POLICY + 1; // 38
-    short EMPTY = TABLE_REBASE + 1;
+    short DELETE = TABLE_REBASE + 1; // 39
+    short EMPTY = DELETE + 1;
     short TYPES_COUNT = EMPTY;
 
     void closeAllButSelect();
@@ -106,6 +108,8 @@ public interface CompiledQuery {
 
     @Transient
     AlterOperation getAlterOperation();
+
+    DeleteOperation getDeleteOperation();
 
     Operation getOperation();
 

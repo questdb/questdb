@@ -76,6 +76,7 @@ public final class ReadOnlyStatementGate {
             bit(CompiledQuery.INSERT)
                     | bit(CompiledQuery.INSERT_AS_SELECT)
                     | bit(CompiledQuery.UPDATE)
+                    | bit(CompiledQuery.DELETE)
                     | bit(CompiledQuery.ALTER)
                     | bit(CompiledQuery.TRUNCATE)
                     | bit(CompiledQuery.RENAME_TABLE)

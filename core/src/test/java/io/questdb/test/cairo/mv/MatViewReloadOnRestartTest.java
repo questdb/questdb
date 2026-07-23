@@ -243,6 +243,46 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testBootLoadInvalidatesOnBaseTableDeleteInGap() throws Exception {
+        // F-B: the delete-in-gap counterpart of testBootLoadInvalidatesOnBaseTableTruncateInGap. The boot
+        // cold-load path (buildViewGraphs -> loadMatViewIntoStore) must invalidate a view whose base table had
+        // a DELETE in the unscanned WAL gap past its persisted last-refresh base txn, with the ACCURATE reason
+        // "delete operation" (not the truncate reason). This exercises the renamed baseTableBarrierReasonInWalGap
+        // returning the delete reason and the caller passing it through to enqueueInvalidate - the half-update
+        // the truncate-only cold-load caller left behind. Non-vacuous: main2 is a fresh process, so the only way
+        // the view becomes invalid there is the boot cold-load scan (drainWalQueue on main1 never runs the
+        // mat-view refresh job, so no invalid state is persisted and the enqueued INVALIDATE task dies with main1).
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain main1 = startMainPortsDisabled()) {
+                execute(main1, "create table b (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+                execute(main1, "create materialized view bm as (select ts, count() cnt from b sample by 1h) partition by DAY");
+                execute(main1, "insert into b values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+                }
+                // Delete an aggregated row + a later bucket; apply ONLY the base WAL, so the view stays
+                // stale-valid with the delete sitting in the gap past its persisted last-refresh base txn.
+                execute(main1, "delete from b where val = 1.0");
+                execute(main1, "insert into b values ('a', 9.0, '2024-09-10T20:00')");
+                drainWalQueue(main1.getEngine());
+            }
+
+            // Restart: main2's boot runs buildViewGraphs over the on-disk state, sees the delete in the gap,
+            // and invalidates the view with reason "delete operation".
+            try (final TestServerMain main2 = startMainPortsDisabled()) {
+                try (var refreshJob = createMatViewRefreshJob(main2.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                }
+                assertSql(
+                        main2,
+                        "view_status\tinvalidation_reason\ninvalid\tdelete operation\n",
+                        "select view_status, invalidation_reason from materialized_views where view_name = 'bm'"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testMatViewsCheckUpdates() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startWithEnvVariables0(

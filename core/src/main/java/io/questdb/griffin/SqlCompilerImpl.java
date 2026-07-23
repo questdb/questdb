@@ -76,6 +76,13 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.QuaternaryFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -88,6 +95,7 @@ import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.DropAllOperation;
 import io.questdb.griffin.engine.ops.GenericDropOperation;
 import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
@@ -95,6 +103,7 @@ import io.questdb.griffin.engine.ops.InsertAsSelectOperationImpl;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
@@ -102,10 +111,12 @@ import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -119,6 +130,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -156,6 +168,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     public static final String ALTER_TABLE_EXPECTED_TOKEN_DESCR =
             "'add', 'alter', 'attach', 'detach', 'drop', 'convert', 'resume', 'rename', 'set' or 'squash'";
     static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
+    // Identity alias translator for the DELETE time-range classifier. The DELETE inner model is always a bare
+    // "SELECT * FROM t" (no column aliases) and is not yet optimised when classifyDeleteTimeRange runs, so its
+    // aliasToColumnNameMap is empty and QueryModel.translateAlias would return null (NPE-ing WhereClauseParser
+    // paths that resolve a column, e.g. BETWEEN). Every identifier in the predicate is already a real column
+    // name, so identity translation is exactly what the optimised select-star map would yield.
+    private static final AliasTranslator DELETE_IDENTITY_ALIAS_TRANSLATOR = column -> column;
     // null object used to skip null checks in batch method
     private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
         @Override
@@ -185,6 +203,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final CharacterStore characterStore;
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ViewCompilerExecutionContext compileViewContext;
+    // Dedicated WhereClauseParser for the DELETE time-range fast-path classifier (Task 2.1). Kept separate
+    // from the code generator's shared parser so classification never re-enters or clobbers an in-flight
+    // codegen extraction; it runs to completion before the survivor factory is generated.
+    private final WhereClauseParser deleteWhereClauseParser = new WhereClauseParser();
     private final CharSequenceObjHashMap<String> dropAllTablesFailures = new CharSequenceObjHashMap<>();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
@@ -207,6 +229,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<CharSequence> views = new ObjList<>();
     protected CharSequence sqlText;
     private boolean closed = false;
+    // Result of classifying the current DELETE's predicate as a single designated-timestamp interval
+    // [deleteTimeRangeLo, deleteTimeRangeHiExcl) with no residual filter (Task 2.1). Written by
+    // classifyDeleteTimeRange in compileExecutionModel0's DELETE case, from the ORIGINAL (un-negated)
+    // predicate, and read straight after by generateDelete. Plain scratch fields: a compiler compiles one
+    // statement at a time and DELETE compiles never nest, so there is no re-entrancy.
+    private long deleteTimeRangeHiExcl;
+    private long deleteTimeRangeLo;
+    private boolean deleteTimeRangePure;
+    private boolean isDeletePredicateReplayStable;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     //determines how compiler parses query text
@@ -761,6 +792,49 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         return indexValueBlockSize;
+    }
+
+    private static boolean isDeletePredicateReplayStable(Function function) {
+        if (function.isRandom()) {
+            return false;
+        }
+        if (function instanceof IndexedParameterLinkFunction || function instanceof NamedParameterLinkFunction) {
+            // WAL captures user bind values with the DELETE SQL transaction and restores them once before apply,
+            // so these links remain stable across survivor windows and retries.
+            return true;
+        }
+
+        // Traverse known child shapes even when the wrapper itself reports deterministic. A deterministic
+        // operator may contain a volatile argument, and replay stability is a property of the complete tree.
+        if (function instanceof UnaryFunction unaryFunction) {
+            return isDeletePredicateReplayStable(unaryFunction.getArg());
+        }
+        if (function instanceof BinaryFunction binaryFunction) {
+            return isDeletePredicateReplayStable(binaryFunction.getLeft())
+                    && isDeletePredicateReplayStable(binaryFunction.getRight());
+        }
+        if (function instanceof TernaryFunction ternaryFunction) {
+            return isDeletePredicateReplayStable(ternaryFunction.getLeft())
+                    && isDeletePredicateReplayStable(ternaryFunction.getCenter())
+                    && isDeletePredicateReplayStable(ternaryFunction.getRight());
+        }
+        if (function instanceof QuaternaryFunction quaternaryFunction) {
+            return isDeletePredicateReplayStable(quaternaryFunction.getFunc0())
+                    && isDeletePredicateReplayStable(quaternaryFunction.getFunc1())
+                    && isDeletePredicateReplayStable(quaternaryFunction.getFunc2())
+                    && isDeletePredicateReplayStable(quaternaryFunction.getFunc3());
+        }
+        if (function instanceof MultiArgFunction multiArgFunction) {
+            final ObjList<Function> args = multiArgFunction.args();
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (!isDeletePredicateReplayStable(args.getQuick(i))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        // Unknown non-deterministic functions may read clocks, random state, or mutable external state.
+        return !function.isNonDeterministic();
     }
 
     private static boolean isIPv4UpdateCast(int from, int to) {
@@ -3079,6 +3153,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
                     return model;
                 }
+            case ExecutionModel.DELETE: {
+                final IQueryModel deleteQueryModel = (IQueryModel) model;
+                TableToken deleteTableToken = executionContext.getTableToken(deleteQueryModel.getTableName());
+                try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(deleteTableToken)) {
+                    // DELETE does not support a subquery in its WHERE predicate. At apply time the survivor
+                    // set (WHERE NOT(pred)) is recomputed window by window; the opt-in disk-bounded route
+                    // (cairo.wal.delete.disk.bounded) commits each window before the next is scanned, so a
+                    // subquery over the base table would evaluate against partially-deleted state and delete
+                    // the wrong rows - silent data loss. Rather than let correctness depend on a config flag,
+                    // reject a subquery predicate outright. Checked here on the raw (un-negated, pre-optimise)
+                    // predicate so it does not depend on how the optimiser later restructures a subquery; runs
+                    // on the query-thread compile, so a rejected DELETE never reaches the WAL.
+                    rejectSubQueryDeletePredicate(deleteQueryModel);
+                    // Classify the ORIGINAL (un-negated) predicate for the Task 2.1 time-range fast path BEFORE
+                    // it is negated below - the negated survivor predicate describes the COMPLEMENT, which is
+                    // not what we want to measure. Runs on both compiles (the predicate is identical: negation
+                    // is apply-only); generateDelete reads the result. Advisory only - never affects
+                    // correctness, only whether executeDelete can skip staging survivors.
+                    classifyDeletePredicateReplayStable(deleteQueryModel, metadata, executionContext);
+                    classifyDeleteTimeRange(deleteQueryModel, deleteTableToken, executionContext);
+                    // At WAL apply time OperationExecutor.executeDelete needs the SURVIVOR rows
+                    // (WHERE NOT(pred)) to feed TableWriter.replaceRange, not the matching rows. Negate the
+                    // predicate on the freshly parsed model BEFORE optimisation so the optimiser processes
+                    // NOT(pred) (interval extraction, pushdown, De Morgan) exactly like any other predicate.
+                    // On the first (query-thread) compile isWalApplication() is false: the predicate is left
+                    // as-is and the factory generateDelete builds is used only to validate predicate columns
+                    // before the DELETE is stored as SQL text.
+                    if (executionContext.isWalApplication()) {
+                        negateDeleteWhereClause(deleteQueryModel);
+                    }
+                    IQueryModel optimisedNested = optimiser.optimise(deleteQueryModel.getNestedModel(), executionContext, this);
+                    deleteQueryModel.setNestedModel(optimisedNested);
+                    return model;
+                }
+            }
             default:
                 return model;
         }
@@ -3153,7 +3262,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compileUsingModel(executionContext, beginNanos, generateProgressLogger);
         }
         final short type = compiledQuery.getType();
-        if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
+        if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE || type == CompiledQuery.DELETE) && !executionContext.isWalApplication()) {
+            // Capture the SQL text on the first (query-thread) compile so it is stored in the WAL SQL txn
+            // (via DeleteOperation.getSqlText() in WalWriter.applyNonStructural) and can be recompiled at
+            // apply time. Skipped when already applying (isWalApplication). Without this the DELETE is
+            // stored with empty text and the apply-time recompile yields an empty query.
             compiledQuery.withSqlText(Chars.toString(sqlText));
         }
         compiledQuery.withContext(executionContext);
@@ -3954,6 +4067,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
+                    break;
+                case ExecutionModel.DELETE:
+                    compiledQuery.ofDelete(generateDelete((QueryModel) executionModel, executionContext));
                     break;
                 case ExecutionModel.EXPLAIN:
                     sqlId = queryRegistry.register(sqlText, executionContext);
@@ -4863,6 +4979,344 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             Misc.free(queryModel.getTableNameFunction());
             queryModel.setTableNameFunction(null);
         } while ((queryModel = queryModel.getNestedModel()) != null && queryModel.isOptimisable());
+    }
+
+    private void classifyDeletePredicateReplayStable(
+            IQueryModel deleteQueryModel,
+            TableRecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) {
+        isDeletePredicateReplayStable = false;
+        final ExpressionNode predicate = deleteQueryModel.getNestedModel().getNestedModel().getWhereClause();
+        if (predicate == null) {
+            return;
+        }
+
+        Function predicateFunction = null;
+        try {
+            predicateFunction = functionParser.parseFunction(ExpressionNode.deepClone(sqlNodePool, predicate), metadata, executionContext);
+            // Some factories constant-fold deterministic wrappers around random children, so the compiled Function
+            // tree no longer exposes every child. Keep the AST probe as a conservative backstop for those shapes.
+            isDeletePredicateReplayStable = isDeletePredicateReplayStable(predicateFunction)
+                    && isDeletePredicateReplayStable(predicate, metadata, executionContext);
+        } catch (SqlException ignored) {
+            // This probe only chooses an apply strategy. The normal compile below reports invalid SQL.
+        } finally {
+            Misc.free(predicateFunction);
+        }
+    }
+
+    private boolean isDeletePredicateReplayStable(
+            ExpressionNode node,
+            TableRecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) {
+        if (node == null) {
+            return true;
+        }
+        if (node.type == ExpressionNode.BIND_VARIABLE || node.type == ExpressionNode.LITERAL) {
+            return true;
+        }
+
+        if (node.type == ExpressionNode.FUNCTION) {
+            Function function = null;
+            try {
+                function = functionParser.parseFunction(ExpressionNode.deepClone(sqlNodePool, node), metadata, executionContext);
+                if (!isDeletePredicateReplayStable(function)) {
+                    return false;
+                }
+            } catch (SqlException ignored) {
+                return false;
+            } finally {
+                Misc.free(function);
+            }
+        }
+
+        if (!isDeletePredicateReplayStable(node.lhs, metadata, executionContext)
+                || !isDeletePredicateReplayStable(node.rhs, metadata, executionContext)) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isDeletePredicateReplayStable(node.args.getQuick(i), metadata, executionContext)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Classifies the DELETE's ORIGINAL (un-negated) predicate for the Task 2.1 time-range fast path: does the
+     * WHOLE predicate reduce to a SINGLE designated-timestamp interval with NO residual non-timestamp filter?
+     * If so, records the deleted interval in {@link #deleteTimeRangeLo}/{@link #deleteTimeRangeHiExcl}
+     * (inclusive lo, exclusive hi, in the table's timestamp units) and sets {@link #deleteTimeRangePure}, so
+     * {@code OperationExecutor.executeDelete} can apply it as one empty {@code replaceRange} over the deleted
+     * interval instead of staging survivors. Otherwise leaves {@code deleteTimeRangePure == false} and the
+     * executor falls back to the always-correct whole-range survivor-replace.
+     * <p>
+     * <b>Soundness (mandatory: no false positives).</b> This mirrors the exact conditions the code generator
+     * uses to build a pure interval scan with no row filter - {@code filter == null && keyColumn == null && no
+     * key sub-query/values && hasIntervalFilters()} - applied to the same {@link WhereClauseParser} extraction
+     * an interval scan uses, over the un-negated predicate, and additionally requires a single STATIC interval
+     * (exactly one {@code [lo, hi]} pair). Any residual non-timestamp filter (e.g. {@code ts < X AND s = 'a'}),
+     * indexed-symbol key, multiple intervals (e.g. {@code ts < a OR ts > b}), runtime interval, or any failure
+     * keeps the fast path off. Because {@code extract} structurally rewrites the tree it walks, it runs on a
+     * deep clone, leaving the real predicate (which the survivor factory later compiles) untouched.
+     */
+    private void classifyDeleteTimeRange(IQueryModel deleteQueryModel, TableToken tableToken, SqlExecutionContext executionContext) {
+        deleteTimeRangePure = false;
+        deleteTimeRangeLo = Long.MIN_VALUE;
+        deleteTimeRangeHiExcl = Long.MAX_VALUE;
+
+        final IQueryModel fromModel = deleteQueryModel.getNestedModel();
+        final IQueryModel innerModel = fromModel != null ? fromModel.getNestedModel() : null;
+        if (innerModel == null) {
+            return;
+        }
+        final ExpressionNode predicate = innerModel.getWhereClause();
+        if (predicate == null) {
+            return;
+        }
+
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final RecordMetadata readerMetadata = reader.getMetadata();
+            final int timestampIndex = readerMetadata.getTimestampIndex();
+            if (timestampIndex < 0) {
+                return; // no designated timestamp -> no interval fast path
+            }
+            // extract() rewrites the tree it walks (sets intrinsicValue flags and relinks AND children), so
+            // clone first: the real predicate is negated + compiled into the survivor factory right after.
+            final ExpressionNode predicateClone = ExpressionNode.deepClone(sqlNodePool, predicate);
+
+            RuntimeIntrinsicIntervalModel intervalModel = null;
+            final IntrinsicModel intrinsicModel = deleteWhereClauseParser.extract(
+                    DELETE_IDENTITY_ALIAS_TRANSLATOR,
+                    predicateClone,
+                    readerMetadata,
+                    null,
+                    timestampIndex,
+                    functionParser,
+                    readerMetadata,
+                    executionContext,
+                    false,
+                    reader,
+                    false
+            );
+            try {
+                // Mirror SqlCodeGenerator's pure-interval-scan gate: the entire predicate must be absorbed
+                // into a timestamp interval, with nothing left as a row filter or an indexed-symbol key.
+                final boolean pureInterval = intrinsicModel.intrinsicValue != IntrinsicModel.FALSE
+                        && intrinsicModel.filter == null
+                        && intrinsicModel.keyColumn == null
+                        && intrinsicModel.keySubQuery == null
+                        && intrinsicModel.keyValueFuncs.size() == 0
+                        && intrinsicModel.keyExcludedValueFuncs.size() == 0
+                        && intrinsicModel.hasIntervalFilters();
+                if (pureInterval) {
+                    intervalModel = intrinsicModel.buildIntervalModel();
+                    // Compile-time-constant intervals only: a single static [lo, hi] pair. Runtime intervals
+                    // (now(), bind vars) or multiple disjoint intervals fall back - correct, just unoptimized.
+                    if (intervalModel.isStatic()) {
+                        final LongList intervals = intervalModel.calculateIntervals(executionContext);
+                        if (intervals.size() == 2) {
+                            final long loInclusive = intervals.getQuick(0);
+                            final long hiInclusive = intervals.getQuick(1);
+                            deleteTimeRangeLo = loInclusive;
+                            // Interval bounds are inclusive; convert to replaceRange's exclusive hi, guarding
+                            // an open upper bound (Long.MAX_VALUE) against +1 overflow.
+                            deleteTimeRangeHiExcl = hiInclusive == Long.MAX_VALUE ? Long.MAX_VALUE : hiInclusive + 1;
+                            deleteTimeRangePure = true;
+                        }
+                    }
+                }
+            } finally {
+                // Free everything extract may have allocated. On the pure path buildIntervalModel() took
+                // ownership of any dynamic interval functions (freed by closing intervalModel); on the
+                // fallback path intrinsicModel.clear() frees them via the builder's freeAndClear().
+                Misc.free(intervalModel);
+                Misc.freeObjList(intrinsicModel.keyValueFuncs);
+                Misc.freeObjList(intrinsicModel.keyExcludedValueFuncs);
+                intrinsicModel.clear();
+            }
+        } catch (Throwable th) {
+            // Classification is advisory - any failure just disables the fast path (sound: never a false
+            // positive). The real predicate validation/compile happens later in generateDelete.
+            deleteTimeRangePure = false;
+            deleteTimeRangeLo = Long.MIN_VALUE;
+            deleteTimeRangeHiExcl = Long.MAX_VALUE;
+        } finally {
+            deleteWhereClauseParser.clear();
+        }
+    }
+
+    // Wraps the DELETE predicate in a logical NOT so that generating the (already SELECT-*) nested model
+    // yields the survivor rows (WHERE NOT(pred)) rather than the matching rows. The parsed model shape
+    // (SqlParser.parseDelete) is:
+    //   deleteQueryModel(DELETE) -> nested = fromModel(SELECT *) -> nested = innerModel(whereClause = pred)
+    // The NOT node is built exactly as the optimiser builds a logical negation (SqlOptimiser: type=OPERATION,
+    // token "not", paramCount 1, rhs = operand). WHERE is mandatory for DELETE (parser-enforced), so the
+    // inner where clause is always non-null here.
+    // Rejects a DELETE whose WHERE predicate contains a subquery (see the call site in
+    // compileExecutionModel0 for the data-loss rationale). Called on the freshly-parsed, un-negated model,
+    // so the predicate sits at nestedModel.nestedModel.whereClause (mirrors negateDeleteWhereClause).
+    private void rejectSubQueryDeletePredicate(IQueryModel deleteQueryModel) throws SqlException {
+        final IQueryModel nested = deleteQueryModel.getNestedModel();
+        final IQueryModel innerModel = nested != null ? nested.getNestedModel() : null;
+        final ExpressionNode subQuery = innerModel != null ? findSubQueryNode(innerModel.getWhereClause()) : null;
+        if (subQuery != null) {
+            throw SqlException.$(subQuery.position, "subquery is not supported in DELETE");
+        }
+    }
+
+    // Returns the first subquery operand (a node carrying a nested query model) anywhere in the expression
+    // tree, or null. Walks lhs, rhs and the args list, so it finds a subquery at any depth and in any operand
+    // position (e.g. "ts < (select ...)", "x = 1 and y > (select ...)"). ExpressionNode stores <=2-ary
+    // operands in lhs/rhs and >2-ary operands in args (the unused side is null/empty per node), so visiting
+    // all three covers every arity.
+    private static ExpressionNode findSubQueryNode(ExpressionNode node) {
+        if (node == null) {
+            return null;
+        }
+        if (node.queryModel != null) {
+            return node;
+        }
+        ExpressionNode found = findSubQueryNode(node.lhs);
+        if (found != null) {
+            return found;
+        }
+        found = findSubQueryNode(node.rhs);
+        if (found != null) {
+            return found;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            found = findSubQueryNode(node.args.getQuick(i));
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    private void negateDeleteWhereClause(IQueryModel deleteQueryModel) {
+        final IQueryModel innerModel = deleteQueryModel.getNestedModel().getNestedModel();
+        final ExpressionNode pred = innerModel.getWhereClause();
+        final ExpressionNode notPred = sqlNodePool.next();
+        notPred.type = ExpressionNode.OPERATION;
+        notPred.token = "not";
+        notPred.paramCount = 1;
+        notPred.rhs = pred;
+        notPred.position = pred.position;
+        innerModel.setWhereClause(notPred);
+    }
+
+    private DeleteOperation generateDelete(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        TableToken tableToken = executionContext.getTableToken(model.getTableName());
+        try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
+            if (!metadata.isWalEnabled()) {
+                throw SqlException.$(model.getModelPosition(), "DELETE is only supported on WAL tables");
+            }
+            checkViewModification(tableToken);
+            checkMatViewModification(tableToken);
+
+            // The nested model is a schema-identical "SELECT * FROM t WHERE <clause>". On the first
+            // (query-thread) compile <clause> is the raw predicate: build then immediately discard the
+            // factory purely to validate that the predicate columns exist/type-check; the DELETE then
+            // travels through the WAL as SQL text with a null survivor factory. At apply time
+            // (isWalApplication) the predicate has been negated in compileExecutionModel0, so this factory
+            // is the SURVIVOR cursor (WHERE NOT(pred)) that OperationExecutor.executeDelete feeds to
+            // TableWriter.replaceRange: keep it and hand ownership to the DeleteOperation.
+            final RecordCursorFactory survivorFactory;
+            final int windowHiBindVariableIndex;
+            final int windowLoBindVariableIndex;
+            if (executionContext.isWalApplication()) {
+                // Bound the survivor scan to a per-window designated-timestamp interval via two indexed bind
+                // variables allocated after all WAL-restored user binds. This lets
+                // OperationExecutor re-drive this ONE factory window by window - rebinding the two variables and
+                // re-running getCursor - so each pass reads only the window's partitions (an interval scan)
+                // instead of re-scanning the whole table per window. The bind variables are runtime, so the
+                // code generator extracts the bound into a RuntimeIntervalModel designated-ts intrinsic (an
+                // interval forward scan) with NOT(pred) left as the residual filter.
+                final BindVariableService bindVariableService = executionContext.getBindVariableService();
+                windowLoBindVariableIndex = bindVariableService.getIndexedVariableCount();
+                windowHiBindVariableIndex = windowLoBindVariableIndex + 1;
+                andSurvivorWindowBounds(model.getNestedModel(), metadata, windowLoBindVariableIndex, windowHiBindVariableIndex);
+                // Default bounds preserve whole-range semantics until OperationExecutor rebinds this factory for
+                // each apply window. NOTE: the lower bound is Long.MIN_VALUE + 1, NOT
+                // Long.MIN_VALUE: a timestamp bind variable equal to Long.MIN_VALUE reads as the timestamp NULL
+                // sentinel (Numbers.LONG_NULL == Long.MIN_VALUE), which RuntimeIntervalModel collapses to an
+                // EMPTY set - that would make the survivor scan return nothing and the DELETE erase the whole
+                // table. Long.MIN_VALUE + 1 is the smallest non-null timestamp and sits below all real data, so
+                // the default interval [MIN+1, MAX) covers every row.
+                // Set both bind variables in the designated-timestamp column's OWN unit (see
+                // DeleteOperation.setWindowBound): a micros-typed bind variable read against a TIMESTAMP_NANO
+                // column is rescaled x1000 by NanosTimestampDriver.from, which overflows on these whole-range
+                // defaults and suspends the table instead of deleting anything.
+                final int tsColumnType = metadata.getColumnType(metadata.getTimestampIndex());
+                DeleteOperation.setWindowBound(bindVariableService, windowLoBindVariableIndex, tsColumnType, Long.MIN_VALUE + 1);
+                DeleteOperation.setWindowBound(bindVariableService, windowHiBindVariableIndex, tsColumnType, Long.MAX_VALUE);
+                survivorFactory = generateSelectOneShot(model.getNestedModel(), executionContext, false);
+            } else {
+                final RecordCursorFactory validationFactory = generateSelectOneShot(model.getNestedModel(), executionContext, false);
+                validationFactory.close();
+                survivorFactory = null;
+                windowHiBindVariableIndex = -1;
+                windowLoBindVariableIndex = -1;
+            }
+
+            return new DeleteOperation(
+                    tableToken,
+                    metadata.getTableId(),
+                    metadata.getMetadataVersion(),
+                    model.getModelPosition(),
+                    survivorFactory,
+                    isDeletePredicateReplayStable,
+                    deleteTimeRangePure,
+                    deleteTimeRangeLo,
+                    deleteTimeRangeHiExcl,
+                    windowLoBindVariableIndex,
+                    windowHiBindVariableIndex
+            );
+        }
+    }
+
+    // ANDs indexed runtime bounds onto the base-table model's WHERE clause. The bound is added to the
+    // model that directly references the table because the code generator extracts designated-timestamp
+    // interval intrinsics from THAT model's WHERE (SqlCodeGenerator.generateTableQuery0) - adding it higher up
+    // would apply it as a post-filter and forfeit the interval scan. DELETE is single-table (no joins in v1),
+    // so exactly one such model exists in the (already optimised) nested chain.
+    private void andSurvivorWindowBounds(
+            IQueryModel nested,
+            TableRecordMetadata metadata,
+            int windowLoBindVariableIndex,
+            int windowHiBindVariableIndex
+    ) {
+        IQueryModel tableModel = nested;
+        while (tableModel.getTableNameExpr() == null && tableModel.getNestedModel() != null) {
+            tableModel = tableModel.getNestedModel();
+        }
+        final CharSequence tsColumn = metadata.getColumnName(metadata.getTimestampIndex());
+        ExpressionNode where = tableModel.getWhereClause();
+        where = andWindowBound(where, tsColumn, ">=", "$" + (windowLoBindVariableIndex + 1));
+        where = andWindowBound(where, tsColumn, "<", "$" + (windowHiBindVariableIndex + 1));
+        tableModel.setWhereClause(where);
+    }
+
+    // Builds "<tsColumn> <op> <bindVarToken>" (a LITERAL ts column compared to a ':'-prefixed bind variable,
+    // which ExpressionNode.of promotes to BIND_VARIABLE) and ANDs it onto an existing where clause, mirroring
+    // SqlOptimiser.concatFilters. Precedence is irrelevant on an already-built tree, so it is left at 0 as the
+    // compiler does elsewhere when synthesising nodes post-parse.
+    private ExpressionNode andWindowBound(ExpressionNode where, CharSequence tsColumn, CharSequence op, CharSequence bindVarToken) {
+        final ExpressionNode cmp = sqlNodePool.next().of(ExpressionNode.OPERATION, op, 0, 0);
+        cmp.paramCount = 2;
+        cmp.lhs = sqlNodePool.next().of(ExpressionNode.LITERAL, tsColumn, 0, 0);
+        cmp.rhs = sqlNodePool.next().of(ExpressionNode.LITERAL, bindVarToken, 0, 0);
+        if (where == null) {
+            return cmp;
+        }
+        final ExpressionNode and = sqlNodePool.next().of(ExpressionNode.OPERATION, "and", 0, 0);
+        and.paramCount = 2;
+        and.lhs = where;
+        and.rhs = cmp;
+        return and;
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {

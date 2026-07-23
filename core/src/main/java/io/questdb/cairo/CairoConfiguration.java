@@ -378,6 +378,27 @@ public interface CairoConfiguration {
 
     long getMatViewRowsPerQueryEstimate();
 
+    /**
+     * Target number of rows staged per window of an arbitrary-predicate DELETE's survivor-replace. The
+     * apply path walks the deleted range in windows of roughly this many rows, bounding peak O3 memory to
+     * one window regardless of table size. Default 1,000,000.
+     * <p>
+     * Atomic DELETE expands each estimated window to the logical partition ceiling, so one transaction never
+     * rewrites a physical partition twice; peak staging may therefore include a whole logical partition. The
+     * opt-in disk-bounded route keeps the unaligned estimate because each window commits independently, so a
+     * very small target can revisit one logical partition across commits and increase write amplification.
+     * Must be {@code >= 1}; {@code PropServerConfiguration} rejects a smaller value at startup.
+     * <p>
+     * <b>Limitation (timestamp-clustered rows):</b> the ~one-window memory bound assumes an approximately
+     * UNIFORM designated-timestamp distribution, because the window is TIME-based - a ts-width chosen to span
+     * roughly this many rows at the average row density. A dense cluster of rows sharing a single timestamp, or
+     * packed into a very narrow sub-interval (e.g. from dedup-disabled bursty ingestion), falls in one
+     * indivisible window and is staged together: such a cluster cannot be split by timestamp windowing, so a
+     * window over it stages more than this target. It is still strictly better than the pre-windowing
+     * whole-table staging - the peak is bounded by the densest cluster, not the whole table.
+     */
+    long getWalDeleteRowsPerStep();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
@@ -944,6 +965,25 @@ public interface CairoConfiguration {
     }
 
     long getWalDataAppendPageSize();
+
+    /**
+     * When {@code true}, an arbitrary-predicate DELETE that must rewrite Parquet partitions applies via a
+     * per-window convert+replace+commit loop that bounds transient Parquet-convert disk to a single window
+     * (at most one window's partitions are transiently native at a time). This path is intentionally
+     * <b>non-atomic</b>: a concurrent reader may observe a partially-applied delete while WAL apply is in
+     * progress (it is still crash-safe - a crash re-applies the whole delete). Replay-unstable predicates and
+     * base tables with dependent materialized views always use the atomic route. When {@code false} (default),
+     * the atomic windowed survivor-replace is used, which bounds staged memory but converts all Parquet
+     * partitions up front. Only affects the arbitrary route; pure time-range deletes are unaffected.
+     * <p>
+     * <b>Concurrent-reader disk caveat:</b> the single-window transient-disk bound holds only while no reader or
+     * checkpoint is pinned at an older transaction. A superseded partition version is normally unlinked
+     * synchronously as the next window supersedes it, but while a long-lived reader (or open checkpoint) still
+     * references an older txn the reclaim is deferred to the asynchronous partition-purge job, so superseded
+     * native partition versions accumulate for that reader's lifetime and the transient footprint can approach
+     * the whole-range conversion this route exists to avoid.
+     */
+    boolean getWalDeleteDiskBounded();
 
     boolean getWalEnabledDefault();
 

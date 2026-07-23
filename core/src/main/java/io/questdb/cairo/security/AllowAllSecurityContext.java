@@ -230,6 +230,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeTableDelete(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 

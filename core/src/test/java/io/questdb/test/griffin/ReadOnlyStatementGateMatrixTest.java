@@ -69,6 +69,7 @@ public class ReadOnlyStatementGateMatrixTest extends AbstractCairoTest {
         EXPECTED_REFUSED.add("INSERT");
         EXPECTED_REFUSED.add("INSERT_AS_SELECT");
         EXPECTED_REFUSED.add("UPDATE");
+        EXPECTED_REFUSED.add("DELETE");
         EXPECTED_REFUSED.add("ALTER");
         EXPECTED_REFUSED.add("TRUNCATE");
         EXPECTED_REFUSED.add("RENAME_TABLE");

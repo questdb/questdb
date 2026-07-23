@@ -916,6 +916,132 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         testReplaceRangeCommit("2022-02-25T02:53", "2022-02-25T01:00", "2022-02-25T23");
     }
 
+    /**
+     * Whole-branch-review regression (DELETE feature, Task 2.2 follow-up): the fully-covered-Parquet-
+     * partition inline-drop guard in {@code TableWriter.processO3Block} - an EMPTY replace batch
+     * ({@code srcOooLo > srcOooHi}) that fully covers a Parquet-tiered partition now DROPS the partition
+     * inline instead of throwing "commit replace mode is not supported for Parquet partitions" - is shared
+     * by every REPLACE_RANGE writer, not just DELETE's callers. That includes {@code MatViewRefreshJob},
+     * which commits an incremental/full mat-view refresh via exactly this primitive
+     * ({@link WalWriter#commitMatView}, dedup mode {@code WAL_DEDUP_MODE_REPLACE_RANGE} - see
+     * {@code MatViewRefreshJob#commitMatView}). That change had no test on the mat-view side; this pins it
+     * directly on a mat view's own physical table.
+     * <p>
+     * A real end-to-end trigger (seed a base table, refresh so the view's Parquet-tiered partition holds
+     * real rows, then delete the underlying base rows and refresh again) is not reachable: a DELETE on a
+     * base table that removes any row unconditionally INVALIDATES every dependent mat view instead of
+     * incrementally refreshing it ({@code ApplyWal2TableJob#processWalSql}'s {@code CMD_DELETE_TABLE} case is
+     * gated on {@code deleted > 0} - see {@code DeleteTest#testDeleteInvalidatesMaterializedView}), so an
+     * incremental refresh can never observe an already-refreshed period going empty as a result of a base
+     * DELETE. This test instead drives the exact commit primitive {@code MatViewRefreshJob} itself calls
+     * directly against the view's own WAL - the same white-box technique {@code MatViewStateTest} uses to
+     * exercise {@code commitMatView} without running a real refresh cycle, and
+     * {@code TableWriterReplaceRangeDirectTest} uses to exercise {@code replaceRange} without going through
+     * DELETE.
+     * <p>
+     * {@code ALTER MATERIALIZED VIEW ... CONVERT PARTITION TO PARQUET} does not exist as grammar
+     * ({@code SqlCompilerImpl#compileAlterMatView} has no CONVERT branch), and a plain
+     * {@code ALTER TABLE <mv> CONVERT PARTITION ...} is unconditionally rejected by
+     * {@code checkMatViewModification}, so the day-1 partition is tiered to Parquet by calling
+     * {@link TableWriter#convertPartitionNativeToParquet} directly on a writer grabbed for the view's own
+     * table token - the same direct-writer-on-a-WAL-table technique already used elsewhere in this file (see
+     * {@code getWriter(tableToken)} usages in {@code WalWriterTest}).
+     */
+    @Test
+    public void testReplaceRangeMatViewEmptyDropsFullyCoveredParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view mv as (select ts, last(v) v from base sample by 1h) partition by DAY");
+            drainWalQueue();
+            final TableToken mvToken = engine.verifyTableName("mv");
+            Assert.assertTrue("mv must be a materialized view", mvToken.isMatView());
+
+            final long day1 = MicrosTimestampDriver.floor("1970-01-01T00:00:00.000000Z");
+            final long day2 = MicrosTimestampDriver.floor("1970-01-02T00:00:00.000000Z");
+            final long day3 = MicrosTimestampDriver.floor("1970-01-03T00:00:00.000000Z");
+
+            // Hand-craft two refreshed periods (day 1 and day 2) directly on the view's own WAL, exactly as
+            // an incremental refresh would via MatViewRefreshJob#commitMatView: two real, non-empty
+            // REPLACE_RANGE commits, each fully covering one calendar-day view partition.
+            try (WalWriter ww = engine.getWalWriter(mvToken)) {
+                TableWriter.Row row = ww.newRow(day1);
+                row.putDouble(1, 1.0);
+                row.append();
+                row = ww.newRow(day1 + 3_600_000_000L);
+                row.putDouble(1, 2.0);
+                row.append();
+                ww.commitMatView(1, 1, day2, day1, day2);
+
+                row = ww.newRow(day2);
+                row.putDouble(1, 3.0);
+                row.append();
+                ww.commitMatView(2, 2, day3, day2, day3);
+            }
+            drainWalQueue();
+
+            assertQuery("select ts, v from mv order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000000Z\t1.0
+                            1970-01-01T01:00:00.000000Z\t2.0
+                            1970-01-02T00:00:00.000000Z\t3.0
+                            """);
+            assertQuery("select count(*) from table_partitions('mv')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+
+            // Tier the view's day-1 partition to Parquet - directly on the writer, since neither ALTER
+            // MATERIALIZED VIEW nor ALTER TABLE can do this for a mat view (see class comment above).
+            try (TableWriter w = getWriter(mvToken)) {
+                Assert.assertTrue(
+                        "day-1 partition conversion to parquet must succeed",
+                        // Pass NaN (not 0) for the bloom-filter fpp: with no bloom-filter columns the
+                        // encoder normalizes NaN to the configured default, whereas a literal 0 reaches
+                        // the native encoder's fpp-in-(0,1) assertion and aborts the JVM. This matches the
+                        // convention used elsewhere (e.g. TableReaderReloadFuzzTest, ALTER ... CONVERT).
+                        w.convertPartitionNativeToParquet(day1, null, Double.NaN)
+                );
+            }
+            assertQuery("select isParquet from table_partitions('mv') where name = '1970-01-01'")
+                    .noLeakCheck().noRandomAccess().returns("isParquet\ntrue\n");
+
+            // The regression case: an EMPTY REPLACE_RANGE (no rows appended) that fully covers the now
+            // Parquet-tiered day-1 partition - exactly what an incremental refresh commits when the
+            // recomputed period turns out to have zero rows. Pre-Task-2.2 this threw "commit replace mode is
+            // not supported for Parquet partitions" and suspended the table; the refined guard now drops the
+            // partition inline instead.
+            try (WalWriter ww = engine.getWalWriter(mvToken)) {
+                ww.commitMatView(3, 3, day2, day1, day2);
+            }
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "an empty replace over a fully-covered Parquet mat-view partition must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(mvToken));
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            mv\tbase\tvalid
+                            """);
+            // Day-1 partition is gone (dropped inline), not merely emptied-but-present.
+            assertQuery("select count(*) from table_partitions('mv') where name = '1970-01-01'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            // Day-2 content is untouched.
+            assertQuery("select ts, v from mv order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-02T00:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
     @Test
     public void testReplaceRangeNotSupportedParquetPartition() throws Exception {
         assertMemoryLeak(() -> {

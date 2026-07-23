@@ -46,6 +46,7 @@ import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -82,6 +83,7 @@ import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
+import static io.questdb.tasks.TableWriterTask.CMD_DELETE_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
 
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
@@ -429,6 +431,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 transactionLogCursor.toTop();
                 isTerminating = runStatus.isTerminating();
                 boolean firstRun = true;
+                boolean matViewCommitNotified = false;
 
                 try {
 
@@ -574,6 +577,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         writer.commitSeqTxn();
                     }
 
+                    // Publish the materialized-view consequence as soon as the WAL transaction state is durable.
+                    // Queue draining and merge-stat recording below are non-transactional housekeeping; a failure
+                    // there must not advance the base table while losing this invalidation/refresh notification.
+                    if (initialSeqTxn < writer.getSeqTxn()) {
+                        engine.notifyMatViewBaseTableCommit(mvRefreshTask, writer.getSeqTxn());
+                        matViewCommitNotified = true;
+                    }
+
                     // The apply loop holds the writer across this batch of transactions and never
                     // ticks the command queue itself. Once the batch is applied and its sequencer
                     // txn finalized, drain async writer commands (e.g. storage policy parquet-commit
@@ -605,6 +616,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     finishedAll = false;
                 }
 
+                // Ejection skips the normal post-loop block above, but earlier transactions in this batch may
+                // already be durable. Notify for those before any remaining housekeeping can fail.
+                if (!matViewCommitNotified && initialSeqTxn < writer.getSeqTxn()) {
+                    engine.notifyMatViewBaseTableCommit(mvRefreshTask, writer.getSeqTxn());
+                }
+
                 finishedAll = finishedAll || (writer.getAppliedSeqTxn() == transactionLogCursor.getMaxTxn() && !transactionLogCursor.hasNext());
                 if (totalTransactionCount > 0) {
                     double amplification = rowsAdded > 0 ? Numbers.roundUp(Numbers.roundUp(100.0 * physicalRowsAdded / rowsAdded, 2) / 100.0, 2) : 0;
@@ -628,13 +645,17 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     );
                 }
 
-                if (initialSeqTxn < writer.getSeqTxn()) {
-                    engine.notifyMatViewBaseTableCommit(mvRefreshTask, writer.getSeqTxn());
-                }
             } catch (Throwable th) {
-                // We could have been applying multiple txns, and we failed somewhere in the middle. The writer will
-                // be returned to the pool and dirty writes will be rolled back. We have to update the sequencer
-                // on the state of the writer and revert any dirty txns that might have advanced.
+                // We could have been applying multiple txns, and we failed somewhere in the middle. A transaction
+                // may already be durable even though post-commit housekeeping threw; publish its materialized-view
+                // consequence before updating the sequencer, because that durable txn will not replay.
+                if (initialSeqTxn < writer.getSeqTxn()) {
+                    try {
+                        engine.notifyMatViewBaseTableCommit(mvRefreshTask, writer.getSeqTxn());
+                    } catch (Throwable notifyFailure) {
+                        th.addSuppressed(notifyFailure);
+                    }
+                }
                 engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getSeqTxn(), writer.getSeqTxn());
                 throw th;
             } finally {
@@ -874,6 +895,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         operationExecutor.resetRnd(sqlInfo.getRndSeed0(), sqlInfo.getRndSeed1());
         sqlInfo.populateBindVariableService(operationExecutor.getBindVariableService());
         try {
+            int recompilationAttempts = 0;
             while (true) {
                 try {
                     switch (cmdType) {
@@ -891,13 +913,31 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 mvRefreshTask.invalidationReason = UpdateOperation.MAT_VIEW_INVALIDATION_REASON;
                             }
                             return;
+                        case CMD_DELETE_TABLE:
+                            final long deleteTxnBefore = tableWriter.getTxn();
+                            try {
+                                final long deleted = operationExecutor.executeDelete(tableWriter, sql, seqTxn);
+                                if (deleted > 0) {
+                                    mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                                    mvRefreshTask.invalidationReason = DeleteOperation.MAT_VIEW_INVALIDATION_REASON;
+                                }
+                            } catch (Throwable th) {
+                                // replaceRange may publish commit00 and then fail in housekeeping. The durable
+                                // DELETE cannot replay, so retain its MV invalidation for the outer failure path.
+                                if (tableWriter.getTxn() > deleteTxnBefore) {
+                                    mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                                    mvRefreshTask.invalidationReason = DeleteOperation.MAT_VIEW_INVALIDATION_REASON;
+                                }
+                                throw th;
+                            }
+                            return;
                         default:
                             throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
                     }
                 } catch (SqlException ex) {
                     if (ex.isWalRecoverable()) {
                         LOG.info().$("recoverable error applying SQL to wal table [table=").$(tableWriter.getTableToken())
-                                .$(", sql=").$(sql)
+                                .$(", sql=").$safe(sql)
                                 .$(", position=").$(ex.getPosition())
                                 .$(", error=").$safe(ex.getFlyweightMessage())
                                 .I$();
@@ -913,6 +953,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (!ex.isTableDoesNotExist()) {
                         throw ex;
                     }
+                }
+
+                if (recompilationAttempts++ >= engine.getConfiguration().getMaxSqlRecompileAttempts()) {
+                    LOG.info().$("failed to compile WAL SQL after table rename retries, will retry later [table=")
+                            .$(tableWriter.getTableToken())
+                            .$(", attempts=").$(recompilationAttempts).I$();
+                    throw EjectApplyWalException.INSTANCE;
                 }
 
                 TableToken tableToken = tableWriter.getTableToken();
@@ -945,7 +992,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             }
             LogRecord log = !e.isWALTolerable() ? LOG.error() : LOG.info();
             log.$("error applying SQL to wal table [table=").$(tableWriter.getTableToken())
-                    .$(", sql=").$(sql)
+                    .$(", sql=").$safe(sql)
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();

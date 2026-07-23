@@ -564,6 +564,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getWalDeleteRowsPerStep() {
+        return getDelegate().getWalDeleteRowsPerStep();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }
@@ -1451,6 +1456,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWalDataAppendPageSize() {
         return getDelegate().getWalDataAppendPageSize();
+    }
+
+    @Override
+    public boolean getWalDeleteDiskBounded() {
+        return getDelegate().getWalDeleteDiskBounded();
     }
 
     @Override

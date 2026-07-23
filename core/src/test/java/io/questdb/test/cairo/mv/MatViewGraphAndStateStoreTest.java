@@ -40,6 +40,11 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
 public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     private final MatViewGraph graph = new MatViewGraph();
     private final ObjList<TableToken> ordered = new ObjList<>();
@@ -70,6 +75,95 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
 
         Assert.assertTrue(graph.addView(viewDefinition));
         Assert.assertFalse(graph.addView(viewDefinition));
+    }
+
+    @Test
+    public void testApplyIfNoDependentViews() throws Exception {
+        final TableToken tableToken = newTableToken("table1");
+        final TableToken viewToken = newMatViewToken("view1");
+        final int[] invocationCount = {0};
+
+        Assert.assertEquals(42, graph.applyIfNoDependentViews(tableToken, () -> {
+            invocationCount[0]++;
+            return 42;
+        }));
+        Assert.assertEquals(1, invocationCount[0]);
+
+        graph.addView(createDefinition(viewToken, tableToken));
+        Assert.assertEquals(-1, graph.applyIfNoDependentViews(tableToken, () -> {
+            invocationCount[0]++;
+            return 42;
+        }));
+        Assert.assertEquals(1, invocationCount[0]);
+
+        graph.removeView(viewToken);
+        Assert.assertEquals(42, graph.applyIfNoDependentViews(tableToken, () -> {
+            invocationCount[0]++;
+            return 42;
+        }));
+        Assert.assertEquals(2, invocationCount[0]);
+    }
+
+    @Test
+    public void testApplyIfNoDependentViewsBlocksConcurrentAdd() throws Exception {
+        final TableToken tableToken = newTableToken("table1");
+        final TableToken viewToken = newMatViewToken("view1");
+        final CountDownLatch actionEntered = new CountDownLatch(1);
+        final CountDownLatch addAttempted = new CountDownLatch(1);
+        final CountDownLatch releaseAction = new CountDownLatch(1);
+        final AtomicInteger eventOrder = new AtomicInteger();
+        final AtomicInteger actionExitOrder = new AtomicInteger();
+        final AtomicInteger addCompleteOrder = new AtomicInteger();
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+
+        final Thread actionThread = new Thread(() -> {
+            try {
+                graph.applyIfNoDependentViews(tableToken, () -> {
+                    actionEntered.countDown();
+                    try {
+                        releaseAction.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                    actionExitOrder.set(eventOrder.incrementAndGet());
+                    return 42;
+                });
+            } catch (Throwable th) {
+                failure.compareAndSet(null, th);
+            }
+        });
+        final Thread addThread = new Thread(() -> {
+            try {
+                addAttempted.countDown();
+                graph.addView(createDefinition(viewToken, tableToken));
+                addCompleteOrder.set(eventOrder.incrementAndGet());
+            } catch (Throwable th) {
+                failure.compareAndSet(null, th);
+            }
+        });
+
+        try {
+            actionThread.start();
+            Assert.assertTrue(actionEntered.await(10, TimeUnit.SECONDS));
+            addThread.start();
+            Assert.assertTrue(addAttempted.await(10, TimeUnit.SECONDS));
+            releaseAction.countDown();
+            actionThread.join(10_000);
+            addThread.join(10_000);
+            Assert.assertFalse(actionThread.isAlive());
+            Assert.assertFalse(addThread.isAlive());
+            Assert.assertNull(failure.get());
+            Assert.assertTrue(
+                    "addView must complete after the guarded action returns",
+                    actionExitOrder.get() > 0 && actionExitOrder.get() < addCompleteOrder.get()
+            );
+            Assert.assertEquals(MatViewGraph.DEPENDENT_VIEWS_PRESENT, graph.applyIfNoDependentViews(tableToken, () -> 42));
+        } finally {
+            releaseAction.countDown();
+            actionThread.join(10_000);
+            addThread.join(10_000);
+        }
     }
 
     // loops

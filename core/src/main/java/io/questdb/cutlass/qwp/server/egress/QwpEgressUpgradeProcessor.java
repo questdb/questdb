@@ -900,6 +900,16 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 }
                 break;
             }
+            case CompiledQuery.DELETE: {
+                // DELETE is a deferred WAL SQL op executed via the same dispatcher as UPDATE (it is NOT
+                // parse-time-executed), so it must call cq.execute() here -- otherwise it falls into the
+                // default "already done" arm and silently reports success without deleting anything.
+                try (OperationFuture fut = cq.execute(sqlCtx, state.getEventSubSequence(), true)) {
+                    fut.await();
+                    rowsAffected = fut.getAffectedRowsCount();
+                }
+                break;
+            }
             case CompiledQuery.ALTER: {
                 try (OperationFuture fut = cq.execute(state.getEventSubSequence())) {
                     fut.await();

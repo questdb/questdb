@@ -362,6 +362,65 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
         });
     }
 
+    @Test
+    public void testDeleteActuallyDeletesRows() throws Exception {
+        // DELETE is WAL-only, and it is a DEFERRED WAL SQL op (like UPDATE) -- executed via
+        // cq.execute(), NOT parse-time. Before the egress switch learned the DELETE case, a DELETE fell
+        // into the default "already executed at parse time" arm: the server replied EXEC_DONE(DELETE,-1)
+        // -- indistinguishable from success -- while zero rows were deleted. This test is RED against that
+        // behaviour (the survivors below would still contain x<5) and GREEN once the case runs cq.execute.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented()) {
+                serverMain.execute("CREATE TABLE del(ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute(
+                        "INSERT INTO del SELECT CAST((x - 1) * 1_000_000L AS TIMESTAMP), x " +
+                                "FROM long_sequence(10)"
+                );
+                serverMain.awaitTable("del");
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    // DELETE x < 5 -- removes rows 1..4 (x in {1,2,3,4}), survivors {5..10}.
+                    ExecResult r = executeExec(client, "DELETE FROM del WHERE x < 5");
+                    Assert.assertEquals(CompiledQuery.DELETE, r.opType);
+                    // WAL apply computes the exact count after this acknowledgement. The wire response uses 0
+                    // as the unavailable-count placeholder and must never expose the minted sequencer txn.
+                    Assert.assertEquals(0, r.rowsAffected);
+                    // Apply the WAL DELETE txn, then verify the exact survivor set over the wire.
+                    serverMain.awaitTable("del");
+                    final boolean[] present = new boolean[11]; // index == x value (1..10)
+                    final int[] total = {0};
+                    client.execute("SELECT x FROM del", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r2 = 0; r2 < batch.getRowCount(); r2++) {
+                                present[(int) batch.getLongValue(0, r2)] = true;
+                                total[0]++;
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("unexpected error: " + message);
+                        }
+                    });
+                    // Exact survivor-set oracle: {1,2,3,4} gone, {5..10} present, nothing else.
+                    for (int v = 1; v <= 4; v++) {
+                        Assert.assertFalse("x=" + v + " should have been deleted", present[v]);
+                    }
+                    for (int v = 5; v <= 10; v++) {
+                        Assert.assertTrue("x=" + v + " should have survived", present[v]);
+                    }
+                    Assert.assertEquals(6, total[0]);
+                }
+            }
+        });
+    }
+
     /**
      * Helper: runs a DDL that we don't care about rowsAffected for. Returns
      * the op type so the test can assert against a CompiledQuery constant.

@@ -1073,6 +1073,75 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertPartitionFsyncsNativeFilesInSyncMode() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+
+        final AtomicBoolean armed = new AtomicBoolean();
+        final AtomicBoolean dataFsynced = new AtomicBoolean();
+        final AtomicBoolean partitionDirFsynced = new AtomicBoolean();
+        final AtomicLong dataFd = new AtomicLong(-1);
+        final AtomicLong partitionDirFd = new AtomicLong(-1);
+        final AtomicReference<String> partitionDirRef = new AtomicReference<>();
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void fsync(long fd) {
+                if (armed.get() && fd == dataFd.get()) {
+                    dataFsynced.set(true);
+                }
+                super.fsync(fd);
+            }
+
+            @Override
+            public void fsyncAndClose(long fd) {
+                if (armed.get() && fd == partitionDirFd.get()) {
+                    partitionDirFsynced.set(true);
+                }
+                super.fsyncAndClose(fd);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ path) {
+                long fd = super.openRONoCache(path);
+                final String partitionDir = partitionDirRef.get();
+                if (armed.get() && partitionDir != null && Utf8s.stringFromUtf8Bytes(path).startsWith(partitionDir)) {
+                    partitionDirFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openAppend(LPSZ name) {
+                long fd = super.openAppend(name);
+                if (armed.get() && fd > -1 && Utf8s.endsWithAscii(name, ".d")) {
+                    final String dataPath = Utf8s.stringFromUtf8Bytes(name);
+                    dataFd.set(fd);
+                    partitionDirRef.set(dataPath.substring(0, dataPath.lastIndexOf(Files.SEPARATOR)));
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = "testConvertNativeSync";
+            createTable(
+                    tableName,
+                    "INSERT INTO " + tableName + " VALUES(1, '2024-06-10T00:00:00.000000Z')",
+                    "INSERT INTO " + tableName + " VALUES(2, '2024-06-11T00:00:00.000000Z')"
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+            armed.set(true);
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
+
+            Assert.assertNotEquals("native data file open was not intercepted", -1L, dataFd.get());
+            Assert.assertTrue("native data file must be fsynced before _txn publication", dataFsynced.get());
+            if (!Os.isWindows()) {
+                Assert.assertTrue("native partition directory must be fsynced before _txn publication", partitionDirFsynced.get());
+            }
+        });
+    }
+
+    @Test
     public void testConvertPartitionFsyncsParquetMetadataInSyncMode() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
 

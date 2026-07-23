@@ -121,6 +121,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             this.queryExecutors.extendAndSet(CompiledQuery.RENAME_TABLE, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.UPDATE, this::executeUpdate);
+            this.queryExecutors.extendAndSet(CompiledQuery.DELETE, this::executeDelete);
             this.queryExecutors.extendAndSet(CompiledQuery.VACUUM, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.BEGIN, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.COMMIT, sendConfirmation);
@@ -791,6 +792,47 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         }
     }
 
+    // Mirrors executeUpdate(): DELETE reports an affected-row count the same way UPDATE does. Kept
+    // as its own method (rather than reusing executeUpdate) because the interruption/OOM cleanup path
+    // must free cq.getDeleteOperation(), not cq.getUpdateOperation() -- the two hold distinct native
+    // resources (DeleteOperation's survivorFactory vs UpdateOperation's factory) on the CompiledQuery.
+    private void executeDelete(
+            JsonQueryProcessorState state,
+            CompiledQuery cq,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        HttpConnectionContext context = state.getHttpConnectionContext();
+        NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+        SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
+        circuitBreaker.resetTimer();
+        sqlExecutionContext.initNow();
+        OperationFuture fut = null;
+        boolean isAsyncWait = false;
+        try {
+            fut = cq.execute(sqlExecutionContext, state.getEventSubSequence(), true);
+            int waitResult = fut.await(getAsyncWriterStartTimeout(state));
+            if (waitResult != OperationFuture.QUERY_COMPLETE) {
+                isAsyncWait = true;
+                state.setOperationFuture(fut);
+                throw EntryUnavailableException.instance("retry delete table wait");
+            }
+            // All good, finished deletes
+            final long deletedCount = fut.getAffectedRowsCount();
+            metrics.jsonQueryMetrics().markComplete();
+            sendUpdateConfirmation(state, keepAliveHeader, deletedCount);
+        } catch (CairoException e) {
+            // close e.g., when the query has been canceled, or we got an OOM
+            if (e.isInterruption() || e.isOutOfMemory()) {
+                Misc.free(cq.getDeleteOperation());
+            }
+            throw e;
+        } finally {
+            if (!isAsyncWait && fut != null) {
+                fut.close();
+            }
+        }
+    }
+
     private long getAsyncWriterStartTimeout(JsonQueryProcessorState state) {
         return Math.min(asyncWriterStartTimeout, state.getStatementTimeout());
     }
@@ -916,7 +958,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         } else {
             // Done
             state.freeAsyncOperation();
-            if (state.getQueryType() == CompiledQuery.UPDATE) {
+            if (state.getQueryType() == CompiledQuery.UPDATE || state.getQueryType() == CompiledQuery.DELETE) {
                 sendUpdateConfirmation(state, configuration.getKeepAliveHeader(), fut.getAffectedRowsCount());
             } else {
                 // Alter, sends ddl:OK

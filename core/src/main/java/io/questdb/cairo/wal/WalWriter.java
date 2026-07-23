@@ -67,6 +67,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -267,6 +268,16 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         } else {
             return applyNonStructural(alterOp, false);
         }
+    }
+
+    @Override
+    public long apply(DeleteOperation operation) {
+        operation.authorize();
+        if (inTransaction()) {
+            throw CairoException.critical(0).put("cannot delete from table with uncommitted inserts [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+        return applyNonStructural(operation, true);
     }
 
     // Returns table transaction number
