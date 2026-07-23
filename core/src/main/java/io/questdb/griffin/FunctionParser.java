@@ -322,9 +322,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             try {
                 traverseAlgo.traverse(node, this);
             } catch (Exception e) {
-                // release parsed functions
+                // Release parsed functions best-effort: keep closing the rest even if one close()
+                // throws, and fold close failures into e as suppressed instead of masking it.
                 for (int i = functionStack.size(); i > 0; i--) {
-                    Misc.free(functionStack.poll());
+                    Misc.free(functionStack.poll(), e);
                 }
                 positionStack.clear();
                 throw e;
@@ -394,8 +395,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         arg = functionToConstant(arg);
                     }
                 } catch (Throwable th) {
-                    // these args were already popped from functionStack
-                    Misc.freeObjList(mutableArgs);
+                    // these args were already popped from functionStack.
+                    // Best-effort cleanup: fold any close() failure into th as suppressed instead
+                    // of masking it, and keep closing later args even if one close() throws.
+                    Misc.freeObjList(mutableArgs, th);
                     throw th;
                 }
 
@@ -403,8 +406,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 mutableArgPositions.setQuick(n, pos);
 
                 if (arg instanceof GroupByFunction) {
-                    Misc.freeObjList(mutableArgs);
-                    throw SqlException.position(pos).put("Aggregate function cannot be passed as an argument");
+                    final SqlException ex = SqlException.position(pos).put("Aggregate function cannot be passed as an argument");
+                    Misc.freeObjList(mutableArgs, ex);
+                    throw ex;
                 }
 
                 final boolean argRuntimeConst = arg != null && arg.isRuntimeConstant();
@@ -511,7 +515,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         }
                     }
                 }
-                Misc.freeObjList(args);
+                Misc.freeObjList(args, ex);
                 return ex;
             }
 
@@ -552,7 +556,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else {
                 ex.put("function `").put(node.token).put("` requires arguments");
             }
-            Misc.freeObjList(args);
+            Misc.freeObjList(args, ex);
             return ex;
         }
 
@@ -565,7 +569,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             ex.put(node.token);
             ex.put(' ');
             putArgType(args, 1, ex);
-            Misc.freeObjList(args);
+            Misc.freeObjList(args, ex);
             return ex;
         }
 
@@ -575,15 +579,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // function, not an operator, is not found
         ex.put("there is no matching operator `").put(node.token).put("` with the argument type: ");
         putArgType(args, 0, ex);
-        Misc.freeObjList(args);
+        Misc.freeObjList(args, ex);
         return ex;
     }
 
     private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
         if (isUnnestKeyword(node.token)) {
-            Misc.freeObjList(args);
-            return SqlException.position(node.position)
+            final SqlException ex = SqlException.position(node.position)
                     .put("UNNEST cannot be used as an expression; use it in the FROM clause");
+            Misc.freeObjList(args, ex);
+            return ex;
         }
         SqlException ex = SqlException.position(node.position);
         ex.put("unknown function name");
@@ -599,7 +604,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         ex.put(')');
-        Misc.freeObjList(args);
+        Misc.freeObjList(args, ex);
         return ex;
     }
 
@@ -632,12 +637,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     .I$();
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         } catch (SqlException | ImplicitCastException e) {
-            Misc.freeObjList(args);
+            // Best-effort cleanup: keep closing args even if one close() throws, and fold any
+            // close failure into the original error as suppressed instead of masking it.
+            Misc.freeObjList(args, e);
             throw e;
         } catch (Throwable e) {
             LOG.error().$("exception in function factory: ").$(e).$();
-            Misc.freeObjList(args);
-            throw SqlException.position(position).put("exception in function factory: ").put(e.getMessage());
+            final SqlException ex = SqlException.position(position).put("exception in function factory: ").put(e.getMessage());
+            Misc.freeObjList(args, ex);
+            throw ex;
         }
 
         if (function == null) {
@@ -645,8 +653,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     .$(" [signature=").$safe(factory.getSignature())
                     .$(", class=").$safe(factory.getClass().getName())
                     .I$();
-            Misc.freeObjList(args);
-            throw SqlException.position(position).put("bad function factory (NULL), check log");
+            final SqlException ex = SqlException.position(position).put("bad function factory (NULL), check log");
+            Misc.freeObjList(args, ex);
+            throw ex;
         } else if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
             final SqlException exception = SqlException.nonDeterministicColumn(node.position, node.token);
             if (args != null) {
@@ -1224,8 +1233,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             for (int k = candidateSigArgCount; k < argCount; k++) {
                 Function func = args.getQuick(k);
                 if (!(func.isConstant() || func.isRuntimeConstant())) {
-                    Misc.freeObjList(args);
-                    throw SqlException.$(argPositions.getQuick(k), "constant expected");
+                    final SqlException ex = SqlException.$(argPositions.getQuick(k), "constant expected");
+                    Misc.freeObjList(args, ex);
+                    throw ex;
                 }
             }
         }
@@ -1306,8 +1316,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (isWindowContext && candidate.isWindow() && argCount > 0
                 && ColumnType.tagOf(args.getQuick(0).getType()) == ColumnType.NULL
                 && countWindowOverloads(overload) > 1) {
-            Misc.freeObjList(args);
-            throw SqlException.$(node.position, "window function ").put(node.token).put(" does not support an untyped NULL argument; cast it to a concrete type, e.g. null::double");
+            final SqlException ex = SqlException.$(node.position, "window function ").put(node.token).put(" does not support an untyped NULL argument; cast it to a concrete type, e.g. null::double");
+            Misc.freeObjList(args, ex);
+            throw ex;
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);
     }
