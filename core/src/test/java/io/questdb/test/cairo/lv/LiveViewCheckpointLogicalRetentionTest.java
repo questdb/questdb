@@ -30,10 +30,13 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
+import io.questdb.cairo.lv.LiveViewCheckpointRoot;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -255,6 +258,86 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                     assertViewMatchesRecompute();
                 }
             }
+        });
+    }
+
+    @Test
+    public void testRestartReconstructsCorruptNewestRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            final long generationBefore;
+            final long nextIdBefore;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                generationBefore = generation(instance);
+                nextIdBefore = nextCheckpointId(instance);
+                // Corrupt the newest logical root's data segment while the view is
+                // quiescent: one truncated byte makes its state page fail the reader's
+                // length check, exactly as a torn write would.
+                corruptNewestRootDataSegment(instance);
+            }
+
+            // Restart: drop the in-memory registry and rebuild it from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // Restore: the floor selects the corrupt newest root, the reader falls back
+            // to its predecessor, and the restart reconstructs the corrupt id in place
+            // before restoring cleanly from the healed generation.
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(resumed);
+            }
+
+            final LiveViewInstance restored = viewInstance();
+            // Reconstruction, not a rebuild: a rebuild would retire the timeline and
+            // reset the generation to a fresh epoch. Here the generation advances over
+            // the preserved epoch and the id space is unchanged.
+            Assert.assertTrue(
+                    "reconstruction must advance the generation, not reset it [generation="
+                            + generation(restored) + ']',
+                    generation(restored) > generationBefore
+            );
+            Assert.assertEquals(
+                    "reconstruction re-versions ids in place and mints none",
+                    nextIdBefore,
+                    nextCheckpointId(restored)
+            );
+            Assert.assertEquals(
+                    "every logical entry survives the corrupt-root reconstruction",
+                    SEALS,
+                    assertEpochRetainsEveryEntry(restored, SEALS, "after reconstruction")
+            );
+
+            final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
+            // The healed newest boundary keeps its original coordinate and id, so it is
+            // addressable again rather than a permanently skipped corrupt version.
+            Assert.assertTrue(
+                    "the healed newest boundary must be addressable at its original id",
+                    findsEntry(restored, ts(timestamp(SEALS * 10)), SEALS - 1, entry)
+            );
+            // The oldest boundary - an unrelated root far below the corruption - survives.
+            Assert.assertTrue(
+                    "an unrelated root must survive the corruption",
+                    findsEntry(restored, ts(timestamp(10)), 0, entry)
+            );
+            assertViewMatchesRecompute();
+
+            // An in-order row above the frontier folds directly into the reconstructed
+            // window state: a wrong retained RANGE frame would make its sum diverge from
+            // a fresh recompute, so this exercises the reconstructed state, not just the
+            // durable table the restore left untouched.
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(resumed, (SEALS + 1) * 10, SEALS + 1);
+                driveRefreshToQuiescence(resumed);
+            }
+            assertViewMatchesRecompute();
+
+            // A deep O3 correction after the heal localizes against the surviving roots,
+            // proving the reconstructed timeline is fully usable for later repair.
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                correct(resumed, restored, historicalSecond(2), 950);
+            }
+            assertViewMatchesRecompute();
         });
     }
 
@@ -485,6 +568,40 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 "the row at second " + second + " must be repaired rather than appended",
                 repairedRows(instance) > repairedBefore
         );
+    }
+
+    // Truncates the newest logical root's first data segment by one byte, so the
+    // reader rejects its state page on a length check - the cheapest structural
+    // corruption a torn write can leave. Mirrors the seal test's corruption helper.
+    private void corruptNewestRootDataSegment(LiveViewInstance instance) {
+        final long segmentId;
+        final long fileLength;
+        try (
+                LiveViewCheckpointMetaStore store = openStore(instance);
+                LiveViewCheckpointGenerationPin pin = store.pin();
+                LiveViewCheckpointTimelineReader timeline = openTimelineReader(instance);
+                LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
+                LiveViewCheckpointSegmentDirectoryReader directory =
+                        new LiveViewCheckpointSegmentDirectoryReader(configuration);
+                Path checkpointsDir = checkpointsDir(instance)
+        ) {
+            final LiveViewCheckpointTimelineEntry newest = new LiveViewCheckpointTimelineEntry();
+            Assert.assertTrue("the timeline must hold a newest root", timeline.last(pin.getTimelineRootRef(), newest));
+            root.of(checkpointsDir, newest.rootRef);
+            segmentId = root.getSegmentId(0);
+            directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
+            fileLength = directory.getFileLength(segmentId);
+        }
+        try (Path checkpointsDir = checkpointsDir(instance); Path dataPath = new Path()) {
+            LiveViewCheckpointLayout.dataSegmentPath(dataPath, checkpointsDir, segmentId);
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long fd = ff.openRW(dataPath.$(), 0);
+            try {
+                Assert.assertTrue("truncating the data segment must succeed", ff.truncate(fd, fileLength - 1));
+            } finally {
+                ff.close(fd);
+            }
+        }
     }
 
     private void createView() throws Exception {

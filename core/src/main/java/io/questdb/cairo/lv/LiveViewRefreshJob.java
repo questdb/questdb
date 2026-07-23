@@ -5812,6 +5812,218 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Reconstructs the logical checkpoint roots the restore reader had to skip
+     * because their data pages were structurally invalid, re-versioning each one in
+     * place: the same {@code (maxTimestamp, checkpointId)} logical key, fresh state
+     * derived from the current base, and the identical row position it always had.
+     * The corrupt roots are healed rather than deleted, so every unrelated root
+     * survives and a later restore or historical repair addresses the repaired ids
+     * directly.
+     * <p>
+     * The heal restores the safe predecessor the reader landed on, folds the base
+     * rows above it back through the window pipeline - writing nothing to the
+     * live-view table, which is already correct - freezes each corrupt boundary as
+     * the replay crosses it, and publishes the lot as one timeline range splice with
+     * no row-count change. It is best-effort: any failure leaves the timeline
+     * untouched (the temporary capture segment removes itself) and returns
+     * {@code false}, and the caller rebuilds the derived state from the applied base
+     * instead.
+     *
+     * @return true when the corrupt roots were reconstructed and republished
+     */
+    private boolean reconstructCorruptCheckpointRoots(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            LiveViewCheckpointTimelineStoreReader.Result restored,
+            long durableBaseSeqTxn
+    ) {
+        final String viewName = instance.getDefinition().getViewName();
+        if (engine.isReadOnlyMode()) {
+            return false;
+        }
+        final long predecessorMaxTs = restored.maxTimestamp;
+        final long predecessorCheckpointId = restored.checkpointId;
+        final long corruptCeilingMaxTs = restored.corruptCeilingMaxTs;
+        // H, the exclusive convergence bound the suffix starts at. A boundary
+        // timestamp is a real designated timestamp, so the +1 never overflows in
+        // practice; the guard keeps a hypothetical unbounded ceiling from wrapping.
+        final long highTsExclusive = corruptCeilingMaxTs == Long.MAX_VALUE
+                ? Long.MAX_VALUE
+                : corruptCeilingMaxTs + 1;
+        final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
+        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+        final long definitionTxn = instance.getLiveViewToken().getTableId();
+        if (checkpointTimelineStoreWriter == null) {
+            checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(engine.getConfiguration());
+            checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
+        }
+        LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = null;
+        TableReader baseReader = null;
+        boolean readerAttached = false;
+        try (Path checkpointsDir = new Path()) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            capture = checkpointTimelineStoreWriter.beginRepair(checkpointsDir);
+            // (predecessorMaxTs, corruptCeilingMaxTs] in key space: the predecessor's
+            // own boundary is kept, and every corrupt root above it up to and including
+            // the ceiling is re-versioned. A non-corrupt boundary caught in the range
+            // (a same-timestamp tie the reader stepped over) re-versions to identical
+            // state, which is harmless.
+            final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
+            capture.collectBoundaries(predecessorMaxTs + 1, highTsExclusive, boundaries);
+            if (boundaries.size() == 0) {
+                return false;
+            }
+            // The durable live-view table is authoritative for each repaired root's
+            // position - its rows at or below the boundary's timestamp. A non-native
+            // boundary partition has no searchable prefix, so the heal cannot position
+            // its root and defers to the full rebuild.
+            final LongList positions = new LongList();
+            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                for (int i = 0, n = boundaries.size(); i < n; i++) {
+                    final long boundaryMaxTs = boundaries.getQuick(i).maxTimestamp;
+                    final long position = countDurableRowsBelow(
+                            lvReader,
+                            boundaryMaxTs == Long.MAX_VALUE ? Long.MAX_VALUE : boundaryMaxTs + 1
+                    );
+                    if (position < 0) {
+                        return false;
+                    }
+                    positions.add(position);
+                }
+            }
+            baseReader = waitForApply(baseToken, durableBaseSeqTxn);
+            // The predecessor's state is the replay's warm start. Clear the maps the
+            // failed floor restore may have partially filled, then restore it: the
+            // reader already proved this boundary reads cleanly.
+            final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                final Map map = functions.getQuick(i).getPartitionMap();
+                if (map != null) {
+                    map.clear();
+                }
+            }
+            if (restoreAnchorRoot(instance, windowFactory, predecessorMaxTs, predecessorCheckpointId)
+                    == Numbers.LONG_NULL) {
+                return false;
+            }
+            engine.detachReader(baseReader);
+            executionContext.of(baseReader);
+            readerAttached = true;
+            final RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
+            final Function filter = filterFactory.getFilter();
+            final PageFrameRecordCursorFactory pageFrameFactory =
+                    (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
+            final int cursorTimestampIndex = windowFactory.getMetadata().getTimestampIndex();
+            // Start strictly above the predecessor: its restored state already covers
+            // every row at or below its timestamp, so the frame it holds is the warm-up
+            // the replay resumes from. Stop at the ceiling - every corrupt boundary is
+            // at or below it.
+            final long scanLowTs = Math.max(viewLowerBoundTimestamp, predecessorMaxTs + 1);
+            int captured = 0;
+            try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
+                    executionContext,
+                    scanLowTs,
+                    corruptCeilingMaxTs
+            )) {
+                RecordCursor source = pageCursor;
+                if (filter != null) {
+                    filteringCursor.of(source, filter, executionContext);
+                    source = filteringCursor;
+                }
+                if (anchorWindow != null) {
+                    anchorDispatchingCursor.of(source, anchorWindow, executionContext);
+                    source = anchorDispatchingCursor;
+                }
+                try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
+                    final Record outRecord = windowCursor.getRecord();
+                    while (windowCursor.hasNext()) {
+                        final long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                        // The cursor has already folded this row, so a boundary strictly
+                        // below it holds exactly the qualifying rows at or below its
+                        // timestamp - freeze there. A boundary at ts itself waits for the
+                        // next row, which admits its complete timestamp tie.
+                        while (captured < boundaries.size()
+                                && boundaries.getQuick(captured).maxTimestamp < ts) {
+                            capture.capture(
+                                    boundaries.getQuick(captured),
+                                    functions,
+                                    anchorWindow,
+                                    positions.getQuick(captured)
+                            );
+                            captured++;
+                        }
+                    }
+                    // Boundaries at or above the last row the replay saw: no qualifying
+                    // row sits between them and it, so the state the replay ends on is
+                    // theirs. The ceiling is the highest, so this drains the rest.
+                    while (captured < boundaries.size()) {
+                        capture.capture(
+                                boundaries.getQuick(captured),
+                                functions,
+                                anchorWindow,
+                                positions.getQuick(captured)
+                        );
+                        captured++;
+                    }
+                }
+            }
+            executionContext.clearReader();
+            engine.attachReader(baseReader);
+            readerAttached = false;
+            final long coveredLvSeqTxn = engine.getTableSequencerAPI()
+                    .getTxnTracker(instance.getLiveViewToken())
+                    .getWriterTxn();
+            final Lock roleLock = engine.getRoleSwitchReadLock();
+            roleLock.lock();
+            try {
+                if (engine.isReadOnlyMode()) {
+                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                }
+                // suffixRowDelta is 0: the base did not change, so the repaired roots
+                // hold the same rows at the same positions - only their damaged state
+                // pages are replaced.
+                checkpointTimelineStoreWriter.publishRepair(
+                        capture,
+                        definitionTxn,
+                        restored.normalizedBaseSeqTxn,
+                        coveredLvSeqTxn,
+                        0,
+                        true,
+                        highTsExclusive,
+                        0
+                );
+            } finally {
+                roleLock.unlock();
+            }
+            capture = Misc.free(capture);
+            LOG.info().$("reconstructed corrupt live view checkpoint roots [view=")
+                    .$(viewName)
+                    .$(", predecessorMaxTs=").$ts(predecessorMaxTs)
+                    .$(", corruptCeilingMaxTs=").$ts(corruptCeilingMaxTs)
+                    .$(", roots=").$(boundaries.size()).I$();
+            return true;
+        } catch (Throwable t) {
+            LOG.critical().$("could not reconstruct corrupt live view checkpoint roots [view=")
+                    .$(viewName)
+                    .$(", corruptCeilingMaxTs=").$ts(corruptCeilingMaxTs)
+                    .$(", error=").$(t).I$();
+            return false;
+        } finally {
+            if (readerAttached) {
+                executionContext.clearReader();
+                engine.attachReader(baseReader);
+            }
+            Misc.free(capture);
+            if (baseReader != null) {
+                baseReader.close();
+            }
+        }
+    }
+
+    /**
      * Restart replay-to-applied: re-feeds base WAL rows over
      * {@code (fromSeqTxn, toSeqTxn]} through the window pipeline to advance the
      * accumulators restored from a checkpoint root up to the persisted applied
@@ -6144,7 +6356,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return;
             }
 
-            final LiveViewCheckpointTimelineStoreReader.Result restored;
+            LiveViewCheckpointTimelineStoreReader.Result restored;
             try (LiveViewCheckpointTimelineStoreReader timelineReader =
                          new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration())) {
                 timelineReader.of(checkpointsDir);
@@ -6160,6 +6372,40 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         windowFactory.getWindowFunctions(),
                         instance.getAnchorWindow()
                 );
+            }
+
+            if (restored.corruptCeilingMaxTs != Numbers.LONG_NULL) {
+                // The floor root's data page was corrupt and the reader fell back to a
+                // predecessor. Heal the skipped boundaries in place - same logical ids,
+                // fresh state - so a later restore or historical repair addresses them
+                // directly instead of falling back again, then restore cleanly from the
+                // healed generation. A heal that cannot complete throws to the rebuild
+                // below, which still derives a correct view from the applied base.
+                LOG.error().$("live view checkpoint restore fell back past corrupt roots, reconstructing [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", predecessorMaxTs=").$ts(restored.maxTimestamp)
+                        .$(", corruptCeilingMaxTs=").$ts(restored.corruptCeilingMaxTs).I$();
+                if (!reconstructCorruptCheckpointRoots(instance, windowFactory, restored, durableBaseSeqTxn)) {
+                    throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                            .put("live view checkpoint corrupt-root reconstruction failed");
+                }
+                try (LiveViewCheckpointTimelineStoreReader healedReader =
+                             new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration())) {
+                    healedReader.of(checkpointsDir);
+                    restored = healedReader.restoreLatestCompatible(
+                            durableFrontierTimestamp,
+                            durableBaseSeqTxn,
+                            durableLvSeqTxn,
+                            durableLvRowCount,
+                            instance.getLiveViewToken().getTableId(),
+                            windowFactory.getWindowFunctions(),
+                            instance.getAnchorWindow()
+                    );
+                }
+                if (restored.corruptCeilingMaxTs != Numbers.LONG_NULL) {
+                    throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                            .put("live view checkpoint reconstruction did not heal the corrupt roots");
+                }
             }
 
             instance.forceSetLatestSeenTs(restored.maxTimestamp);

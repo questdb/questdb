@@ -54,6 +54,12 @@ import java.util.Arrays;
 public class LiveViewCheckpointTimelineStoreReader implements Closeable {
 
     private static final int DATA_READER_CACHE_SIZE = 8;
+    // Predecessors {@link #restoreLatestCompatible} retries past corrupt selected
+    // roots before it declares the checkpoint storage unrecoverable. A single
+    // damaged data page is the realistic case; a longer contiguous run means the
+    // storage is broadly compromised and the caller rebuilds from the applied base
+    // rather than trusting more of the timeline.
+    private static final int MAX_CORRUPT_ROOT_FALLBACKS = 8;
     private final LiveViewCheckpointAnchorRoot anchorRoot;
     private final Path checkpointsDir = new Path();
     private final CairoConfiguration configuration;
@@ -142,7 +148,15 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     ) {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
-            return restorePinned(pin, maxTimestamp, checkpointId, expectedDefinitionTxn, functions, anchorWindow);
+            return restorePinned(
+                    pin,
+                    maxTimestamp,
+                    checkpointId,
+                    expectedDefinitionTxn,
+                    functions,
+                    anchorWindow,
+                    Numbers.LONG_NULL
+            );
         }
     }
 
@@ -180,7 +194,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                     entry.checkpointId,
                     expectedDefinitionTxn,
                     functions,
-                    anchorWindow
+                    anchorWindow,
+                    Numbers.LONG_NULL
             );
         }
     }
@@ -190,6 +205,16 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
      * durable live-view coordinates. Selection and lazy root/page validation
      * run under the same generation pin, so publication cannot mix tree roots
      * from different generations.
+     * <p>
+     * A structurally invalid data page in the selected root does not fail the
+     * whole generation: the design isolates that damage to the one root version.
+     * This method retries a bounded run of predecessors under the same pin,
+     * skipping each corrupt root until one restores, and reports the highest
+     * skipped boundary in {@link Result#corruptCeilingMaxTs} so the caller can
+     * reconstruct the same logical checkpoint ids. Only a run longer than
+     * {@link #MAX_CORRUPT_ROOT_FALLBACKS}, or a corrupt oldest root with no
+     * predecessor left, surfaces as checkpoint-storage corruption; generation and
+     * superblock corruption still propagate directly, before the fallback runs.
      */
     public Result restoreLatestCompatible(
             long durableFrontierTimestamp,
@@ -221,27 +246,65 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 throw invalid("has no root at or below durable frontier [frontier=")
                         .put(durableFrontierTimestamp).put(']');
             }
-            final long effectiveLvRowPosition = deltaReader.effectivePosition(
-                    pin.getRowPositionDeltaRootRef(),
-                    entry
-            );
-            if (entry.createdLvSeqTxn > durableLvSeqTxn
-                    || effectiveLvRowPosition < 0
-                    || effectiveLvRowPosition > durableLvRowCount) {
-                throw invalid("logical root is incompatible with durable materialization")
-                        .put(" [createdLvSeqTxn=").put(entry.createdLvSeqTxn)
-                        .put(", durableLvSeqTxn=").put(durableLvSeqTxn)
-                        .put(", effectiveLvRowPosition=").put(effectiveLvRowPosition)
-                        .put(", durableLvRowCount=").put(durableLvRowCount).put(']');
+            // Bounded predecessor fallback: the floor root is the newest compatible
+            // one, but its data page may be structurally invalid. That damage is
+            // scoped to the one root version, so retry the next-older boundary under
+            // this same pin until one restores, and remember the highest corrupt
+            // boundary so the caller can reconstruct exactly those ids. The floor is
+            // the only candidate the durable-compatibility gate rejects outright: an
+            // older predecessor covers strictly fewer rows and cannot be ahead of the
+            // durable materialization, so it is skipped only when its own restore
+            // fails.
+            long corruptCeilingMaxTs = Numbers.LONG_NULL;
+            int fallbacks = 0;
+            boolean isFloor = true;
+            while (true) {
+                final long effectiveLvRowPosition = deltaReader.effectivePosition(
+                        pin.getRowPositionDeltaRootRef(),
+                        entry
+                );
+                final boolean compatible = entry.createdLvSeqTxn <= durableLvSeqTxn
+                        && effectiveLvRowPosition >= 0
+                        && effectiveLvRowPosition <= durableLvRowCount;
+                if (compatible) {
+                    try {
+                        return restorePinned(
+                                pin,
+                                entry.maxTimestamp,
+                                entry.checkpointId,
+                                expectedDefinitionTxn,
+                                functions,
+                                anchorWindow,
+                                corruptCeilingMaxTs
+                        );
+                    } catch (CairoException e) {
+                        if (e.getErrno() != CairoException.LV_CHECKPOINT_TIMELINE_INVALID) {
+                            throw e;
+                        }
+                        // The selected root's data page is invalid. Fall through to walk
+                        // to its predecessor; restorePinned validates before it mutates
+                        // the runtime, so the failed candidate left it untouched (or the
+                        // next restore re-clears it), and this pin still holds the same
+                        // generation for the retry.
+                    }
+                } else if (isFloor) {
+                    throw invalid("logical root is incompatible with durable materialization")
+                            .put(" [createdLvSeqTxn=").put(entry.createdLvSeqTxn)
+                            .put(", durableLvSeqTxn=").put(durableLvSeqTxn)
+                            .put(", effectiveLvRowPosition=").put(effectiveLvRowPosition)
+                            .put(", durableLvRowCount=").put(durableLvRowCount).put(']');
+                }
+                if (corruptCeilingMaxTs == Numbers.LONG_NULL) {
+                    corruptCeilingMaxTs = entry.maxTimestamp;
+                }
+                if (++fallbacks > MAX_CORRUPT_ROOT_FALLBACKS
+                        || !timelineReader.predecessor(pin.getTimelineRootRef(), entry.maxTimestamp, entry)) {
+                    throw invalid("storage is corrupt: no usable root at or below the corruption ceiling")
+                            .put(" [corruptCeilingMaxTs=").put(corruptCeilingMaxTs)
+                            .put(", fallbacks=").put(fallbacks).put(']');
+                }
+                isFloor = false;
             }
-            return restorePinned(
-                    pin,
-                    entry.maxTimestamp,
-                    entry.checkpointId,
-                    expectedDefinitionTxn,
-                    functions,
-                    anchorWindow
-            );
         }
     }
 
@@ -345,7 +408,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             long checkpointId,
             long expectedDefinitionTxn,
             @NotNull ObjList<WindowFunction> functions,
-            @Nullable LiveViewWindow anchorWindow
+            @Nullable LiveViewWindow anchorWindow,
+            long corruptCeilingMaxTs
     ) {
         final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
         if (!timelineReader.findExact(pin.getTimelineRootRef(), maxTimestamp, checkpointId, entry)) {
@@ -384,7 +448,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 effectiveLvRowPosition,
                 entry.logicalStateBytes,
                 metaStore.getSuperblock().seedCursorOffset,
-                lookupDepth
+                lookupDepth,
+                corruptCeilingMaxTs
         );
     }
 
@@ -621,6 +686,16 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
 
     public static final class Result {
         public final long checkpointId;
+        /**
+         * When {@link #restoreLatestCompatible} fell back past one or more corrupt
+         * selected roots to restore a safe predecessor, the {@code maxTimestamp} of
+         * the highest corrupt root it skipped; {@link Numbers#LONG_NULL} when the
+         * floor root restored cleanly with no fallback. Together with
+         * {@link #maxTimestamp} (the restored predecessor's) it bounds the range the
+         * caller reconstructs: every logical boundary in
+         * {@code (maxTimestamp, corruptCeilingMaxTs]}.
+         */
+        public final long corruptCeilingMaxTs;
         public final long coveredLvSeqTxn;
         public final long createdLvSeqTxn;
         public final long effectiveLvRowPosition;
@@ -650,7 +725,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 long effectiveLvRowPosition,
                 long logicalStateBytes,
                 long seedCursorOffset,
-                int lookupDepth
+                int lookupDepth,
+                long corruptCeilingMaxTs
         ) {
             this.generation = generation;
             this.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
@@ -662,6 +738,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             this.logicalStateBytes = logicalStateBytes;
             this.seedCursorOffset = seedCursorOffset;
             this.lookupDepth = lookupDepth;
+            this.corruptCeilingMaxTs = corruptCeilingMaxTs;
         }
     }
 }
