@@ -138,6 +138,12 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    @TestOnly
+    public AsyncFilterAtom getAtom() {
+        return frameSequence.getAtom();
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }
@@ -290,21 +296,24 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final boolean isParquetFrame = task.isParquetFrame();
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
-        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
-
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
-
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
-        final Function filter = atom.getFilter(filterId);
+        // The slot is held from here on, so everything below belongs inside the try that releases
+        // it: populateFrameMemory() navigates to the frame, which decodes parquet and can breach the
+        // per-query memory limit. See PerWorkerLocks.acquireSlot().
         try {
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
+
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+
+            final DirectLongList rows = task.getFilteredRows();
+            rows.clear();
+
+            final Function filter = atom.getFilter(filterId);
             if (task.isCountOnly()) {
                 long count = 0;
                 for (long r = 0; r < frameRowCount; r++) {

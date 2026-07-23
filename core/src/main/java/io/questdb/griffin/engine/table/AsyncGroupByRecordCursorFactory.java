@@ -67,6 +67,7 @@ import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -145,6 +146,12 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             Misc.free(this, th);
             throw th;
         }
+    }
+
+    @Override
+    @TestOnly
+    public AsyncGroupByAtom getAtom() {
+        return frameSequence.getAtom();
     }
 
     @Override
@@ -246,17 +253,16 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        // navigateTo() decodes the parquet frame and can throw (e.g. OOM); it must sit
-        // inside the try so a decode failure still releases the per-worker slot. Leaking
-        // the slot lock permanently strands it, and once every slot leaks acquireSlot()
-        // spins forever -- the query hangs in dispatchAndAwait().
+
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final GroupByMapFragment fragment = atom.getFragment(slotId);
+        final RecordSink mapSink = atom.getMapSink(slotId);
+        // navigateTo() decodes the frame and can throw, so it must sit inside the try that
+        // releases the slot, see PerWorkerLocks.acquireSlot().
         try {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
             record.init(frameMemory);
 
-            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-            final GroupByMapFragment fragment = atom.getFragment(slotId);
-            final RecordSink mapSink = atom.getMapSink(slotId);
             atom.resetLocalStats(slotId);
 
             if (atom.isSharded()) {
@@ -274,8 +280,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
             atom.maybeEnableSharding(fragment);
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
@@ -496,10 +505,17 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
 
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        // navigateTo() decodes the parquet frame and can throw (e.g. OOM); it must sit
-        // inside the try so a decode failure still releases the per-worker slot. Leaking
-        // the slot lock permanently strands it, and once every slot leaks acquireSlot()
-        // spins forever -- the query hangs in dispatchAndAwait().
+
+        final DirectLongList rows = filterCtx.getFilteredRows(slotId);
+        rows.clear();
+
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final GroupByMapFragment fragment = atom.getFragment(slotId);
+        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+        final Function filter = filterCtx.getFilter(slotId);
+        final RecordSink mapSink = atom.getMapSink(slotId);
+        // navigateTo() can throw; it must sit inside the try that releases the slot. See
+        // aggregate() for why a leaked slot is permanent.
         try {
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
@@ -509,14 +525,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             }
             record.init(frameMemory);
 
-            final DirectLongList rows = filterCtx.getFilteredRows(slotId);
-            rows.clear();
-
-            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-            final GroupByMapFragment fragment = atom.getFragment(slotId);
-            final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
-            final Function filter = filterCtx.getFilter(slotId);
-            final RecordSink mapSink = atom.getMapSink(slotId);
             atom.resetLocalStats(slotId);
 
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
@@ -569,8 +577,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
             atom.maybeEnableSharding(fragment);
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
