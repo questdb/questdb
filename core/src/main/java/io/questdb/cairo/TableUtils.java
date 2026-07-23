@@ -2079,9 +2079,20 @@ public final class TableUtils {
             LOG.error().$("could not convert partition to parquet [table=").$(tableName)
                     .$(", error=").$safe(e.getMessage()).I$();
 
-            // Rollback: remove only the partial data.parquet file itself, never its parent directory.
-            // Callers that allocate a fresh parquet-only directory handle that directory's cleanup
-            // in their own outer catch.
+            // Rollback: remove the partial data.parquet AND its _pm sidecar, never the parent
+            // directory. Callers that allocate a fresh parquet-only directory handle that
+            // directory's cleanup in their own outer catch. Leaving _pm behind orphans a
+            // _pm-only partition dir that cold storage's structural scans misread as
+            // parquet-local/cold. Close the _pm fd first so the removal succeeds on Windows,
+            // and clear the handle so the finally does not double-close it.
+            if (parquetMetaFd > -1) {
+                ff.close(parquetMetaFd);
+                parquetMetaFd = -1;
+            }
+            setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+            if (ff.exists(other.$()) && !ff.removeQuiet(other.$())) {
+                LOG.error().$("could not remove parquet _pm on rollback [path=").$(other).I$();
+            }
             setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
             if (ff.exists(other.$()) && !ff.removeQuiet(other.$())) {
                 LOG.error().$("could not remove parquet file on rollback [path=").$(other).I$();
