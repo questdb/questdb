@@ -14,6 +14,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Witnesses that {@code LifecycleOrchestrator.close()} survives a THROWING shutdown hook. Both
@@ -72,11 +73,15 @@ public class LifecycleOrchestratorHookThrowsTest {
             throw new IllegalStateException("pre-stop hook deliberately throws");
         });
 
+        final AtomicReference<Throwable> bootFailure = new AtomicReference<>();
         final Thread boot = new Thread(() -> {
             try {
                 orch.run();
-            } catch (Throwable ignore) {
-                // A close() racing run() may surface a startup exception; irrelevant here.
+            } catch (Throwable t) {
+                // A close() racing run() may legitimately surface a startup exception, but an
+                // unexpected boot-thread failure must still fail the test loudly rather than
+                // vanish -- capture it and rethrow after the joins below instead of discarding it.
+                bootFailure.set(t);
             }
         }, "boot");
         boot.start();
@@ -98,6 +103,9 @@ public class LifecycleOrchestratorHookThrowsTest {
             // Failure hygiene: close() is CAS-guarded, joining a dead thread returns at once.
             orch.close();
             boot.join(TimeUnit.SECONDS.toMillis(10));
+        }
+        if (bootFailure.get() != null) {
+            throw new AssertionError("boot thread failed: " + bootFailure.get(), bootFailure.get());
         }
     }
 }
