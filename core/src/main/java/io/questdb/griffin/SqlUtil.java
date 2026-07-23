@@ -99,35 +99,32 @@ public class SqlUtil {
     }
 
     public static long castPGDates(CharSequence value, int fromColumnType, TimestampDriver driver) {
-        final int hi = value.length();
-        for (int i = 0; i < IMPLICIT_CAST_FORMATS_SIZE; i++) {
-            try {
-                return driver.fromDate(IMPLICIT_CAST_FORMATS[i].parse(value, 0, hi, EN_LOCALE));
-            } catch (NumericException ignore) {
-            }
+        try {
+            return driver.fromDate(parsePGDate(value));
+        } catch (NumericException ignore) {
+            throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
         }
-        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
     }
 
     public static long castPGDates(Utf8Sequence value, int fromColumnType, TimestampDriver driver) {
         try {
             // The common case needs neither an ASCII scan nor UTF-16 decoding.
-            return castPGDates(value.asAsciiCharSequence(), fromColumnType, driver);
-        } catch (ImplicitCastException ignore) {
-            // A failed parse may still be a valid localized time-zone name.
-            // Avoid decoding when the false ASCII hint was merely conservative.
-            if (!Utf8s.isAscii(value)) {
-                final StringSink utf16Sink = IMPLICIT_CAST_VARCHAR_SINK.get();
-                utf16Sink.clear();
-                if (Utf8s.utf8ToUtf16(value, utf16Sink)) {
-                    try {
-                        return castPGDates(utf16Sink, fromColumnType, driver);
-                    } catch (ImplicitCastException ignored) {
-                    }
+            return driver.fromDate(parsePGDate(value.asAsciiCharSequence()));
+        } catch (NumericException ignore) {
+        }
+        // A failed parse may still be a valid localized time-zone name.
+        // Avoid decoding when the false ASCII hint was merely conservative.
+        if (!Utf8s.isAscii(value)) {
+            final StringSink utf16Sink = IMPLICIT_CAST_VARCHAR_SINK.get();
+            utf16Sink.clear();
+            if (Utf8s.utf8ToUtf16(value, utf16Sink)) {
+                try {
+                    return driver.fromDate(parsePGDate(utf16Sink));
+                } catch (NumericException ignore) {
                 }
             }
-            throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
         }
+        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
     }
 
     public static void collectAllTableAndViewNames(
@@ -2072,6 +2069,24 @@ public class SqlUtil {
             return takenAliases.excludes(alias, 1, alias.length() - 1);
         }
         return bareQuotedSibling == null || takenAliases.excludes(bareQuotedSibling);
+    }
+
+    /**
+     * Parses the value against every implicit-cast format, in order. Signals a failed
+     * parse with the flyweight {@link NumericException} rather than an
+     * {@link ImplicitCastException}: callers retry a failed parse against a decoded
+     * value, and a discarded {@code ImplicitCastException} would cost a stack fill and
+     * a message allocation on every row.
+     */
+    private static long parsePGDate(CharSequence value) throws NumericException {
+        final int hi = value.length();
+        for (int i = 0; i < IMPLICIT_CAST_FORMATS_SIZE; i++) {
+            try {
+                return IMPLICIT_CAST_FORMATS[i].parse(value, 0, hi, EN_LOCALE);
+            } catch (NumericException ignore) {
+            }
+        }
+        throw NumericException.instance();
     }
 
     static QueryColumn nextColumn(
