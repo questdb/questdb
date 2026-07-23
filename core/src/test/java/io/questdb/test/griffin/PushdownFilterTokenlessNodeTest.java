@@ -1,7 +1,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 // Regression test for claim C1: a retained filter containing a tokenless
@@ -16,10 +15,14 @@ public class PushdownFilterTokenlessNodeTest extends AbstractCairoTest {
     public void testTokenlessOrOperandOnParquetPartitionNonTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            printSql("select * from p where v = 1 or (select b from x limit 1)");
-            TestUtils.assertEquals(BOTH_ROWS, sink);
-            printSql("select * from p where v = 1 or (select b from x_false limit 1)");
-            TestUtils.assertEquals("v\tts\n1\t2018-01-01T00:00:00.000000Z\n", sink);
+            assertQuery("select * from p where v = 1 or (select b from x limit 1)")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns(BOTH_ROWS);
+            assertQuery("select * from p where v = 1 or (select b from x_false limit 1)")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("v\tts\n1\t2018-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -28,10 +31,14 @@ public class PushdownFilterTokenlessNodeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             // the retained-filter shape produced by the WhereClauseParser tokenless-node fix
-            printSql("select * from p where ts = '2018-01-01' or (select b from x limit 1)");
-            TestUtils.assertEquals(BOTH_ROWS, sink);
-            printSql("select * from p where ts = '2018-01-01' or (select b from x_false limit 1)");
-            TestUtils.assertEquals("v\tts\n1\t2018-01-01T00:00:00.000000Z\n", sink);
+            assertQuery("select * from p where ts = '2018-01-01' or (select b from x limit 1)")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns(BOTH_ROWS);
+            assertQuery("select * from p where ts = '2018-01-01' or (select b from x_false limit 1)")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("v\tts\n1\t2018-01-01T00:00:00.000000Z\n");
         });
     }
 

@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 /**
@@ -94,9 +93,9 @@ public class BooleanSubQueryPredicateTest extends AbstractCairoTest {
     public void testExplainShowsSubQueryFilter() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            printSql("explain select * from t where (select b from x_false limit 1)");
-            TestUtils.assertContains(sink, "filter: cursor");
-            TestUtils.assertContains(sink, "Frame forward scan on: x_false");
+            assertQuery("select * from t where (select b from x_false limit 1)")
+                    .noLeakCheck()
+                    .assertsPlanContaining("filter: cursor", "Frame forward scan on: x_false");
         });
     }
 
@@ -151,10 +150,8 @@ public class BooleanSubQueryPredicateTest extends AbstractCairoTest {
             execute("create table x_true (b boolean)");
             execute("insert into x_true values (true)");
             final String expected = "ts\tg\tsym\n2018-01-01T00:00:00.000000Z\tsp052w92\ta\n";
-            printSql("select * from gt where g within(#sp05) and (select b from x_true limit 1) latest on ts partition by sym");
-            TestUtils.assertEquals(expected, sink);
-            printSql("select * from gt where g within(#sp05) and (select b from x_false limit 1) latest on ts partition by sym");
-            TestUtils.assertEquals("ts\tg\tsym\n", sink);
+            assertPredicate(expected, "select * from gt where g within(#sp05) and (select b from x_true limit 1) latest on ts partition by sym");
+            assertPredicate("ts\tg\tsym\n", "select * from gt where g within(#sp05) and (select b from x_false limit 1) latest on ts partition by sym");
         });
     }
 
@@ -165,8 +162,11 @@ public class BooleanSubQueryPredicateTest extends AbstractCairoTest {
             assertPredicate(NO_ROWS, "select * from (select * from t where (select b from x_false limit 1))");
             assertPredicate(THE_ROW, "with q as (select * from t where (select b from x_true limit 1)) select * from q");
             assertCount("0", "select count() from t where (select b from x_false limit 1)");
-            printSql("select sum(v) from t where (select b from x_false limit 1)");
-            TestUtils.assertEquals("sum\nnull\n", sink);
+            assertQuery("select sum(v) from t where (select b from x_false limit 1)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("sum\nnull\n");
         });
     }
 
@@ -241,13 +241,19 @@ public class BooleanSubQueryPredicateTest extends AbstractCairoTest {
     }
 
     private void assertCount(String expectedCount, String sql) throws Exception {
-        printSql(sql);
-        TestUtils.assertEquals("count\n" + expectedCount + "\n", sink);
+        assertQuery(sql)
+                .noRandomAccess()
+                .expectSize()
+                .noLeakCheck()
+                .returns("count\n" + expectedCount + "\n");
     }
 
     private void assertPredicate(String expected, String sql) throws Exception {
-        printSql(sql);
-        TestUtils.assertEquals(expected, sink);
+        assertQuery(sql)
+                .timestamp("ts")
+                .sizeMayVary()
+                .noLeakCheck()
+                .returns(expected);
     }
 
     private void createTables() throws Exception {

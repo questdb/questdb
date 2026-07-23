@@ -207,9 +207,7 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBigTable();
             RecordCursorFactory base = select("select * from big");
-            RuntimeConstGateRecordCursorFactory gate =
-                    new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false));
-            try {
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false))) {
                 Assert.assertTrue("base must support page frames", base.supportsPageFrameCursor());
                 Assert.assertTrue("gate must keep the base page-frame capability", gate.supportsPageFrameCursor());
                 try (PageFrameCursor cursor = gate.getPageFrameCursor(sqlExecutionContext, ORDER_ANY)) {
@@ -225,8 +223,6 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
                     cursor.toTop();
                     Assert.assertNull("still empty after toTop", cursor.next());
                 }
-            } finally {
-                gate.close();
             }
         });
     }
@@ -238,15 +234,11 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             OpenCountingRecordCursorFactory base = new OpenCountingRecordCursorFactory(select("select * from t"));
-            RuntimeConstGateRecordCursorFactory gate =
-                    new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false));
-            try {
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false))) {
                 try (RecordCursor cursor = gate.getCursor(sqlExecutionContext)) {
                     Assert.assertFalse("false predicate must yield no rows", cursor.hasNext());
                 }
                 Assert.assertEquals("base must not be opened when the predicate is false", 0, base.openCount);
-            } finally {
-                gate.close();
             }
         });
     }
@@ -261,10 +253,16 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
             createParquetFile();
             assertRowCountSql(0, "select * from read_parquet('p.parquet') where (select b from x_false limit 1)");
             assertRowCountSql(10, "select * from read_parquet('p.parquet') where (select b from x_true limit 1)");
-            printSql("select sum(v) from read_parquet('p.parquet') where (select b from x_false limit 1)");
-            TestUtils.assertContains(sink, "null");
-            printSql("select sum(v) from read_parquet('p.parquet') where (select b from x_true limit 1)");
-            TestUtils.assertContains(sink, "55");
+            assertQuery("select sum(v) from read_parquet('p.parquet') where (select b from x_false limit 1)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("sum\nnull\n");
+            assertQuery("select sum(v) from read_parquet('p.parquet') where (select b from x_true limit 1)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("sum\n55\n");
         });
     }
 
@@ -292,9 +290,11 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns(
-                            "ts\tk\tts1\tv\n" +
-                                    "2020-01-01T00:00:00.000000Z\t1\t2020-01-01T00:00:00.000000Z\t100\n" +
-                                    "2020-01-01T00:00:01.000000Z\t2\t2020-01-01T00:00:00.000000Z\t100\n"
+                            """
+                                    ts\tk\tts1\tv
+                                    2020-01-01T00:00:00.000000Z\t1\t2020-01-01T00:00:00.000000Z\t100
+                                    2020-01-01T00:00:01.000000Z\t2\t2020-01-01T00:00:00.000000Z\t100
+                                    """
                     );
         });
     }
@@ -402,10 +402,12 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
             // unmatched left key (3). ORDER BY the left key makes the comparison deterministic.
             assertQuery("select * from lj1 left join lj2 on lj1.k = lj2.k where (select b from x_true limit 1) order by lj1.k")
                     .returns(
-                            "k\ta\tk1\tb2\n" +
-                                    "1\t10\t1\t100\n" +
-                                    "2\t20\t2\t200\n" +
-                                    "3\t30\tnull\tnull\n"
+                            """
+                                    k\ta\tk1\tb2
+                                    1\t10\t1\t100
+                                    2\t20\t2\t200
+                                    3\t30\tnull\tnull
+                                    """
                     );
         });
     }
@@ -523,9 +525,7 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBigTable();
             RecordCursorFactory base = select("select * from big");
-            RuntimeConstGateRecordCursorFactory gate =
-                    new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(true));
-            try {
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(true))) {
                 Assert.assertTrue("base must support page frames", base.supportsPageFrameCursor());
                 Assert.assertTrue("gate must keep the base page-frame capability", gate.supportsPageFrameCursor());
                 try (PageFrameCursor cursor = gate.getPageFrameCursor(sqlExecutionContext, ORDER_ANY)) {
@@ -544,8 +544,6 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
                     cursor.calculateSize(counter);
                     Assert.assertEquals(1_000, counter.get());
                 }
-            } finally {
-                gate.close();
             }
         });
     }
@@ -568,11 +566,17 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
             TestUtils.assertContains(sink, "Frame forward scan on: big");
             TestUtils.assertNotContains(sink, "Async Filter");
             // true path: sum of 1..1000
-            printSql("select sum(v) from big where (select b from x_true limit 1)");
-            TestUtils.assertContains(sink, "500500");
+            assertQuery("select sum(v) from big where (select b from x_true limit 1)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("sum\n500500\n");
             // false path: the vectorized aggregate drives the empty page-frame wrapper; one row, null
-            printSql("select sum(v) from big where (select b from x_false limit 1)");
-            TestUtils.assertContains(sink, "null");
+            assertQuery("select sum(v) from big where (select b from x_false limit 1)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("sum\nnull\n");
             assertRowCountSql(1, "select sum(v) from big where (select b from x_false limit 1)");
         });
     }
@@ -584,9 +588,7 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             OpenCountingRecordCursorFactory base = new OpenCountingRecordCursorFactory(select("select * from t"));
-            RuntimeConstGateRecordCursorFactory gate =
-                    new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(true));
-            try {
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(true))) {
                 int rows = 0;
                 try (RecordCursor cursor = gate.getCursor(sqlExecutionContext)) {
                     while (cursor.hasNext()) {
@@ -595,8 +597,6 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals("true predicate must pass every base row", 1, rows);
                 Assert.assertEquals("base must be opened exactly once when the predicate is true", 1, base.openCount);
-            } finally {
-                gate.close();
             }
         });
     }
