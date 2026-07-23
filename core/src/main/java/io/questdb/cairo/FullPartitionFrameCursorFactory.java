@@ -32,9 +32,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
+    private static final ThreadLocal<CloseObserver> TEST_CLOSE_OBSERVER = new ThreadLocal<>();
     private final int baseOrder;
+    private final CloseObserver closeObserver;
     private FullBwdPartitionFrameCursor bwdCursor;
     private FullFwdPartitionFrameCursor fwdCursor;
 
@@ -49,6 +52,17 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
     ) {
         super(tableToken, metadataVersion, metadata, viewName, viewPosition, updateQuery);
         this.baseOrder = order;
+        this.closeObserver = TEST_CLOSE_OBSERVER.get();
+    }
+
+    @TestOnly
+    public static void clearCloseObserverForTesting() {
+        TEST_CLOSE_OBSERVER.remove();
+    }
+
+    @TestOnly
+    public static void setCloseObserverForTesting(CloseObserver observer) {
+        TEST_CLOSE_OBSERVER.set(observer);
     }
 
     @Override
@@ -56,6 +70,9 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
         super.close();
         fwdCursor = Misc.free(fwdCursor);
         bwdCursor = Misc.free(bwdCursor);
+        if (closeObserver != null) {
+            closeObserver.onClose(this);
+        }
     }
 
     @Override
@@ -100,5 +117,10 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
             sink.type("Frame forward scan");
         }
         super.toPlan(sink);
+    }
+
+    @TestOnly
+    public interface CloseObserver {
+        void onClose(FullPartitionFrameCursorFactory factory);
     }
 }

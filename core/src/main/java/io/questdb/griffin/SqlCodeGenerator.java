@@ -170,6 +170,7 @@ import io.questdb.griffin.engine.functions.memoization.SymbolFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.VarcharFunctionMemoizer;
+import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -285,6 +286,7 @@ import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
+import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -323,6 +325,7 @@ import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
+import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
@@ -6716,7 +6719,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             null,
                                             null,
                                             true,
-                                            filter
+                                            filter,
+                                            null,
+                                            null
                                     );
                                     symbolValueFunc = null;
                                     return coveringFactory;
@@ -6798,7 +6803,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     intrinsicModel.keyValueFuncs,
                                     reader,
                                     true,
-                                    filter
+                                    filter,
+                                    null,
+                                    null
                             );
                         }
                     }
@@ -10857,6 +10864,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 null,
                                                 null,
                                                 false,
+                                                null,
+                                                null,
                                                 null
                                         );
                                         // coveringFactory now owns dfcFactory and symbolFunc; clear our
@@ -10961,6 +10970,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         intrinsicModel.keyValueFuncs,
                                         reader,
                                         false,
+                                        null,
+                                        null,
                                         null
                                 );
                                 // coveringFactory now owns dfcFactory; clear our reference so the
@@ -11050,6 +11061,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 intrinsicModel.filter = filter;
                             }
                         }
+                    }
+                }
+
+                // Index fast path for a positive LIKE/ILIKE/regex on an indexed static-symbol column.
+                // Fires only when no discrete key column ('='/'IN') was lifted (so this does not compete
+                // with the keyColumn branch above), the feature is enabled, not opted out, and not an UPDATE.
+                if (intrinsicModel.keyColumn == null
+                        && intrinsicModel.filter != null
+                        && intrinsicModel.keySubQuery == null
+                        && configuration.isSymbolPatternIndexEnabled()
+                        && !SqlHints.hasNoSymbolPatternIndexHint(model)
+                        && !model.isUpdate()) {
+                    final RecordCursorFactory f;
+                    try {
+                        f = tryGenerateSymbolPatternIndex(
+                                model, executionContext, intrinsicModel, reader, queryMeta, dfcFactory,
+                                columnIndexes, columnSizeShifts
+                        );
+                    } catch (Throwable th) {
+                        // tryGenerateSymbolPatternIndex frees dfcFactory EXACTLY ONCE on any throw; null the
+                        // caller's reference so the outer catch (Misc.free(dfcFactory)) cannot re-free it.
+                        dfcFactory = null;
+                        throw th;
+                    }
+                    if (f != null) {
+                        dfcFactory = null; // ownership transferred to f
+                        return f;
                     }
                 }
 
@@ -11623,6 +11661,297 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0;
     }
 
+    /**
+     * Collects the top-level AND-spine conjuncts of {@code node} into {@code out}. A node whose token is
+     * {@code AND} is decomposed into its two operands (recursively); any other node is a leaf conjunct.
+     */
+    private void collectAndConjuncts(ExpressionNode node, ObjList<ExpressionNode> out) {
+        if (node == null) {
+            return;
+        }
+        if (node.paramCount == 2 && node.type == OPERATION && isAndKeyword(node.token)) {
+            collectAndConjuncts(node.lhs, out);
+            collectAndConjuncts(node.rhs, out);
+        } else {
+            out.add(node);
+        }
+    }
+
+    /**
+     * Returns {@code true} when {@code node} is a positive {@code LIKE}/{@code ILIKE}/{@code ~} predicate
+     * ({@code paramCount == 2}) whose left operand is a literal naming an indexed static-symbol column.
+     * Negation ({@code not(...)} / {@code !~}) is deliberately not recognized; those stay in the filter.
+     */
+    private boolean isPatternOnIndexedSymbol(
+            ExpressionNode node,
+            RecordMetadata queryMeta,
+            TableReader reader,
+            IntList columnIndexes
+    ) {
+        if (node.paramCount != 2 || node.token == null) {
+            return false;
+        }
+        if (!(isLikeKeyword(node.token)
+                || Chars.equalsIgnoreCase(node.token, "ilike")
+                || Chars.equals(node.token, "~"))) {
+            return false;
+        }
+        final ExpressionNode lhs = node.lhs;
+        if (lhs == null || lhs.type != LITERAL || lhs.token == null) {
+            return false;
+        }
+        final int keyColumnIndex = queryMeta.getColumnIndexQuiet(lhs.token);
+        if (keyColumnIndex < 0 || !isSymbol(queryMeta.getColumnType(keyColumnIndex))) {
+            return false;
+        }
+        // Ground truth for "is indexed" is the reader's metadata at the base (reader) column index.
+        final int baseIdx = columnIndexes.getQuick(keyColumnIndex);
+        return reader.getMetadata().isColumnIndexed(baseIdx);
+    }
+
+    /**
+     * Recognizes a NEGATED pattern on an indexed static-symbol column, either
+     * <ul>
+     *     <li>Case A: a unary {@code not(...)} ({@code paramCount == 1}) wrapping a positive
+     *     {@code like}/{@code ilike}/{@code ~}, or</li>
+     *     <li>Case B: the binary {@code !~} operator ({@code paramCount == 2}).</li>
+     * </ul>
+     * Returns the POSITIVE equivalent node to compile as the {@link SymbolKeySetProvider} (whose matched keys
+     * become the set to EXCLUDE), or {@code null} when {@code node} is not such a negation. For Case A the
+     * positive node already exists ({@code node.rhs}); for Case B a positive {@code ~} node is synthesized
+     * from the pool with the {@code ~} operator's token/precedence, sharing the same lhs/rhs.
+     */
+    private ExpressionNode negatedPatternPositiveNode(
+            ExpressionNode node,
+            RecordMetadata queryMeta,
+            TableReader reader,
+            IntList columnIndexes
+    ) {
+        if (node.token == null) {
+            return null;
+        }
+        // Case A: not( like|ilike|~ ... )
+        if (node.paramCount == 1 && isNotKeyword(node.token) && node.rhs != null
+                && isPatternOnIndexedSymbol(node.rhs, queryMeta, reader, columnIndexes)) {
+            return node.rhs;
+        }
+        // Case B: sym !~ 'pattern'  ->  synthesize the positive ~ node
+        if (node.paramCount == 2 && Chars.equals(node.token, "!~") && node.lhs != null
+                && node.lhs.type == LITERAL && node.lhs.token != null) {
+            final int idx = queryMeta.getColumnIndexQuiet(node.lhs.token);
+            if (idx >= 0 && isSymbol(queryMeta.getColumnType(idx))
+                    && reader.getMetadata().isColumnIndexed(columnIndexes.getQuick(idx))) {
+                // getOperatorDefinition("~") resolves to the BINARY LikeRegex operator: the registry map is
+                // keyed by token and deliberately excludes the unary complement, so there is no ambiguity.
+                final OperatorExpression tilde = OperatorExpression.chooseRegistry(
+                        configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("~");
+                final ExpressionNode pos = expressionNodePool.next().of(OPERATION, tilde.operator.token, tilde.precedence, node.position);
+                pos.paramCount = 2;
+                pos.lhs = node.lhs;
+                pos.rhs = node.rhs;
+                return pos;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Attempts to build the index fast path for a LIKE/ILIKE/regex predicate — or its negation
+     * (NOT LIKE / NOT ILIKE / !~), served by a complement scan — on an indexed static-symbol column.
+     * Returns {@code null} (leaking nothing) when the filter has no qualifying conjunct or the qualifying
+     * conjunct does not compile to a {@link SymbolKeySetProvider}; in that case the caller keeps
+     * {@code dfcFactory} and continues with the ordinary scan+filter path.
+     * <p>
+     * On success the adaptive factory exclusively owns {@code dfcFactory} and its close-no-op delegate
+     * wrappers. The outer prepared filter owns the provider and residual filter. The caller clears its
+     * {@code dfcFactory} reference after both owners have been assembled, so every failure path closes
+     * the partition factory exactly once.
+     */
+    private RecordCursorFactory tryGenerateSymbolPatternIndex(
+            IQueryModel model,
+            SqlExecutionContext executionContext,
+            IntrinsicModel intrinsicModel,
+            TableReader reader,
+            GenericRecordMetadata queryMeta,
+            PartitionFrameCursorFactory dfcFactory,
+            IntList columnIndexes,
+            IntList columnSizeShifts
+    ) throws SqlException {
+        // 1) split the filter into top-level AND conjuncts
+        final ObjList<ExpressionNode> conjuncts = new ObjList<>();
+        collectAndConjuncts(intrinsicModel.filter, conjuncts);
+
+        // 2) find the first qualifying conjunct on an indexed symbol column: a positive pattern, or a
+        //    negation (NOT LIKE / NOT ILIKE / !~) whose POSITIVE equivalent we compile as the provider.
+        int patternIdx = -1;
+        boolean isNegated = false;
+        ExpressionNode positiveNode = null; // the node compiled as the provider (matched keys)
+        for (int i = 0, n = conjuncts.size(); i < n; i++) {
+            if (isPatternOnIndexedSymbol(conjuncts.getQuick(i), queryMeta, reader, columnIndexes)) {
+                patternIdx = i;
+                positiveNode = conjuncts.getQuick(i);
+                isNegated = false;
+                break;
+            }
+            final ExpressionNode p = negatedPatternPositiveNode(conjuncts.getQuick(i), queryMeta, reader, columnIndexes);
+            if (p != null) {
+                patternIdx = i;
+                positiveNode = p;
+                isNegated = true;
+                break;
+            }
+        }
+        if (patternIdx < 0) {
+            return null; // nothing compiled yet, nothing to free
+        }
+
+        // The ORIGINAL conjunct at patternIdx is excluded when building the residual (step 5 below skips i==patternIdx);
+        // the POSITIVE node is compiled as the provider. For both polarities positiveNode.lhs is the symbol-column literal.
+        final int keyColumnIndex = queryMeta.getColumnIndexQuiet(positiveNode.lhs.token);
+
+        AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter patternFilter = null;
+        Function providerFunction = null;
+        Function residualFilter = null;
+        RecordCursorFactory coveringDelegate = null;
+        RecordCursorFactory indexDelegate = null;
+        RecordCursorFactory scanDelegate = null;
+        try {
+            // 4) compile the POSITIVE pattern predicate; bail out (freeing it) unless it is a key-set provider
+            providerFunction = functionParser.parseFunction(positiveNode, queryMeta, executionContext);
+            if (!(providerFunction instanceof SymbolKeySetProvider)) {
+                providerFunction = Misc.free(providerFunction);
+                return null;
+            }
+
+            // 5) residual = AND of the other conjuncts (null when the pattern is the only conjunct)
+            ExpressionNode residualRoot = null;
+            for (int i = 0, n = conjuncts.size(); i < n; i++) {
+                if (i == patternIdx) {
+                    continue;
+                }
+                final ExpressionNode conjunct = conjuncts.getQuick(i);
+                if (residualRoot == null) {
+                    residualRoot = conjunct;
+                } else {
+                    final OperatorExpression andOp = OperatorExpression.chooseRegistry(
+                            configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
+                    final ExpressionNode newRoot = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, 0);
+                    newRoot.paramCount = 2;
+                    newRoot.lhs = conjunct;
+                    newRoot.rhs = residualRoot;
+                    residualRoot = newRoot;
+                }
+            }
+            if (residualRoot != null) {
+                residualFilter = compileBooleanFilter(residualRoot, queryMeta, executionContext);
+            }
+
+            // The adaptive owner is the sole owner of dfcFactory. Its delegates receive close-no-op
+            // wrappers, so every construction and failure path closes the partition factory exactly once.
+            // The prepared filter owns the provider and residual; it initializes the provider once before
+            // costing, then both the record and page-frame scan routes reuse the resulting key set.
+            final IntList effectiveKeys = new IntList();
+            patternFilter = new AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter(
+                    providerFunction,
+                    residualFilter,
+                    isNegated,
+                    keyColumnIndex
+            );
+            providerFunction = null;
+            residualFilter = null;
+
+            indexDelegate = new SymbolPatternIndexRecordCursorFactory(
+                    configuration,
+                    queryMeta,
+                    new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(dfcFactory),
+                    keyColumnIndex,
+                    effectiveKeys,
+                    isOrderByDesignatedTimestampOnly(model),
+                    IndexReader.DIR_FORWARD,
+                    columnIndexes,
+                    columnSizeShifts
+            );
+
+            if (!isNegated && !SqlHints.hasNoCoveringHint(model) && executionContext.isCoveringIndexEnabled()) {
+                final int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
+                final int[] coveringMapping = buildCoveringIndexMapping(reader, keyReaderColIdx, columnIndexes, queryMeta);
+                if (coveringMapping != null) {
+                    coveringDelegate = new CoveringIndexRecordCursorFactory(
+                            queryMeta,
+                            new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(dfcFactory),
+                            keyReaderColIdx,
+                            SymbolTable.VALUE_NOT_FOUND,
+                            null,
+                            columnIndexes,
+                            coveringMapping,
+                            null,
+                            reader,
+                            false,
+                            null,
+                            null,
+                            effectiveKeys
+                    );
+                }
+            }
+
+            scanDelegate = new PageFrameRecordCursorFactory(
+                    configuration,
+                    queryMeta,
+                    new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(dfcFactory),
+                    new PageFrameRowCursorFactory(dfcFactory.getOrder()),
+                    false,
+                    null,
+                    true,
+                    columnIndexes,
+                    columnSizeShifts,
+                    true,
+                    false
+            );
+            final AdaptiveSymbolPatternRecordCursorFactory adaptiveFactory =
+                    new AdaptiveSymbolPatternRecordCursorFactory(
+                            queryMeta,
+                            dfcFactory,
+                            columnIndexes,
+                            effectiveKeys,
+                            columnIndexes.getQuick(keyColumnIndex),
+                            isNegated,
+                            configuration.getSymbolPatternIndexThreshold(),
+                            patternFilter,
+                            indexDelegate,
+                            coveringDelegate,
+                            scanDelegate
+                    );
+            dfcFactory = null;
+            indexDelegate = null;
+            coveringDelegate = null;
+            scanDelegate = null;
+            final AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter preparedFilter = patternFilter;
+            patternFilter = null;
+            return wrapAdaptiveSymbolPatternWithFilter(
+                    adaptiveFactory,
+                    preparedFilter,
+                    intrinsicModel.filter,
+                    queryMeta,
+                    model,
+                    executionContext
+            );
+        } catch (Throwable th) {
+            // Free dfcFactory here so it is released EXACTLY ONCE on every throw. It is null on the
+            // covering-transfer path (coveringFactory / wrapCoveringWithFilter already freed it) and
+            // non-null on the classic path (no factory took ownership yet). The caller nulls its own
+            // reference on catch, so the outer Misc.free(dfcFactory) never re-frees -- this closes the
+            // double-free when wrapCoveringWithFilter throws after ownership transfer.
+            Misc.free(coveringDelegate);
+            Misc.free(indexDelegate);
+            Misc.free(scanDelegate);
+            Misc.free(dfcFactory);
+            Misc.free(patternFilter);
+            Misc.free(providerFunction);
+            Misc.free(residualFilter);
+            throw th;
+        }
+    }
+
     private boolean isOrderByDesignatedTimestampOnly(IQueryModel model) {
         return model.getOrderByAdvice().size() == 1
                 && model.getTimestamp() != null
@@ -11942,6 +12271,44 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.$(slaveModel.getJoinKeywordPosition(),
                         "ASOF/LT JOIN cannot use designated timestamp as a join key");
             }
+        }
+    }
+
+    private RecordCursorFactory wrapAdaptiveSymbolPatternWithFilter(
+            AdaptiveSymbolPatternRecordCursorFactory adaptiveFactory,
+            AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter,
+            ExpressionNode filterExpr,
+            RecordMetadata queryMeta,
+            IQueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        try {
+            if (executionContext.isParallelFilterEnabled()
+                    && adaptiveFactory.supportsPageFrameCursor()
+                    && filter.isThreadSafe()) {
+                final IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
+                return new AsyncFilteredRecordCursorFactory(
+                        executionContext.getCairoEngine(),
+                        configuration,
+                        executionContext.getMessageBus(),
+                        adaptiveFactory,
+                        filter,
+                        filterUsedColumnIndexes,
+                        reduceTaskFactory,
+                        null,
+                        deepClone(expressionNodePool, filterExpr),
+                        null,
+                        0,
+                        executionContext.getSharedQueryWorkerCount(),
+                        SqlHints.hasEnablePreTouchHint(model, model.getName())
+                );
+            }
+            return new FilteredRecordCursorFactory(adaptiveFactory, filter);
+        } catch (Throwable th) {
+            Misc.free(filter);
+            Misc.free(adaptiveFactory);
+            throw th;
         }
     }
 

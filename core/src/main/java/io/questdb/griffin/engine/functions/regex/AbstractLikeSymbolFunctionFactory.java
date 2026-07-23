@@ -151,12 +151,13 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
     protected abstract boolean isCaseInsensitive();
 
-    private static class BindLikeStaticSymbolTableFunction extends BooleanFunction implements BinaryFunction {
+    private static class BindLikeStaticSymbolTableFunction extends BooleanFunction implements BinaryFunction, SymbolKeySetProvider {
         private final boolean caseInsensitive;
         private final Function pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
         private String lastPattern = null;
+        private Matcher matcher;
         private boolean stateInherited = false;
         private boolean stateShared = false;
 
@@ -172,6 +173,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
 
         @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
+        }
+
+        @Override
         public Function getLeft() {
             return value;
         }
@@ -184,15 +190,12 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
-            if (stateInherited) {
-                return;
-            }
-            this.stateShared = false;
-            // this is bind variable, we can use it as constant
+            stateInherited = false;
+            stateShared = false;
+            // This is a bind variable, so cache regex compilation while rebuilding the key set against
+            // the current symbol table on every cursor open. An unchanged bind can still see new symbols.
             final CharSequence patternValue = pattern.getStrA(null);
             if (patternValue != null && patternValue.length() > 0) {
-                // lastPattern is used to avoid recompiling the same regex multiple times on
-                // different cursor invocations
                 String p = escapeSpecialChars(patternValue, lastPattern);
                 if (p != null) {
                     int flags = Pattern.DOTALL;
@@ -200,12 +203,14 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                         flags |= Pattern.CASE_INSENSITIVE;
                         p = p.toLowerCase();
                     }
-                    Matcher matcher = Pattern.compile(p, flags).matcher("");
-                    this.lastPattern = p;
-                    extractSymbolKeys(value, symbolKeys, matcher);
+                    matcher = Pattern.compile(p, flags).matcher("");
+                    lastPattern = p;
                 }
+                extractSymbolKeys(value, symbolKeys, matcher);
             } else {
                 lastPattern = null;
+                matcher = null;
+                symbolKeys.clear();
             }
         }
 
@@ -240,7 +245,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
@@ -260,6 +265,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public boolean getBool(Record rec) {
             return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
         }
 
         @Override
@@ -307,7 +317,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
@@ -327,6 +337,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public boolean getBool(Record rec) {
             return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
         }
 
         @Override
@@ -373,7 +388,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstIContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstIContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
@@ -393,6 +408,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public boolean getBool(Record rec) {
             return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
         }
 
         @Override
@@ -440,7 +460,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstIEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstIEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
@@ -460,6 +480,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public boolean getBool(Record rec) {
             return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
         }
 
         @Override
@@ -506,7 +531,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstIStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstIStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
@@ -526,6 +551,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public boolean getBool(Record rec) {
             return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
         }
 
         @Override
@@ -572,7 +602,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstLikeStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstLikeStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final Matcher matcher;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
@@ -592,6 +622,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public boolean getBool(Record rec) {
             return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
         }
 
         @Override
@@ -635,7 +670,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
@@ -655,6 +690,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public boolean getBool(Record rec) {
             return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
         }
 
         @Override

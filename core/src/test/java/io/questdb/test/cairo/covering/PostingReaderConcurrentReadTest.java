@@ -601,6 +601,72 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
     }
 
     /**
+     * C1 tight guard: {@code populateCacheForKey} MUST prime the sparse-gen sidecar prefix-sum memo
+     * for every covered sparse gen it caches, single-threaded, BEFORE the freeze. On the cheap
+     * metadata-only covered production path this is the only thing that warms the memo -- the frozen
+     * reduce workers then read it read-only. If it did not prime, the workers would build the memo
+     * lazily with non-volatile stores from N threads over one shared reader (a data race that
+     * silently corrupts covered values). This pins the prime directly and deterministically: no
+     * cursor is positioned before the assertion, so ONLY populateCacheForKey can have built the memo
+     * row. Removing the prime (or letting it miss a cached gen) fails this immediately -- unlike the
+     * end-to-end tests, whose sparse data can bail to a traverse that pre-warms the memo anyway.
+     */
+    @Test
+    public void testPopulateCacheForKeyPrimesSidecarMemo() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "prime_sidecar_memo";
+                final int plen = path.size();
+                // One clearly-sparse covered gen: keys {0,50,100} over [0,100], single commit, no seal.
+                final int[] sparseKeys = {0, 50, 100};
+                final int rowsPerKey = 40;
+                final int totalRows = sparseKeys.length * rowsPerKey;
+                final long colBytes = (long) totalRows * Long.BYTES;
+                final long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < totalRows; i++) {
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr}, new long[]{0}, new int[]{3}, new int[]{1}, new int[]{ColumnType.LONG}, 1);
+                        int row = 0;
+                        for (int r = 0; r < rowsPerKey; r++) {
+                            for (int sk : sparseKeys) {
+                                writer.add(sk, row++);
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit(); // single commit -> single sparse gen
+                    }
+
+                    final RecordMetadata md = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
+                    final int probeKey = 50;
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
+                        reader.reloadConditionally();
+                        // No cursor has been positioned, so the memo is cold. (If this ever trips, the
+                        // reader eagerly warmed the memo and the assertion below would be vacuous.)
+                        assertFalse("sidecar memo must be cold before populateCacheForKey",
+                                reader.isSidecarGenPrimedForTesting(0));
+
+                        reader.populateCacheForKey(probeKey, Long.MAX_VALUE);
+
+                        // The probe key lives in gen 0, which is sparse and covered -> populateCacheForKey
+                        // must have primed its memo row so a frozen worker never builds it.
+                        assertTrue("populateCacheForKey must prime the covered sparse gen's sidecar memo",
+                                reader.isSidecarGenPrimedForTesting(0));
+                        assertFalse("one selective key must not allocate the full sparse-gen prefix",
+                                reader.isSidecarGenFullPrefixForTesting(0));
+                    }
+                } finally {
+                    Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * Freeze guard: while a reader is frozen, {@code reloadConditionally()} must be a
      * complete no-op so the value mmap (and everything keyed off it) stays put for
      * in-flight worker cursors holding raw page addresses. We:
@@ -717,7 +783,7 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                                 writer.commit();
                             }
 
-                            // --- FROZEN: reloadConditionally must do nothing observable. ---
+                            // While frozen, reloadConditionally must do nothing observable.
                             reader.setFrozen(true);
                             reader.reloadConditionally();
 
@@ -744,7 +810,7 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                                     preRows.size(), fi);
                             Misc.free(frozenCursor);
 
-                            // --- UNFROZEN: reload resumes and picks up the new chain state. ---
+                            // Once unfrozen, reload resumes and picks up the new chain state.
                             reader.setFrozen(false);
                             reader.reloadConditionally();
 

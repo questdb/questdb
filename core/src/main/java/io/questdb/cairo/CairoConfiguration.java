@@ -859,6 +859,8 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
+    int getSymbolPatternIndexThreshold();
+
     long getSymbolTableMaxAllocationPageSize();
 
     long getSymbolTableMinAllocationPageSize();
@@ -1116,6 +1118,8 @@ public interface CairoConfiguration {
     boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isSqlWindowCachedLightEnabled();
+
+    boolean isSymbolPatternIndexEnabled();
 
     boolean isTableTypeConversionEnabled();
 
