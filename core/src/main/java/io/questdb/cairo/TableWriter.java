@@ -1762,9 +1762,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return true; // Partition is already in Parquet format.
         }
 
-        // Conversion re-parents the partition and deletes the old directory, which holds
-        // the delta catalog and its sealed tiles; a delta-active partition must keep its
-        // frozen base as-is.
+        // The delta epoch is filed against this frozen base's format and window layout.
+        // Conversion needs the later base-rewrite protocol to publish a compatible epoch.
         if (txWriter.isPartitionDeltaActive(partitionIndex)) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
             throw CairoException.nonCritical().put("cannot convert partition to parquet, partition is delta-active [table=")
@@ -1905,7 +1904,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // The retrofit delta switch clears read_only, so the guard above no longer covers a
-        // delta-active partition; conversion would delete its delta catalog with the old dir.
+        // delta-active partition; conversion needs the later base-rewrite protocol.
         if (txWriter.isPartitionDeltaActive(partitionIndex)) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
             throw CairoException.nonCritical().put("cannot convert parquet partition to native, partition is delta-active [table=")
@@ -3229,6 +3228,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * This method leaves symbol files intact.
      */
     public final void removeAllPartitions() {
+        checkNoPartitionWithDelta("remove all partitions");
         if (size() == 0) {
             return;
         }
@@ -3354,6 +3354,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             partitionIndex = -partitionIndex - 1;
         }
         partitionIndex /= LONGS_PER_TX_ATTACHED_PARTITION;
+
+        // The stable delta namespace is independent of partitionNameTxn. Until
+        // partition generations and reader-safe reclamation land, removing and
+        // recreating this logical timestamp could otherwise reuse stale tiles.
+        int checkIndex = partitionIndex;
+        while (checkIndex < txWriter.getPartitionCount() &&
+                txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(checkIndex)) == logicalPartitionTimestampToDelete) {
+            checkPartitionHasNoDelta(checkIndex, "drop partition");
+            checkIndex++;
+        }
 
         boolean dropped = false;
         long partitionTimestamp;
@@ -4583,7 +4593,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // bails earlier still. See lastPartitionHasLegacyCoveringHead().
                 && !lastPartitionHasLegacyCoveringHead()
                 // A delta-active last partition takes no direct appends: its rows must go
-                // through the O3 path, which routes them into the partition's local delta.
+                // through the O3 path, which routes them into the table-scoped delta.
                 && !txWriter.isPartitionDeltaActiveByPartitionTimestamp(lastPartitionTimestamp)) {
             // There is some data in LAG, it's ordered, and it's already written to the last partition.
             // We can simply increase the last partition transient row count to make it committed.
@@ -4868,7 +4878,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // together they cover every fast-lag extend path.
                 && !lastPartitionHasLegacyCoveringHead()
                 // A delta-active last partition takes no direct appends: its rows must go
-                // through the O3 path, which routes them into the partition's local delta.
+                // through the O3 path, which routes them into the table-scoped delta.
                 && !txWriter.isPartitionDeltaActiveByPartitionTimestamp(lastPartitionTimestamp);
     }
 
@@ -9393,7 +9403,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Captures one WAL transaction's ts-sorted O3 slice targeting a delta-active
-     * partition in that partition's local delta. The delta seal completes before
+     * partition in the table's stable delta namespace. The delta seal completes before
      * this transaction's {@code _txn} commit, so the applied seqTxn never runs
      * ahead of the last durable tile; {@code has_delta} arms in that same commit,
      * atomically with the first tile becoming visible. Without a writer (an OSS
@@ -10379,7 +10389,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .I$();
 
                     if (partitionIndexRaw > -1 && txWriter.isPartitionDeltaActiveByRawIndex(partitionIndexRaw)) {
-                        // Late rows into a delta-active partition land in its local delta;
+                        // Late rows into a delta-active partition land in its table-scoped delta;
                         // the frozen base (native or parquet) is never touched. Ahead of the
                         // append/merge dispatch so every strategy is captured, and the delta
                         // seal is durable before this transaction's _txn commit.
@@ -15103,6 +15113,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
+    private void checkNoPartitionWithDelta(CharSequence operation) {
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            checkPartitionHasNoDelta(i, operation);
+        }
+    }
+
+    private void checkPartitionHasNoDelta(int partitionIndex, CharSequence operation) {
+        if (txWriter.getPartitionHasDelta(partitionIndex)) {
+            throw CairoException.nonCritical()
+                    .put("cannot ").put(operation).put(", partition has cold delta [table=")
+                    .put(tableToken.getTableName())
+                    .put(", partition=").ts(timestampDriver, txWriter.getPartitionTimestampByIndex(partitionIndex))
+                    .put(']');
+        }
+    }
+
     private void tombstoneCoveredColumnInOtherIndexes(int droppedWriterIdx) {
         if (droppedWriterIdx < 0) {
             return;
@@ -15139,6 +15165,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void truncate(boolean keepSymbolTables) {
         rollback();
+        checkNoPartitionWithDelta("truncate table");
 
         if (!keepSymbolTables) {
             // we do this before size check so that "old" corrupt symbol tables are brought back in line
