@@ -2353,6 +2353,12 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testUtf8ToUtf16OrViewRejectsMalformedInput() {
+        Utf8String malformed = new Utf8String(new byte[]{'1', (byte) 0xC3}, false);
+        Assert.assertNull(Utf8s.utf8ToUtf16OrView(malformed, new StringSink()));
+    }
+
+    @Test
     public void testUtf8ToUtf16UncheckedError() {
         // Invalid UTF-8 in DirectUtf8Sequence — exercises utf8ToUtf16Unchecked error path
         try (DirectUtf8Sink dirSink = new DirectUtf8Sink(8)) {

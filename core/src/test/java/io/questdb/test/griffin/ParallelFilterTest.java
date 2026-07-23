@@ -349,6 +349,44 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateParsingInParallelFilter() throws Exception {
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, _, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    engine.execute(
+                            "CREATE TABLE x AS (" +
+                                    "SELECT " +
+                                    "'2026年07月22日'::varchar date_value, " +
+                                    "'2026年07月22日 13:17:26'::varchar timestamp_value " +
+                                    "FROM long_sequence(" + ROW_COUNT + "))",
+                            sqlExecutionContext
+                    );
+                    final String query = "SELECT count() FROM x " +
+                            "WHERE to_date(date_value, 'yyyy年MM月dd日') = '2026-07-22'::date " +
+                            "AND to_timestamp(timestamp_value, 'yyyy年MM月dd日 HH:mm:ss') " +
+                            "= '2026-07-22T13:17:26'::timestamp";
+
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .assertsPlanContaining("Async Filter");
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n" + ROW_COUNT + "\n");
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
     public void testEarlyCursorClose() throws Exception {
         // This scenario used to lead to an NPE on `circuitBreaker.cancelledFlag` access in PageFrameReduceJob.
         WorkerPool pool = new WorkerPool(() -> 4);

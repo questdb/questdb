@@ -39,9 +39,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 
 public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunctionFactory {
     private final static String NAME = "to_timestamp";
@@ -108,43 +106,24 @@ public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunc
         }
 
         @Override
+        public boolean isThreadSafe() {
+            return VarcharDateFunctionUtils.isVarcharGetterThreadSafe(arg);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(name).val("(").val(arg).val(')');
         }
     }
 
     protected static final class ToUtf8TimestampFunc extends ToAsciiTimestampFunc {
-        private StringSink utf16Sink;
-
         public ToUtf8TimestampFunc(Function arg, CharSequence pattern, DateLocale locale, int timestampType, String name) {
             super(arg, pattern, locale, timestampType, name);
         }
 
         @Override
         public long getTimestamp(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
-            try {
-                if (value != null) {
-                    if (Utf8s.isAscii(value)) {
-                        return timestampFormat.parse(value.asAsciiCharSequence(), locale);
-                    }
-                    if (utf16Sink == null) {
-                        utf16Sink = new StringSink();
-                    } else {
-                        utf16Sink.clear();
-                    }
-                    if (Utf8s.utf8ToUtf16(value, utf16Sink)) {
-                        return timestampFormat.parse(utf16Sink, locale);
-                    }
-                }
-            } catch (NumericException ignore) {
-            }
-            return Numbers.LONG_NULL;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
+            return VarcharDateFunctionUtils.parse(arg.getVarcharA(rec), timestampFormat, locale);
         }
     }
 }

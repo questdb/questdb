@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
@@ -111,11 +112,10 @@ public class InStrVarcharArrayFunctionFactory implements FunctionFactory {
             ArrayView arrayView = arrayFunc.getArray(null);
             for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
                 Utf8Sequence element = arrayView.getVarchar(i);
-                if (element == null) {
-                    set.addNull();
-                } else {
-                    set.add(Utf8s.toString(element));
-                }
+                CharSequence value = element == null
+                        ? null
+                        : Utf8s.utf8ToUtf16OrView(element, Misc.getThreadLocalSink());
+                set.add(value);
             }
         }
 

@@ -69,6 +69,18 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
                 row.putVarchar(1, asciiWithoutFlag("22 Jul 2026 13:17:26.136"));
                 row.putVarchar(2, asciiWithoutFlag("22 Jul 2026"));
                 row.append();
+
+                row = writer.newRow();
+                row.putInt(0, 5);
+                row.putVarchar(1, new Utf8String("2026-07-22 13:17:26 Réunion Time"));
+                row.append();
+
+                row = writer.newRow();
+                row.putInt(0, 6);
+                row.putVarchar(1, malformedUtf8("2026年07月22日 13:17:26.136"));
+                row.putVarchar(2, malformedUtf8("2026年07月22日"));
+                row.putVarchar(3, malformedUtf8("2026-07-22"));
+                row.append();
                 writer.commit();
             }
 
@@ -113,6 +125,16 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
+                    select to_timestamp(ts_value, 'yyyy-MM-dd HH:mm:ss z') ts
+                    from x where id = 5
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts
+                            2026-07-22T09:17:26.000000Z
+                            """);
+
+            assertQuery("""
                     select
                         to_timestamp(ts_value, 'yyyy-MM-dd HH:mm:ss.SSS') is null ts_null,
                         to_timestamp_ns(ts_value, 'yyyy-MM-dd HH:mm:ss.SSS') is null ts_ns_null,
@@ -124,6 +146,22 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
                     .returns("""
                             ts_null\tts_ns_null\td_null\tpg_null
                             true\ttrue\ttrue\ttrue
+                            """);
+
+            assertQuery("""
+                    select
+                        to_timestamp(ts_value, 'yyyy年MM月dd日 HH:mm:ss.SSS') is null ts_null,
+                        to_timestamp_ns(ts_value, 'yyyy年MM月dd日 HH:mm:ss.SSS') is null ts_ns_null,
+                        to_date(date_value, 'yyyy年MM月dd日') is null d_null,
+                        to_pg_date(pg_date_value) is null pg_null,
+                        cast(ts_value as string) is null str_null,
+                        cast(ts_value as symbol) is null sym_null
+                    from x where id = 6
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts_null\tts_ns_null\td_null\tpg_null\tstr_null\tsym_null
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue
                             """);
         });
     }
@@ -478,5 +516,11 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
 
     private static Utf8String asciiWithoutFlag(String value) {
         return new Utf8String(value.getBytes(StandardCharsets.UTF_8), false);
+    }
+
+    private static Utf8String malformedUtf8(String validPrefix) {
+        final byte[] bytes = (validPrefix + ' ').getBytes(StandardCharsets.UTF_8);
+        bytes[bytes.length - 1] = (byte) 0xC3;
+        return new Utf8String(bytes, false);
     }
 }

@@ -40,9 +40,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 
 public class VarcharToDateFunctionFactory implements FunctionFactory {
 
@@ -98,43 +96,24 @@ public class VarcharToDateFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isThreadSafe() {
+            return VarcharDateFunctionUtils.isVarcharGetterThreadSafe(arg);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("to_date(").val(arg).val(',').val(pattern).val(')');
         }
     }
 
     private static final class ToUtf8DateFunction extends ToAsciiDateFunction {
-        private StringSink utf16Sink;
-
         private ToUtf8DateFunction(Function arg, DateFormat dateFormat, DateLocale locale, CharSequence pattern) {
             super(arg, dateFormat, locale, pattern);
         }
 
         @Override
         public long getDate(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
-            try {
-                if (value != null) {
-                    if (Utf8s.isAscii(value)) {
-                        return dateFormat.parse(value.asAsciiCharSequence(), locale);
-                    }
-                    if (utf16Sink == null) {
-                        utf16Sink = new StringSink();
-                    } else {
-                        utf16Sink.clear();
-                    }
-                    if (Utf8s.utf8ToUtf16(value, utf16Sink)) {
-                        return dateFormat.parse(utf16Sink, locale);
-                    }
-                }
-            } catch (NumericException ignore) {
-            }
-            return Numbers.LONG_NULL;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
+            return VarcharDateFunctionUtils.parse(arg.getVarcharA(rec), dateFormat, locale);
         }
     }
 }

@@ -24,10 +24,33 @@
 
 package io.questdb.test.griffin.engine.functions.bool;
 
+import io.questdb.cairo.TableWriter;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testMalformedVarcharInSymbolCursorDoesNotMatchPrefix() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v VARCHAR)");
+            try (TableWriter writer = getWriter("x")) {
+                TableWriter.Row row = writer.newRow();
+                row.putVarchar(0, new Utf8String(new byte[]{'a', 'b', 'c', (byte) 0xC3}, false));
+                row.append();
+                writer.commit();
+            }
+
+            assertQuery("SELECT 'abc'::symbol IN (SELECT v FROM x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            false
+                            """);
+        });
+    }
 
     @Test
     public void testNullInCursorInFilter() throws Exception {

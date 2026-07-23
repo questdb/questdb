@@ -31,7 +31,9 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1729,6 +1731,44 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
                 assertConversion("LONG", target, values);
             }
+        });
+    }
+
+    @Test
+    public void testMalformedVarcharToIntIsNullInLazyAndO3Conversions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            try (TableWriter writer = getWriter("pt")) {
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-01T00:00:02.000000Z"));
+                row.putVarchar(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+
+                row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-02T00:00:00.000000Z"));
+                row.putVarchar(0, new Utf8String("3"));
+                row.append();
+                writer.commit();
+            }
+
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE INT");
+
+            assertQuery("SELECT val FROM pt WHERE ts < '2024-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            null
+                            """);
+
+            execute("INSERT INTO pt VALUES (2, '2024-01-01T00:00:01.000000Z')");
+
+            assertQuery("SELECT val FROM pt WHERE ts < '2024-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            2
+                            null
+                            """);
         });
     }
 

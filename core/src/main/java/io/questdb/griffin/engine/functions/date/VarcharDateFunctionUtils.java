@@ -24,6 +24,17 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
+
 final class VarcharDateFunctionUtils {
     private VarcharDateFunctionUtils() {
     }
@@ -59,5 +70,26 @@ final class VarcharDateFunctionUtils {
             }
         }
         return true;
+    }
+
+    static boolean isVarcharGetterThreadSafe(Function arg) {
+        // VarcharColumn's UTF-16 views use mutable sinks, but getVarcharA() is stateless.
+        return arg.getClass() == VarcharColumn.class || arg.isThreadSafe();
+    }
+
+    static long parse(Utf8Sequence value, DateFormat format, DateLocale locale) {
+        try {
+            if (value != null) {
+                if (Utf8s.isAscii(value)) {
+                    return format.parse(value.asAsciiCharSequence(), locale);
+                }
+                final StringSink sink = Misc.getThreadLocalSink();
+                if (Utf8s.utf8ToUtf16(value, sink)) {
+                    return format.parse(sink, locale);
+                }
+            }
+        } catch (NumericException ignore) {
+        }
+        return Numbers.LONG_NULL;
     }
 }

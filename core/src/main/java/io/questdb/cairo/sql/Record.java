@@ -36,6 +36,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -56,12 +57,7 @@ public interface Record {
         if (vch == null) {
             return null;
         }
-        if (vch.isAscii()) {
-            return vch.asAsciiCharSequence();
-        }
-        sink.clear();
-        sink.put(vch);
-        return sink;
+        return Utf8s.utf8ToUtf16OrView(vch, sink);
     };
 
     default ArrayView getArray(int col, int columnType) {

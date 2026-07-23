@@ -4144,6 +4144,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Decimal128 d128,
             Decimal256 d256
     ) {
+        if (value == null) {
+            writeFixedNull(dstType, dstPtr, rowIndex);
+            return;
+        }
         try {
             switch (ColumnType.tagOf(dstType)) {
                 case ColumnType.BOOLEAN -> {

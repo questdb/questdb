@@ -44,8 +44,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 /**
  * Handles "symbol IN $1" where $1 is a VARCHAR[] bind variable.
@@ -122,20 +122,12 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
 
             for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
                 Utf8Sequence value = arrayView.getVarchar(i);
-                if (value == null) {
-                    intSet.add(symbolTable.keyOf(null));
-                } else if (value.isAscii()) {
-                    int key = symbolTable.keyOf(value.asAsciiCharSequence());
-                    if (key != SymbolTable.VALUE_NOT_FOUND) {
-                        intSet.add(key);
-                    }
-                } else {
-                    StringSink sink = Misc.getThreadLocalSink();
-                    sink.put(value);
-                    int key = symbolTable.keyOf(sink);
-                    if (key != SymbolTable.VALUE_NOT_FOUND) {
-                        intSet.add(key);
-                    }
+                CharSequence symbol = value == null
+                        ? null
+                        : Utf8s.utf8ToUtf16OrView(value, Misc.getThreadLocalSink());
+                int key = symbolTable.keyOf(symbol);
+                if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    intSet.add(key);
                 }
             }
         }
@@ -196,7 +188,11 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
             strSet.clear();
             ArrayView arrayView = arrayFunc.getArray(null);
             for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
-                strSet.add(arrayView.getVarchar(i));
+                Utf8Sequence value = arrayView.getVarchar(i);
+                CharSequence symbol = value == null
+                        ? null
+                        : Utf8s.utf8ToUtf16OrView(value, Misc.getThreadLocalSink());
+                strSet.add(symbol);
             }
         }
 

@@ -1170,8 +1170,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
                 return null;
             }
             sink.clear();
-            Utf8s.utf8ToUtf16(utf8, sink);
-            return sink;
+            return Utf8s.utf8ToUtf16(utf8, sink) ? sink : null;
         }
         CharSequence cs = getStr0(columnIndex, csViewA(columnIndex));
         if (cs == null) {
