@@ -54,6 +54,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -67,6 +68,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
+import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.griffin.engine.ops.Operation;
@@ -817,6 +820,26 @@ public final class TestUtils {
         Assert.fail("SQL statement should have failed");
     }
 
+    /**
+     * Asserts that the factory tree, walked down the base factories, contains an instance of the
+     * expected class. Pinning the factory keeps a test honest: the reduce phase follows from the
+     * factory the optimizer picks, so a query that quietly moved to a different one would still
+     * run, still pass, and cover nothing.
+     */
+    public static void assertFactoryInTree(RecordCursorFactory factory, Class<?> expected) {
+        assertFactoryInTree(factory, expected, null);
+    }
+
+    public static void assertFactoryInTree(RecordCursorFactory factory, Class<?> expected, @Nullable CharSequence context) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (expected.isInstance(f)) {
+                return;
+            }
+        }
+        Assert.fail("expected " + expected.getSimpleName() + " in the factory tree, but top was "
+                + factory.getClass().getSimpleName() + (context != null ? ": " + context : ""));
+    }
+
     public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
         try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
              BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))
@@ -862,6 +885,75 @@ public final class TestUtils {
             } catch (Throwable e) {
                 ignore.skipChecks();
                 throw e;
+            }
+        }
+    }
+
+    /**
+     * Asserts that the first parallel factory in the tree holds no per-worker slots. Call it once
+     * the cursor is closed, so the frame sequence has been awaited and no worker is inside a locked
+     * section. A reducer that acquires a slot and then throws before entering the try that releases
+     * it leaves the slot held forever: {@link io.questdb.griffin.engine.PerWorkerLocks} has no reset
+     * and the atom belongs to the factory, so every later execution of the same cached factory finds
+     * one slot fewer, until the workers spin for a slot nobody will release.
+     * <p>
+     * An atom that holds no locks at all reports -1 and fails here rather than passing for the wrong
+     * reason.
+     *
+     * @param factory the compiled factory, executed at least once and with its cursor closed
+     * @param context what is being asserted, for the failure message
+     */
+    public static void assertNoSlotLeak(RecordCursorFactory factory, CharSequence context) {
+        Assert.assertEquals(
+                "worker slot leaked: " + context,
+                0,
+                findPerWorkerLocks(factory, context).getAcquiredSlotCount()
+        );
+    }
+
+    /**
+     * Compiles the query once and executes the same factory twice. A worker must acquire a slot
+     * before the owner can reduce, and both executions must report the expected memory breach. Each execution verifies exact slot balance after close; the second also observes that the cached
+     * factory remains reusable after the first failure without depending on a concrete factory class.
+     */
+    public static void assertNoSlotLeakOnBreach(
+            SqlCompiler compiler,
+            SqlExecutionContext ctx,
+            String query
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+            final PerWorkerLocks locks = findPerWorkerLocks(factory, query);
+            for (int i = 0; i < 2; i++) {
+                // A fresh latch per execution, so the acquisition it records is this execution's.
+                // An atom that owns no locks never reaches here, which is what stops a plan that
+                // quietly stopped cloning per-worker state from passing.
+                final CountDownLatch acquired = new CountDownLatch(1);
+                locks.setTestAcquireLatch(acquired);
+                try {
+                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach for: " + query);
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    }
+                    assertNoSlotLeak(factory, query);
+                    // The latch is the tally: a worker counts it down as it takes a slot, so a
+                    // latch still standing means no worker ever entered the path under test and the
+                    // zero above would be zero for the wrong reason. It also catches a pool trimmed
+                    // below the work-stealing threshold, where the owner reduces every frame itself
+                    // and no worker ever gets a chance to take a slot.
+                    Assert.assertEquals(
+                            "no worker acquired a slot for: " + query,
+                            0,
+                            acquired.getCount()
+                    );
+                } finally {
+                    locks.setTestAcquireLatch(null);
+                }
             }
         }
     }
@@ -1577,6 +1669,45 @@ public final class TestUtils {
                 execute(connection, sql);
             }
         }
+    }
+
+    /**
+     * Returns the first atom found walking down the factory tree, failing when there is none.
+     */
+    public static StatefulAtom findAtom(RecordCursorFactory factory, CharSequence context) {
+        StatefulAtom atom = null;
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            atom = f.getAtom();
+            if (atom != null) {
+                break;
+            }
+        }
+        Assert.assertNotNull(
+                "no parallel factory with an atom in the tree, top was " + factory.getClass().getSimpleName() + ": " + context,
+                atom
+        );
+        return atom;
+    }
+
+    /**
+     * Returns the per-worker locks of the first atom in the factory tree, failing when the atom
+     * guards no per-worker state. An atom that holds no locks can neither take a slot nor leak one,
+     * so asserting slot balance against it would pass for the wrong reason.
+     */
+    public static PerWorkerLocks findPerWorkerLocks(RecordCursorFactory factory, CharSequence context) {
+        final StatefulAtom atom = findAtom(factory, context);
+        Assert.assertTrue(
+                atom.getClass().getSimpleName() + " owns no per-worker locks, so this query cannot"
+                        + " exercise the slot-leak path: " + context,
+                atom instanceof PerWorkerLockOwner
+        );
+        final PerWorkerLocks locks = ((PerWorkerLockOwner) atom).getPerWorkerLocks();
+        Assert.assertNotNull(
+                atom.getClass().getSimpleName() + " built no per-worker locks, so this query cannot"
+                        + " exercise the slot-leak path: " + context,
+                locks
+        );
+        return locks;
     }
 
     @NotNull

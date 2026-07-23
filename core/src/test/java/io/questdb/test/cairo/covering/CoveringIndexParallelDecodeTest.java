@@ -79,7 +79,6 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         assertEquals((byte) 1, DataSource.COVERED);
     }
 
-
     /**
      * PURPOSE-BUILT PERFORMANCE MEASUREMENT (Task 14) — NOT an assertion test.
      * <p>
