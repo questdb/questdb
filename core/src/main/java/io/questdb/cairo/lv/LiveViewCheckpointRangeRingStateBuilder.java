@@ -40,9 +40,12 @@ import java.util.Arrays;
  * Copy-on-write chunk builder for the partitioned bounded-RANGE value ring.
  * Sealed chunks are reused by reference, expiration advances a logical offset
  * into the shared head, and only the rows this boundary appended are encoded.
- * The value column holds a 64-bit word per row: a DOUBLE ring stores exact
- * IEEE-754 bits (raw or XOR-compressed), a LONG/DATE/TIMESTAMP ring stores the
- * raw payload; {@link #of} configures which kind the seal writes. A {@code max}/
+ * <p>
+ * The value column holds one, two or four 64-bit words per row, which the ring's
+ * value kind selects: a DOUBLE ring stores exact IEEE-754 bits (raw or
+ * XOR-compressed), a LONG/DATE/TIMESTAMP or narrow DECIMAL ring stores one raw
+ * payload word, and a DECIMAL128/DECIMAL256 ring stores two or four raw words, most
+ * significant first. {@link #of} configures which kind the seal writes. A {@code max}/
  * {@code min} frame ring uses the same payload but tags its value pages with the
  * deque page kinds so a deque-family root stays distinct from a value-ring root.
  * <p>
@@ -62,16 +65,19 @@ import java.util.Arrays;
  */
 public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
 
+    private final LiveViewCheckpointRangeRingStateReader previousReader;
+    private final LiveViewCheckpointStateCodec.Scratch scratch;
     private int headOffset;
     private boolean initialized;
     private long lastTimestamp;
-    private final LiveViewCheckpointRangeRingStateReader previousReader;
+    private int maxChunkRows = LiveViewCheckpointStateCodec.CHUNK_ROWS;
     private int refCount;
     private LiveViewCheckpointStatePageRef[] refs = new LiveViewCheckpointStatePageRef[8];
     private long rowCount;
-    private final LiveViewCheckpointStateCodec.Scratch scratch;
+    private int scalarWords = 1;
     private int tailCount;
     private int valueKind = LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE;
+    private int valueWords = 1;
 
     public LiveViewCheckpointRangeRingStateBuilder(@NotNull CairoConfiguration configuration) {
         this(configuration, null);
@@ -86,30 +92,46 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
     }
 
     /**
-     * Appends one row in designated-timestamp order. The value arrives as raw
-     * 64-bit bits: a DOUBLE ring passes IEEE-754 bits (a NULL first/last/nth row
-     * is a legitimate NaN), a LONG/DATE/TIMESTAMP ring passes the raw payload. The
-     * value codec round-trips whatever bits it is handed, so no value is rejected.
+     * Appends one row of a one-word ring in designated-timestamp order. The value
+     * arrives as raw 64-bit bits: a DOUBLE ring passes IEEE-754 bits (a NULL
+     * first/last/nth row is a legitimate NaN), a LONG/DATE/TIMESTAMP or narrow DECIMAL
+     * ring passes the raw payload. The value codec round-trips whatever bits it is
+     * handed, so no value is rejected.
      */
     public void append(
             @NotNull LiveViewCheckpointDataSegmentWriter writer,
             long timestamp,
             long valueBits
     ) {
-        ensureInitialized();
-        if (rowCount > 0 && timestamp < lastTimestamp) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint RANGE ring timestamps must be non-decreasing")
-                    .put(" [previous=").put(lastTimestamp).put(", timestamp=").put(timestamp).put(']');
-        }
-        if (tailCount == LiveViewCheckpointStateCodec.CHUNK_ROWS) {
-            sealTail(writer);
-        }
-        Unsafe.putLong(scratch.timestampsAddress() + (long) tailCount * Long.BYTES, timestamp);
-        Unsafe.putLong(scratch.valuesAddress() + (long) tailCount * Long.BYTES, valueBits);
-        tailCount++;
-        rowCount++;
-        lastTimestamp = timestamp;
+        appendWords(writer, timestamp, 1, valueBits, 0, 0, 0);
+    }
+
+    /**
+     * Appends one row of a two-word (128-bit decimal) ring, most significant word
+     * first.
+     */
+    public void append(
+            @NotNull LiveViewCheckpointDataSegmentWriter writer,
+            long timestamp,
+            long hi,
+            long lo
+    ) {
+        appendWords(writer, timestamp, 2, hi, lo, 0, 0);
+    }
+
+    /**
+     * Appends one row of a four-word (256-bit decimal) ring, most significant word
+     * first.
+     */
+    public void append(
+            @NotNull LiveViewCheckpointDataSegmentWriter writer,
+            long timestamp,
+            long hh,
+            long hl,
+            long lh,
+            long ll
+    ) {
+        appendWords(writer, timestamp, 4, hh, hl, lh, ll);
     }
 
     @Override
@@ -154,10 +176,14 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
             }
             final int kept = tailCount - (int) remaining;
             if (kept > 0) {
-                final long bytes = (long) kept * Long.BYTES;
-                final long dropped = remaining * Long.BYTES;
-                Vect.memmove(scratch.timestampsAddress(), scratch.timestampsAddress() + dropped, bytes);
-                Vect.memmove(scratch.valuesAddress(), scratch.valuesAddress() + dropped, bytes);
+                final long timestampBytes = (long) kept * Long.BYTES;
+                final long droppedTimestamps = remaining * Long.BYTES;
+                Vect.memmove(scratch.timestampsAddress(), scratch.timestampsAddress() + droppedTimestamps, timestampBytes);
+                Vect.memmove(
+                        scratch.valuesAddress(),
+                        scratch.valuesAddress() + droppedTimestamps * valueWords,
+                        timestampBytes * valueWords
+                );
             }
             rowCount -= remaining;
             tailCount = kept;
@@ -178,12 +204,16 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
      * Freezes the candidate descriptor. The exact scalar continuation state (the
      * running aggregate for avg/sum, the emitted frame value for first_value/
      * last_value/nth_value) is stored by raw bits, and the frame size is stored
-     * rather than recomputed, to preserve the exact continuation state.
+     * rather than recomputed, to preserve the exact continuation state. The scalar
+     * words beyond the ring's declared width are ignored.
      */
     public void freeze(
             @NotNull LiveViewCheckpointDataSegmentWriter writer,
             @NotNull byte[] key,
-            long scalarBits,
+            long scalarWord0,
+            long scalarWord1,
+            long scalarWord2,
+            long scalarWord3,
             long frameSize,
             @NotNull LiveViewCheckpointPartitionMapEntry out
     ) {
@@ -211,9 +241,14 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
         out.of(
                 key,
                 LiveViewCheckpointRangeRingStateReader.encodeScalar(
+                        valueKind,
+                        scalarWords,
                         headOffset,
                         rowCount,
-                        scalarBits,
+                        scalarWord0,
+                        scalarWord1,
+                        scalarWord2,
+                        scalarWord3,
                         frameSize,
                         lastTimestamp
                 ),
@@ -247,24 +282,26 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
 
     /**
      * Carries the previous root's chunk references forward under the given value
-     * kind. Reads no data page: {@code previous} is the checksummed partition
-     * entry, and everything the builder needs is in it. The kind must match the
-     * pages the previous root wrote - a function seals a partition under one value
-     * kind across every boundary - so a mismatch means the caller wired the ring to
+     * kind and scalar width. Reads no data page: {@code previous} is the checksummed
+     * partition entry, and everything the builder needs is in it. The kind and width
+     * must match what the previous root wrote - a function seals a partition under one
+     * shape across every boundary - so a mismatch means the caller wired the ring to
      * the wrong function.
      *
-     * @param valueKind one of {@link LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DOUBLE},
-     *                  {@link LiveViewCheckpointRangeRingStateReader#VALUE_KIND_LONG},
-     *                  {@link LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DEQUE_DOUBLE}
-     *                  or {@link LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DEQUE_LONG}
+     * @param valueKind   one of the
+     *                    {@link LiveViewCheckpointRangeRingStateReader} {@code VALUE_KIND_*}
+     *                    constants
+     * @param scalarWords the words the scalar continuation state occupies: 1, 2 or 4
      */
-    public void of(@NotNull LiveViewCheckpointPartitionMapEntry previous, int valueKind) {
+    public void of(@NotNull LiveViewCheckpointPartitionMapEntry previous, int valueKind, int scalarWords) {
         previousReader.ofMetadata(previous);
         final LiveViewCheckpointStatePageRef[] previousRefs = previousReader.copyStatePageRefs();
-        if (previousRefs.length > 0 && previousReader.getValueKind() != valueKind) {
+        if (previousReader.getValueKind() != valueKind || previousReader.getScalarWordCount() != scalarWords) {
             throw CairoException.critical(0)
-                    .put("live view checkpoint RANGE ring value kind mismatch")
-                    .put(" [configured=").put(valueKind).put(", previous=").put(previousReader.getValueKind()).put(']');
+                    .put("live view checkpoint RANGE ring state shape mismatch")
+                    .put(" [configuredKind=").put(valueKind).put(", previousKind=").put(previousReader.getValueKind())
+                    .put(", configuredScalarWords=").put(scalarWords)
+                    .put(", previousScalarWords=").put(previousReader.getScalarWordCount()).put(']');
         }
         ensureRefCapacity(previousRefs.length);
         System.arraycopy(previousRefs, 0, refs, 0, previousRefs.length);
@@ -273,18 +310,54 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
         headOffset = previousReader.getHeadOffset();
         lastTimestamp = previousReader.getLastTimestamp();
         tailCount = 0;
-        this.valueKind = valueKind;
-        initialized = true;
+        ofShape(valueKind, scalarWords);
     }
 
-    public void ofEmpty(int valueKind) {
+    public void ofEmpty(int valueKind, int scalarWords) {
         refCount = 0;
         rowCount = 0;
         headOffset = 0;
         lastTimestamp = 0;
         tailCount = 0;
-        this.valueKind = valueKind;
-        initialized = true;
+        ofShape(valueKind, scalarWords);
+    }
+
+    private void appendWords(
+            @NotNull LiveViewCheckpointDataSegmentWriter writer,
+            long timestamp,
+            int words,
+            long word0,
+            long word1,
+            long word2,
+            long word3
+    ) {
+        ensureInitialized();
+        if (words != valueWords) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint RANGE ring value width mismatch")
+                    .put(" [expected=").put(valueWords).put(", actual=").put(words).put(']');
+        }
+        if (rowCount > 0 && timestamp < lastTimestamp) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint RANGE ring timestamps must be non-decreasing")
+                    .put(" [previous=").put(lastTimestamp).put(", timestamp=").put(timestamp).put(']');
+        }
+        if (tailCount == maxChunkRows) {
+            sealTail(writer);
+        }
+        Unsafe.putLong(scratch.timestampsAddress() + (long) tailCount * Long.BYTES, timestamp);
+        final long valueAddress = scratch.valuesAddress() + (long) tailCount * words * Long.BYTES;
+        Unsafe.putLong(valueAddress, word0);
+        if (words > 1) {
+            Unsafe.putLong(valueAddress + Long.BYTES, word1);
+        }
+        if (words > 2) {
+            Unsafe.putLong(valueAddress + 2 * Long.BYTES, word2);
+            Unsafe.putLong(valueAddress + 3 * Long.BYTES, word3);
+        }
+        tailCount++;
+        rowCount++;
+        lastTimestamp = timestamp;
     }
 
     private void ensureInitialized() {
@@ -297,6 +370,17 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
         if (capacity > refs.length) {
             refs = Arrays.copyOf(refs, Math.max(capacity, refs.length * 2));
         }
+    }
+
+    private void ofShape(int valueKind, int scalarWords) {
+        this.valueKind = valueKind;
+        this.valueWords = LiveViewCheckpointRangeRingStateReader.valueWords(valueKind);
+        this.maxChunkRows = LiveViewCheckpointRangeRingStateReader.maxChunkRows(valueKind);
+        this.scalarWords = scalarWords;
+        // Rejects an invalid width here rather than at freeze, so a wrongly wired
+        // function cannot stream a whole partition before failing.
+        LiveViewCheckpointRangeRingStateReader.scalarStateBytes(scalarWords);
+        initialized = true;
     }
 
     private void removeFirstChunk() {
@@ -331,21 +415,24 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
                 timestampCodec, tailCount, 0
         );
         final int valuePageKind = LiveViewCheckpointRangeRingStateReader.valuePageKind(valueKind);
+        // A wide value spends several words per row; the page still counts rows, so
+        // its decoded length carries the width the reader validates against.
+        final int valueElements = tailCount * valueWords;
         if (LiveViewCheckpointRangeRingStateReader.isLongColumn(valueKind)) {
             LiveViewCheckpointStateCodec.encodeLongs(
-                    writer.beginPage(), scratch.valuesAddress(), tailCount, LiveViewCheckpointStateCodec.LONG_RAW_64
+                    writer.beginPage(), scratch.valuesAddress(), valueElements, LiveViewCheckpointStateCodec.LONG_RAW_64
             );
             writer.endPage(
-                    refs[refCount + 1], tailCount * Long.BYTES,
+                    refs[refCount + 1], valueElements * Long.BYTES,
                     valuePageKind, LiveViewCheckpointStateCodec.LONG_RAW_64, tailCount, 0
             );
         } else {
-            final int doubleCodec = LiveViewCheckpointStateCodec.selectDoubleCodec(scratch.valuesAddress(), tailCount);
+            final int doubleCodec = LiveViewCheckpointStateCodec.selectDoubleCodec(scratch.valuesAddress(), valueElements);
             LiveViewCheckpointStateCodec.encodeDoubles(
-                    writer.beginPage(), scratch.valuesAddress(), tailCount, doubleCodec
+                    writer.beginPage(), scratch.valuesAddress(), valueElements, doubleCodec
             );
             writer.endPage(
-                    refs[refCount + 1], tailCount * Long.BYTES,
+                    refs[refCount + 1], valueElements * Long.BYTES,
                     valuePageKind, doubleCodec, tailCount, 0
             );
         }

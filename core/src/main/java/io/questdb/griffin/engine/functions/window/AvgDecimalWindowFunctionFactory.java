@@ -31,6 +31,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -1132,6 +1135,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int scale;
         private final Decimal128 scratch = new Decimal128();
         private final int timestampIndex;
@@ -1450,6 +1454,35 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            acc.ofRaw(
+                    source.getScalarWord(0),
+                    source.getScalarWord(1),
+                    source.getScalarWord(2),
+                    source.getScalarWord(3)
+            );
+            value.putDecimal256(0, acc);
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
@@ -1485,8 +1518,40 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public int checkpointRingScalarWords() {
+            return 4;
+        }
+
+        @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128;
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
-            return 1;
+            return 2;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame's (timestamp, value) rows, so adjacent
+            // roots reference the same pages instead of each re-encoding the frame. The
+            // scalar slot carries the exact running sum verbatim rather than let restore
+            // re-derive it, so it cannot drift from the one the runtime carried.
+            value.getDecimal256(0, acc);
+            sink.putScalarState(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl(), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(
+                        memory.getLong(rec),
+                        memory.getLong(rec + Long.BYTES),
+                        memory.getLong(rec + 2 * Long.BYTES)
+                );
+            }
         }
 
         @Override
@@ -1505,6 +1570,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                 sink.putDecimal128(scratch.getHigh(), scratch.getLow());
             }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
         }
 
         @Override
@@ -1539,6 +1609,37 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.toTop();
             memory.truncate();
             freeList.clear();
+        }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab, rebasing firstIdx to zero. Reused across partitions so a restore
+         * that walks thousands of them allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.Decimal128RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long hi, long lo) {
+                // The avg ring never stores a null (computeNext excludes them), so a
+                // null here is a corrupt value page. The shared reader admits any bit
+                // pattern, so avg re-asserts the invariant it relies on rather than fold
+                // garbage into the running sum.
+                if (hi == Decimals.DECIMAL128_HI_NULL && lo == Decimals.DECIMAL128_LO_NULL) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is null");
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putDecimal128(rec + Long.BYTES, hi, lo);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
         }
     }
 
@@ -2872,6 +2973,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int scale;
         private final int timestampIndex;
         private final int type;
@@ -3165,6 +3267,29 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, source.getScalarBits());
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putLong(0, source.getLong(offset));
             offset += Long.BYTES;
@@ -3199,8 +3324,30 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG;
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
-            return 1;
+            return 2;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame's (timestamp, value) rows, so adjacent
+            // roots reference the same pages instead of each re-encoding the frame. The
+            // scalar slot carries the exact running sum verbatim rather than let restore
+            // re-derive it, so it cannot drift from the one the runtime carried.
+            sink.putScalarState(value.getLong(0), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(memory.getLong(rec), memory.getShort(rec + Long.BYTES));
+            }
         }
 
         @Override
@@ -3217,6 +3364,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 sink.putLong(memory.getLong(rec));
                 sink.putShort(memory.getShort(rec + Long.BYTES));
             }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
         }
 
         @Override
@@ -3250,6 +3402,37 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.toTop();
             memory.truncate();
             freeList.clear();
+        }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab, rebasing firstIdx to zero. Reused across partitions so a restore
+         * that walks thousands of them allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                // The avg ring never stores a null (computeNext excludes them), so a
+                // null here is a corrupt value page. The shared reader admits any bit
+                // pattern, so avg re-asserts the invariant it relies on rather than fold
+                // garbage into the running sum.
+                if (valueBits == Decimals.DECIMAL16_NULL) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is null");
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putShort(rec + Long.BYTES, (short) valueBits);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
         }
     }
 
@@ -4480,6 +4663,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int scale;
         private final Decimal256 scratch = new Decimal256();
         private final int timestampIndex;
@@ -4810,6 +4994,35 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            acc.ofRaw(
+                    source.getScalarWord(0),
+                    source.getScalarWord(1),
+                    source.getScalarWord(2),
+                    source.getScalarWord(3)
+            );
+            value.putDecimal256(0, acc);
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal256(offset, acc);
             value.putDecimal256(0, acc);
@@ -4851,8 +5064,42 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public int checkpointRingScalarWords() {
+            return 4;
+        }
+
+        @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL256;
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
-            return 1;
+            return 2;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame's (timestamp, value) rows, so adjacent
+            // roots reference the same pages instead of each re-encoding the frame. The
+            // scalar slot carries the exact running sum verbatim rather than let restore
+            // re-derive it, so it cannot drift from the one the runtime carried.
+            value.getDecimal256(0, acc);
+            sink.putScalarState(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl(), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(
+                        memory.getLong(rec),
+                        memory.getLong(rec + Long.BYTES),
+                        memory.getLong(rec + 2 * Long.BYTES),
+                        memory.getLong(rec + 3 * Long.BYTES),
+                        memory.getLong(rec + 4 * Long.BYTES)
+                );
+            }
         }
 
         @Override
@@ -4873,6 +5120,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 sink.putLong(memory.getLong(rec + 3 * Long.BYTES));
                 sink.putLong(memory.getLong(rec + 4 * Long.BYTES));
             }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
         }
 
         @Override
@@ -4907,6 +5159,38 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.toTop();
             memory.truncate();
             freeList.clear();
+        }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab, rebasing firstIdx to zero. Reused across partitions so a restore
+         * that walks thousands of them allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.Decimal256RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long hh, long hl, long lh, long ll) {
+                // The avg ring never stores a null (computeNext excludes them), so a
+                // null here is a corrupt value page. The shared reader admits any bit
+                // pattern, so avg re-asserts the invariant it relies on rather than fold
+                // garbage into the running sum.
+                if (hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL
+                        && lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is null");
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putDecimal256(rec + Long.BYTES, hh, hl, lh, ll);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
         }
     }
 
@@ -6300,6 +6584,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int scale;
         private final int timestampIndex;
         private final int type;
@@ -6593,6 +6878,29 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, source.getScalarBits());
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putLong(0, source.getLong(offset));
             offset += Long.BYTES;
@@ -6627,8 +6935,30 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG;
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
-            return 1;
+            return 2;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame's (timestamp, value) rows, so adjacent
+            // roots reference the same pages instead of each re-encoding the frame. The
+            // scalar slot carries the exact running sum verbatim rather than let restore
+            // re-derive it, so it cannot drift from the one the runtime carried.
+            sink.putScalarState(value.getLong(0), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(memory.getLong(rec), memory.getInt(rec + Long.BYTES));
+            }
         }
 
         @Override
@@ -6645,6 +6975,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 sink.putLong(memory.getLong(rec));
                 sink.putInt(memory.getInt(rec + Long.BYTES));
             }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
         }
 
         @Override
@@ -6678,6 +7013,37 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.toTop();
             memory.truncate();
             freeList.clear();
+        }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab, rebasing firstIdx to zero. Reused across partitions so a restore
+         * that walks thousands of them allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                // The avg ring never stores a null (computeNext excludes them), so a
+                // null here is a corrupt value page. The shared reader admits any bit
+                // pattern, so avg re-asserts the invariant it relies on rather than fold
+                // garbage into the running sum.
+                if (valueBits == Decimals.DECIMAL32_NULL) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is null");
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putInt(rec + Long.BYTES, (int) valueBits);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
         }
     }
 
@@ -7880,6 +8246,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final long minDiff;
         private final int position;
         private final Decimal128 result = new Decimal128();
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int scale;
         private final int timestampIndex;
         private final int type;
@@ -8184,6 +8551,30 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            decimal128.ofRaw(source.getScalarWord(0), source.getScalarWord(1));
+            value.putDecimal128(0, decimal128);
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             source.getDecimal128(offset, decimal128);
             value.putDecimal128(0, decimal128);
@@ -8219,8 +8610,36 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public int checkpointRingScalarWords() {
+            return 2;
+        }
+
+        @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG;
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
-            return 1;
+            return 2;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame's (timestamp, value) rows, so adjacent
+            // roots reference the same pages instead of each re-encoding the frame. The
+            // scalar slot carries the exact running sum verbatim rather than let restore
+            // re-derive it, so it cannot drift from the one the runtime carried.
+            value.getDecimal128(0, decimal128);
+            sink.putScalarState(decimal128.getHigh(), decimal128.getLow(), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(memory.getLong(rec), memory.getLong(rec + Long.BYTES));
+            }
         }
 
         @Override
@@ -8238,6 +8657,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 sink.putLong(memory.getLong(rec));
                 sink.putLong(memory.getLong(rec + Long.BYTES));
             }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
         }
 
         @Override
@@ -8274,6 +8698,37 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.toTop();
             memory.truncate();
             freeList.clear();
+        }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab, rebasing firstIdx to zero. Reused across partitions so a restore
+         * that walks thousands of them allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                // The avg ring never stores a null (computeNext excludes them), so a
+                // null here is a corrupt value page. The shared reader admits any bit
+                // pattern, so avg re-asserts the invariant it relies on rather than fold
+                // garbage into the running sum.
+                if (valueBits == Decimals.DECIMAL64_NULL) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is null");
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putLong(rec + Long.BYTES, valueBits);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
         }
     }
 
@@ -9523,6 +9978,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int scale;
         private final int timestampIndex;
         private final int type;
@@ -9816,6 +10272,29 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint avg RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, source.getScalarBits());
+            value.putLong(1, source.getFrameSize());
+            value.putLong(2, newStartOffset);
+            value.putLong(3, size);
+            value.putLong(4, capacity);
+            value.putLong(5, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putLong(0, source.getLong(offset));
             offset += Long.BYTES;
@@ -9850,8 +10329,30 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG;
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
-            return 1;
+            return 2;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The shared ring carries the frame's (timestamp, value) rows, so adjacent
+            // roots reference the same pages instead of each re-encoding the frame. The
+            // scalar slot carries the exact running sum verbatim rather than let restore
+            // re-derive it, so it cannot drift from the one the runtime carried.
+            sink.putScalarState(value.getLong(0), value.getLong(1));
+            final long startOffset = value.getLong(2);
+            final long size = value.getLong(3);
+            final long capacity = value.getLong(4);
+            final long firstIdx = value.getLong(5);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(memory.getLong(rec), memory.getByte(rec + Long.BYTES));
+            }
         }
 
         @Override
@@ -9868,6 +10369,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 sink.putLong(memory.getLong(rec));
                 sink.putByte(memory.getByte(rec + Long.BYTES));
             }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
         }
 
         @Override
@@ -9901,6 +10407,37 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.toTop();
             memory.truncate();
             freeList.clear();
+        }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab, rebasing firstIdx to zero. Reused across partitions so a restore
+         * that walks thousands of them allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                // The avg ring never stores a null (computeNext excludes them), so a
+                // null here is a corrupt value page. The shared reader admits any bit
+                // pattern, so avg re-asserts the invariant it relies on rather than fold
+                // garbage into the running sum.
+                if (valueBits == Decimals.DECIMAL8_NULL) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint avg RANGE ring value is null");
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putByte(rec + Long.BYTES, (byte) valueBits);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
         }
     }
 

@@ -35,6 +35,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointStateCodec;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
+import io.questdb.std.Decimals;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -81,13 +82,13 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                      LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                      Path dir = new Path()) {
-                    builder.of(first, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE);
+                    builder.of(first, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
                     builder.dropHeadRows(5);
                     writer.of(checkpointsDir(dir), 2);
                     builder.append(writer, 4_106_000, Double.doubleToRawLongBits(10_000.0));
                     builder.append(writer, 4_107_000, Double.doubleToRawLongBits(-0.0));
                     builder.append(writer, 4_108_000, Double.doubleToRawLongBits(10_002.0));
-                    builder.freeze(writer, KEY, Double.doubleToRawLongBits(-0.0), 4_104, second);
+                    builder.freeze(writer, KEY, Double.doubleToRawLongBits(-0.0), 0, 0, 0, 4_104, second);
                     secondSegmentBytes[0] = writer.commit();
                     directory.addSegment(2, secondSegmentBytes[0]);
                 }
@@ -185,12 +186,12 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                      LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                      Path dir = new Path()) {
-                    builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG);
+                    builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG, 1);
                     writer.of(checkpointsDir(dir), 7);
                     for (int i = 0; i < payload.length; i++) {
                         builder.append(writer, i * 1_000L, payload[i]);
                     }
-                    builder.freeze(writer, KEY, 0L, payload.length, root);
+                    builder.freeze(writer, KEY, 0L, 0, 0, 0, payload.length, root);
                     directory.addSegment(7, writer.commit());
                 }
                 // The value pages self-identify as the long page kind, stored raw.
@@ -230,12 +231,12 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
 
                 final byte[] shortScalar = Arrays.copyOf(
                         valid.getScalarState(),
-                        LiveViewCheckpointRangeRingStateReader.SCALAR_STATE_BYTES - 1
+                        LiveViewCheckpointRangeRingStateReader.scalarStateBytes(1) - 1
                 );
                 assertInvalid(entry(shortScalar, refs(valid)), directory, false, "scalar state size mismatch");
 
                 final byte[] badVersion = Arrays.copyOf(valid.getScalarState(), valid.getScalarState().length);
-                badVersion[0] = 2;
+                badVersion[0] = 3;
                 assertInvalid(entry(badVersion, refs(valid)), directory, false, "format version mismatch");
 
                 final byte[] badHead = Arrays.copyOf(valid.getScalarState(), valid.getScalarState().length);
@@ -304,9 +305,9 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                          LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                          Path dir = new Path()) {
                         if (generation == 0) {
-                            builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE);
+                            builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
                         } else {
-                            builder.of(previous, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE);
+                            builder.of(previous, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
                             builder.dropHeadRows(drop);
                         }
                         writer.of(checkpointsDir(dir), 100 + generation);
@@ -317,7 +318,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                             timestamps.add(nextTimestamp);
                             values.add(Double.doubleToRawLongBits(value));
                         }
-                        builder.freeze(writer, KEY, Double.doubleToRawLongBits(generation + 0.125), timestamps.size(), next);
+                        builder.freeze(writer, KEY, Double.doubleToRawLongBits(generation + 0.125), 0, 0, 0, timestamps.size(), next);
                         directory.addSegment(100 + generation, writer.commit());
                     }
                     roots.add(next);
@@ -333,6 +334,36 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWideDecimalRingsShareChunksAndRoundTripRawWords() throws Exception {
+        // A DECIMAL128/DECIMAL256 ring spends two or four raw 64-bit words per row.
+        // The chunk row cap shrinks by the same factor so one chunk's value page still
+        // fits a single codec scratch buffer, and the page kinds keep a wide root's
+        // pages distinct from a narrow root's and a value ring's from a deque's. Drive
+        // each of the four wide kinds against a strictly decreasing oracle - so the
+        // deque kinds carry a legitimate monotonic snapshot - and prove the tail chunk
+        // shares, every word round-trips verbatim including the NULL sentinels, and the
+        // wide scalar comes back exactly.
+        assertMemoryLeak(() -> {
+            assertWideRingSharesAndRoundTrips(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128,
+                    LiveViewCheckpointRangeRingStateReader.DECIMAL128_VALUE_PAGE_KIND, 2, 70
+            );
+            assertWideRingSharesAndRoundTrips(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_DECIMAL128,
+                    LiveViewCheckpointRangeRingStateReader.DEQUE_DECIMAL128_VALUE_PAGE_KIND, 2, 74
+            );
+            assertWideRingSharesAndRoundTrips(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL256,
+                    LiveViewCheckpointRangeRingStateReader.DECIMAL256_VALUE_PAGE_KIND, 4, 78
+            );
+            assertWideRingSharesAndRoundTrips(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_DECIMAL256,
+                    LiveViewCheckpointRangeRingStateReader.DEQUE_DECIMAL256_VALUE_PAGE_KIND, 4, 82
+            );
+        });
+    }
+
+    @Test
     public void testWholeChunkDropReusesRemainingTailWithoutWritingData() throws Exception {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
@@ -342,9 +373,9 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                      LiveViewCheckpointDataSegmentWriter unopenedWriter = new LiveViewCheckpointDataSegmentWriter(configuration);
                      Path dir = new Path()) {
-                    builder.of(first, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE);
+                    builder.of(first, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
                     builder.dropHeadRows(LiveViewCheckpointStateCodec.CHUNK_ROWS + 5L);
-                    builder.freeze(unopenedWriter, KEY, Double.doubleToRawLongBits(1.25), 7, second);
+                    builder.freeze(unopenedWriter, KEY, Double.doubleToRawLongBits(1.25), 0, 0, 0, 7, second);
                 }
                 Assert.assertEquals(2, second.getStatePageCount());
                 assertRefEquals(first.getStatePageRef(2), second.getStatePageRef(0));
@@ -373,7 +404,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                  LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                  Path dir = new Path()) {
-                builder.ofEmpty(valueKind);
+                builder.ofEmpty(valueKind, 1);
                 writer.of(checkpointsDir(dir), firstSegment);
                 for (int i = 0; i < initialRows; i++) {
                     final long ts = i * 1_000L;
@@ -384,7 +415,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     firstTimestamps.add(ts);
                     firstValues.add(valueBits);
                 }
-                builder.freeze(writer, KEY, 0L, initialRows, first);
+                builder.freeze(writer, KEY, 0L, 0, 0, 0, initialRows, first);
                 directory.addSegment(firstSegment, writer.commit());
             }
 
@@ -393,7 +424,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                  LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                  Path dir = new Path()) {
-                builder.of(first, valueKind);
+                builder.of(first, valueKind, 1);
                 builder.dropHeadRows(dropRows);
                 writer.of(checkpointsDir(dir), secondSegment);
                 for (int i = dropRows; i < initialRows; i++) {
@@ -407,7 +438,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     secondTimestamps.add(ts);
                     secondValues.add(valueBits);
                 }
-                builder.freeze(writer, KEY, 0L, secondTimestamps.size(), second);
+                builder.freeze(writer, KEY, 0L, 0, 0, 0, secondTimestamps.size(), second);
                 directory.addSegment(secondSegment, writer.commit());
             }
 
@@ -495,6 +526,165 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertWideRestored(
+            LiveViewCheckpointPartitionMapEntry entry,
+            Catalogue directory,
+            LongList expectedTimestamps,
+            LongList expectedWords,
+            int words
+    ) {
+        try (LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
+             Path dir = new Path()) {
+            reader.of(checkpointsDir(dir), directory.reader, entry);
+            Assert.assertEquals(expectedTimestamps.size(), reader.getRowCount());
+            final int[] index = {0};
+            if (words == 2) {
+                reader.forEachRow((timestamp, hi, lo) -> {
+                    final int i = index[0]++;
+                    Assert.assertEquals(expectedTimestamps.getQuick(i), timestamp);
+                    Assert.assertEquals(expectedWords.getQuick(2 * i), hi);
+                    Assert.assertEquals(expectedWords.getQuick(2 * i + 1), lo);
+                });
+            } else {
+                reader.forEachRow((timestamp, hh, hl, lh, ll) -> {
+                    final int i = index[0]++;
+                    Assert.assertEquals(expectedTimestamps.getQuick(i), timestamp);
+                    Assert.assertEquals(expectedWords.getQuick(4 * i), hh);
+                    Assert.assertEquals(expectedWords.getQuick(4 * i + 1), hl);
+                    Assert.assertEquals(expectedWords.getQuick(4 * i + 2), lh);
+                    Assert.assertEquals(expectedWords.getQuick(4 * i + 3), ll);
+                });
+            }
+            Assert.assertEquals(expectedTimestamps.size(), index[0]);
+            // The narrow overload must refuse a wide ring rather than hand back the
+            // most significant word alone.
+            try {
+                reader.forEachRow((timestamp, valueBits) -> {
+                });
+                Assert.fail("expected a value width mismatch");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "value width mismatch");
+            }
+        }
+    }
+
+    private static void assertWideRingSharesAndRoundTrips(
+            int valueKind,
+            int expectedPageKind,
+            int words,
+            long firstSegment
+    ) {
+        final int initialRows = 4_106;
+        final int dropRows = 5;
+        final int appendRows = 3;
+        final long secondSegment = firstSegment + 1;
+        final int maxChunkRows = LiveViewCheckpointRangeRingStateReader.maxChunkRows(valueKind);
+        Assert.assertEquals(LiveViewCheckpointStateCodec.CHUNK_ROWS / words, maxChunkRows);
+        final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+        final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
+        final LongList firstTimestamps = new LongList();
+        final LongList firstWords = new LongList();
+        try (Catalogue directory = new Catalogue()) {
+            try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                 LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                 Path dir = new Path()) {
+                builder.ofEmpty(valueKind, words);
+                writer.of(checkpointsDir(dir), firstSegment);
+                for (int i = 0; i < initialRows; i++) {
+                    final long ts = i * 1_000L;
+                    appendWideRow(builder, writer, ts, initialRows - i, words, firstTimestamps, firstWords);
+                }
+                builder.freeze(writer, KEY, 1, 2, 3, 4, initialRows, first);
+                directory.addSegment(firstSegment, writer.commit());
+            }
+
+            final LongList secondTimestamps = new LongList();
+            final LongList secondWords = new LongList();
+            try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                 LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                 Path dir = new Path()) {
+                builder.of(first, valueKind, words);
+                builder.dropHeadRows(dropRows);
+                writer.of(checkpointsDir(dir), secondSegment);
+                for (int i = dropRows; i < initialRows; i++) {
+                    secondTimestamps.add(firstTimestamps.getQuick(i));
+                    for (int w = 0; w < words; w++) {
+                        secondWords.add(firstWords.getQuick(i * words + w));
+                    }
+                }
+                for (int i = 0; i < appendRows; i++) {
+                    final long ts = (initialRows + i) * 1_000L;
+                    appendWideRow(builder, writer, ts, -i - 1, words, secondTimestamps, secondWords);
+                }
+                builder.freeze(writer, KEY, 5, 6, 7, 8, secondTimestamps.size(), second);
+                directory.addSegment(secondSegment, writer.commit());
+            }
+
+            // Every value page self-identifies as this kind, carries the row count in
+            // rows and the payload in rows*words, and stops at the width's chunk cap.
+            for (int i = 1; i < first.getStatePageCount(); i += 2) {
+                final LiveViewCheckpointStatePageRef ref = first.getStatePageRef(i);
+                Assert.assertEquals(expectedPageKind, ref.getPageKind());
+                Assert.assertTrue(ref.getRowCount() <= maxChunkRows);
+                Assert.assertEquals(ref.getRowCount() * words * Long.BYTES, ref.getDecodedLength());
+            }
+            Assert.assertEquals(maxChunkRows, first.getStatePageRef(0).getRowCount());
+            // The second root references at least one chunk the first root sealed
+            // rather than re-encoding it, which is the whole point of sharing.
+            boolean shared = false;
+            for (int i = 0; i < second.getStatePageCount(); i++) {
+                if (second.getStatePageRef(i).getSegmentId() == firstSegment) {
+                    shared = true;
+                    break;
+                }
+            }
+            Assert.assertTrue("wide ring did not share any chunk from the first root", shared);
+
+            assertWideRestored(first, directory, firstTimestamps, firstWords, words);
+            assertWideRestored(second, directory, secondTimestamps, secondWords, words);
+            try (LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir), directory.reader, second);
+                Assert.assertEquals(valueKind, reader.getValueKind());
+                Assert.assertEquals(words, reader.getScalarWordCount());
+                for (int w = 0; w < words; w++) {
+                    Assert.assertEquals(5 + w, reader.getScalarWord(w));
+                }
+            }
+        }
+    }
+
+    private static void appendWideRow(
+            LiveViewCheckpointRangeRingStateBuilder builder,
+            LiveViewCheckpointDataSegmentWriter writer,
+            long timestamp,
+            long seed,
+            int words,
+            LongList timestamps,
+            LongList out
+    ) {
+        timestamps.add(timestamp);
+        if (words == 2) {
+            // Every 97th row is the DECIMAL128 NULL sentinel, which the ring must carry
+            // verbatim rather than reject.
+            final long hi = seed % 97 == 0 ? Decimals.DECIMAL128_HI_NULL : seed;
+            final long lo = seed % 97 == 0 ? Decimals.DECIMAL128_LO_NULL : ~seed;
+            builder.append(writer, timestamp, hi, lo);
+            out.add(hi);
+            out.add(lo);
+            return;
+        }
+        final long hh = seed % 97 == 0 ? Decimals.DECIMAL256_HH_NULL : seed;
+        final long hl = seed % 97 == 0 ? Decimals.DECIMAL256_HL_NULL : ~seed;
+        final long lh = seed % 97 == 0 ? Decimals.DECIMAL256_LH_NULL : seed * 31;
+        final long ll = seed % 97 == 0 ? Decimals.DECIMAL256_LL_NULL : Long.MIN_VALUE + seed;
+        builder.append(writer, timestamp, hh, hl, lh, ll);
+        out.add(hh);
+        out.add(hl);
+        out.add(lh);
+        out.add(ll);
+    }
+
     private static Path checkpointsDir(Path path) {
         return path.of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
     }
@@ -536,12 +726,12 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
              LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
              Path dir = new Path()) {
-            builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE);
+            builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
             writer.of(checkpointsDir(dir), segmentId);
             for (int i = 0; i < rows; i++) {
                 builder.append(writer, i * 1_000L, Double.doubleToRawLongBits(i + 0.25));
             }
-            builder.freeze(writer, KEY, Double.doubleToRawLongBits(42.5), rows, out);
+            builder.freeze(writer, KEY, Double.doubleToRawLongBits(42.5), 0, 0, 0, rows, out);
             directory.addSegment(segmentId, writer.commit());
         }
     }

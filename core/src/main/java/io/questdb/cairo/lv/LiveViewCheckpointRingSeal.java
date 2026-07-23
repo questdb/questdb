@@ -50,7 +50,8 @@ import java.io.Closeable;
  * <p>
  * Sharing is worth having only when a chunk descriptor rides on enough rows to
  * pay for itself: two {@link LiveViewCheckpointStatePageRef}s cost 80 bytes of
- * metadata in every later root, against 16 raw bytes for the row they replace.
+ * metadata in every later root, against the 16 raw bytes of the narrowest row
+ * they replace (a wide decimal row is 24 or 40 and pays for itself sooner).
  * {@link #chunkCap(long)} therefore lets a partition hold one chunk per
  * {@link #MIN_SHARED_CHUNK_ROWS} live rows and rebuilds from empty rather than
  * exceed that, which leaves a small frame writing one complete image per root -
@@ -81,10 +82,15 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
     private long previousLastTimestamp;
     private long previousRowCount;
     private long rowsStreamed;
-    private long scalarBits;
+    private long scalarWord0;
+    private long scalarWord1;
+    private long scalarWord2;
+    private long scalarWord3;
+    private int scalarWords;
     private long splitTimestamp;
     private long survivorCount;
     private int valueKind;
+    private int valueWords;
     private LiveViewCheckpointDataSegmentWriter writer;
 
     public LiveViewCheckpointRingSeal(
@@ -110,33 +116,39 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
     }
 
     @Override
-    public void putScalarState(long scalarBits, long frameSize) {
-        this.scalarBits = scalarBits;
-        this.frameSize = frameSize;
-        this.hasScalarState = true;
+    public void putRow(long timestamp, long valueBits) {
+        if (acceptRow(timestamp, 1)) {
+            builder.append(writer, timestamp, valueBits);
+        }
     }
 
     @Override
-    public void putRow(long timestamp, long valueBits) {
-        rowsStreamed++;
-        if (!isAppending) {
-            if (timestamp <= splitTimestamp) {
-                survivorCount++;
-                lastSurvivorTimestamp = timestamp;
-                if (survivorCount > previousRowCount) {
-                    // More rows below the previous boundary than that boundary
-                    // held: the shared prefix is not a prefix. Give up on sharing
-                    // rather than splice a ring that never existed.
-                    isRebuildRequired = true;
-                }
-                return;
-            }
-            endSurvivors();
+    public void putRow(long timestamp, long hi, long lo) {
+        if (acceptRow(timestamp, 2)) {
+            builder.append(writer, timestamp, hi, lo);
         }
-        if (isRebuildRequired) {
-            return;
+    }
+
+    @Override
+    public void putRow(long timestamp, long hh, long hl, long lh, long ll) {
+        if (acceptRow(timestamp, 4)) {
+            builder.append(writer, timestamp, hh, hl, lh, ll);
         }
-        builder.append(writer, timestamp, valueBits);
+    }
+
+    @Override
+    public void putScalarState(long scalarBits, long frameSize) {
+        putScalarWords(1, scalarBits, 0, 0, 0, frameSize);
+    }
+
+    @Override
+    public void putScalarState(long hi, long lo, long frameSize) {
+        putScalarWords(2, hi, lo, 0, 0, frameSize);
+    }
+
+    @Override
+    public void putScalarState(long hh, long hl, long lh, long ll, long frameSize) {
+        putScalarWords(4, hh, hl, lh, ll, frameSize);
     }
 
     /**
@@ -167,10 +179,12 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
     ) {
         writer = dataWriter;
         valueKind = function.checkpointRingValueKind();
+        valueWords = LiveViewCheckpointRangeRingStateReader.valueWords(valueKind);
+        scalarWords = function.checkpointRingScalarWords();
         try {
             boolean isShared = false;
             if (previous != null) {
-                builder.of(previous, valueKind);
+                builder.of(previous, valueKind, scalarWords);
                 isShared = builder.getChunkCount() < chunkCap(builder.getRowCount())
                         && builder.getLastTimestamp() <= previousBoundaryMaxTimestamp;
             }
@@ -197,12 +211,42 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
                 throw CairoException.critical(0)
                         .put("live view checkpoint ring state published no scalar state");
             }
-            builder.freeze(writer, key, scalarBits, frameSize, out);
-            return LiveViewCheckpointRangeRingStateReader.SCALAR_STATE_BYTES
-                    + rowsStreamed * 2 * Long.BYTES;
+            builder.freeze(writer, key, scalarWord0, scalarWord1, scalarWord2, scalarWord3, frameSize, out);
+            return LiveViewCheckpointRangeRingStateReader.scalarStateBytes(scalarWords)
+                    + rowsStreamed * (1 + valueWords) * Long.BYTES;
         } finally {
             writer = null;
         }
+    }
+
+    /**
+     * Routes one streamed row through the survivor split.
+     *
+     * @return whether the builder should encode the row, which only the rows above
+     * the split do
+     */
+    private boolean acceptRow(long timestamp, int words) {
+        if (words != valueWords) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint ring state value width does not match the declared kind")
+                    .put(" [declared=").put(valueWords).put(", actual=").put(words).put(']');
+        }
+        rowsStreamed++;
+        if (!isAppending) {
+            if (timestamp <= splitTimestamp) {
+                survivorCount++;
+                lastSurvivorTimestamp = timestamp;
+                if (survivorCount > previousRowCount) {
+                    // More rows below the previous boundary than that boundary
+                    // held: the shared prefix is not a prefix. Give up on sharing
+                    // rather than splice a ring that never existed.
+                    isRebuildRequired = true;
+                }
+                return false;
+            }
+            endSurvivors();
+        }
+        return !isRebuildRequired;
     }
 
     private void beginPartition(boolean isShared, long previousBoundaryMaxTimestamp) {
@@ -211,7 +255,7 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
             previousLastTimestamp = builder.getLastTimestamp();
             splitTimestamp = previousBoundaryMaxTimestamp;
         } else {
-            builder.ofEmpty(valueKind);
+            builder.ofEmpty(valueKind, scalarWords);
             previousRowCount = 0;
             previousLastTimestamp = 0;
             splitTimestamp = Long.MIN_VALUE;
@@ -222,7 +266,10 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
         lastSurvivorTimestamp = 0;
         isRebuildRequired = false;
         rowsStreamed = 0;
-        scalarBits = 0;
+        scalarWord0 = 0;
+        scalarWord1 = 0;
+        scalarWord2 = 0;
+        scalarWord3 = 0;
         survivorCount = 0;
     }
 
@@ -244,5 +291,19 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
             return;
         }
         builder.dropHeadRows(previousRowCount - survivorCount);
+    }
+
+    private void putScalarWords(int words, long word0, long word1, long word2, long word3, long frameSize) {
+        if (words != scalarWords) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint ring state scalar width does not match the declared width")
+                    .put(" [declared=").put(scalarWords).put(", actual=").put(words).put(']');
+        }
+        this.scalarWord0 = word0;
+        this.scalarWord1 = word1;
+        this.scalarWord2 = word2;
+        this.scalarWord3 = word3;
+        this.frameSize = frameSize;
+        this.hasScalarState = true;
     }
 }

@@ -630,16 +630,30 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * The value kind this function's checkpoint ring stores per row, one of
-     * {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DOUBLE},
-     * {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader#VALUE_KIND_LONG},
-     * {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DEQUE_DOUBLE}
-     * or {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader#VALUE_KIND_DEQUE_LONG}.
-     * A DOUBLE ring stores exact IEEE-754 bits (raw or XOR-compressed); a LONG/DATE/TIMESTAMP
-     * ring stores the raw 64-bit payload, which an integer value keeps out of a double so a
-     * NaN bit pattern is never canonicalized. The {@code DEQUE_*} kinds carry the same payload
-     * but tag the value pages as a {@code max}/{@code min} monotonic-deque root's frame ring,
-     * keeping it distinct from a value-ring root. Read only for a
+     * The words this function's checkpoint ring spends on its scalar continuation state:
+     * 1 (the default), 2 for a 128-bit decimal accumulator, or 4 for a 256-bit one. It is
+     * independent of {@link #checkpointRingValueKind()} - a {@code decimal(20,4)}
+     * {@code avg} holds a 64-bit value per row and a 256-bit running sum, while a
+     * {@code decimal(38,4)} {@code first_value} holds a 128-bit value per row and no scalar
+     * at all. The arity of the
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointRingStateSink#putScalarState(long, long)}
+     * overload the function calls must agree with this. Read only for a
+     * {@link #supportsCheckpointRingState() ring-shaped} function.
+     */
+    default int checkpointRingScalarWords() {
+        return 1;
+    }
+
+    /**
+     * The value kind this function's checkpoint ring stores per row, one of the
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader} {@code VALUE_KIND_*}
+     * constants. A DOUBLE ring stores exact IEEE-754 bits (raw or XOR-compressed) in one word;
+     * a LONG/DATE/TIMESTAMP ring and a narrow DECIMAL ring (physical width 8, 16, 32 or 64 bits)
+     * store the raw 64-bit payload, which an integer value keeps out of a double so a NaN bit
+     * pattern is never canonicalized; a DECIMAL128 ring stores two raw words per row and a
+     * DECIMAL256 ring four, most significant first. The {@code DEQUE_*} kinds carry the same
+     * payload but tag the value pages as a {@code max}/{@code min} monotonic-deque root's frame
+     * ring, keeping it distinct from a value-ring root. Read only for a
      * {@link #supportsCheckpointRingState() ring-shaped} function.
      */
     default int checkpointRingValueKind() {

@@ -39,6 +39,25 @@ package io.questdb.cairo.lv;
 public interface LiveViewCheckpointRingStateSink {
 
     /**
+     * Appends one live ring row by its raw 64-bit value bits - IEEE-754 bits for a
+     * DOUBLE ring, the raw payload for a LONG/DATE/TIMESTAMP or narrow DECIMAL ring.
+     * Timestamps must not decrease across a partition's stream.
+     */
+    void putRow(long timestamp, long valueBits);
+
+    /**
+     * Appends one live ring row of a two-word (128-bit decimal) ring, most
+     * significant word first. See {@link #putRow(long, long)}.
+     */
+    void putRow(long timestamp, long hi, long lo);
+
+    /**
+     * Appends one live ring row of a four-word (256-bit decimal) ring, most
+     * significant word first. See {@link #putRow(long, long)}.
+     */
+    void putRow(long timestamp, long hh, long hl, long lh, long ll);
+
+    /**
      * Records the exact scalar continuation state, restored verbatim rather than
      * recomputed so it cannot drift from the one the runtime carried: the running
      * aggregate for {@code avg}/{@code sum}, or the frame value {@code first_value}/
@@ -46,6 +65,9 @@ public interface LiveViewCheckpointRingStateSink {
      * the first {@link #putRow}. The value travels as raw 64-bit bits so a function
      * that carries no aggregate can leave it unused and one carrying a double can
      * store a non-finite NaN - a base first/last/nth value over a NULL row.
+     * <p>
+     * The arity must match the function's declared
+     * {@link io.questdb.griffin.engine.window.WindowFunction#checkpointRingScalarWords()}.
      *
      * @param scalarBits the function's scalar continuation state, by raw bits
      * @param frameSize  the number of rows the scalar covers. It is the function's
@@ -57,9 +79,14 @@ public interface LiveViewCheckpointRingStateSink {
     void putScalarState(long scalarBits, long frameSize);
 
     /**
-     * Appends one live ring row by its raw 64-bit value bits - IEEE-754 bits for a
-     * DOUBLE ring, the raw payload for a LONG/DATE/TIMESTAMP ring. Timestamps must
-     * not decrease across a partition's stream.
+     * Records a two-word (128-bit decimal) scalar continuation state, most
+     * significant word first. See {@link #putScalarState(long, long)}.
      */
-    void putRow(long timestamp, long valueBits);
+    void putScalarState(long hi, long lo, long frameSize);
+
+    /**
+     * Records a four-word (256-bit decimal) scalar continuation state, most
+     * significant word first. See {@link #putScalarState(long, long)}.
+     */
+    void putScalarState(long hh, long hl, long lh, long ll, long frameSize);
 }

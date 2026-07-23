@@ -40,8 +40,21 @@ public interface LiveViewCheckpointRingStateSource {
      * Replays every live ring row in designated-timestamp order. A malformed
      * chunk page invalidates the root here rather than at open time: the root's
      * metadata is validated eagerly, its payload lazily.
+     * <p>
+     * Reads a one-word ring. A function always replays the width it sealed under,
+     * so calling the wrong overload is a wiring error and fails fast.
      */
     void forEachRow(@NotNull RowConsumer consumer);
+
+    /**
+     * Replays a two-word (128-bit decimal) ring. See {@link #forEachRow(RowConsumer)}.
+     */
+    void forEachRow(@NotNull Decimal128RowConsumer consumer);
+
+    /**
+     * Replays a four-word (256-bit decimal) ring. See {@link #forEachRow(RowConsumer)}.
+     */
+    void forEachRow(@NotNull Decimal256RowConsumer consumer);
 
     /**
      * @return the number of ring rows the stored scalar covers
@@ -54,18 +67,47 @@ public interface LiveViewCheckpointRingStateSource {
     long getRowCount();
 
     /**
-     * @return the exact stored scalar continuation state, by the raw bits the seal
-     * captured (the running aggregate for avg/sum, the emitted frame value for
-     * first_value/last_value/nth_value). The function reinterprets the bits: a
-     * DOUBLE ring reads them as IEEE-754, a LONG/DATE/TIMESTAMP ring as a raw payload
+     * @return the first word of the stored scalar continuation state, equivalent to
+     * {@code getScalarWord(0)}. The function reinterprets the bits: a DOUBLE ring
+     * reads them as IEEE-754, every other ring as a raw payload
      */
     long getScalarBits();
+
+    /**
+     * @return one word of the exact stored scalar continuation state, by the raw bits
+     * the seal captured (the running aggregate for avg/sum, the emitted frame value for
+     * first_value/last_value/nth_value). Word 0 is the most significant word of a
+     * multi-word scalar, so a 256-bit decimal accumulator arrives as
+     * {@code (hh, hl, lh, ll)}
+     */
+    long getScalarWord(int index);
+
+    /**
+     * @return the words the stored scalar continuation state occupies: 1, 2 or 4
+     */
+    int getScalarWordCount();
+
+    @FunctionalInterface
+    interface Decimal128RowConsumer {
+        /**
+         * Receives one ring row's 128-bit decimal value, most significant word first.
+         */
+        void accept(long timestamp, long hi, long lo);
+    }
+
+    @FunctionalInterface
+    interface Decimal256RowConsumer {
+        /**
+         * Receives one ring row's 256-bit decimal value, most significant word first.
+         */
+        void accept(long timestamp, long hh, long hl, long lh, long ll);
+    }
 
     @FunctionalInterface
     interface RowConsumer {
         /**
          * Receives one ring row's raw 64-bit value bits - IEEE-754 bits for a DOUBLE
-         * ring, the raw payload for a LONG/DATE/TIMESTAMP ring.
+         * ring, the raw payload for a LONG/DATE/TIMESTAMP or narrow DECIMAL ring.
          */
         void accept(long timestamp, long valueBits);
     }
