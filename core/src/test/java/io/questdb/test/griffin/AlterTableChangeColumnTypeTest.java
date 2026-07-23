@@ -214,34 +214,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testChangeDecimalToVarchar() throws Exception {
-        // DECIMAL8 -> VARCHAR
-        assertChangeDecimalToVar("12", "12", "decimal(2, 0)", "VARCHAR");
-        assertChangeDecimalToVar("1.2m", "1.2", "decimal(2, 1)", "VARCHAR");
-
-        // DECIMAL16 -> VARCHAR
-        assertChangeDecimalToVar("1234", "1234", "decimal(4, 0)", "VARCHAR");
-        assertChangeDecimalToVar("12.34m", "12.34", "decimal(4, 2)", "VARCHAR");
-
-        // DECIMAL32 -> VARCHAR
-        assertChangeDecimalToVar("123456789", "123456789", "decimal(9, 0)", "VARCHAR");
-        assertChangeDecimalToVar("123456.789m", "123456.789", "decimal(9, 3)", "VARCHAR");
-
-        // DECIMAL64 -> VARCHAR
-        assertChangeDecimalToVar("123456789012345678m", "123456789012345678", "decimal(18, 0)", "VARCHAR");
-        assertChangeDecimalToVar("12345678901234.5678m", "12345678901234.5678", "decimal(18, 4)", "VARCHAR");
-
-        // DECIMAL128 -> VARCHAR
-        assertChangeDecimalToVar("12345678901234567890123456789012345678m", "12345678901234567890123456789012345678", "decimal(38, 0)", "VARCHAR");
-        assertChangeDecimalToVar("1234567890123456789012345678901234.5678m", "1234567890123456789012345678901234.5678", "decimal(38, 4)", "VARCHAR");
-
-        // DECIMAL256 -> VARCHAR
-        assertChangeDecimalToVar("12345678901234567890123456789012345678901234567890123456789012345678901234.5m",
-                "12345678901234567890123456789012345678901234567890123456789012345678901234.5",
-                "decimal(76, 1)", "VARCHAR");
-    }
-
-    @Test
     public void testChangeDecimalToString() throws Exception {
         // DECIMAL64 -> STRING
         assertChangeDecimalToVar("123456789012345678m", "123456789012345678", "decimal(18, 0)", "STRING");
@@ -276,6 +248,34 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeDecimalToVarchar() throws Exception {
+        // DECIMAL8 -> VARCHAR
+        assertChangeDecimalToVar("12", "12", "decimal(2, 0)", "VARCHAR");
+        assertChangeDecimalToVar("1.2m", "1.2", "decimal(2, 1)", "VARCHAR");
+
+        // DECIMAL16 -> VARCHAR
+        assertChangeDecimalToVar("1234", "1234", "decimal(4, 0)", "VARCHAR");
+        assertChangeDecimalToVar("12.34m", "12.34", "decimal(4, 2)", "VARCHAR");
+
+        // DECIMAL32 -> VARCHAR
+        assertChangeDecimalToVar("123456789", "123456789", "decimal(9, 0)", "VARCHAR");
+        assertChangeDecimalToVar("123456.789m", "123456.789", "decimal(9, 3)", "VARCHAR");
+
+        // DECIMAL64 -> VARCHAR
+        assertChangeDecimalToVar("123456789012345678m", "123456789012345678", "decimal(18, 0)", "VARCHAR");
+        assertChangeDecimalToVar("12345678901234.5678m", "12345678901234.5678", "decimal(18, 4)", "VARCHAR");
+
+        // DECIMAL128 -> VARCHAR
+        assertChangeDecimalToVar("12345678901234567890123456789012345678m", "12345678901234567890123456789012345678", "decimal(38, 0)", "VARCHAR");
+        assertChangeDecimalToVar("1234567890123456789012345678901234.5678m", "1234567890123456789012345678901234.5678", "decimal(38, 4)", "VARCHAR");
+
+        // DECIMAL256 -> VARCHAR
+        assertChangeDecimalToVar("12345678901234567890123456789012345678901234567890123456789012345678901234.5m",
+                "12345678901234567890123456789012345678901234567890123456789012345678901234.5",
+                "decimal(76, 1)", "VARCHAR");
+    }
+
+    @Test
     public void testChangeDecimalToVarcharWithNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP, col DECIMAL(18, 4)) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
@@ -285,219 +285,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             drainWalQueue();
 
             execute("ALTER TABLE x ALTER COLUMN col TYPE VARCHAR", sqlExecutionContext);
-            drainWalQueue();
-
-            assertQuery("x")
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tcol
-                            2024-05-14T16:00:00.000000Z\t12345.6789
-                            2024-05-14T16:00:01.000000Z\t
-                            2024-05-14T16:00:02.000000Z\t-99.9999
-                            """);
-
-            execute("DROP TABLE x");
-        });
-    }
-
-    /**
-     * Pre-existing bug in the native ALTER COLUMN TYPE path: VARCHAR to CHAR (and any
-     * other fixed target routed through {@code ColumnTypeConverter.convertFromVarcharToFixed})
-     * treated UTF-8 bytes as Latin-1 chars via {@code Utf8Sequence.asAsciiCharSequence()}.
-     * <p>
-     * For a CHAR destination the downstream converter reads {@code charAt(0)}, so the
-     * first raw UTF-8 byte became the CHAR value instead of the decoded code point. E.g.
-     * the value {@code 'e-acute'} (UTF-8 {@code 0xC3 0xA9}) was stored as CHAR
-     * {@code U+00C3} ('A-tilde') rather than {@code U+00E9} ('e-acute').
-     * <p>
-     * This test exercises only native partitions (no CONVERT PARTITION TO PARQUET) and
-     * asserts the stored CHAR matches the first UTF-16 code point of the source value.
-     * The peer fix lives in
-     * {@code ColumnTypeConverter.convertFromVarcharToFixed}; removing that fix reverts
-     * this test to a failure.
-     */
-    @Test
-    public void testChangeVarcharToCharPreservesNonAsciiCodepoint() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
-            execute("""
-                    INSERT INTO x VALUES
-                    ('2024-05-14T16:00:00.000000Z', 'a'),
-                    ('2024-05-14T16:00:01.000000Z', 'é'),
-                    ('2024-05-14T16:00:02.000000Z', '日')""", sqlExecutionContext);
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN col TYPE CHAR", sqlExecutionContext);
-            drainWalQueue();
-
-            // Expected: first UTF-16 code point of each stored value.
-            //   'a'  -> 'a'
-            //   'é'  -> 'é' (U+00E9)
-            //   '日' -> '日' (U+65E5)
-            // With the pre-fix code, non-ASCII rows stored the first UTF-8 byte as a char
-            // (e.g. 'é' -> 'A-tilde'), so the assertion below would fail.
-            assertQuery("x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
-                    """
-                            ts\tcol
-                            2024-05-14T16:00:00.000000Z\ta
-                            2024-05-14T16:00:01.000000Z\té
-                            2024-05-14T16:00:02.000000Z\t日
-                            """);
-
-            execute("DROP TABLE x");
-        });
-    }
-
-    @Test
-    public void testChangeVarcharToDecimal() throws Exception {
-        // VARCHAR -> DECIMAL8
-        assertChangeVarToDecimal("'12'", "12", "VARCHAR", "decimal(2, 0)");
-        assertChangeVarToDecimal("'1.2'", "1.2", "VARCHAR", "decimal(2, 1)");
-
-        // VARCHAR -> DECIMAL16
-        assertChangeVarToDecimal("'1234'", "1234", "VARCHAR", "decimal(4, 0)");
-        assertChangeVarToDecimal("'12.34'", "12.34", "VARCHAR", "decimal(4, 2)");
-
-        // VARCHAR -> DECIMAL32
-        assertChangeVarToDecimal("'123456789'", "123456789", "VARCHAR", "decimal(9, 0)");
-
-        // VARCHAR -> DECIMAL64
-        assertChangeVarToDecimal("'123456789012345678'", "123456789012345678", "VARCHAR", "decimal(18, 0)");
-        assertChangeVarToDecimal("'12345678901234.5678'", "12345678901234.5678", "VARCHAR", "decimal(18, 4)");
-
-        // VARCHAR -> DECIMAL128
-        assertChangeVarToDecimal("'12345678901234567890123456789012345678'", "12345678901234567890123456789012345678", "VARCHAR", "decimal(38, 0)");
-
-        // VARCHAR -> DECIMAL256
-        assertChangeVarToDecimal("'12345678901234567890123456789012345678901234567890123456789012345678901234.5'",
-                "12345678901234567890123456789012345678901234567890123456789012345678901234.5",
-                "VARCHAR", "decimal(76, 1)");
-    }
-
-    @Test
-    public void testChangeStringToDecimal() throws Exception {
-        // STRING -> DECIMAL64
-        assertChangeVarToDecimal("'123456789012345678'", "123456789012345678", "STRING", "decimal(18, 0)");
-        assertChangeVarToDecimal("'12345678901234.5678'", "12345678901234.5678", "STRING", "decimal(18, 4)");
-    }
-
-    @Test
-    public void testChangeStringToDecimalWithInvalidValues() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, col STRING) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', '12345.6789')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', 'abc')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', '')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:03.000000Z', '12.34.56')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:04.000000Z', NULL)", sqlExecutionContext);
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
-            drainWalQueue();
-
-            assertQuery("x")
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tcol
-                            2024-05-14T16:00:00.000000Z\t12345.6789
-                            2024-05-14T16:00:01.000000Z\t
-                            2024-05-14T16:00:02.000000Z\t
-                            2024-05-14T16:00:03.000000Z\t
-                            2024-05-14T16:00:04.000000Z\t
-                            """);
-
-            execute("DROP TABLE x");
-        });
-    }
-
-    @Test
-    public void testChangeVarcharToDecimalWithInvalidValues() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', '12345.6789')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', 'abc')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', '')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:03.000000Z', '12.34.56')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:04.000000Z', NULL)", sqlExecutionContext);
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
-            drainWalQueue();
-
-            assertQuery("x")
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tcol
-                            2024-05-14T16:00:00.000000Z\t12345.6789
-                            2024-05-14T16:00:01.000000Z\t
-                            2024-05-14T16:00:02.000000Z\t
-                            2024-05-14T16:00:03.000000Z\t
-                            2024-05-14T16:00:04.000000Z\t
-                            """);
-
-            execute("DROP TABLE x");
-        });
-    }
-
-    @Test
-    public void testChangeVarcharToDecimalWithNull() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', '12345.6789')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', NULL)", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', '-99.9999')", sqlExecutionContext);
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
-            drainWalQueue();
-
-            assertQuery("x")
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tcol
-                            2024-05-14T16:00:00.000000Z\t12345.6789
-                            2024-05-14T16:00:01.000000Z\t
-                            2024-05-14T16:00:02.000000Z\t-99.9999
-                            """);
-
-            execute("DROP TABLE x");
-        });
-    }
-
-    @Test
-    public void testChangeVarcharToDecimalRoundTrip() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, col DECIMAL(18, 4)) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', 12345.6789m)", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', NULL)", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', -99.9999m)", sqlExecutionContext);
-            drainWalQueue();
-
-            // DECIMAL -> VARCHAR
-            execute("ALTER TABLE x ALTER COLUMN col TYPE VARCHAR", sqlExecutionContext);
-            drainWalQueue();
-
-            assertQuery("x")
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tcol
-                            2024-05-14T16:00:00.000000Z\t12345.6789
-                            2024-05-14T16:00:01.000000Z\t
-                            2024-05-14T16:00:02.000000Z\t-99.9999
-                            """);
-
-            // VARCHAR -> DECIMAL (round trip)
-            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
             drainWalQueue();
 
             assertQuery("x")
@@ -710,6 +497,44 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testChangeStringToBinary() throws Exception {
         assertFailure("alter table x alter column c type binary", 34, "incompatible column type change [existing=STRING, new=BINARY]");
+    }
+
+    @Test
+    public void testChangeStringToDecimal() throws Exception {
+        // STRING -> DECIMAL64
+        assertChangeVarToDecimal("'123456789012345678'", "123456789012345678", "STRING", "decimal(18, 0)");
+        assertChangeVarToDecimal("'12345678901234.5678'", "12345678901234.5678", "STRING", "decimal(18, 4)");
+    }
+
+    @Test
+    public void testChangeStringToDecimalWithInvalidValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col STRING) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', '12345.6789')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', 'abc')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', '')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:03.000000Z', '12.34.56')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:04.000000Z', NULL)", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
+            drainWalQueue();
+
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t
+                            2024-05-14T16:00:03.000000Z\t
+                            2024-05-14T16:00:04.000000Z\t
+                            """);
+
+            execute("DROP TABLE x");
+        });
     }
 
     @Test
@@ -976,6 +801,181 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         "select v from x"
                 );
             }
+        });
+    }
+
+    /**
+     * Pre-existing bug in the native ALTER COLUMN TYPE path: VARCHAR to CHAR (and any
+     * other fixed target routed through {@code ColumnTypeConverter.convertFromVarcharToFixed})
+     * treated UTF-8 bytes as Latin-1 chars via {@code Utf8Sequence.asAsciiCharSequence()}.
+     * <p>
+     * For a CHAR destination the downstream converter reads {@code charAt(0)}, so the
+     * first raw UTF-8 byte became the CHAR value instead of the decoded code point. E.g.
+     * the value {@code 'e-acute'} (UTF-8 {@code 0xC3 0xA9}) was stored as CHAR
+     * {@code U+00C3} ('A-tilde') rather than {@code U+00E9} ('e-acute').
+     * <p>
+     * This test exercises only native partitions (no CONVERT PARTITION TO PARQUET) and
+     * asserts the stored CHAR matches the first UTF-16 code point of the source value.
+     * The peer fix lives in
+     * {@code ColumnTypeConverter.convertFromVarcharToFixed}; removing that fix reverts
+     * this test to a failure.
+     */
+    @Test
+    public void testChangeVarcharToCharPreservesNonAsciiCodepoint() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 'a'),
+                    ('2024-05-14T16:00:01.000000Z', 'é'),
+                    ('2024-05-14T16:00:02.000000Z', '日')""", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE CHAR", sqlExecutionContext);
+            drainWalQueue();
+
+            // Expected: first UTF-16 code point of each stored value.
+            //   'a'  -> 'a'
+            //   'é'  -> 'é' (U+00E9)
+            //   '日' -> '日' (U+65E5)
+            // With the pre-fix code, non-ASCII rows stored the first UTF-8 byte as a char
+            // (e.g. 'é' -> 'A-tilde'), so the assertion below would fail.
+            assertQuery("x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\ta
+                            2024-05-14T16:00:01.000000Z\té
+                            2024-05-14T16:00:02.000000Z\t日
+                            """);
+
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
+    public void testChangeVarcharToDecimal() throws Exception {
+        // VARCHAR -> DECIMAL8
+        assertChangeVarToDecimal("'12'", "12", "VARCHAR", "decimal(2, 0)");
+        assertChangeVarToDecimal("'1.2'", "1.2", "VARCHAR", "decimal(2, 1)");
+
+        // VARCHAR -> DECIMAL16
+        assertChangeVarToDecimal("'1234'", "1234", "VARCHAR", "decimal(4, 0)");
+        assertChangeVarToDecimal("'12.34'", "12.34", "VARCHAR", "decimal(4, 2)");
+
+        // VARCHAR -> DECIMAL32
+        assertChangeVarToDecimal("'123456789'", "123456789", "VARCHAR", "decimal(9, 0)");
+
+        // VARCHAR -> DECIMAL64
+        assertChangeVarToDecimal("'123456789012345678'", "123456789012345678", "VARCHAR", "decimal(18, 0)");
+        assertChangeVarToDecimal("'12345678901234.5678'", "12345678901234.5678", "VARCHAR", "decimal(18, 4)");
+
+        // VARCHAR -> DECIMAL128
+        assertChangeVarToDecimal("'12345678901234567890123456789012345678'", "12345678901234567890123456789012345678", "VARCHAR", "decimal(38, 0)");
+
+        // VARCHAR -> DECIMAL256
+        assertChangeVarToDecimal("'12345678901234567890123456789012345678901234567890123456789012345678901234.5'",
+                "12345678901234567890123456789012345678901234567890123456789012345678901234.5",
+                "VARCHAR", "decimal(76, 1)");
+    }
+
+    @Test
+    public void testChangeVarcharToDecimalRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col DECIMAL(18, 4)) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', 12345.6789m)", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', NULL)", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', -99.9999m)", sqlExecutionContext);
+            drainWalQueue();
+
+            // DECIMAL -> VARCHAR
+            execute("ALTER TABLE x ALTER COLUMN col TYPE VARCHAR", sqlExecutionContext);
+            drainWalQueue();
+
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
+
+            // VARCHAR -> DECIMAL (round trip)
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
+            drainWalQueue();
+
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
+
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
+    public void testChangeVarcharToDecimalWithInvalidValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', '12345.6789')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', 'abc')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', '')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:03.000000Z', '12.34.56')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:04.000000Z', NULL)", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
+            drainWalQueue();
+
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t
+                            2024-05-14T16:00:03.000000Z\t
+                            2024-05-14T16:00:04.000000Z\t
+                            """);
+
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
+    public void testChangeVarcharToDecimalWithNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', '12345.6789')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', NULL)", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', '-99.9999')", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
+            drainWalQueue();
+
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
+
+            execute("DROP TABLE x");
         });
     }
 
@@ -1835,7 +1835,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     null,
                     Double.NaN,
                     bloomIndexes,
-                    -1L
+                    -1L,
+                    tx.getSeqTxn()
             );
             Assert.assertTrue("produceParquetFromNative must encode the partition", parquetLen > 0);
 
@@ -2023,26 +2024,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         });
     }
 
-    private void assertChangeIntToDecimal(CharSequence initial, CharSequence expected, CharSequence fromType, CharSequence toType) throws Exception {
-        assertMemoryLeak(() -> {
-            execute(String.format("create table x (ts timestamp, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
-            execute(String.format("insert into x values('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
-            drainWalQueue();
-
-            execute(String.format("alter table x alter column col type %s", toType), sqlExecutionContext);
-            drainWalQueue();
-
-            assertQuery("x")
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("ts")
-                    .returns("ts\tcol\n" +
-                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
-
-            execute("drop table x");
-        });
-    }
-
     private void assertChangeDecimalToVar(CharSequence initial, CharSequence expected, CharSequence fromType, CharSequence toType) throws Exception {
         assertMemoryLeak(() -> {
             execute(String.format("CREATE TABLE x (ts TIMESTAMP, col %s) TIMESTAMP(ts) PARTITION BY DAY WAL", fromType), sqlExecutionContext);
@@ -2060,6 +2041,26 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
 
             execute("DROP TABLE x");
+        });
+    }
+
+    private void assertChangeIntToDecimal(CharSequence initial, CharSequence expected, CharSequence fromType, CharSequence toType) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(String.format("create table x (ts timestamp, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
+            execute(String.format("insert into x values('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
+            drainWalQueue();
+
+            execute(String.format("alter table x alter column col type %s", toType), sqlExecutionContext);
+            drainWalQueue();
+
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tcol\n" +
+                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
+
+            execute("drop table x");
         });
     }
 
