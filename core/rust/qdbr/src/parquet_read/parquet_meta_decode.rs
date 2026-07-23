@@ -528,6 +528,21 @@ pub fn decode_row_group_range(
             )?;
         }
 
+        // decode_column_chunk_with_params emits the source physical width for every
+        // DecodeAs::Source conversion (e.g. INT->LONG stays i32 here, decimal narrowing
+        // keeps the source width, DATE<->TIMESTAMP stays unscaled); finish the conversion
+        // in place exactly as decode_row_group does, so the O3 merge sees target-typed
+        // buffers rather than raw source bytes. Column tops are always 0 on the _pm decode
+        // path (see the doc comment above), so the surfaced top and post_convert's
+        // leading-null count are both 0.
+        column_chunk_bufs.column_top = 0;
+        post_convert(
+            meta.original_column_type,
+            to_column_type,
+            0,
+            column_chunk_bufs,
+        )?;
+
         if dest_col_idx > 0 && total != col_decoded {
             return Err(fmt_err!(
                 InvalidLayout,
@@ -1306,6 +1321,103 @@ mod tests {
         Ok((parquet_buf, parquet_meta_bytes, parquet_meta_file_size))
     }
 
+    /// Build a parquet + `_pm` with a designated timestamp column ("ts", index 0)
+    /// and an INT value column ("v", index 1) written across `row_group_size`-sized
+    /// row groups, so a range decode can span more than one group. `values` is the
+    /// raw i32 content of "v".
+    fn build_int_col_parquet_meta(
+        values: &[i32],
+        row_group_size: usize,
+    ) -> ParquetResult<(Vec<u8>, Vec<u8>, u64)> {
+        use crate::parquet::qdb_metadata::QdbMeta;
+        use crate::parquet::tests::ColumnTypeTagExt;
+        use crate::parquet_metadata::convert::{convert_from_parquet, NoBloomFilterSource};
+        use crate::parquet_write::file::ParquetWriter;
+        use crate::parquet_write::schema::{Column, ParquetEncodingConfig, Partition};
+        use parquet2::compression::CompressionOptions;
+        use parquet2::read::read_metadata_with_size;
+        use parquet2::write::Version;
+        use std::io::Cursor;
+
+        let row_count = values.len();
+        let ts_values: Vec<i64> = (0..row_count as i64).collect();
+        let ts_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(ts_values.as_ptr() as *const u8, ts_values.len() * 8)
+        };
+        let ts_static: &'static [u8] = Box::leak(ts_bytes.to_vec().into_boxed_slice());
+        let int_bytes: &[u8] =
+            unsafe { std::slice::from_raw_parts(values.as_ptr() as *const u8, values.len() * 4) };
+        let int_static: &'static [u8] = Box::leak(int_bytes.to_vec().into_boxed_slice());
+
+        let ts_col = Column {
+            name: "ts",
+            data_type: ColumnTypeTag::Timestamp.into_type(),
+            id: 0,
+            row_count,
+            primary_data: ts_static,
+            secondary_data: &[],
+            symbol_offsets: &[],
+            column_top: 0,
+            designated_timestamp: true,
+            not_null_hint: true,
+            strided_timestamp_16: false,
+            designated_timestamp_ascending: true,
+            parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+        };
+        let int_col = Column {
+            name: "v",
+            data_type: ColumnTypeTag::Int.into_type(),
+            id: 1,
+            row_count,
+            primary_data: int_static,
+            secondary_data: &[],
+            symbol_offsets: &[],
+            column_top: 0,
+            designated_timestamp: false,
+            not_null_hint: false,
+            strided_timestamp_16: false,
+            designated_timestamp_ascending: false,
+            parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+        };
+
+        let partition = Partition {
+            table: "test".to_string(),
+            columns: vec![ts_col, int_col],
+        };
+
+        let mut parquet_buf = Vec::new();
+        ParquetWriter::new(&mut parquet_buf)
+            .with_statistics(true)
+            .with_compression(CompressionOptions::Uncompressed)
+            .with_version(Version::V1)
+            .with_row_group_size(Some(row_group_size))
+            .finish(partition)
+            .unwrap();
+
+        let mut cursor = Cursor::new(&parquet_buf);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_buf.len() as u64).unwrap();
+        let qdb_meta = metadata
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| {
+                kvs.iter()
+                    .find(|kv| kv.key == "questdb")
+                    .and_then(|kv| kv.value.as_deref())
+            })
+            .map(|j| QdbMeta::deserialize(j).unwrap());
+
+        let (parquet_meta_bytes, parquet_meta_file_size) = convert_from_parquet(
+            &metadata,
+            qdb_meta.as_ref(),
+            0,
+            0,
+            &NoBloomFilterSource,
+            None,
+        )?;
+
+        Ok((parquet_buf, parquet_meta_bytes, parquet_meta_file_size))
+    }
+
     /// Slice the parquet file into one owned byte vector per requested column,
     /// using the chunks' byte_range_start/total_compressed recorded in `_pm`.
     /// Returns the owned buffers (kept alive by the caller) and a flat
@@ -1566,6 +1678,55 @@ mod tests {
             msg.contains("decode_row_group_range requires a File source"),
             "unexpected error: {msg}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_row_group_range_finishes_source_conversion() -> ParquetResult<()> {
+        // A lazy ALTER COLUMN TYPE INT->LONG that stays parquet decodes the column at
+        // its source i32 width; plan_decode_conversion classifies it DecodeAs::Source, so
+        // post_convert must widen the buffer to i64 (mapping the i32::MIN null sentinel to
+        // i64::MIN). The O3 merge decodes a run of row groups that share a boundary
+        // timestamp via decode_row_group_range. Regression for that range path skipping
+        // post_convert, which left a half-width i32 buffer that the merge then read as i64
+        // (out-of-bounds / garbled values written to the partition).
+        let values: Vec<i32> = vec![10, 20, 30, i32::MIN, 50, 60];
+        let (parquet_data, pm_bytes, parquet_meta_file_size) =
+            build_int_col_parquet_meta(&values, 3)?; // two row groups of three
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
+        assert_eq!(reader.row_group_count() as usize, 2);
+
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        // Decode the "v" column (parquet index 1) as LONG across both row groups.
+        let col_pairs = [(1i32, ColumnType::new(ColumnTypeTag::Long, 0))];
+
+        let mut ctx = DecodeContext::new(std::ptr::null(), 0);
+        let mut bufs = RowGroupBuffers::new(allocator);
+        let decoded = decode_row_group_range(
+            &mut ctx,
+            &mut bufs,
+            ColumnChunkSource::File(&parquet_data),
+            &reader,
+            &col_pairs,
+            0,
+            1,
+        )?;
+        assert_eq!(decoded, values.len());
+
+        let data = &bufs.column_bufs[0].data_vec;
+        // Without post_convert the buffer stays i32-width (len == rows*4) and every value
+        // is misread; the fix widens it to i64.
+        assert_eq!(data.len(), values.len() * 8, "expected widened i64 buffer");
+        for (i, &src) in values.iter().enumerate() {
+            let got = i64::from_le_bytes(data[i * 8..(i + 1) * 8].try_into().unwrap());
+            let want = if src == i32::MIN {
+                i64::MIN
+            } else {
+                src as i64
+            };
+            assert_eq!(got, want, "row {i}");
+        }
         Ok(())
     }
 
