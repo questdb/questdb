@@ -79,6 +79,7 @@ import io.questdb.cairo.view.ViewStateStoreImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.DefaultDurableAckRegistry;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.LocalDurableAckRegistry;
@@ -160,12 +161,47 @@ import java.io.Closeable;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static io.questdb.griffin.CompiledQuery.*;
 
 public class CairoEngine implements Closeable, WriterSource {
+    @FunctionalInterface
+    public interface DurabilityFailureHandler {
+        void onFailure(DurabilityFailure failure);
+    }
+
+    public static final class DurabilityFailure {
+        private final int errno;
+        private final String message;
+        private final String operation;
+
+        private DurabilityFailure(int errno, String operation, String message) {
+            this.errno = errno;
+            this.operation = operation;
+            this.message = message;
+        }
+
+        public int getErrno() {
+            return errno;
+        }
+
+        public String getMessage() {
+            return message;
+        }
+
+        public String getOperation() {
+            return operation;
+        }
+
+        @Override
+        public String toString() {
+            return "operation=" + operation + ", errno=" + errno + ", message=" + message;
+        }
+    }
+
     public static final String REASON_BUSY_READER = "busyReader";
     public static final String REASON_BUSY_SEQUENCER_METADATA_POOL = "busySequencerMetaPool";
     public static final String REASON_BUSY_TABLE_READER_METADATA_POOL = "busyTableReaderMetaPool";
@@ -185,6 +221,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final CopyImportContext copyImportContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final DataID dataID;
+    private final AtomicReference<DurabilityFailure> durabilityFailure = new AtomicReference<>();
     private final FunctionFactoryCache ffCache;
     private final MatViewGraph matViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
@@ -275,6 +312,10 @@ public class CairoEngine implements Closeable, WriterSource {
     // (DefaultDdlListener.INSTANCE on REPLICA, EntDdlListener instance on PRIMARY) and read by
     // SqlCompilerImpl on worker threads. Matches the sibling volatile durableAckRegistry.
     private volatile @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    // The standalone/test-engine default only fences the engine; handleDataSyncFailure still throws a
+    // CairoError if this callback returns. ServerMain installs the production hard-halt callback.
+    private volatile @NotNull DurabilityFailureHandler durabilityFailureHandler = failure -> {
+    };
     // Default is LocalDurableAckRegistry (local-fsync tier, isEnabled=true). Initialized in the
     // constructor body after `this` is available. Enterprise overrides via setDurableAckRegistry.
     private volatile @NotNull DurableAckRegistry durableAckRegistry;
@@ -329,6 +370,17 @@ public class CairoEngine implements Closeable, WriterSource {
      * {@code completeInit=true} so all existing call sites are unaffected.
      */
     public CairoEngine(CairoConfiguration configuration, @NotNull WalLocker walLocker, boolean completeInit) {
+        this(configuration, walLocker, completeInit, failure -> {
+        });
+    }
+
+    public CairoEngine(
+            CairoConfiguration configuration,
+            @NotNull WalLocker walLocker,
+            boolean completeInit,
+            @NotNull DurabilityFailureHandler durabilityFailureHandler
+    ) {
+        this.durabilityFailureHandler = durabilityFailureHandler;
         try {
             this.walLocker = walLocker;
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
@@ -1012,7 +1064,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public @NotNull DurableAckRegistry getDurableAckRegistry() {
-        return durableAckRegistry;
+        return isDurabilityFailed() ? DefaultDurableAckRegistry.INSTANCE : durableAckRegistry;
+    }
+
+    public @Nullable DurabilityFailure getDurabilityFailure() {
+        return durabilityFailure.get();
     }
 
     public FrameFactory getFrameFactory() {
@@ -1424,6 +1480,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public @NotNull ViewWalWriter getViewWalWriter(TableToken viewToken) {
+        throwIfDurabilityFailed();
         verifyTableToken(viewToken);
         try {
             return viewWalWriterPool.get(viewToken);
@@ -1491,6 +1548,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * read-only/role gating themselves (e.g. rebaseWalTable0's assertRebaseRole + variant check).
      */
     public @NotNull WalWriter getWalWriterUnsafe(TableToken tableToken) {
+        throwIfDurabilityFailed();
         verifyTableToken(tableToken);
         if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
             throw CairoException.tableSuspended(tableToken);
@@ -1505,11 +1563,13 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableWriter getWriter(TableToken tableToken, @NotNull String lockReason) {
+        throwIfDurabilityFailed();
         verifyTableToken(tableToken);
         return writerPool.get(tableToken, lockReason);
     }
 
     public TableWriter getWriterOrPublishCommand(TableToken tableToken, @NotNull AsyncWriterCommand asyncWriterCommand) {
+        throwIfDurabilityFailed();
         verifyTableToken(tableToken);
         return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
@@ -1519,6 +1579,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableWriter getWriterUnsafe(TableToken tableToken, @NotNull String lockReason) {
+        throwIfDurabilityFailed();
         return writerPool.get(tableToken, lockReason);
     }
 
@@ -2139,6 +2200,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.ddlListener = ddlListener;
     }
 
+    public void setDurabilityFailureHandler(@NotNull DurabilityFailureHandler durabilityFailureHandler) {
+        this.durabilityFailureHandler = durabilityFailureHandler;
+    }
+
     public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
         this.durableAckRegistry = durableAckRegistry;
     }
@@ -2258,6 +2323,53 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void unlockWalPurgeJob() {
         walPurgeJobLock.unlock();
+    }
+
+    public boolean isDurabilityFailed() {
+        return durabilityFailure.get() != null;
+    }
+
+    public boolean isDurabilityPoisoned() {
+        return isDurabilityFailed();
+    }
+
+    /**
+     * Permanently poison this engine after a synchronous durability barrier failed. The first failure wins.
+     * The callback is invoked only by the first failing thread. It must hard-stop production; standalone and
+     * test callbacks may return, in which case this method throws a CairoError and every later write acquire
+     * is rejected by {@link #throwIfDurabilityFailed()}.
+     */
+    public void handleDataSyncFailure(Throwable failure) {
+        CairoException syncFailure = null;
+        Throwable cursor = failure;
+        while (cursor != null) {
+            if (cursor instanceof CairoException cairoException && cairoException.isDataSyncFailure()) {
+                syncFailure = cairoException;
+                break;
+            }
+            cursor = cursor.getCause();
+        }
+        if (syncFailure == null) {
+            throw new CairoError(failure);
+        }
+
+        final DurabilityFailure detail = new DurabilityFailure(
+                syncFailure.getErrno(),
+                syncFailure.getDataSyncOperation(),
+                syncFailure.getFlyweightMessage().toString()
+        );
+        if (durabilityFailure.compareAndSet(null, detail)) {
+            LOG.critical().$("fatal durability barrier failure [").$(detail.toString()).$(']').$();
+            durabilityFailureHandler.onFailure(detail);
+        }
+        throw new CairoError(syncFailure);
+    }
+
+    public void throwIfDurabilityFailed() {
+        final DurabilityFailure failure = durabilityFailure.get();
+        if (failure != null) {
+            throw new CairoError("engine is poisoned by a failed durability barrier [" + failure + "]");
+        }
     }
 
     public void unlockWalWriters(TableToken tableToken) {
@@ -2497,6 +2609,29 @@ public class CairoEngine implements Closeable, WriterSource {
                             createTableOrViewOrMatViewUnsafe(mem, blockFileWriter, path, struct, tableToken);
                         }
                         filesystemCreated = true;
+
+                        if (struct.isWalEnabled() && !struct.isView()) {
+                            final int declaredMode = struct.getCommitMode();
+                            final int effectiveMode = declaredMode == CommitMode.UNSET ? configuration.getCommitMode() : declaredMode;
+                            if (effectiveMode == CommitMode.ADAPTIVE) {
+                                try {
+                                    final int timestampIndex = struct.getTimestampIndex();
+                                    final int timestampType = timestampIndex < 0 ? ColumnType.TIMESTAMP : struct.getColumnType(timestampIndex);
+                                    DurableEpochManifest.publishInitial(
+                                            configuration,
+                                            tableToken,
+                                            timestampType,
+                                            struct.getPartitionBy(),
+                                            configuration.getMicrosecondClock().getTicks() / 1000L
+                                    );
+                                } catch (Throwable e) {
+                                    if (CairoException.isDataSyncFailure(e)) {
+                                        handleDataSyncFailure(e);
+                                    }
+                                    CairoException.rethrowCleanupFailure(e);
+                                }
+                            }
+                        }
 
                         if (struct.isWalEnabled()) {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);

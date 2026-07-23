@@ -268,6 +268,14 @@ public class TableSequencerAPI implements QuietCloseable {
         return engine.getWalGroupCommitFlushQueue();
     }
 
+    public void handleDataSyncFailure(Throwable failure) {
+        engine.handleDataSyncFailure(failure);
+    }
+
+    public boolean isDurabilityFailed() {
+        return engine.isDurabilityFailed();
+    }
+
     /**
      * Returns the table's EFFECTIVE per-table commit mode (the {@code _meta} override resolved against the
      * global {@code cairo.commit.mode}), populating the per-table {@link SeqTxnTracker} cache on first use.

@@ -178,7 +178,7 @@ flowchart TD
 
     ROOT --> TBLF["_meta · _txn · _cv"]
     ROOT --> SYMF["&lt;col&gt;.o · &lt;col&gt;.c · &lt;col&gt;.k · &lt;col&gt;.v  (symbol maps, table root)"]
-    ROOT --> EPO["_snapshot · _txn.epoch · _cv.epoch  (adaptive recovery)"]
+    ROOT --> EPO["_snapshot · _txn.epoch.{0,1} · _cv.epoch.{0,1} · _epoch.manifest.{0,1}  (adaptive recovery)"]
     ROOT --> PART["YYYY-MM-DD[.&lt;ver&gt;]/  (partition dirs)"]
     PART --> PCOL["&lt;col&gt;.d (+ .i var-size) · &lt;col&gt;.k / .v (indexed cols)"]
 
@@ -301,11 +301,16 @@ advance():
 the one place ADAPTIVE forces the table to disk): publish indexers → columns durable (Linux
 batched, else per‑file + symbols) → **`syncfs`** (a whole‑filesystem flush, to catch
 closed‑partition files the writer no longer tracks) → `columnVersionWriter.fsync()` →
-`txWriter.fsync()` (**`_cv` before `_txn`**) → write the epoch copies **`_cv.epoch` then
-`_txn.epoch`** (`writeEpochCopy` = `ff.copy` + real `ff.fsync`). Both `TxWriter.fsync` and
-`ColumnVersionWriter.fsync` are `msync(MS_SYNC)` **+ real `ff.fsync(fd)`** despite the
-`.fsync()` name; `SnapshotMarker.write` is an A/B‑slot write + `storeFence` + version bump +
-`msync` + `ff.fsync`.
+`txWriter.fsync()` (**`_cv` before `_txn`**) → write the inactive generation's copies
+**`_cv.epoch.N` then `_txn.epoch.N`** (`writeEpochCopy` = `ff.copy` + real `ff.fsync`) →
+write `_epoch.manifest.N` binding table ID, seqTxn, table txn, column-version identity, payload
+sizes and checksums → mandatory table-directory fsync → publish `_snapshot` last. Both
+`TxWriter.fsync` and `ColumnVersionWriter.fsync` are `msync(MS_SYNC)` **+ real
+`ff.fsync(fd)`** despite the `.fsync()` name; `SnapshotMarker.write` is an A/B‑slot write +
+`storeFence` + version bump + `msync` + `ff.fsync`. Adaptive WAL-table creation publishes a
+fully validated generation-0 baseline before sequencer/name registration, including a second
+directory fsync after creating `_snapshot`, so recovery always has a proven replay floor even before
+the first periodic epoch.
 
 > **Note on cost:** the epoch's dominant cost is the `syncfs` — whole‑filesystem, so its
 > latency scales with *system‑wide* dirty pages, not just this table's. On busy shared
@@ -314,13 +319,21 @@ closed‑partition files the writer no longer tracks) → `columnVersionWriter.f
 ### Recovery
 
 `RecoveryCoordinator.recover()` (kill‑switch `isAdaptiveRecoveryRollForwardEnabled()`)
-iterates WAL tables, skipping non‑adaptive ones. Per table (`recoverTable`): cheap
-`_snapshot` existence check → `marker.tryLoad()` → **C1** validate both `.epoch` copies +
-cross‑check `_txn.epoch`'s seqTxn against the marker (skip if torn) → **C2** skip if the epoch
-post‑dates the live `_txn` (stale restore / PITR) → **restore `_txn` then `_cv`** (`ff.copy`
+iterates WAL tables, skipping non‑adaptive ones. Per table (`recoverTable`): require
+`_snapshot` → inspect the selector-current slot then the previous valid slot → validate the
+selected generation's manifest, table/txn/column-version identities, payload sizes and
+checksums → use the newest trustworthy candidate (falling back to the previous generation if
+the newest payload or manifest is torn) → **restore `_txn` then `_cv`** (`ff.copy`
 epoch→live) → `fsync` `_txn`, `_cv`, dir → `bumpRecoveryIncarnation`. Boot then re‑applies
-the WAL `(epochSeqTxn, frontier]` on top. The DB opens and serves while this catch‑up runs in
-the background.
+the WAL `(epochSeqTxn, frontier]` on top.
+
+Recovery is fail-closed: an absent marker, no valid candidate, or a wrong-lineage anchor aborts
+engine initialization rather than exposing the possibly non-durable live materialization. Legacy
+V1 anchors remain readable only when both internally checksummed payloads load and their full
+available seqTxn/table-txn/column-version tuple matches; they never fall back to live state. A synchronous `fsync`/`fdatasync`/`syncfs`/`fsyncAndClose`
+or synchronous `msync` failure is logged as a fatal durability-barrier failure with operation
+and errno; the first failure poisons the engine, fences writers/acknowledgements/purge, and the
+server exits via `Runtime.halt(55)` without graceful writer cleanup.
 
 > **Deliberate order asymmetry:** the epoch *writes* `_cv.epoch` then `_txn.epoch`; recovery
 > *restores* `_txn` then `_cv`. Both orders are chosen so a crash mid‑operation leaves the

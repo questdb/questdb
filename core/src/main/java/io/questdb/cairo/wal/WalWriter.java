@@ -29,6 +29,7 @@ import io.questdb.Telemetry;
 import io.questdb.TelemetryEvent;
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
@@ -233,6 +234,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             openNewSegment();
             configureSymbolTable();
         } catch (Throwable e) {
+            if (CairoException.isDataSyncFailure(e)) {
+                distressed = true;
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(e);
+            }
             doClose(false);
             throw e;
         }
@@ -554,6 +560,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 recordPendingDurable(seqTxn);
             }
         } catch (Throwable th) {
+            if (CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(th);
+            }
             rollback0();
             throw th;
         }
@@ -564,6 +575,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             openNewSegment();
         } catch (Throwable e) {
             distressed = true;
+            if (CairoException.isDataSyncFailure(e)) {
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(e);
+            }
             throw e;
         }
     }
@@ -724,6 +739,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             }
         } catch (Throwable th) {
+            if (CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(th);
+            }
             rollback0();
             throw th;
         }
@@ -749,6 +769,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 recordPendingDurable(seqTxn);
             }
         } catch (Throwable th) {
+            if (CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(th);
+            }
             rollback0();
             throw th;
         }
@@ -921,6 +946,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         } catch (Throwable th) {
             // perhaps half record was written to WAL-e, better to not use this WAL writer instance
             distressed = true;
+            if (CairoException.isDataSyncFailure(th)) {
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(th);
+            }
             throw th;
         }
     }
@@ -959,6 +988,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             } catch (CairoException e) {
                 distressed = true;
+                if (e.isDataSyncFailure()) {
+                    dropPendingDurable();
+                    sequencer.handleDataSyncFailure(e);
+                }
                 throw e;
             }
         } while (txn == NO_TXN);
@@ -973,6 +1006,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         } catch (Throwable th) {
             LOG.critical().$("Exception during alter [ex=").$(th).I$();
             distressed = true;
+            if (CairoException.isDataSyncFailure(th)) {
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(th);
+            }
             throw th;
         }
         return lastSeqTxn = txn;
@@ -1010,6 +1047,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     void checkDistressed() {
+        if (sequencer.isDurabilityFailed()) {
+            distressed = true;
+            throw new CairoError("engine is poisoned by a failed durability barrier");
+        }
         if (!distressed) {
             return;
         }
@@ -1127,8 +1168,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         recordPendingDurable(seqTxn);
                     } else {
                         // W=0 (today's behaviour): fdatasync completed (data→events→seq) before this point,
-                        // so the commit is device-durable. Advance the local-durable frontier synchronously
-                        // so QWP can emit a durable-ack without waiting for an object-store upload.
+                        // so the commit is device-durable. Re-check the process fence before publishing.
+                        checkDistressed();
                         seqTxnTracker.setLocalDurableSeqTxn(seqTxn);
                     }
                 }
@@ -1178,6 +1219,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             }
         } catch (CairoException | TableReferenceOutOfDateException ex) {
             distressed = true;
+            if (CairoException.isDataSyncFailure(ex)) {
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(ex);
+            }
             throw ex;
         } catch (Throwable th) {
             // If distressed, no need to rollback, WalWriter will not be used anymore
@@ -1550,14 +1595,24 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private long getSequencerTxn() {
-        long seqTxn;
-        do {
-            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
-            if (seqTxn == NO_TXN) {
-                applyMetadataChangeLog(Long.MAX_VALUE);
+        try {
+            long seqTxn;
+            do {
+                seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
+                if (seqTxn == NO_TXN) {
+                    applyMetadataChangeLog(Long.MAX_VALUE);
+                }
+            } while (seqTxn == NO_TXN);
+            return lastSeqTxn = seqTxn;
+        } catch (Throwable failure) {
+            if (CairoException.isDataSyncFailure(failure)) {
+                distressed = true;
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(failure);
             }
-        } while (seqTxn == NO_TXN);
-        return lastSeqTxn = seqTxn;
+            CairoException.rethrowCleanupFailure(failure);
+            return NO_TXN;
+        }
     }
 
     private boolean hasDirtyColumns(long currentTxnStartRowNum) {
@@ -2253,6 +2308,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void syncIfRequired() {
+        try {
+            syncIfRequired0();
+        } catch (Throwable failure) {
+            if (CairoException.isDataSyncFailure(failure)) {
+                distressed = true;
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(failure);
+            }
+            CairoException.rethrowCleanupFailure(failure);
+        }
+    }
+
+    private void syncIfRequired0() {
         int commitMode = walCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             // Deferred 2 (group commit, W>0): push the column pages to the page cache with msync(MS_ASYNC)
@@ -2350,27 +2418,42 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         if (flushTo < 0) {
             return; // nothing pending (already flushed by a peer, or never deferred)
         }
-        // data -> events -> seq, the same ordering the synchronous ADAPTIVE path holds.
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final MemoryMA column = columns.getQuick(i);
-            // A closed column (dropped / parquet-converted / rolled back mid-commit) is non-null,
-            // non-NullMemory, yet has fd == -1 — no WAL segment file to flush. Guard fdatasync(-1).
-            if (column != null && !(column instanceof NullMemory) && column.getFd() != -1) {
-                ff.fdatasync(column.getFd());
+        checkDistressed();
+        try {
+            // data -> events -> seq, the same ordering the synchronous ADAPTIVE path holds.
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final MemoryMA column = columns.getQuick(i);
+                // A closed column (dropped / parquet-converted / rolled back mid-commit) is non-null,
+                // non-NullMemory, yet has fd == -1 — no WAL segment file to flush. Guard fdatasync(-1).
+                if (column != null && !(column instanceof NullMemory) && column.getFd() != -1) {
+                    ff.fdatasync(column.getFd());
+                }
             }
+            events.fdatasync();
+            sequencer.fdatasyncTxnLog(tableToken);
+            // Only NOW is this writer's batch on disk. Drop our contiguous-prefix pin and let the shared frontier
+            // advance to the durable prefix across ALL writers (min oldest-un-flushed - 1, or getSeqTxn() when
+            // nothing is pending) — NOT to our own flushTo, which would over-claim a peer writer's still-unflushed
+            // lower seqTxn (CRITICAL 2). markWriterDurable recomputes the prefix; flushTo above only gates the
+            // nothing-pending early return. Re-check process poison after the barriers and before publication.
+            checkDistressed();
+            seqTxnTracker.markWriterDurable(walId);
+            pendingDurableSeqTxn = -1L;
+            pendingSinceMicros = -1L;
+            pendingLoSeqTxn = -1L;
+            sequencer.getWalGroupCommitFlushQueue().unregister(this);
+        } catch (CairoException e) {
+            if (e.isDataSyncFailure()) {
+                distressed = true;
+                // Leave the shared contiguous-prefix pin in place: this batch was not proven durable.
+                pendingDurableSeqTxn = -1L;
+                pendingSinceMicros = -1L;
+                pendingLoSeqTxn = -1L;
+                sequencer.getWalGroupCommitFlushQueue().unregister(this);
+                sequencer.handleDataSyncFailure(e);
+            }
+            throw e;
         }
-        events.fdatasync();
-        sequencer.fdatasyncTxnLog(tableToken);
-        // Only NOW is this writer's batch on disk. Drop our contiguous-prefix pin and let the shared frontier
-        // advance to the durable prefix across ALL writers (min oldest-un-flushed - 1, or getSeqTxn() when
-        // nothing is pending) — NOT to our own flushTo, which would over-claim a peer writer's still-unflushed
-        // lower seqTxn (CRITICAL 2). markWriterDurable recomputes the prefix; flushTo above only gates the
-        // nothing-pending early return.
-        seqTxnTracker.markWriterDurable(walId);
-        pendingDurableSeqTxn = -1L;
-        pendingSinceMicros = -1L;
-        pendingLoSeqTxn = -1L;
-        sequencer.getWalGroupCommitFlushQueue().unregister(this);
     }
 
     /**

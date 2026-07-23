@@ -96,6 +96,8 @@ public class Bootstrap {
     private final Log log;
     private final MicrosecondClock microsecondClock;
     private final String rootDirectory;
+    private CairoEngine.DurabilityFailureHandler durabilityFailureHandler = failure -> {
+    };
 
     public Bootstrap(String... args) {
         this(new PropBootstrapConfiguration(), args);
@@ -394,7 +396,16 @@ public class Bootstrap {
     }
 
     public CairoEngine newCairoEngine() {
-        return new CairoEngine(getConfiguration().getCairoConfiguration(), new io.questdb.cairo.wal.QdbrWalLocker(), true);
+        return new CairoEngine(
+                getConfiguration().getCairoConfiguration(),
+                new io.questdb.cairo.wal.QdbrWalLocker(),
+                true,
+                durabilityFailureHandler
+        );
+    }
+
+    public void setDurabilityFailureHandler(@NotNull CairoEngine.DurabilityFailureHandler durabilityFailureHandler) {
+        this.durabilityFailureHandler = durabilityFailureHandler;
     }
 
     private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {

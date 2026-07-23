@@ -804,6 +804,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try {
                     ff.fsyncAndClose(openRO(ff, path.$(), LOG));
                 } catch (CairoException e) {
+                    if (e.isDataSyncFailure()) {
+                        distressed = true;
+                        engine.handleDataSyncFailure(e);
+                    }
                     LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
                             .$(", msg=").$safe(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
@@ -1099,6 +1103,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     ff.fsync(parquetMetaFd);
                                 }
                             } catch (Throwable t) {
+                                if (CairoException.isDataSyncFailure(t)) {
+                                    distressed = true;
+                                    engine.handleDataSyncFailure(t);
+                                }
                                 LOG.error().$("failed to generate parquet metadata [path=").$(path).$(", error=").$(t.getMessage()).I$();
                                 ff.remove(path.$());
                                 return AttachDetachStatus.ATTACH_ERR_GENERATE_PM_FILE;
@@ -1110,7 +1118,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 path.trimTo(partitionPathLen);
                                 final long dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
                                 if (dirFd != -1) {
-                                    ff.fsyncAndClose(dirFd);
+                                    try {
+                                        ff.fsyncAndClose(dirFd);
+                                    } catch (Throwable failure) {
+                                        if (CairoException.isDataSyncFailure(failure)) {
+                                            distressed = true;
+                                            engine.handleDataSyncFailure(failure);
+                                        }
+                                        throw failure;
+                                    }
                                 }
                             }
                         }
@@ -1532,7 +1548,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 } catch (Throwable ex) {
-                    LOG.error().$("could not advance durable epoch after batched parquet->native conversion [table=").$(tableToken).$(", e=").$(ex).I$();
+                    handleBestEffortDurableEpochFailure(ex, "batched parquet->native conversion");
                 }
             }
 
@@ -1773,7 +1789,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 } catch (Throwable e) {
-                    LOG.error().$("could not advance durable epoch after partition convert [table=").$(tableToken).$(", e=").$(e).I$();
+                    handleBestEffortDurableEpochFailure(e, "partition convert");
                 }
             }
 
@@ -1919,7 +1935,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 } catch (Throwable e) {
-                    LOG.error().$("could not advance durable epoch after partition convert [table=").$(tableToken).$(", e=").$(e).I$();
+                    handleBestEffortDurableEpochFailure(e, "partition convert");
                 }
             }
 
@@ -2121,7 +2137,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
             } catch (Throwable e) {
-                LOG.error().$("could not advance durable epoch after detach partition [table=").$(tableToken).$(", e=").$(e).I$();
+                handleBestEffortDurableEpochFailure(e, "detach partition");
             }
         }
         safeDeletePartitionDir(timestamp, partitionNameTxn);
@@ -2781,6 +2797,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public Row newRow(long timestamp) {
+        try {
+            return newRow0(timestamp);
+        } catch (Throwable failure) {
+            if (CairoException.isDataSyncFailure(failure)) {
+                distressed = true;
+                engine.handleDataSyncFailure(failure);
+            }
+            CairoException.rethrowCleanupFailure(failure);
+            return null;
+        }
+    }
+
+    private Row newRow0(long timestamp) {
         if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
             timestampDriver.validateBounds(timestamp);
         }
@@ -3643,7 +3672,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 } catch (Throwable ex) {
-                    LOG.error().$("could not advance durable epoch after native<->parquet switch [table=").$(tableToken).$(", e=").$(ex).I$();
+                    handleBestEffortDurableEpochFailure(ex, "native<->parquet switch");
                 }
             }
 
@@ -4969,6 +4998,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void checkDistressed() {
+        if (engine.isDurabilityFailed()) {
+            distressed = true;
+            engine.throwIfDurabilityFailed();
+        }
         if (!distressed) {
             return;
         }
@@ -5066,8 +5099,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             todoMem.jumpTo(40);
             todoMem.sync(false);
         } catch (Throwable th) {
-            // if we failed to clear _todo_, it's ok, it will be ignored
-            // because the txn inside _todo_ is out of date.
+            if (CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
+            }
+            // A non-sync failure leaves an out-of-date _todo_ that can be ignored safely.
             handleHousekeepingException(th);
         } finally {
             path.trimTo(pathSize);
@@ -5124,6 +5160,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param o3MaxLag if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
      */
     private void commit(long o3MaxLag) {
+        try {
+            commit0(o3MaxLag);
+        } catch (Throwable failure) {
+            if (CairoException.isDataSyncFailure(failure)) {
+                distressed = true;
+                engine.handleDataSyncFailure(failure);
+            }
+            CairoException.rethrowCleanupFailure(failure);
+        }
+    }
+
+    private void commit0(long o3MaxLag) {
         checkDistressed();
         physicallyWrittenRowsSinceLastCommit.reset();
 
@@ -6643,7 +6691,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 }
             } catch (Throwable e) {
-                LOG.error().$("adaptive: durable-epoch flush on close failed [table=").$(tableToken).$(", err=").$(e).I$();
+                handleBestEffortDurableEpochFailure(e, "writer close");
             }
         }
         // Best-effort cleanup that now does I/O: a spill mmap, and a direct
@@ -6656,6 +6704,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             closeDeferredPostingSealPurges();
         } catch (Throwable th) {
+            if (CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
+            }
             LOG.critical()
                     .$("posting seal-purge close cleanup failed [table=").$(tableToken)
                     .$(", err=").$(th)
@@ -9340,6 +9392,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .I$();
         } catch (Throwable e) {
             distressed = true;
+            if (CairoException.isDataSyncFailure(e)) {
+                engine.handleDataSyncFailure(e);
+            }
             throw e;
         } finally {
             path.trimTo(pathSize);
@@ -11617,6 +11672,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         ff.fsyncAndClose(partDirFd);
                     }
                 } catch (CairoException ex) {
+                    if (ex.isDataSyncFailure()) {
+                        distressed = true;
+                        engine.handleDataSyncFailure(ex);
+                    }
                     LOG.error().$("could not fsync native partition dir [path=").$(other).$(", errno=").$(ex.getErrno()).I$();
                 }
             }
@@ -13186,9 +13245,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.fsyncAndClose(dirFd);
                 }
             } catch (CairoException e) {
-                // _meta has already moved to _meta.prev and the restore marker is armed. Recover the old
-                // metadata now so this live writer is safe to reuse/retry, rather than relying on open-time
-                // recovery that only a newly constructed writer would run.
+                if (e.isDataSyncFailure()) {
+                    distressed = true;
+                    engine.handleDataSyncFailure(e);
+                }
+                // Opening the directory failed before a durability syscall ran. In that determinate case,
+                // recover the old metadata in-process; an actual fsync failure took the fatal branch above.
                 runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, e);
             }
         }
@@ -13202,8 +13264,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.fsyncAndClose(dirFd);
                 }
             } catch (CairoException e) {
-                // The directory entry is not known durable, so roll the DDL back through _meta.prev and
-                // leave the writer consistent for the caller's retry.
+                if (e.isDataSyncFailure()) {
+                    distressed = true;
+                    engine.handleDataSyncFailure(e);
+                }
+                // A pre-fsync open failure is determinate and can be rolled back locally.
                 runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, e);
             }
         }
@@ -13299,6 +13364,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             return index;
         } catch (Throwable th) {
+            if (CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
+            }
             LOG.critical().$("could not write to metadata file, rolling back DDL [path=").$(path).$(']').$();
             try {
                 // Revert metadata
@@ -13868,6 +13937,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", count=").$(readyCount).I$();
             return true;
         } catch (Throwable th) {
+            if (CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
+            }
             LOG.error().$("posting seal-purge spill on writer close failed [table=").$(tableToken)
                     .$(", err=").$(th).I$();
             return false;
@@ -14447,9 +14520,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * checkpoint path's {@code dumpTo} works only because it dumps from a loaded {@code TxReader} (where
      * {@code version == txn}); copying the live file is the robust equivalent here.
      */
-    private void writeEpochCopy(String baseFileName) {
-        // Source: the live committed file (just fsync'd). Dest: the .epoch sibling.
+    private void writeEpochCopy(String baseFileName, int generation) {
+        // Source: the live committed file (just fsync'd). Dest: the inactive generation (or legacy sibling
+        // for the public test seam). The active generation is never truncated before the marker switches.
         path.trimTo(pathSize).concat(baseFileName).put(TableUtils.EPOCH_COPY_SUFFIX);
+        if (generation != SnapshotMarker.LEGACY_GENERATION) {
+            path.put('.').put(generation);
+        }
         // ff.copy uses creat(O_TRUNC), so it both creates and fully replaces any prior copy; no explicit
         // remove needed. Build the source path into `other` to avoid clobbering `path` (the dest).
         other.trimTo(pathSize).concat(baseFileName);
@@ -14464,12 +14541,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Make the copy hard-durable: fsync the freshly-written .epoch file. The copy is immutable until
         // the next epoch overwrites it, so a single fsync here is the recovery anchor's durability barrier.
         final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
-        if (fd != -1) {
-            try {
-                ff.fsync(fd);
-            } finally {
-                ff.close(fd);
-            }
+        if (fd == -1) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not open durable epoch copy for fsync [table=").put(tableToken.getTableName())
+                    .put(", path=").put(path).put(']');
+        }
+        try {
+            ff.fsync(fd);
+        } finally {
+            ff.close(fd);
         }
         path.trimTo(pathSize);
     }
@@ -14494,21 +14574,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        // Step 1: make the materialized state fully durable + write the durable epoch copies.
-        fsyncMaterializedState();
-
-        // The cut's identity, captured AFTER the durable cut's A/B commit point.
-        final long epochSeqTxn = getSeqTxn();
-        final long epochTxn = getTxn();
-        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-
-        // Step 2: write + fsync the _snapshot marker (the hard crash boundary).
+        // Select the INACTIVE epoch-copy generation before writing any payload. A failed attempt can damage
+        // only that generation; the marker continues to select the previous complete generation.
         if (durableEpochMarker == null) {
             durableEpochMarker = new SnapshotMarker(configuration);
         }
         durableEpochSnapshotPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.SNAPSHOT_FILE_NAME);
         durableEpochMarker.of(durableEpochSnapshotPath.$());
-        durableEpochMarker.write(epochSeqTxn, epochTxn, nowMs);
+        final int epochGeneration = durableEpochMarker.tryLoad()
+                && durableEpochMarker.getGeneration() != SnapshotMarker.LEGACY_GENERATION
+                ? 1 - durableEpochMarker.getGeneration()
+                : 0;
+
+        // Step 1: make the materialized state fully durable + write the inactive durable epoch copies.
+        fsyncMaterializedState(epochGeneration);
+
+        // Bind both payloads to this exact table/cut before making their directory entries durable.
+        final long epochSeqTxn = getSeqTxn();
+        final long epochTxn = getTxn();
+        DurableEpochManifest.write(
+                configuration,
+                tableToken,
+                path.trimTo(pathSize),
+                pathSize,
+                epochGeneration,
+                epochSeqTxn,
+                epochTxn,
+                txWriter.getColumnVersion()
+        );
+        fsyncEpochDirectory();
+        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+
+        // Step 2: write + fsync the _snapshot marker (the hard crash boundary) LAST. Only now can recovery
+        // select the newly-written generation. Do not publish after another thread poisoned the process.
+        checkDistressed();
+        durableEpochMarker.write(epochSeqTxn, epochTxn, nowMs, epochGeneration);
 
         // Steps 3+4: ping-pong pin handover. Pin the NEW epoch txn into the FREE slot, THEN release the
         // prior from the other slot, so a concurrent O3PartitionPurgeJob never sees an unprotected gap
@@ -14571,6 +14671,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * does, so a durable cut is self-consistent with respect to index state too.
      */
     public void fsyncMaterializedState() {
+        fsyncMaterializedState(SnapshotMarker.LEGACY_GENERATION);
+    }
+
+    private void fsyncMaterializedState(int epochGeneration) {
         // Publish buffered index writes (PostingIndexWriter / BitmapIndexWriter) just like
         // syncColumns(): without this readers (and the durable cut) could see keyCount=0.
         final long publishTxn = txWriter.getTxn() + 1;
@@ -14623,11 +14727,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // _txn.epoch; restoring that pair makes _cv ahead of _txn — harmless (column versions only grow;
         // the older _txn never references the extra ones, and _txn is the authoritative row-count/seqTxn
         // pointer). The reverse order could leave _txn ahead of _cv (a dangling column-version reference).
-        writeEpochCopy(TableUtils.COLUMN_VERSION_FILE_NAME);
-        writeEpochCopy(TableUtils.TXN_FILE_NAME);
+        writeEpochCopy(TableUtils.COLUMN_VERSION_FILE_NAME, epochGeneration);
+        writeEpochCopy(TableUtils.TXN_FILE_NAME, epochGeneration);
 
         // Mirror syncColumns(): forward indexer purge entries safe for the committed txn.
         publishPendingPostingSealPurges(txWriter.getTxn());
+    }
+
+    private void handleBestEffortDurableEpochFailure(Throwable failure, CharSequence operation) {
+        if (CairoException.isDataSyncFailure(failure)) {
+            distressed = true;
+            engine.handleDataSyncFailure(failure);
+        }
+        LOG.error().$("could not advance durable epoch after ").$(operation)
+                .$(" [table=").$(tableToken).$(", e=").$(failure).I$();
+    }
+
+    private void fsyncEpochDirectory() {
+        if (!Os.isWindows()) {
+            DurableEpochManifest.fsyncDirectory(configuration, path.trimTo(pathSize), pathSize);
+            path.trimTo(pathSize);
+        }
     }
 
     private void fsyncTableDirAfterMetadataRename() {
@@ -15105,6 +15225,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         } catch (CairoException e) {
+            if (e.isDataSyncFailure()) {
+                distressed = true;
+                engine.handleDataSyncFailure(e);
+            }
             runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, e);
         }
     }

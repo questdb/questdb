@@ -25,6 +25,9 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -35,6 +38,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -42,6 +46,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Deferred 2 — adaptive GROUP-COMMIT (the RPO knob {@code cairo.adaptive.commit.group.window}).
@@ -71,6 +77,61 @@ import java.util.Map;
 public class AdaptiveGroupCommitTest extends AbstractCairoTest {
 
     private static final long WINDOW_US = 1_000_000L; // 1s window, driven by the test microsecond clock
+
+    @Test
+    public void testBackgroundFdatasyncFailurePoisonsEngineWithoutRetryOrFrontierAdvance() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+
+        final FailingWalFdatasyncFacade ff = new FailingWalFdatasyncFacade();
+        try {
+            assertMemoryLeak(ff, () -> {
+                setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            final AtomicInteger fatalCalls = new AtomicInteger();
+            engine.setDurabilityFailureHandler(failure -> fatalCalls.incrementAndGet());
+
+            try (WalWriter writer = engine.getWalWriter(tt); ExposedWalPurgeJob purgeJob = new ExposedWalPurgeJob(engine)) {
+                commitRow(writer, 0, 1);
+                final long durableBefore = tracker.getLocalDurableSeqTxn();
+                ff.failNext();
+                setCurrentMicros(1_000_000L + WINDOW_US + 1);
+
+                try {
+                    purgeJob.flushNow();
+                    Assert.fail("background fdatasync failure must remain fatal");
+                } catch (CairoError expected) {
+                    Assert.assertTrue(CairoException.isDataSyncFailure(expected));
+                }
+
+                Assert.assertEquals(1, fatalCalls.get());
+                Assert.assertEquals(1, ff.failureAttempts);
+                Assert.assertTrue(engine.isDurabilityFailed());
+                Assert.assertEquals(durableBefore, tracker.getLocalDurableSeqTxn());
+
+                try {
+                    commitRow(writer, 60_000_000L, 2);
+                    Assert.fail("distressed writer must not be reusable");
+                } catch (CairoException | CairoError expected) {
+                    // no second fdatasync is allowed after the first indeterminate failure
+                }
+                Assert.assertEquals(1, ff.failureAttempts);
+
+                try {
+                    engine.getWalWriter(tt);
+                    Assert.fail("poisoned engine must reject new WAL writers");
+                } catch (CairoError expected) {
+                    TestUtils.assertContains(expected.getMessage(), "engine is poisoned");
+                }
+            }
+            });
+        } finally {
+            resetDurabilityPoisonForTest();
+        }
+    }
 
     @Test
     public void testGroupWindowDefaultsTo50Ms() throws Exception {
@@ -578,6 +639,37 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
      * device flushes and total WAL device flushes (segment column data + events + sequencer part/header).
      * Used to prove the W=0 per-commit fdatasync vs the W&gt;0 batched fdatasync.
      */
+    private void resetDurabilityPoisonForTest() throws Exception {
+        final java.lang.reflect.Field field = CairoEngine.class.getDeclaredField("durabilityFailure");
+        field.setAccessible(true);
+        ((AtomicReference<?>) field.get(engine)).set(null);
+        engine.setDurabilityFailureHandler(failure -> {
+        });
+    }
+
+    static class FailingWalFdatasyncFacade extends WalFdatasyncFacade {
+        private boolean armed;
+        private boolean failNext;
+        private int failureAttempts;
+
+        @Override
+        public void fdatasync(long fd) {
+            if (armed) {
+                failureAttempts++;
+            }
+            if (failNext) {
+                failNext = false;
+                throw CairoException.dataSyncFailure(5, "fdatasync").put("injected WAL fdatasync failure");
+            }
+            super.fdatasync(fd);
+        }
+
+        void failNext() {
+            armed = true;
+            failNext = true;
+        }
+    }
+
     static class WalFdatasyncFacade extends TestFilesFacadeImpl {
         private final List<String> fdatasyncPaths = new ArrayList<>();
         private final Map<Long, String> fdToPath = new HashMap<>();

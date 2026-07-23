@@ -84,15 +84,17 @@ import java.io.Closeable;
  * </ol>
  */
 public class SnapshotMarker implements Closeable {
-    // Format version written into each slot body.
-    public static final int FORMAT_VERSION = 1;
+    public static final int LEGACY_FORMAT_VERSION = 1;
+    // V2 uses the formerly-reserved word at +28 to select one of two epoch-copy generations.
+    public static final int FORMAT_VERSION = 2;
+    public static final int LEGACY_GENERATION = -1;
 
     // Slot body layout offsets (relative to slot base).
     public static final int SLOT_OFFSET_EPOCH_SEQ_TXN = 0;
     public static final int SLOT_OFFSET_EPOCH_TXN = 8;
     public static final int SLOT_OFFSET_TS = 16;
     public static final int SLOT_OFFSET_FORMAT_VERSION = 24;
-    // 4 bytes padding at +28 (zeroed, reserved for future use).
+    public static final int SLOT_OFFSET_GENERATION = 28;
 
     // Slot trailer layout (immediately after the body).
     public static final int SLOT_BODY_SIZE = 32; // epochSeqTxn(8) + epochTxn(8) + ts(8) + formatVersion(4) + padding(4)
@@ -120,7 +122,25 @@ public class SnapshotMarker implements Closeable {
     private long epochSeqTxn;
     private long epochTxn;
     private long epochTs;
+    private int formatVersion;
+    private int generation = LEGACY_GENERATION;
     private long version; // version word from the file
+
+    public static final class Candidate {
+        public final long epochSeqTxn;
+        public final long epochTxn;
+        public final long epochTs;
+        public final int formatVersion;
+        public final int generation;
+
+        private Candidate(long epochSeqTxn, long epochTxn, long epochTs, int formatVersion, int generation) {
+            this.epochSeqTxn = epochSeqTxn;
+            this.epochTxn = epochTxn;
+            this.epochTs = epochTs;
+            this.formatVersion = formatVersion;
+            this.generation = generation;
+        }
+    }
 
     public SnapshotMarker(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -163,6 +183,17 @@ public class SnapshotMarker implements Closeable {
      * </ol>
      */
     public void write(long epochSeqTxn, long epochTxn, long ts) {
+        write0(epochSeqTxn, epochTxn, ts, LEGACY_FORMAT_VERSION, LEGACY_GENERATION);
+    }
+
+    public void write(long epochSeqTxn, long epochTxn, long ts, int generation) {
+        if (generation != 0 && generation != 1) {
+            throw CairoException.critical(0).put("invalid durable epoch generation [generation=").put(generation).put(']');
+        }
+        write0(epochSeqTxn, epochTxn, ts, FORMAT_VERSION, generation);
+    }
+
+    private void write0(long epochSeqTxn, long epochTxn, long ts, int formatVersion, int generation) {
         // The ACTIVE slot is selected by (version & 1): 0 => A, 1 => B.
         // We write into the INACTIVE slot (the opposite one).
         boolean currentIsA = (version & 1L) == 0L;
@@ -175,8 +206,8 @@ public class SnapshotMarker implements Closeable {
         mem.putLong(writeSlotOffset + SLOT_OFFSET_EPOCH_SEQ_TXN, epochSeqTxn);
         mem.putLong(writeSlotOffset + SLOT_OFFSET_EPOCH_TXN, epochTxn);
         mem.putLong(writeSlotOffset + SLOT_OFFSET_TS, ts);
-        mem.putInt(writeSlotOffset + SLOT_OFFSET_FORMAT_VERSION, FORMAT_VERSION);
-        mem.putInt(writeSlotOffset + 28, 0); // padding
+        mem.putInt(writeSlotOffset + SLOT_OFFSET_FORMAT_VERSION, formatVersion);
+        mem.putInt(writeSlotOffset + SLOT_OFFSET_GENERATION, generation);
 
         // Write checksum trailer: MAGIC then xxh3 over the body.
         long bodyAddr = mem.addressOf(writeSlotOffset);
@@ -215,6 +246,8 @@ public class SnapshotMarker implements Closeable {
             epochSeqTxn = 0;
             epochTxn = 0;
             epochTs = 0;
+            formatVersion = 0;
+            generation = LEGACY_GENERATION;
             return false;
         }
 
@@ -237,7 +270,42 @@ public class SnapshotMarker implements Closeable {
         epochSeqTxn = 0;
         epochTxn = 0;
         epochTs = 0;
+        formatVersion = 0;
+        generation = LEGACY_GENERATION;
         return false;
+    }
+
+    /**
+     * Returns valid marker slots in selector order: current first, previous second.
+     * Payload validation is deliberately left to recovery, which may reject the current generation
+     * and then adopt the previous fully-bound generation.
+     */
+    public Candidate[] loadCandidates() {
+        if (mem == null || mem.size() < FILE_SIZE) {
+            return new Candidate[0];
+        }
+        final long ver = mem.getLong(OFFSET_VERSION);
+        final boolean liveIsA = (ver & 1L) == 0L;
+        final long liveSlotOffset = liveIsA ? OFFSET_SLOT_A : OFFSET_SLOT_B;
+        final long otherSlotOffset = liveIsA ? OFFSET_SLOT_B : OFFSET_SLOT_A;
+        Candidate current = null;
+        Candidate previous = null;
+        if (tryLoadSlot(liveSlotOffset)) {
+            current = new Candidate(epochSeqTxn, epochTxn, epochTs, formatVersion, generation);
+        }
+        if (tryLoadSlot(otherSlotOffset)) {
+            previous = new Candidate(epochSeqTxn, epochTxn, epochTs, formatVersion, generation);
+        }
+        if (current != null && previous != null) {
+            return new Candidate[]{current, previous};
+        }
+        if (current != null) {
+            return new Candidate[]{current};
+        }
+        if (previous != null) {
+            return new Candidate[]{previous};
+        }
+        return new Candidate[0];
     }
 
     /**
@@ -259,6 +327,14 @@ public class SnapshotMarker implements Closeable {
      */
     public long getEpochTs() {
         return epochTs;
+    }
+
+    public int getFormatVersion() {
+        return formatVersion;
+    }
+
+    public int getGeneration() {
+        return generation;
     }
 
     @Override
@@ -291,9 +367,19 @@ public class SnapshotMarker implements Closeable {
         }
 
         // Read fields.
+        final int loadedFormatVersion = mem.getInt(slotOffset + SLOT_OFFSET_FORMAT_VERSION);
+        final int loadedGeneration = mem.getInt(slotOffset + SLOT_OFFSET_GENERATION);
+        if (loadedFormatVersion != LEGACY_FORMAT_VERSION && loadedFormatVersion != FORMAT_VERSION) {
+            return false;
+        }
+        if (loadedFormatVersion == FORMAT_VERSION && loadedGeneration != 0 && loadedGeneration != 1) {
+            return false;
+        }
         epochSeqTxn = mem.getLong(slotOffset + SLOT_OFFSET_EPOCH_SEQ_TXN);
         epochTxn = mem.getLong(slotOffset + SLOT_OFFSET_EPOCH_TXN);
         epochTs = mem.getLong(slotOffset + SLOT_OFFSET_TS);
+        formatVersion = loadedFormatVersion;
+        generation = loadedFormatVersion == LEGACY_FORMAT_VERSION ? LEGACY_GENERATION : loadedGeneration;
         return true;
     }
 }

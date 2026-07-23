@@ -710,10 +710,16 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         try {
             advance(writer, nowMs);
         } catch (CairoException e) {
+            if (e.isDataSyncFailure()) {
+                engine.handleDataSyncFailure(e);
+            }
             LOG.error().$("could not advance adaptive durable epoch [table=").$(tableToken)
                     .$(", error=").$(e.getFlyweightMessage()).I$();
         } catch (Throwable th) {
             // Let Errors (OOM / writer distress CairoError) propagate; swallow only Exceptions.
+            if (CairoException.isDataSyncFailure(th)) {
+                engine.handleDataSyncFailure(th);
+            }
             if (th instanceof Exception) {
                 LOG.error().$("could not advance adaptive durable epoch [table=").$(tableToken)
                         .$(", error=").$(th).I$();

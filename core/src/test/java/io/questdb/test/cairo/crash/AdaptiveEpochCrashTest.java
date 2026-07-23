@@ -126,7 +126,7 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
      * not from some other sync on the apply path.
      */
     @Test
-    public void testNegativeControlWithoutEpochAnchorIsAbsent() throws Exception {
+    public void testDisabledPeriodicEpochRetainsCreationBaseline() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1); // epochs disabled
         try {
@@ -141,20 +141,13 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
 
                 TableToken tt = engine.verifyTableName("n");
 
-                // advance()'s reproducible, deterministic contribution: WITHOUT it there is NO recovery
-                // anchor — neither the _snapshot marker nor the durable epoch copies are written. The
-                // cut recovery would land on is simply not recorded, so recovery must fall back to full
-                // WAL replay. (We assert the anchor's absence rather than column row-loss because the
-                // crash harness cannot deterministically strip the just-applied column here: the
-                // writer's clean close fsyncs it and its in-process dirty mmap survives a file-level
-                // crash() rollback — see the DONE_WITH_CONCERNS report. Scenario 1 confirms the epoch
-                // makes the identical lazily-applied row durable through the crash.)
-                assertNoEpochArtifacts(tt);
+                // Disabling periodic epochs must still retain the creation-time generation-0 replay floor.
+                assertCreationBaseline(tt);
 
                 crashAndReopen();
 
-                // After the crash the anchor is still absent (it was never written).
-                assertNoEpochArtifacts(tt);
+                // The proven baseline survives and recovery can replay the WAL from seqTxn zero.
+                assertCreationBaseline(tt);
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
@@ -246,19 +239,17 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
         }
     }
 
-    /**
-     * The epoch's recovery anchor (marker + durable copies) must NOT exist (no epoch fired).
-     */
-    private void assertNoEpochArtifacts(TableToken tt) {
-        assertFileAbsent(tt, TableUtils.SNAPSHOT_FILE_NAME);
-        assertFileAbsent(tt, TableUtils.TXN_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX);
-        assertFileAbsent(tt, TableUtils.COLUMN_VERSION_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX);
+    private void assertCreationBaseline(TableToken tt) {
+        assertMarkerSeqTxn(tt, 0);
+        assertFilePresent(tt, TableUtils.TXN_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX + ".0");
+        assertFilePresent(tt, TableUtils.COLUMN_VERSION_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX + ".0");
+        assertFilePresent(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME + ".0");
     }
 
-    private void assertFileAbsent(TableToken tt, String fileName) {
+    private void assertFilePresent(TableToken tt, String fileName) {
         try (Path p = new Path()) {
             p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(fileName);
-            Assert.assertFalse("must be absent without an epoch: " + fileName,
+            Assert.assertTrue("creation baseline file must exist: " + fileName,
                     engine.getConfiguration().getFilesFacade().exists(p.$()));
         }
     }

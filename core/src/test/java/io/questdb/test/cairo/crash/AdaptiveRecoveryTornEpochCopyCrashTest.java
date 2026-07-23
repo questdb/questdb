@@ -87,7 +87,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
      * files survive and the table rebuilds all rows from the durable WAL.
      */
     @Test
-    public void testRecoverySkipsZeroByteTxnEpochAndKeepsTableIntact() throws Exception {
+    public void testRecoveryFallsBackFromZeroByteTxnEpochAndReplaysWal() throws Exception {
         assertTornCopyHandledSafely(TornMode.TRUNCATE_TXN_EPOCH_TO_ZERO);
     }
 
@@ -96,7 +96,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
      * garbage) fails the checksum/seqTxn validation and is skipped — same safe fallback.
      */
     @Test
-    public void testRecoverySkipsCorruptBodyTxnEpochAndKeepsTableIntact() throws Exception {
+    public void testRecoveryFallsBackFromCorruptBodyTxnEpochAndReplaysWal() throws Exception {
         assertTornCopyHandledSafely(TornMode.CORRUPT_TXN_EPOCH_BODY);
     }
 
@@ -105,8 +105,8 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
      * marker (the anchor trio disagree) is rejected by the seqTxn cross-check and skipped.
      */
     @Test
-    public void testRecoverySkipsSeqTxnMismatchedTxnEpochAndKeepsTableIntact() throws Exception {
-        assertTornCopyHandledSafely(TornMode.MARKER_SEQTXN_AHEAD_OF_COPY);
+    public void testRecoveryFallsBackFromMismatchedManifestAndReplaysWal() throws Exception {
+        assertTornCopyHandledSafely(TornMode.MANIFEST_SEQTXN_MISMATCH);
     }
 
     /**
@@ -135,7 +135,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
             tornByMode(tt, TornMode.TRUNCATE_TXN_EPOCH_TO_ZERO);
             try (Path src = new Path(); Path dst = new Path()) {
                 src.of(engine.getConfiguration().getDbRoot()).concat(tt)
-                        .concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX);
+                        .concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(1);
                 dst.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
                 Assert.assertTrue("emulated unvalidated restore (the pre-C1 bug) must copy",
                         ff.copy(src.$(), dst.$()) >= 0);
@@ -179,19 +179,12 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
             // Corrupt the durable epoch copy to model a crash inside the epoch-copy window.
             tornByMode(tt, mode);
 
-            // ACT: recovery. With the C1 guard it must DETECT the torn/mismatched copy and SKIP the restore
-            // (NOT copy it over the live files). Recovery itself must not throw.
+            // Recovery rejects the newest generation and restores the proven creation baseline.
             new RecoveryCoordinator(engine).recover();
+            Assert.assertEquals("torn newest generation must fall back to the generation-0 replay floor",
+                    0, readTxnSeqTxn(tt));
 
-            // The live _txn must be UNTOUCHED (still the post-epoch frontier) — the torn copy was NOT
-            // restored over it. (Before C1 this is 0 / unreadable.)
-            final long liveSeqTxnAfter = readTxnSeqTxn(tt);
-            Assert.assertEquals(
-                    "live _txn must be intact after a skipped restore (torn copy must NOT overwrite it)",
-                    liveSeqTxnBefore, liveSeqTxnAfter
-            );
-
-            // Re-init the WAL tracker + drain: the table opens normally and a full replay keeps all rows.
+            // Re-init the WAL tracker + drain: genuine replay from seqTxn 0 restores every durable WAL row.
             engine.notifyWalTxnRepublisher(tt);
             drainWalQueue();
 
@@ -225,19 +218,11 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
         final TableToken tt = engine.verifyTableName("t");
 
         final long epochSeqTxn;
-        final long epochTxn;
         try (TableWriter w = getWriter(tt)) {
-            w.fsyncMaterializedState();
+            w.advanceDurableEpoch(1L);
             epochSeqTxn = w.getSeqTxn();
-            epochTxn = w.getTxn();
         }
         Assert.assertEquals("epoch must be taken at seqTxn=K", K, epochSeqTxn);
-        try (SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration());
-             Path p = new Path()) {
-            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            marker.of(p.$());
-            marker.write(epochSeqTxn, epochTxn, 1L);
-        }
 
         // M more rows applied lazily AFTER the epoch (no new epoch fires).
         for (int i = K; i < K + M; i++) {
@@ -252,7 +237,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
     private enum TornMode {
         TRUNCATE_TXN_EPOCH_TO_ZERO,
         CORRUPT_TXN_EPOCH_BODY,
-        MARKER_SEQTXN_AHEAD_OF_COPY
+        MANIFEST_SEQTXN_MISMATCH
     }
 
     private void tornByMode(TableToken tt, TornMode mode) {
@@ -261,7 +246,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
             switch (mode) {
                 case TRUNCATE_TXN_EPOCH_TO_ZERO: {
                     p.of(engine.getConfiguration().getDbRoot()).concat(tt)
-                            .concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX);
+                            .concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(1);
                     final long fd = ff.openRW(p.$(), engine.getConfiguration().getWriterFileOpenOpts());
                     Assert.assertTrue("must open _txn.epoch", fd > 0);
                     try {
@@ -274,7 +259,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
                 case CORRUPT_TXN_EPOCH_BODY: {
                     // Overwrite the whole file with garbage bytes: both A/B records fail their checksum.
                     p.of(engine.getConfiguration().getDbRoot()).concat(tt)
-                            .concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX);
+                            .concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(1);
                     final long len = ff.length(p.$());
                     Assert.assertTrue("the _txn.epoch must exist + be non-empty", len > 0);
                     final long fd = ff.openRW(p.$(), engine.getConfiguration().getWriterFileOpenOpts());
@@ -295,16 +280,18 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
                     }
                     break;
                 }
-                case MARKER_SEQTXN_AHEAD_OF_COPY: {
-                    // The _txn.epoch is a perfectly valid record at seqTxn=K, but the _snapshot marker claims
-                    // a DIFFERENT (later) epochSeqTxn — the anchor trio disagree (a stale copy under a newer
-                    // marker). The seqTxn cross-check must reject this.
-                    try (SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
-                        p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                        marker.of(p.$());
-                        Assert.assertTrue(marker.tryLoad());
-                        // Rewrite the marker with a seqTxn the copy cannot match (K + 1000).
-                        marker.write(marker.getEpochSeqTxn() + 1000, marker.getEpochTxn(), 2L);
+                case MANIFEST_SEQTXN_MISMATCH: {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt)
+                            .concat(io.questdb.cairo.DurableEpochManifest.FILE_NAME).put('.').put(1);
+                    final long fd = ff.openRW(p.$(), engine.getConfiguration().getWriterFileOpenOpts());
+                    Assert.assertTrue("must open generation manifest", fd > 0);
+                    final long buf = io.questdb.std.Unsafe.malloc(Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        io.questdb.std.Unsafe.getUnsafe().putLong(buf, K + 1000L);
+                        Assert.assertEquals(Long.BYTES, ff.write(fd, buf, Long.BYTES, 24));
+                    } finally {
+                        io.questdb.std.Unsafe.free(buf, Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                        ff.close(fd);
                     }
                     break;
                 }

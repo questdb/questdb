@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 
@@ -95,10 +96,12 @@ public class WalGroupCommitFlushQueue {
                     did = true;
                 }
             } catch (Throwable th) {
-                // A writer flush can fail (e.g. it became distressed, or the table is mid-drop). Drop it from
-                // the queue so a permanently broken writer cannot wedge the sweep; the writer itself surfaces
-                // the error to its own commit path. Durability is unaffected: localDurableSeqTxn only advances
-                // on a SUCCESSFUL flush, so a failed flush leaves the durable frontier honestly behind.
+                if (CairoException.isDataSyncFailure(th)) {
+                    // Never convert an indeterminate writeback failure into a best-effort retry. The writer
+                    // already poisoned the engine; preserve the fatal signal through worker-loop handling.
+                    CairoException.rethrowCleanupFailure(th);
+                }
+                // A non-durability failure (e.g. table mid-drop) remains isolated to this writer.
                 LOG.error().$("group-commit background flush failed [table=").$(w.getTableToken())
                         .$(", error=").$(th).I$();
                 failedFlushes.incrementAndGet();

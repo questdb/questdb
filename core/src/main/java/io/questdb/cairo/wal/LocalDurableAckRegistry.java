@@ -65,6 +65,9 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
      * depending on a {@link LocalDurableAckRegistry} instance.
      */
     public static long resolveLocalDurableSeqTxn(CairoEngine engine, CharSequence tableDirName) {
+        if (engine.isDurabilityFailed()) {
+            return -1L;
+        }
         TableToken token = engine.getTableTokenByDirName(tableDirName);
         if (token == null) {
             return -1L;
@@ -102,7 +105,7 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
      */
     @Override
     public boolean isEnabled() {
-        return true;
+        return !engine.isDurabilityFailed();
     }
 
     /**
