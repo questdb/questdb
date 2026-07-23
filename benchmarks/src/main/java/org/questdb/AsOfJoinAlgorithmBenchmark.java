@@ -114,7 +114,7 @@ public class AsOfJoinAlgorithmBenchmark {
     private static SqlExecutionContext ctx;
     private static WorkerPool pool;
 
-    @Param({"dense_ts", "unique_ts", "dense_sym", "illiquid_sym", "sparse_tail", "illiquid_idx", "idx_sweep", "noidx_sweep"})
+    @Param({"dense_ts", "unique_ts", "dense_sym", "illiquid_sym", "multikey_sym", "nokey", "sparse_tail", "illiquid_idx", "idx_sweep", "noidx_sweep"})
     public String dist;
 
     @Param({"default", "adaptive", "fast", "dense", "linear", "memoized", "index"})
@@ -125,11 +125,23 @@ public class AsOfJoinAlgorithmBenchmark {
     public static void main(String[] args) throws Exception {
         ensureEngine();
         buildData();
+        // -Dasof.bench.explain=true: print the selected plan (factory) for each shape's default (new) and
+        // fast (old) query, then exit without timing. Proves which cursor auto-selection picked per shape.
+        if (Boolean.getBoolean("asof.bench.explain")) {
+            explainAll();
+            LogFactory.haltInstance();
+            System.out.flush();
+            System.exit(0);
+        }
         final Options opt = args.length > 0
                 ? new org.openjdk.jmh.runner.options.CommandLineOptions(args)
                 : new OptionsBuilder().include(AsOfJoinAlgorithmBenchmark.class.getSimpleName()).build();
         new Runner(opt).run();
         LogFactory.haltInstance();
+        // The benchmark WorkerPool is non-daemon and is never stopped, so the JVM would otherwise hang
+        // after "Run complete" and keep the table lock (blocking the next run). Exit explicitly.
+        System.out.flush();
+        System.exit(0);
     }
 
     @Benchmark
@@ -181,6 +193,19 @@ public class AsOfJoinAlgorithmBenchmark {
         engine.execute("DROP TABLE IF EXISTS ord", ctx);
         engine.execute("CREATE TABLE ord (sym SYMBOL, ts TIMESTAMP, oid LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
         engine.execute("INSERT INTO ord SELECT '500', ((x-1)*" + (RIGHT_ROWS / 1000) + ")::timestamp, x-1 FROM long_sequence(1000)", ctx);
+        // multikey_sym: TWO symbol keys (e.g. exchange+ticker), unique timestamps (realistic). Multi-key
+        // ASOF is not single-symbol, so the new default is the general Dense cursor; the old default was
+        // Fast. This is a do-no-harm shape: Dense must not regress a realistic multi-key workload.
+        createMultiKey("l_mk");
+        engine.execute("INSERT INTO l_mk SELECT ((x-1)%100)::symbol, (((x-1)/100)%100)::symbol, ((x-1)+1)::timestamp, x-1 FROM long_sequence(" + ROWS + ")", ctx);
+        createMultiKey("r_mk");
+        engine.execute("INSERT INTO r_mk SELECT ((x-1)%100)::symbol, (((x-1)/100)%100)::symbol, (x-1)::timestamp, x-1 FROM long_sequence(" + ROWS + ")", ctx);
+        // nokey: no join key at all (single stream ASOF), unique timestamps. The Fast->Dense flip does not
+        // touch the no-key path, so this is a control: new default must equal the old behaviour.
+        createLong("l_nk");
+        engine.execute("INSERT INTO l_nk SELECT 0, ((x-1)+1)::timestamp, x-1 FROM long_sequence(" + ROWS + ")", ctx);
+        createLong("r_nk");
+        engine.execute("INSERT INTO r_nk SELECT 0, (x-1)::timestamp, x-1 FROM long_sequence(" + ROWS + ")", ctx);
         // sparse_tail: huge right (RIGHT_ROWS, single key, unique ts), tiny left window at the tail.
         // Each left row has a cheap targeted predecessor (Fast wins); Dense must reach the window first.
         createLong("r_tail");
@@ -226,6 +251,11 @@ public class AsOfJoinAlgorithmBenchmark {
         engine.execute("CREATE TABLE " + name + " (sym SYMBOL, ts TIMESTAMP, payload LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
     }
 
+    private static void createMultiKey(String name) throws SqlException {
+        engine.execute("DROP TABLE IF EXISTS " + name, ctx);
+        engine.execute("CREATE TABLE " + name + " (sym1 SYMBOL, sym2 SYMBOL, ts TIMESTAMP, payload LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+    }
+
     private static synchronized void ensureEngine() {
         if (engine != null) {
             return;
@@ -262,6 +292,33 @@ public class AsOfJoinAlgorithmBenchmark {
         );
     }
 
+    private static void explainAll() throws SqlException {
+        final String[] shapes = {"dense_ts", "unique_ts", "dense_sym", "illiquid_sym", "multikey_sym", "nokey", "sparse_tail", "illiquid_idx"};
+        System.out.println("=== PLAN SELECTION (shape : default[NEW] | fast[OLD]) ===");
+        for (String shape : shapes) {
+            System.out.println(shape + "\n    NEW default -> " + topAsofPlanLine(shape, "default")
+                    + "\n    OLD fast    -> " + topAsofPlanLine(shape, "fast"));
+        }
+    }
+
+    // Compile EXPLAIN and return the first "AsOf Join ..." line of the plan (the selected join cursor).
+    private static String topAsofPlanLine(String dist, String algo) throws SqlException {
+        try (RecordCursorFactory f = compiler.compile("EXPLAIN " + query(dist, algo), ctx).getRecordCursorFactory();
+             RecordCursor cursor = f.getCursor(ctx)) {
+            final Record rec = cursor.getRecord();
+            while (cursor.hasNext()) {
+                final CharSequence line = rec.getStrA(0);
+                if (line != null) {
+                    final String s = line.toString().trim();
+                    if (s.startsWith("AsOf Join")) {
+                        return s;
+                    }
+                }
+            }
+            return "(no AsOf Join node)";
+        }
+    }
+
     private static String query(String dist, String algo) {
         final String hint;
         switch (algo) {
@@ -292,6 +349,12 @@ public class AsOfJoinAlgorithmBenchmark {
                 return "SELECT " + hint + "sum(r.payload) FROM l_dsym l ASOF JOIN r_dsym r ON (sym)";
             case "illiquid_sym":
                 return "SELECT " + hint + "sum(r.v) FROM ord l ASOF JOIN md r ON (sym)";
+            case "multikey_sym":
+                // two symbol keys, realistic unique ts: new default is general Dense, old default was Fast.
+                return "SELECT " + hint + "sum(r.payload) FROM l_mk l ASOF JOIN r_mk r ON (sym1, sym2)";
+            case "nokey":
+                // no join key (single stream ASOF): untouched by the flip. Control shape.
+                return "SELECT " + hint + "sum(r.payload) FROM l_nk l ASOF JOIN r_nk r";
             case "sparse_tail":
                 // small left window at the TAIL of a huge right: the classic Fast-favourable shape
                 // (Dense must walk the right frame forward to reach the window; Fast jumps to it).
