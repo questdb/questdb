@@ -25,17 +25,35 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetConversionContext;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
+import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Tests lazy column type conversion on parquet partitions.
@@ -1780,6 +1798,251 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         ));
     }
 
+    @Test
+    public void testProduceParquetFromParquetWithConversionsIntToVarchar() throws Exception {
+        assertMemoryLeak(() -> assertDirectParquetMaterializerConversion(
+                "INT",
+                "VARCHAR",
+                """
+                        (1, 'a', '2024-01-01T00:00:01.000000Z'),
+                        (-42, 'b', '2024-01-01T00:00:02.000000Z'),
+                        (NULL, NULL, '2024-01-01T00:00:03.000000Z'),
+                        (7, 'c', '2024-01-02T00:00:01.000000Z')
+                        """,
+                ColumnType.INT,
+                ColumnType.VARCHAR,
+                """
+                        val\tsym
+                        1\ta
+                        -42\tb
+                        \t
+                        """
+        ));
+    }
+
+    @Test
+    public void testProduceParquetUpdaterPostAdoptionFailureDoesNotCloseReusedFd() throws Exception {
+        Assume.assumeFalse("coordinated integer-fd reuse requires POSIX descriptors", Os.isWindows());
+        assertMemoryLeak(() -> {
+            final String tableName = "post_adoption_failure";
+            final String candidateParquetFileName = "data.parquet.post-adoption";
+            final String candidateParquetMetaFileName = "_pm.post-adoption";
+            final AtomicInteger reusedFd = new AtomicInteger(-1);
+            try {
+                execute("CREATE TABLE " + tableName + " (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + tableName + " VALUES " +
+                        "(1, '2024-01-01T00:00:00.000000Z'), " +
+                        "(2, '2024-01-02T00:00:00.000000Z')");
+                execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+                final TableToken tableToken = engine.verifyTableName(tableName);
+                final TableUtils.SymbolTableProviderFromReader symbolTableProvider = new TableUtils.SymbolTableProviderFromReader();
+                final PartitionUpdater failingUpdater = new PartitionUpdater() {
+                    @Override
+                    public void of(
+                            LPSZ srcPath,
+                            int readerFd,
+                            long readFileSize,
+                            int writerFd,
+                            long writeFileSize,
+                            int timestampIndex,
+                            long compressionCodec,
+                            boolean statisticsEnabled,
+                            boolean rawArrayEncoding,
+                            long rowGroupSize,
+                            long dataPageSize,
+                            double bloomFilterFpp,
+                            double minCompressionRatio,
+                            int parquetMetaFd,
+                            long parquetMetaFileSize,
+                            long appendBase,
+                            long existingParquetFileSize,
+                            long seqTxn
+                    ) {
+                        // Model a JNI constructor failure after Rust has adopted and
+                        // dropped all descriptors. Reopen files until the kernel
+                        // recycles one of those exact integers before returning to
+                        // TableUtils' finally block.
+                        Assert.assertTrue(readerFd >= 0);
+                        Assert.assertTrue(writerFd >= 0);
+                        Assert.assertTrue(parquetMetaFd >= 0);
+                        Assert.assertNotEquals(readerFd, writerFd);
+                        Assert.assertNotEquals(readerFd, parquetMetaFd);
+                        Assert.assertNotEquals(writerFd, parquetMetaFd);
+                        Assert.assertEquals(0, Files.closeDetached(readerFd));
+                        Assert.assertEquals(0, Files.closeDetached(writerFd));
+                        Assert.assertEquals(0, Files.closeDetached(parquetMetaFd));
+
+                        final IntList opened = new IntList();
+                        try (Path replacementPath = new Path()) {
+                            replacementPath.of(root).concat("fd-reuse-sentinel").$();
+                            for (int i = 0; i < 64 && reusedFd.get() == -1; i++) {
+                                final long fd = Files.openRW(replacementPath.$());
+                                Assert.assertTrue("could not open replacement fd", fd >= 0);
+                                final int osFd = Files.detach(fd);
+                                opened.add(osFd);
+                                if (osFd == readerFd || osFd == writerFd || osFd == parquetMetaFd) {
+                                    reusedFd.set(osFd);
+                                }
+                            }
+                        } finally {
+                            for (int i = 0, n = opened.size(); i < n; i++) {
+                                final int osFd = opened.getQuick(i);
+                                if (osFd != reusedFd.get()) {
+                                    Files.closeDetached(osFd);
+                                }
+                            }
+                        }
+                        Assert.assertTrue("kernel did not recycle an adopted fd", reusedFd.get() >= 0);
+                        throw CairoException.critical(0).put("injected post-adoption failure");
+                    }
+                };
+
+                try (
+                        TableReader reader = engine.getReader(tableToken);
+                        Path path = new Path();
+                        Path other = new Path();
+                        ParquetConversionContext conversionContext = new ParquetConversionContext(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER) {
+                            @Override
+                            public PartitionUpdater getPartitionUpdater() {
+                                return failingUpdater;
+                            }
+
+                            @Override
+                            public void releaseResources() {
+                                failingUpdater.close();
+                                super.releaseResources();
+                            }
+                        }
+                ) {
+                    final TxReader txReader = reader.getTxFile();
+                    final int partitionIndex = txReader.getPartitionIndex(reader.getMinTimestamp());
+                    Assert.assertTrue(partitionIndex >= 0);
+                    final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
+                    final long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
+                    final long sourceParquetFileSize = txReader.getPartitionParquetFileSize(partitionIndex);
+                    path.of(configuration.getDbRoot()).concat(tableToken);
+                    other.of(configuration.getDbRoot()).concat(tableToken);
+                    final int pathSize = path.size();
+                    symbolTableProvider.of(reader);
+
+                    final CairoException error = Assert.assertThrows(
+                            CairoException.class,
+                            () -> TableUtils.produceParquetFromParquetWithConversions(
+                                    path,
+                                    other,
+                                    pathSize,
+                                    partitionTimestamp,
+                                    partitionNameTxn,
+                                    sourceParquetFileSize,
+                                    candidateParquetFileName,
+                                    candidateParquetMetaFileName,
+                                    reader.getMetadata(),
+                                    reader.getColumnVersionReader(),
+                                    symbolTableProvider,
+                                    configuration,
+                                    conversionContext,
+                                    txReader.getSeqTxn()
+                            )
+                    );
+                    TestUtils.assertContains(error.getMessage(), "injected post-adoption failure");
+                } finally {
+                    symbolTableProvider.clear();
+                }
+
+                // A stale Java finally close would have closed the replacement
+                // descriptor and made closeDetached return -1 (EBADF).
+                Assert.assertEquals("TableUtils closed a recycled fd", 0, Files.closeDetached(reusedFd.getAndSet(-1)));
+            } finally {
+                if (reusedFd.get() >= 0) {
+                    Files.closeDetached(reusedFd.getAndSet(-1));
+                }
+                try (Path replacementPath = new Path()) {
+                    replacementPath.of(root).concat("fd-reuse-sentinel").$();
+                    configuration.getFilesFacade().removeQuiet(replacementPath.$());
+                }
+                tryDrop(tableName);
+            }
+        });
+    }
+
+    @Test
+    public void testProduceParquetFromParquetWithConversionsVarcharToLong() throws Exception {
+        assertMemoryLeak(() -> assertDirectParquetMaterializerConversion(
+                "VARCHAR",
+                "LONG",
+                """
+                        ('1', 'a', '2024-01-01T00:00:01.000000Z'),
+                        ('-42', 'b', '2024-01-01T00:00:02.000000Z'),
+                        (NULL, NULL, '2024-01-01T00:00:03.000000Z'),
+                        ('7', 'c', '2024-01-02T00:00:01.000000Z')
+                        """,
+                ColumnType.VARCHAR,
+                ColumnType.LONG,
+                """
+                        val\tsym
+                        1\ta
+                        -42\tb
+                        null\t
+                        """
+        ));
+    }
+
+    @Test
+    public void testProduceParquetFromParquetWithConversionsWideTableDecodesOnlyChangedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                final int unchangedColumnCount = 256;
+                final int rowCount = 4096;
+                final StringBuilder create = new StringBuilder("CREATE TABLE pt (val INT");
+                for (int i = 0; i < unchangedColumnCount; i++) {
+                    create.append(", u").append(i).append(" LONG");
+                }
+                create.append(", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute(create);
+
+                final StringBuilder insert = new StringBuilder("INSERT INTO pt SELECT x::INT");
+                for (int i = 0; i < unchangedColumnCount; i++) {
+                    insert.append(", x");
+                }
+                insert.append(", timestamp_sequence('2024-01-01T00:00:00.000000Z', 1_000_000) FROM long_sequence(")
+                        .append(rowCount)
+                        .append(')');
+                execute(insert);
+                drainWalQueue();
+                execute("INSERT INTO pt (val, ts) VALUES (1, '2024-01-02T00:00:00.000000Z')");
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE LONG");
+                drainWalQueue();
+
+                final String candidatePath = produceCurrentSchemaParquetCandidate(
+                        "pt",
+                        "wide-long",
+                        ColumnType.INT,
+                        ColumnType.LONG,
+                        1,
+                        64 * 1024L
+                );
+                final String oldInputRoot = inputRoot;
+                inputRoot = root;
+                try {
+                    assertQuery("SELECT count() n, sum(val) val_sum, sum(u0) u0_sum, sum(u255) u255_sum "
+                            + "FROM read_parquet('" + candidatePath.replace("'", "''") + "')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("n\tval_sum\tu0_sum\tu255_sum\n4096\t8390656\t8390656\t8390656\n");
+                } finally {
+                    inputRoot = oldInputRoot;
+                }
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
     /**
      * fixed->var dedup key: symmetric to {@link #testO3DedupKeyConversionVarToFixed} but
      * converting a fixed dedup key (INT) to a var-size target (VARCHAR). The parquet partition
@@ -2831,7 +3094,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * <p>
      * The var-to-fixed arm of {@code TableWriter.produceNativeFromParquet} converts each row
      * group's freshly decoded var buffer to fixed values with
-     * {@code O3PartitionJob.convertVarColumnToFixed} and appends the result to the destination
+     * {@code ParquetColumnTypeConverter.convertVarColumnToFixed} and appends the result to the destination
      * fixed file. {@code convertVarColumnToFixed} reads every value through the row group's own
      * aux vector, whose entry offsets are relative to that row group's local data buffer (the
      * first entry of each row group starts at offset 0). If a later row group's decode were
@@ -3097,7 +3360,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Same absolute-oracle approach for the O3PartitionJob.convertVarColumnToFixed
+     * Same absolute-oracle approach for the ParquetColumnTypeConverter.convertVarColumnToFixed
      * path, which is taken by CONVERT PARTITION TO NATIVE (and by O3 merge into a
      * parquet partition whose column was ALTERed to a fixed type). The materializer
      * must UTF-8 decode the source bytes before taking the first CHAR; routing the
@@ -3600,7 +3863,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
             // Second assertion: eager rewrite path. CONVERT PARTITION TO NATIVE
             // materializes the lazy conversion through produceNativeFromParquet ->
-            // O3PartitionJob.convertVarColumnToFixed / convertFixedColumnToString /
+            // ParquetColumnTypeConverter.convertVarColumnToFixed / convertFixedColumnToString /
             // convertFixedColumnToVarchar (and the in-place var->var copy), so the
             // re-read goes against native files written by the eager kernel.
             execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
@@ -3609,6 +3872,188 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         } finally {
             tryDrop("nt");
             tryDrop("pt");
+        }
+    }
+
+    private void assertDirectParquetMaterializerConversion(
+            String sourceType,
+            String targetType,
+            String values,
+            int expectedSourceColumnType,
+            int expectedColumnType,
+            String expectedCandidateRows
+    ) throws Exception {
+        try {
+            execute("CREATE TABLE pt (val " + sourceType + ", sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO pt VALUES " + values);
+            drainWalQueue();
+
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+
+            // This calls the staged parquet-to-parquet materializer directly. It deliberately does
+            // not query pt afterwards: that would go through the lazy parquet conversion path.
+            final String candidatePath = produceCurrentSchemaParquetCandidate(
+                    "pt",
+                    targetType,
+                    expectedSourceColumnType,
+                    expectedColumnType
+            );
+            final String oldInputRoot = inputRoot;
+            inputRoot = root;
+            try {
+                assertQuery("SELECT val, sym FROM read_parquet('" + candidatePath.replace("'", "''") + "') ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedCandidateRows);
+            } finally {
+                inputRoot = oldInputRoot;
+            }
+        } finally {
+            tryDrop("pt");
+        }
+    }
+
+    private void assertParquetColumnType(String parquetFilePath, int expectedColumnType) {
+        final FilesFacade filesFacade = configuration.getFilesFacade();
+        long fd = -1;
+        long addr = 0;
+        long fileSize = 0;
+        try (Path path = new Path(); ParquetFileDecoder decoder = new ParquetFileDecoder()) {
+            path.of(parquetFilePath).$();
+            fd = TableUtils.openRO(filesFacade, path.$(), LOG);
+            fileSize = filesFacade.length(fd);
+            addr = TableUtils.mapRO(filesFacade, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+            final int columnIndex = decoder.metadata().getColumnIndex("val");
+            Assert.assertTrue("candidate parquet is missing val", columnIndex >= 0);
+            Assert.assertEquals(expectedColumnType, decoder.metadata().getColumnType(columnIndex));
+        } finally {
+            if (addr != 0) {
+                filesFacade.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            if (fd != -1) {
+                filesFacade.close(fd);
+            }
+        }
+    }
+
+    private String produceCurrentSchemaParquetCandidate(
+            String tableName,
+            String candidateSuffix,
+            int expectedSourceColumnType,
+            int expectedColumnType
+    ) throws Exception {
+        return produceCurrentSchemaParquetCandidate(
+                tableName,
+                candidateSuffix,
+                expectedSourceColumnType,
+                expectedColumnType,
+                -1,
+                -1
+        );
+    }
+
+    private String produceCurrentSchemaParquetCandidate(
+            String tableName,
+            String candidateSuffix,
+            int expectedSourceColumnType,
+            int expectedColumnType,
+            int expectedDecodedColumnCount,
+            long maxDecodedRowGroupBytes
+    ) throws Exception {
+        final String candidateParquetFileName = "data.parquet.materializer-" + candidateSuffix.toLowerCase();
+        final String candidateParquetMetaFileName = "_pm.materializer-" + candidateSuffix.toLowerCase();
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        final TableUtils.SymbolTableProviderFromReader symbolTableProvider = new TableUtils.SymbolTableProviderFromReader();
+        final FilesFacade filesFacade = configuration.getFilesFacade();
+
+        try (
+                TableReader reader = engine.getReader(tableToken);
+                Path path = new Path();
+                Path other = new Path();
+                ParquetConversionContext conversionContext = new ParquetConversionContext(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER)
+        ) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(reader.getMinTimestamp());
+            Assert.assertTrue("expected the 2024-01-01 partition", partitionIndex >= 0);
+            Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(partitionIndex));
+            Assert.assertEquals(expectedColumnType, reader.getMetadata().getColumnType(reader.getMetadata().getColumnIndex("val")));
+            reader.openPartition(partitionIndex);
+            final int sourceColumnIndex = reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata().getColumnIndex("val");
+            Assert.assertTrue("source parquet is missing val", sourceColumnIndex >= 0);
+            Assert.assertEquals(
+                    expectedSourceColumnType,
+                    reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata().getColumnType(sourceColumnIndex)
+            );
+
+            final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
+            final long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
+            final long sourceParquetFileSize = txReader.getPartitionParquetFileSize(partitionIndex);
+            path.of(configuration.getDbRoot()).concat(tableToken);
+            other.of(configuration.getDbRoot()).concat(tableToken);
+            final int pathSize = path.size();
+
+            symbolTableProvider.of(reader);
+            final long candidateParquetFileSize = TableUtils.produceParquetFromParquetWithConversions(
+                    path,
+                    other,
+                    pathSize,
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    sourceParquetFileSize,
+                    candidateParquetFileName,
+                    candidateParquetMetaFileName,
+                    reader.getMetadata(),
+                    reader.getColumnVersionReader(),
+                    symbolTableProvider,
+                    configuration,
+                    conversionContext,
+                    txReader.getSeqTxn()
+            );
+            Assert.assertTrue("candidate parquet should be non-empty", candidateParquetFileSize > 0);
+            if (expectedDecodedColumnCount >= 0) {
+                Assert.assertEquals(
+                        "parquet rewrite must decode only the changed columns",
+                        expectedDecodedColumnCount,
+                        conversionContext.getLastDecodedColumnCount()
+                );
+                Assert.assertTrue(
+                        "retained native decode buffers must be bounded by the changed-column width [actual="
+                                + conversionContext.getLastDecodedRowGroupBytes()
+                                + ", max=" + maxDecodedRowGroupBytes + ']',
+                        conversionContext.getLastDecodedRowGroupBytes() <= maxDecodedRowGroupBytes
+                );
+            }
+
+            TableUtils.setPathForNativePartition(
+                    path.trimTo(pathSize),
+                    reader.getMetadata().getTimestampType(),
+                    reader.getMetadata().getPartitionBy(),
+                    partitionTimestamp,
+                    partitionNameTxn
+            );
+            path.concat(candidateParquetFileName).$();
+            Assert.assertTrue("candidate parquet should exist", filesFacade.exists(path.$()));
+            final String candidateParquetPath = path.toString();
+
+            TableUtils.setPathForNativePartition(
+                    other.trimTo(pathSize),
+                    reader.getMetadata().getTimestampType(),
+                    reader.getMetadata().getPartitionBy(),
+                    partitionTimestamp,
+                    partitionNameTxn
+            );
+            other.concat(candidateParquetMetaFileName).$();
+            Assert.assertTrue("candidate parquet metadata should exist", filesFacade.exists(other.$()));
+
+            assertParquetColumnType(candidateParquetPath, expectedColumnType);
+            return candidateParquetPath;
+        } finally {
+            symbolTableProvider.clear();
         }
     }
 
