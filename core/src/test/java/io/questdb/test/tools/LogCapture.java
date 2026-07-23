@@ -9,8 +9,11 @@ import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 import org.junit.Assert;
 
+import java.util.function.LongConsumer;
+import java.util.function.LongSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -18,6 +21,10 @@ public class LogCapture {
     private final LogConsoleWriter consoleWriter;
     private final StringSink sink = new SynchronizedSink();
     private final LogConsoleWriter.LogInterceptor interceptor = this::onLog;
+    // Real by default; a test pins the exact deadline boundary in waitFor(CharSequence, long) by
+    // swapping these for a fake clock/sleeper instead of racing real wall-clock granularity.
+    private LongSupplier clockMillis = System::currentTimeMillis;
+    private LongConsumer sleeper = Os::sleep;
 
     public LogCapture() {
         consoleWriter = getFirstConsoleWriter();
@@ -57,6 +64,16 @@ public class LogCapture {
         Assert.assertEquals("Message '" + regex + "' was not more than once", 0, m.groupCount());
     }
 
+    @TestOnly
+    public void setClockForTest(LongSupplier clockMillis) {
+        this.clockMillis = clockMillis;
+    }
+
+    @TestOnly
+    public void setSleeperForTest(LongConsumer sleeper) {
+        this.sleeper = sleeper;
+    }
+
     public void start() {
         sink.clear();
         consoleWriter.setInterceptor(interceptor);
@@ -72,12 +89,12 @@ public class LogCapture {
 
     public void waitFor(CharSequence value, long timeoutMs) {
         final String needle = value.toString();
-        long start = System.currentTimeMillis();
+        long start = clockMillis.getAsLong();
         while (sink.indexOf(needle) == -1) {
-            if ((System.currentTimeMillis() - start) >= timeoutMs) {
+            if ((clockMillis.getAsLong() - start) >= timeoutMs) {
                 throw new AssertionError("timed out waiting for log to contain '" + value + "', captured log: " + sink);
             }
-            Os.sleep(1);
+            sleeper.accept(1);
         }
     }
 

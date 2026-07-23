@@ -26,6 +26,7 @@ package io.questdb.test.tools;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.After;
 import org.junit.Assert;
@@ -67,5 +68,30 @@ public class LogCaptureTest extends AbstractCairoTest {
                 "expected the AssertionError message to name the awaited string, got: " + error.getMessage(),
                 error.getMessage().contains(marker)
         );
+    }
+
+    @Test
+    public void testWaitForBoundedOverloadThrowsOnExactDeadline() {
+        // Real wall-clock sleeps always overshoot the deadline by some margin, so a real-time test
+        // can never pin the EXACT elapsed==timeoutMs boundary -- a fake clock/sleeper does. The
+        // sleeper jumps the clock straight to start+timeoutMs on its first call; the marker is
+        // never logged, so waitFor must treat elapsed==timeoutMs as timed out (the `>=` check), not
+        // let it slip through (an old `<` loop / `>` post-check shape treats exact equality as
+        // neither "still waiting" nor "timed out" and returns silently instead of throwing).
+        final String marker = "log-capture-witness-exact-deadline-" + System.nanoTime();
+        final long timeoutMs = 50;
+        final long[] clockValue = {1_000_000L};
+        capture.setClockForTest(() -> clockValue[0]);
+        capture.setSleeperForTest(ms -> clockValue[0] = 1_000_000L + timeoutMs);
+        try {
+            AssertionError error = Assert.assertThrows(AssertionError.class, () -> capture.waitFor(marker, timeoutMs));
+            Assert.assertTrue(
+                    "expected the AssertionError message to name the awaited string, got: " + error.getMessage(),
+                    error.getMessage().contains(marker)
+            );
+        } finally {
+            capture.setClockForTest(System::currentTimeMillis);
+            capture.setSleeperForTest(Os::sleep);
+        }
     }
 }
