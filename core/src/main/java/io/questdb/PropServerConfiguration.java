@@ -310,6 +310,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
+    private final long liveViewCheckpointCompactionInterval;
     private final long liveViewCheckpointMaxDurationMicros;
     private final long liveViewCheckpointRepairReplayMaxRows;
     private final long liveViewCheckpointRepairScanMaxKeys;
@@ -1521,6 +1522,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
             // live-view config
+            this.liveViewCheckpointCompactionInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_COMPACTION_INTERVAL, 0L);
             this.liveViewCheckpointMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 5L * Micros.MINUTE_MICROS);
             this.liveViewCheckpointRepairReplayMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000L);
             this.liveViewCheckpointRepairScanMaxKeys = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 100_000L);
@@ -4160,6 +4162,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull CharSequence getLegacyCheckpointRoot() {
             return legacyCheckpointRoot;
+        }
+
+        @Override
+        public long getLiveViewCheckpointCompactionInterval() {
+            return liveViewCheckpointCompactionInterval;
         }
 
         @Override

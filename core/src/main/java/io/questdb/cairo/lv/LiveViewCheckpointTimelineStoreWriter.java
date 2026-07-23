@@ -233,6 +233,167 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
+     * Publishes one physical compaction as a timeline splice that relocates state
+     * pages without changing a single logical coordinate.
+     * <p>
+     * The driver has already repacked every drained page into the plan's target
+     * segment; this method rebuilds only the roots that name a drained segment,
+     * swapping each such page reference to its relocated one and reusing every
+     * other root, anchor and function tree by reference. A rebuilt root keeps its
+     * {@code checkpointId}, {@code maxTimestamp}, {@code createdLvSeqTxn},
+     * {@code baseLvRowPosition} and {@code logicalStateBytes} - only the physical
+     * location of its bytes moves - so the row-position delta index, the watermarks
+     * and the checkpoint-id counter all carry forward untouched.
+     * <p>
+     * The publication is one atomic A/B superblock swap: the old generation is
+     * fully valid until it commits and the new one is fully valid after, so a crash
+     * in between leaves the pre-compaction generation intact and the committed
+     * target segment as an ordinary final-name orphan the next seal reclaims. No
+     * durable repair marker is needed.
+     * <p>
+     * The drained source segments retire at the new generation once no rebuilt root
+     * names them, and the purge job reclaims them after the fallback A/B slot
+     * advances past the old generation and no reader pins it.
+     *
+     * @param plan the target segment and physical-page redirect the driver's repack
+     *             produced against the current generation
+     */
+    public CompactionResult publishCompaction(
+            @Transient @NotNull Path checkpointsDir,
+            long definitionTxn,
+            long historyEpoch,
+            boolean primaryOwner,
+            @NotNull LiveViewCheckpointCompactionPlan plan
+    ) {
+        if (!primaryOwner) {
+            throw CairoException.critical(0).put("replica must not publish a live view checkpoint timeline");
+        }
+        try (
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration);
+                LiveViewCheckpointTimelineReader timelineReader = new LiveViewCheckpointTimelineReader(configuration);
+                LiveViewCheckpointSegmentDirectoryWriter directoryWriter = new LiveViewCheckpointSegmentDirectoryWriter(configuration);
+                RootBuilders roots = new RootBuilders();
+                LiveViewCheckpointTimelineWriter timelineWriter = new LiveViewCheckpointTimelineWriter(configuration)
+        ) {
+            metaStore.of(checkpointsDir);
+            timelineReader.of(checkpointsDir);
+            timelineWriter.of(checkpointsDir);
+            directoryWriter.of(checkpointsDir);
+
+            if (!metaStore.isValid()) {
+                throw CairoException.critical(0)
+                        .put("cannot compact a live view checkpoint timeline with no valid generation");
+            }
+            final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
+            if (superblock.definitionTxn != definitionTxn || superblock.historyEpoch != historyEpoch) {
+                throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                        .put("live view checkpoint compaction definition identity mismatch");
+            }
+            if (superblock.generation != plan.getGeneration()) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint timeline moved under the compaction plan")
+                        .put(" [planned=").put(plan.getGeneration())
+                        .put(", current=").put(superblock.generation).put(']');
+            }
+
+            final long generation = checkedIncrement(superblock.generation, "generation");
+            final LiveViewCheckpointPageRef oldTimelineRoot = copy(superblock.timelineRootRef);
+            final LiveViewCheckpointPageRef oldDirectoryRoot = copy(superblock.segmentDirectoryRootRef);
+            directoryWriter.begin(oldDirectoryRoot);
+
+            final long targetSegmentId = plan.getTargetSegmentId();
+            long nextSegmentId = Math.max(superblock.nextSegmentId, targetSegmentId + 1);
+            roots.of(checkpointsDir, nextSegmentId);
+
+            // One ordered pass over the timeline. Rebuilding a root reads separate
+            // metadata (checkpoint roots, function roots, partition maps) and writes
+            // its own fresh segment, so it never touches the timeline reader's cursor
+            // and runs inside the visitor without a materialized entry-per-root copy.
+            // Only the changed entries - bounded by the roots that name a drained
+            // segment - are copied, for the splice that follows.
+            final ObjList<LiveViewCheckpointTimelineEntry> changedEntries = new ObjList<>();
+            final LongList removedSegmentIds = new LongList();
+            final LongList addedSegmentIds = new LongList();
+            final LiveViewCheckpointPageRef newRootRef = new LiveViewCheckpointPageRef();
+            final int[] targetSegmentRootRefs = {0};
+            timelineReader.iterateAll(oldTimelineRoot, entry -> {
+                if (!roots.buildRedirectedRoot(
+                        entry.rootRef,
+                        definitionTxn,
+                        plan,
+                        newRootRef,
+                        removedSegmentIds,
+                        addedSegmentIds
+                )) {
+                    // Names no drained segment, so every page it holds stays put and
+                    // the entry keeps its existing root by reference.
+                    return;
+                }
+                final LiveViewCheckpointTimelineEntry newEntry = new LiveViewCheckpointTimelineEntry().copyFrom(entry);
+                newEntry.rootRef.of(newRootRef.getSegmentId(), newRootRef.getOffset(), newRootRef.getLength());
+                changedEntries.add(newEntry);
+                // The introduced target segment carries its own root-reference count
+                // through addSegment, so it must not also be counted per root.
+                if (dropSegmentId(addedSegmentIds, targetSegmentId)) {
+                    targetSegmentRootRefs[0]++;
+                }
+                directoryWriter.applyRootReferenceChanges(removedSegmentIds, addedSegmentIds, generation);
+            });
+
+            if (targetSegmentRootRefs[0] == 0) {
+                // A non-empty plan whose pages no surviving root names is an
+                // inconsistency between planning and publication; refuse rather
+                // than leave the committed target segment referenced by nobody.
+                throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                        .put("live view checkpoint compaction plan redirected no live root");
+            }
+            nextSegmentId = roots.nextSegmentId;
+            long metadataBytesAdded = roots.metadataBytesAdded;
+            directoryWriter.addSegment(targetSegmentId, plan.getTargetSegmentBytes(), targetSegmentRootRefs[0]);
+
+            final LiveViewCheckpointTimelineEntry[] spliced = new LiveViewCheckpointTimelineEntry[changedEntries.size()];
+            for (int i = 0; i < spliced.length; i++) {
+                spliced[i] = changedEntries.getQuick(i);
+            }
+            nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            final LiveViewCheckpointPageRef newTimelineRoot = new LiveViewCheckpointPageRef();
+            timelineWriter.splice(oldTimelineRoot, spliced, spliced.length, nextSegmentId++, newTimelineRoot);
+            metadataBytesAdded = checkedAdd(metadataBytesAdded, timelineWriter.getLastSegmentBytes());
+
+            nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
+            directoryWriter.publish(nextSegmentId++, newDirectoryRoot);
+            metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.getLastSegmentBytes());
+            if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
+                throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
+            }
+
+            superblock.generation = generation;
+            superblock.nextSegmentId = nextSegmentId;
+            superblock.metadataBytes = checkedAdd(superblock.metadataBytes, metadataBytesAdded);
+            superblock.dataBytes = checkedAdd(superblock.dataBytes, plan.getTargetSegmentBytes());
+            // Compaction relocates bytes without changing any logical coordinate, so
+            // the logical state total, row-position delta index and its root, the
+            // base and live-view watermarks, the checkpoint-id counter and the
+            // mid-sweep seed cursor all carry forward untouched.
+            copy(newTimelineRoot, superblock.timelineRootRef);
+            copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
+            metaStore.publish();
+
+            return new CompactionResult(
+                    generation,
+                    changedEntries.size(),
+                    targetSegmentId,
+                    plan.getTargetSegmentBytes(),
+                    metadataBytesAdded,
+                    metaStore.getWalPurgeFloor(),
+                    new LiveViewCheckpointTimelineStats()
+                            .of(superblock, checkedAdd(plan.getTargetSegmentBytes(), metadataBytesAdded))
+            );
+        }
+    }
+
+    /**
      * Publishes one localized out-of-order repair as a timeline range splice.
      * <p>
      * The splice preserves every logical key: the captured boundaries keep their
@@ -904,6 +1065,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         return false;
     }
 
+    private static CairoException missingRedirect(LiveViewCheckpointStatePageRef ref) {
+        // The planner walked every root, so a live page in a drained segment must be
+        // in the redirect. Reaching here means planning and publication disagree.
+        return CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                .put("live view checkpoint compaction missing redirect [segmentId=")
+                .put(ref.getSegmentId()).put(", offset=").put(ref.getOffset()).put(']');
+    }
+
     private static void removeMissingPartitions(
             Path checkpointsDir,
             LiveViewCheckpointPageRef oldFunctionRootRef,
@@ -1258,6 +1427,72 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         @Override
         public long getMaxTimestamp() {
             return maxTimestamp;
+        }
+    }
+
+    /**
+     * Result of one physical compaction publication.
+     */
+    public static final class CompactionResult {
+        private final long dataBytesAdded;
+        private final long generation;
+        private final long metadataBytesAdded;
+        private final int rootsRewritten;
+        private final LiveViewCheckpointTimelineStats stats;
+        private final long targetSegmentId;
+        private final long walPurgeFloor;
+
+        private CompactionResult(
+                long generation,
+                int rootsRewritten,
+                long targetSegmentId,
+                long dataBytesAdded,
+                long metadataBytesAdded,
+                long walPurgeFloor,
+                LiveViewCheckpointTimelineStats stats
+        ) {
+            this.generation = generation;
+            this.rootsRewritten = rootsRewritten;
+            this.targetSegmentId = targetSegmentId;
+            this.dataBytesAdded = dataBytesAdded;
+            this.metadataBytesAdded = metadataBytesAdded;
+            this.walPurgeFloor = walPurgeFloor;
+            this.stats = stats;
+        }
+
+        public long getDataBytesAdded() {
+            return dataBytesAdded;
+        }
+
+        public long getGeneration() {
+            return generation;
+        }
+
+        public long getMetadataBytesAdded() {
+            return metadataBytesAdded;
+        }
+
+        /**
+         * @return the number of logical roots this compaction re-versioned onto the
+         * relocated pages
+         */
+        public int getRootsRewritten() {
+            return rootsRewritten;
+        }
+
+        /**
+         * @return the shape of the generation this compaction committed
+         */
+        public LiveViewCheckpointTimelineStats getStats() {
+            return stats;
+        }
+
+        public long getTargetSegmentId() {
+            return targetSegmentId;
+        }
+
+        public long getWalPurgeFloor() {
+            return walPurgeFloor;
         }
     }
 
@@ -1772,8 +2007,174 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 new LiveViewCheckpointFunctionRoot(configuration);
         private final LiveViewCheckpointPartitionMapReader oldPartitionReader =
                 new LiveViewCheckpointPartitionMapReader(configuration);
+        private final LiveViewCheckpointPageRef redirectAnchorRootRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointRoot redirectCheckpointRoot =
+                new LiveViewCheckpointRoot(configuration);
+        private final LiveViewCheckpointFunctionDirectory redirectFunctionDirectory =
+                new LiveViewCheckpointFunctionDirectory(configuration);
+        private final LiveViewCheckpointPageRef redirectFunctionDirectoryRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointPageRef redirectNewFunctionRootRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointPageRef redirectOldFunctionRootRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointPageRef redirectPartitionMapRoot = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointStatePageRef redirectScalarRef = new LiveViewCheckpointStatePageRef();
         private long metadataBytesAdded;
         private long nextSegmentId;
+
+        /**
+         * Rebuilds the checkpoint root at {@code oldRootRef}, swapping every state
+         * page reference that names a drained segment for its relocated reference in
+         * the plan's target segment. Anchor state and every function whose pages all
+         * survive are reused by reference; only the function roots that name a
+         * drained page are rewritten.
+         * <p>
+         * Returns true when the root named a drained segment and was rebuilt -
+         * {@code rootRefOut} names the new root, {@code removedSegmentIdsOut} holds
+         * the old root's referenced segments and {@code addedSegmentIdsOut} the new
+         * root's. Returns false when it named none and is reused as-is, leaving the
+         * out parameters untouched.
+         */
+        private boolean buildRedirectedRoot(
+                LiveViewCheckpointPageRef oldRootRef,
+                long definitionTxn,
+                LiveViewCheckpointCompactionPlan plan,
+                LiveViewCheckpointPageRef rootRefOut,
+                LongList removedSegmentIdsOut,
+                LongList addedSegmentIdsOut
+        ) {
+            redirectCheckpointRoot.of(checkpointsDir, oldRootRef);
+            if (redirectCheckpointRoot.getDefinitionTxn() != definitionTxn) {
+                throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                        .put("live view checkpoint compaction root definition identity mismatch");
+            }
+            // A root that names no drained segment shares every page it holds, so it
+            // keeps its existing root by reference without reading its functions.
+            boolean referencesDrained = false;
+            for (int s = 0, n = redirectCheckpointRoot.getSegmentIdCount(); s < n; s++) {
+                if (plan.isDrainedSegment(redirectCheckpointRoot.getSegmentId(s))) {
+                    referencesDrained = true;
+                    break;
+                }
+            }
+            if (!referencesDrained) {
+                return false;
+            }
+            removedSegmentIdsOut.clear();
+            for (int s = 0, n = redirectCheckpointRoot.getSegmentIdCount(); s < n; s++) {
+                removedSegmentIdsOut.add(redirectCheckpointRoot.getSegmentId(s));
+            }
+
+            // Anchor entries carry no data-segment state, so the anchor root is
+            // reused by reference untouched across a compaction.
+            redirectCheckpointRoot.getAnchorRootRef(redirectAnchorRootRef);
+            redirectCheckpointRoot.getFunctionDirectoryRef(redirectFunctionDirectoryRef);
+            redirectFunctionDirectory.of(checkpointsDir, redirectFunctionDirectoryRef);
+
+            nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            checkpointRootBuilder.begin(
+                    checkpointsDir,
+                    redirectCheckpointRoot.getCheckpointId(),
+                    redirectCheckpointRoot.getMaxTimestamp(),
+                    definitionTxn,
+                    redirectAnchorRootRef
+            );
+            for (int i = 0, n = redirectFunctionDirectory.size(); i < n; i++) {
+                redirectFunctionDirectory.getRootRef(i, redirectOldFunctionRootRef);
+                if (buildRedirectedFunctionRoot(redirectOldFunctionRootRef, plan, redirectNewFunctionRootRef)) {
+                    checkpointRootBuilder.addFunction(redirectNewFunctionRootRef);
+                } else {
+                    checkpointRootBuilder.addFunction(redirectOldFunctionRootRef);
+                }
+            }
+
+            nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            checkpointRootBuilder.build(nextSegmentId++, rootRefOut);
+            metadataBytesAdded = checkedAdd(metadataBytesAdded, checkpointRootBuilder.getLastSegmentBytes());
+            checkpointRootBuilder.getReferencedSegmentIds(addedSegmentIdsOut);
+            return true;
+        }
+
+        /**
+         * Rebuilds one function root, swapping the scalar state reference and every
+         * partition state reference that names a drained segment for its relocated
+         * reference. A function that names no drained page is left untouched and this
+         * returns false, so the checkpoint root reuses it by reference.
+         *
+         * @return true when the function was rewritten ({@code newRootRefOut} names
+         * the new function root)
+         */
+        private boolean buildRedirectedFunctionRoot(
+                LiveViewCheckpointPageRef oldFunctionRootRef,
+                LiveViewCheckpointCompactionPlan plan,
+                LiveViewCheckpointPageRef newRootRefOut
+        ) {
+            oldFunctionRoot.of(checkpointsDir, oldFunctionRootRef);
+            boolean referencesDrained = false;
+            for (int s = 0, n = oldFunctionRoot.getSegmentUseCountSize(); s < n; s++) {
+                if (plan.isDrainedSegment(oldFunctionRoot.getSegmentId(s))) {
+                    referencesDrained = true;
+                    break;
+                }
+            }
+            if (!referencesDrained) {
+                return false;
+            }
+            oldFunctionRoot.getScalarStateRef(redirectScalarRef);
+            oldFunctionRoot.getPartitionMapRootRef(redirectPartitionMapRoot);
+            functionRootBuilder.of(
+                    checkpointsDir,
+                    oldFunctionRootRef,
+                    oldFunctionRoot.getFunctionIdentity(),
+                    oldFunctionRoot.getStateFormatVersion(),
+                    oldFunctionRoot.getKeySchema()
+            );
+            if (!redirectScalarRef.isNull() && plan.isDrainedSegment(redirectScalarRef.getSegmentId())) {
+                final LiveViewCheckpointStatePageRef target = plan.redirect(redirectScalarRef);
+                if (target == null) {
+                    throw missingRedirect(redirectScalarRef);
+                }
+                functionRootBuilder.setScalarStateRef(target);
+            }
+            oldPartitionReader.iterateAll(redirectPartitionMapRoot, entry -> redirectPartition(entry, plan));
+            nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            functionRootBuilder.build(nextSegmentId++, newRootRefOut);
+            metadataBytesAdded = checkedAdd(metadataBytesAdded, functionRootBuilder.getLastSegmentBytes());
+            return true;
+        }
+
+        /**
+         * Stages a putPartition mutation redirecting {@code entry}'s drained state
+         * pages onto their relocated references, or leaves the partition untouched
+         * (reused by reference in the partition-map copy-on-write) when it names no
+         * drained page.
+         */
+        private void redirectPartition(
+                LiveViewCheckpointPartitionMapEntry entry,
+                LiveViewCheckpointCompactionPlan plan
+        ) {
+            final int count = entry.getStatePageCount();
+            LiveViewCheckpointStatePageRef[] newRefs = null;
+            for (int i = 0; i < count; i++) {
+                final LiveViewCheckpointStatePageRef ref = entry.getStatePageRef(i);
+                if (plan.isDrainedSegment(ref.getSegmentId())) {
+                    final LiveViewCheckpointStatePageRef target = plan.redirect(ref);
+                    if (target == null) {
+                        throw missingRedirect(ref);
+                    }
+                    if (newRefs == null) {
+                        newRefs = new LiveViewCheckpointStatePageRef[count];
+                        for (int j = 0; j < i; j++) {
+                            newRefs[j] = LiveViewCheckpointPartitionMapEntry.copyRef(entry.getStatePageRef(j));
+                        }
+                    }
+                    newRefs[i] = LiveViewCheckpointPartitionMapEntry.copyRef(target);
+                } else if (newRefs != null) {
+                    newRefs[i] = LiveViewCheckpointPartitionMapEntry.copyRef(entry.getStatePageRef(i));
+                }
+            }
+            if (newRefs != null) {
+                functionRootBuilder.putPartition(entry.getKey(), entry.getScalarState(), newRefs);
+            }
+        }
 
         /**
          * Writes the anchor root, one function root per frozen function, and the
@@ -1872,6 +2273,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             Misc.free(functionRootBuilder);
             Misc.free(oldFunctionRoot);
             Misc.free(oldPartitionReader);
+            Misc.free(redirectCheckpointRoot);
+            Misc.free(redirectFunctionDirectory);
             Misc.free(checkpointsDir);
         }
 

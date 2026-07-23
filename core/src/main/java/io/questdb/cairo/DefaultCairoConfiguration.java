@@ -507,6 +507,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointCompactionInterval() {
+        return 0;
+    }
+
+    @Override
     public long getLiveViewCheckpointMaxDurationMicros() {
         return 5L * Micros.MINUTE_MICROS;
     }

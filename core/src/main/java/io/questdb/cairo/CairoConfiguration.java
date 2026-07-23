@@ -343,6 +343,17 @@ public interface CairoConfiguration {
     CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
     /**
+     * Cadence, in live-view checkpoint seals, at which the refresh worker attempts
+     * one physical compaction pass over the live view's checkpoint timeline.
+     * Compaction repacks the still-live state pages of sparse data segments into a
+     * fresh segment and redirects the roots onto it, so the drained segments retire
+     * and the purge job reclaims their dead bytes. Zero (the default) disables it,
+     * leaving superseded pages to be reclaimed only when their whole segment
+     * becomes unreferenced.
+     */
+    long getLiveViewCheckpointCompactionInterval();
+
+    /**
      * Wall-clock ceiling between consecutive head-checkpoint writes for a
      * live view. The refresh worker writes a fresh head once this duration
      * has elapsed since the prior write, even when

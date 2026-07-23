@@ -484,6 +484,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointCompactionInterval() {
+        return getDelegate().getLiveViewCheckpointCompactionInterval();
+    }
+
+    @Override
     public long getLiveViewCheckpointMaxDurationMicros() {
         return getDelegate().getLiveViewCheckpointMaxDurationMicros();
     }

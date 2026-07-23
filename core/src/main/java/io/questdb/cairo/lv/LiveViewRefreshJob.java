@@ -158,6 +158,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Bounds the retry rate without perceptibly delaying convergence (LV cadences are
     // >=100ms); the transient lag clears within a few apply-job ticks.
     private static final long APPLY_LAG_DEFER_BACKOFF_US = 5_000;
+    // Fixed policy for the config-gated checkpoint compaction pass: a data segment
+    // is a compaction source when at most half its bytes are still live, and a pass
+    // drains at least two and at most this many such segments so a lone sparse
+    // segment does not trigger a whole-timeline rewrite and one pass stays bounded.
+    private static final int COMPACTION_MAX_LIVE_FRACTION_PERCENT = 50;
+    private static final int COMPACTION_MAX_SOURCE_SEGMENTS = 8;
+    private static final int COMPACTION_MIN_SOURCE_SEGMENTS = 2;
     // Upper bound on refresh tasks a single Job.run() drains from the notification queue
     // before yielding. A base table under sustained ingestion re-enqueues its task as soon
     // as the refresh finishes, so an unbounded drain would let one base table monopolize the
@@ -728,6 +735,53 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             );
         }
         return timelineResult.getLogicalStateBytes();
+    }
+
+    /**
+     * Runs one physical compaction pass over the instance's checkpoint timeline when
+     * the {@code cairo.live.view.checkpoint.compaction.interval} cadence is reached.
+     * Disabled by default (interval zero); when set, it repacks the still-live pages
+     * of sparse data segments into a fresh segment and redirects the roots, so the
+     * drained segments retire for the purge job. Best-effort: a fault abandons the
+     * candidate and leaves the published generation byte-identical.
+     */
+    private void maybeCompactCheckpointTimeline(LiveViewInstance instance, long lvSeqTxn) {
+        final long interval = engine.getConfiguration().getLiveViewCheckpointCompactionInterval();
+        if (interval <= 0 || lvSeqTxn <= 0 || lvSeqTxn % interval != 0) {
+            return;
+        }
+        if (checkpointTimelineStoreWriter == null || engine.isReadOnlyMode()) {
+            return;
+        }
+        try (Path checkpointsDir = new Path()) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            final Lock roleLock = engine.getRoleSwitchReadLock();
+            roleLock.lock();
+            try {
+                if (engine.isReadOnlyMode()) {
+                    return;
+                }
+                LiveViewCheckpointCompaction.compact(
+                        engine.getConfiguration(),
+                        checkpointsDir,
+                        checkpointTimelineStoreWriter,
+                        instance.getLiveViewToken().getTableId(),
+                        0,
+                        true,
+                        COMPACTION_MAX_LIVE_FRACTION_PERCENT,
+                        COMPACTION_MIN_SOURCE_SEGMENTS,
+                        COMPACTION_MAX_SOURCE_SEGMENTS
+                );
+            } finally {
+                roleLock.unlock();
+            }
+        } catch (Throwable t) {
+            LOG.error().$("could not compact live view checkpoint timeline [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+        }
     }
 
     /**
@@ -5809,6 +5863,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", lvSeqTxn=").$(lvSeqTxn)
                     .$(", error=").$(t).I$();
         }
+        // Best-effort maintenance, kept off the seal's own try so a compaction
+        // fault never reads as a failed head write. It publishes its own generation
+        // after the seal's is durable, so it sits outside any reconcile orphan
+        // window and a fault leaves the just-sealed generation untouched.
+        maybeCompactCheckpointTimeline(instance, lvSeqTxn);
     }
 
     /**

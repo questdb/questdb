@@ -26,24 +26,13 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.lv.LiveViewCheckpointDataStore;
-import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
-import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
-import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
+import io.questdb.cairo.lv.LiveViewCheckpointCompaction;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
-import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
-import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
-import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
-import io.questdb.cairo.lv.LiveViewCheckpointRoot;
-import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
-import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
-import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.std.Files;
-import io.questdb.std.LongHashSet;
-import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -88,11 +77,6 @@ public class LiveViewCheckpointSoakTest extends AbstractLiveViewTest {
     // In-order commits per round. Every commit seals one logical checkpoint boundary,
     // so a round contributes this many roots plus one per correction.
     private static final int COMMITS_PER_ROUND = 12;
-    // Distance between the compaction cycle's target segment id and the id the next
-    // ordinary seal would allocate. Any id above the segment directory's last is legal;
-    // this gap keeps an abandoned target from ever colliding with a final name the
-    // soak's own seals reach.
-    private static final int COMPACTION_TARGET_ID_GAP = 1024;
     // Four lifecycle cycles rotate over the rounds, so this is a multiple of four.
     private static final int ROUNDS = 40;
     private static final String SNAPSHOT_ID = "test-live-view-soak";
@@ -198,106 +182,40 @@ public class LiveViewCheckpointSoakTest extends AbstractLiveViewTest {
     }
 
     /**
-     * One compaction cycle over the newest logical root: every state page it references
-     * is repacked into a fresh immutable segment while a purge runs beside it.
+     * One compaction cycle: the production driver repacks the still-live state pages of
+     * the timeline's sparse data segments into a fresh segment and publishes a
+     * generation that redirects every root onto the relocated pages, so the drained
+     * segments retire for the purge job.
      * <p>
-     * The candidate is abandoned rather than published, because no path yet redirects
-     * published roots onto compacted pages - the repack protocol is reachable only as
-     * {@link LiveViewCheckpointDataStore.Candidate}. What the soak drives is the half
-     * that already composes with a live timeline: candidate ownership holding both the
-     * sources and the target off a concurrent purge queue, and the abandon leaving the
-     * published generation byte-identical for the next round to keep repairing.
+     * The soak's repairs are what create the sparsity - they re-version some of the
+     * roots that shared a ring chunk while others keep naming it - so a cycle usually
+     * has something to reclaim, but a round that produced none is a legitimate no-op.
+     * The rotation's own {@code assertViewMatchesRecompute} after the cycle proves the
+     * redirect preserved every root's output, and the later purge and restart cycles
+     * run over the compacted timeline.
+     *
+     * @return true when this cycle published a redirect
      */
-    private void compactionCycle(LiveViewInstance instance) {
-        final ObjList<LiveViewCheckpointStatePageRef> sourceRefs = new ObjList<>();
-        final ObjList<LiveViewCheckpointStatePageRef> targetRefs = new ObjList<>();
-        final LongHashSet sourceSegmentIds = new LongHashSet();
+    private boolean compactionCycle(LiveViewInstance instance) {
         try (
                 Path checkpointsDir = checkpointsDir(instance);
-                LiveViewCheckpointMetaStore metaStore = openMetaStore(checkpointsDir)
+                LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)
         ) {
-            // A round that reached this cycle has sealed a boundary per commit, so a
-            // published generation with a newest root and state pages under it is not a
-            // precondition to skip past - it is the state the cycle is here to compact.
-            Assert.assertTrue("the soak must reach compaction with a published generation", metaStore.isValid());
-            final long targetSegmentId = metaStore.getSuperblock().nextSegmentId + COMPACTION_TARGET_ID_GAP;
-            try (
-                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
-                    LiveViewCheckpointTimelineReader timeline = new LiveViewCheckpointTimelineReader(configuration);
-                    LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
-                    LiveViewCheckpointFunctionDirectory functions = new LiveViewCheckpointFunctionDirectory(configuration);
-                    LiveViewCheckpointFunctionRoot functionRoot = new LiveViewCheckpointFunctionRoot(configuration);
-                    LiveViewCheckpointPartitionMapReader partitions = new LiveViewCheckpointPartitionMapReader(configuration)
-            ) {
-                timeline.of(checkpointsDir);
-                final LiveViewCheckpointTimelineEntry newest = new LiveViewCheckpointTimelineEntry();
-                Assert.assertTrue(
-                        "the published timeline must hold at least one logical entry",
-                        timeline.last(pin.getTimelineRootRef(), newest)
-                );
-                root.of(checkpointsDir, newest.rootRef);
-                final LiveViewCheckpointPageRef directoryRef = new LiveViewCheckpointPageRef();
-                root.getFunctionDirectoryRef(directoryRef);
-                functions.of(checkpointsDir, directoryRef);
-                partitions.of(checkpointsDir);
-
-                final LiveViewCheckpointPageRef functionRef = new LiveViewCheckpointPageRef();
-                final LiveViewCheckpointPageRef partitionMapRef = new LiveViewCheckpointPageRef();
-                final LiveViewCheckpointStatePageRef scalarRef = new LiveViewCheckpointStatePageRef();
-                for (int i = 0, n = functions.size(); i < n; i++) {
-                    functions.getRootRef(i, functionRef);
-                    functionRoot.of(checkpointsDir, functionRef);
-                    functionRoot.getScalarStateRef(scalarRef);
-                    if (!scalarRef.isNull()) {
-                        sourceRefs.add(copyOf(scalarRef));
-                    }
-                    functionRoot.getPartitionMapRootRef(partitionMapRef);
-                    partitions.iterateAll(partitionMapRef, entry -> {
-                        for (int p = 0, m = entry.getStatePageCount(); p < m; p++) {
-                            sourceRefs.add(copyOf(entry.getStatePageRef(p)));
-                        }
-                    });
-                }
-            }
-
-            Assert.assertTrue(
-                    "the newest root must reference the window state the compaction repacks",
-                    sourceRefs.size() > 0
+            // The loosest policy that still reclaims something: a single segment with any
+            // dead byte qualifies, so the cycle follows the round's actual sparsity.
+            final LiveViewCheckpointCompaction.Result result = LiveViewCheckpointCompaction.compact(
+                    configuration,
+                    checkpointsDir,
+                    writer,
+                    instance.getLiveViewToken().getTableId(),
+                    0,
+                    true,
+                    100,
+                    1,
+                    8
             );
-            for (int i = 0, n = sourceRefs.size(); i < n; i++) {
-                sourceSegmentIds.add(sourceRefs.getQuick(i).getSegmentId());
-            }
-            try (LiveViewCheckpointDataStore dataStore = new LiveViewCheckpointDataStore(configuration, metaStore)) {
-                dataStore.of(checkpointsDir);
-                try (LiveViewCheckpointDataStore.Candidate candidate = dataStore.beginCandidate()) {
-                    candidate.repack(targetSegmentId, sourceRefs, targetRefs);
-                    Assert.assertEquals(
-                            "a repack redirects every source page it was given",
-                            sourceRefs.size(),
-                            targetRefs.size()
-                    );
-                    Assert.assertTrue(dataSegmentExists(checkpointsDir, targetSegmentId));
-
-                    // The purge beside an open candidate may reclaim whatever the round's
-                    // repairs superseded, but never a segment the candidate owns.
-                    final LiveViewCheckpointDataStore.PurgeResult purge = dataStore.purge();
-                    Assert.assertEquals("a purge must not fail to unlink", 0, purge.getFailedSegmentCount());
-                    assertSegmentsExist(checkpointsDir, sourceSegmentIds);
-                    Assert.assertTrue(dataSegmentExists(checkpointsDir, targetSegmentId));
-                }
-                Assert.assertFalse(
-                        "an abandoned candidate owes the directory no target",
-                        dataSegmentExists(checkpointsDir, targetSegmentId)
-                );
-                assertSegmentsExist(checkpointsDir, sourceSegmentIds);
-            }
+            return result.isPublished();
         }
-    }
-
-    private LiveViewCheckpointMetaStore openMetaStore(Path checkpointsDir) {
-        final LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(configuration);
-        store.of(checkpointsDir);
-        return store;
     }
 
     // One purge cycle: the primary-owned lifecycle reconciliation a publication or a
@@ -345,6 +263,7 @@ public class LiveViewCheckpointSoakTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             int compactions = 0;
+            int compactionsPublished = 0;
             int purges = 0;
             int restarts = 0;
             int restores = 0;
@@ -384,7 +303,9 @@ public class LiveViewCheckpointSoakTest extends AbstractLiveViewTest {
                         restarts++;
                     }
                     case 3 -> {
-                        compactionCycle(instance);
+                        if (compactionCycle(instance)) {
+                            compactionsPublished++;
+                        }
                         compactions++;
                     }
                     default -> {
@@ -412,47 +333,19 @@ public class LiveViewCheckpointSoakTest extends AbstractLiveViewTest {
             Assert.assertEquals(ROUNDS / 4, purges);
             Assert.assertEquals(isCheckpointSupported ? ROUNDS / 4 : 0, restores);
             Assert.assertEquals(isCheckpointSupported ? ROUNDS / 4 : ROUNDS / 2, restarts);
+            // The soak's repairs fragment the timeline, so at least one compaction cycle
+            // must find a sparse segment and publish a redirect - otherwise the whole
+            // compaction path went untested behind an always-empty plan.
+            Assert.assertTrue("at least one compaction cycle must publish a redirect", compactionsPublished > 0);
 
             execute("DROP LIVE VIEW lv");
         });
-    }
-
-    private static void assertSegmentsExist(Path checkpointsDir, LongHashSet segmentIds) {
-        for (int i = 0, n = segmentIds.size(); i < n; i++) {
-            final long segmentId = segmentIds.get(i);
-            Assert.assertTrue(
-                    "a segment the published generation references must survive, segmentId=" + segmentId,
-                    dataSegmentExists(checkpointsDir, segmentId)
-            );
-        }
     }
 
     private static Path checkpointsDir(LiveViewInstance instance) {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-    }
-
-    // The page-reference flyweights the readers hand out are reused across entries, so a
-    // reference that has to outlive its cursor is copied out by value.
-    private static LiveViewCheckpointStatePageRef copyOf(LiveViewCheckpointStatePageRef src) {
-        return new LiveViewCheckpointStatePageRef().of(
-                src.getSegmentId(),
-                src.getOffset(),
-                src.getStoredLength(),
-                src.getDecodedLength(),
-                src.getPageKind(),
-                src.getCodec(),
-                src.getRowCount(),
-                src.getFlags()
-        );
-    }
-
-    private static boolean dataSegmentExists(Path checkpointsDir, long segmentId) {
-        try (Path path = new Path()) {
-            LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
-            return configuration.getFilesFacade().exists(path.$());
-        }
     }
 
     // Second-of-day of the round's head-adjacent correction: five seconds under the group
