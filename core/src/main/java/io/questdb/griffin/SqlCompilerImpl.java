@@ -1936,6 +1936,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             e.setPosition(viewSqlPosition + e.getPosition());
             throw e;
         } catch (CairoException e) {
+            // An authorization failure (e.g. no ALTER VIEW permission) must keep its identity so the
+            // caller reports it as forbidden. Rewrapping it as a SqlException would downgrade it to a
+            // generic SQL error, so re-throw it unchanged. Only genuine compile errors get the view SQL
+            // position adjustment.
+            if (e.isAuthorizationError()) {
+                throw e;
+            }
             // position is reported from the view SQL, we have to adjust it
             throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
         }
@@ -4362,9 +4369,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (executionModel.getModelType() != ExecutionModel.QUERY) {
                         throw SqlException.$(startPos, "SELECT query expected");
                     }
+                    // Collect view dependencies from both the raw and the optimised model. The raw,
+                    // pre-optimisation model keeps a "SELECT *" over a base table as a "*" wildcard
+                    // dependency (optimise() expands it into a concrete column list), and that wildcard
+                    // is what lets the view keep covering columns added to the base table after the view
+                    // was created - the view-as-security-boundary contract in Enterprise. The optimised
+                    // model contributes the concrete columns the query actually references, including the
+                    // ones introduced by the row-expiry read filter, which the raw model hides behind its
+                    // synthetic sub-query. optimise() mutates the model in place, so collect the raw
+                    // references before it runs and accumulate the optimised references afterwards.
+                    dependencies.clear();
+                    SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) executionModel, dependencies);
                     queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
                     createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
-                    dependencies.clear();
                     SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
 
                     final Runnable barrier = viewFactoryGenerationBarrier;
