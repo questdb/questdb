@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
@@ -225,6 +226,64 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
 
             // unquoted non-numeric constants stay reassociable: boolean logic still regroups
             assertQuery("SELECT true AND true AND false AS v").noLeakCheck().expectSize().returns("v\nfalse\n");
+        });
+    }
+
+    @Test
+    public void testCtasOfOverflowingConstantKeepsIntColumnType() throws Exception {
+        // A BEHAVIOUR CHANGE from master, and a direct consequence of the width rule. Master's
+        // functionToConstant0 folded an overflowing constant INT arithmetic to a LongConstant, so the
+        // expression's declared TYPE depended on its runtime value: CTAS over the literal spelling
+        // created a LONG column holding 1000000000000, while CTAS over the column spelling of the
+        // same arithmetic created an INT column holding the wrap. The fold now leaves the INT
+        // function unfolded, so the literal and column spellings agree - an INT column carrying the
+        // wrapped value - and ::LONG widens on both. Pinned here because the type of a CTAS column
+        // is a persisted, wire-visible contract.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (a INT, b INT)");
+            execute("INSERT INTO src VALUES (1_000_000, 1_000_000)");
+
+            // Both spellings are INT expressions and both wrap. 10^12 mod 2^32 is -727379968. The
+            // projection's own type is pinned too: it is wire-visible, mapping to PG_INT4 where
+            // master's folded LongConstant mapped to PG_INT8.
+            assertQuery("SELECT 1_000_000 * 1_000_000 AS v")
+                    .noLeakCheck().expectSize().columnType(0, ColumnType.INT).returns("v\n-727379968\n");
+            assertQuery("SELECT a * b AS v FROM src")
+                    .noLeakCheck().expectSize().columnType(0, ColumnType.INT).returns("v\n-727379968\n");
+
+            // CTAS over the literal spelling: an INT column storing the wrap. On master this was a
+            // LONG column holding 1000000000000.
+            execute("CREATE TABLE ctas_const AS (SELECT 1_000_000 * 1_000_000 AS v)");
+            assertQuery("SELECT \"column\", \"type\" FROM table_columns('ctas_const')")
+                    .noLeakCheck().noRandomAccess().returns("column\ttype\nv\tINT\n");
+            assertQuery("SELECT v FROM ctas_const").noLeakCheck().expectSize().returns("v\n-727379968\n");
+
+            // CTAS over the column spelling now agrees on both the type and the stored value.
+            execute("CREATE TABLE ctas_col AS (SELECT a * b AS v FROM src)");
+            assertQuery("SELECT \"column\", \"type\" FROM table_columns('ctas_col')")
+                    .noLeakCheck().noRandomAccess().returns("column\ttype\nv\tINT\n");
+            assertQuery("SELECT v FROM ctas_col").noLeakCheck().expectSize().returns("v\n-727379968\n");
+
+            // INSERT into an EXISTING INT column is the loudest half of the change: master's fold
+            // handed the copier a LONG source, so SqlUtil.implicitCastLongAsInt threw
+            // "inconvertible value". The source is now INT, so it stores the wrap instead. A loud
+            // error became silent truncation - defensible, since it is what the column spelling has
+            // always done, but it must not change again unnoticed.
+            execute("CREATE TABLE dest_int (v INT)");
+            execute("INSERT INTO dest_int SELECT 1_000_000 * 1_000_000");
+            execute("INSERT INTO dest_int SELECT a * b FROM src");
+            assertQuery("SELECT v FROM dest_int").noLeakCheck().expectSize()
+                    .returns("v\n-727379968\n-727379968\n");
+
+            // The wide half is still reachable, on both spellings, and CTAS over the cast keeps LONG.
+            assertQuery("SELECT (1_000_000 * 1_000_000)::LONG AS v")
+                    .noLeakCheck().expectSize().columnType(0, ColumnType.LONG).returns("v\n1000000000000\n");
+            assertQuery("SELECT (a * b)::LONG AS v FROM src")
+                    .noLeakCheck().expectSize().columnType(0, ColumnType.LONG).returns("v\n1000000000000\n");
+            execute("CREATE TABLE ctas_cast AS (SELECT (1_000_000 * 1_000_000)::LONG AS v)");
+            assertQuery("SELECT \"column\", \"type\" FROM table_columns('ctas_cast')")
+                    .noLeakCheck().noRandomAccess().returns("column\ttype\nv\tLONG\n");
+            assertQuery("SELECT v FROM ctas_cast").noLeakCheck().expectSize().returns("v\n1000000000000\n");
         });
     }
 

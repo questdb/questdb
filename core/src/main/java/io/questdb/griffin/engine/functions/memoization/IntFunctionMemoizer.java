@@ -35,6 +35,7 @@ import io.questdb.std.Numbers;
 public final class IntFunctionMemoizer extends IntFunction implements MemoizerFunction {
     private final Function fn;
     private final boolean isIntWidthStable;
+    private final boolean isRowStable;
     private boolean isValidLongValue;
     private boolean isValidValue;
     private long longValue;
@@ -43,6 +44,7 @@ public final class IntFunctionMemoizer extends IntFunction implements MemoizerFu
     public IntFunctionMemoizer(Function fn) {
         this.fn = fn;
         this.isIntWidthStable = fn.isIntWidthStable();
+        this.isRowStable = fn.isRowStable();
     }
 
     @Override
@@ -50,8 +52,38 @@ public final class IntFunctionMemoizer extends IntFunction implements MemoizerFu
         return fn;
     }
 
+    /**
+     * A width-unstable delegate carries two values per row, so the widths memoize separately -
+     * except when the delegate also redraws per read. There the two reads would be two different
+     * draws, which is exactly what a memoizer exists to prevent, so the delegate is evaluated once
+     * at long width and the INT width is narrowed from it.
+     * <p>
+     * That narrowing is a CHOICE of authoritative width, not a lossless derivation. It is exact for
+     * the operators whose two widths agree on their low 32 bits - {@code + - *} and the bitwise
+     * ones, a modular ring homomorphism - but {@code /} and {@code %} break even that, and so does
+     * the branch a conditional picks: {@code COALESCE} tests nullness at INT width in
+     * {@code getInt()} and at long width in {@code getLong()}, {@code NULLIF} moves its equality
+     * comparison the same way, and {@code CASE} re-runs its picker. See the
+     * worked counterexample in {@code RuntimeConstFunction}'s int arm:
+     * {@code (1000000 * 1000000) / 7} wraps to {@code -103911424} under {@code getInt()} while its
+     * wide value {@code 142857142857} narrows to {@code 1123222089}.
+     * <p>
+     * Taking the long width as authoritative is nonetheless the right resolution, and the same one
+     * {@link io.questdb.griffin.engine.functions.bool.InLongFunctionFactory} and
+     * {@code CoalesceFunctionFactory} reach: a row-unstable INT expression has no single stable
+     * value to wrap anyway, so there is no int-width answer to preserve - only a second draw. The
+     * reverse choice, the pre-memoization {@code getLong() = Numbers.intToLong(getInt())}, would
+     * throw the wide half away and re-break {@code alias::LONG}.
+     * <p>
+     * A delegate whose two widths are independent rather than a wrap of one another
+     * ({@code json_extract}) is deterministic, so it takes the row-stable branch and keeps both.
+     */
     @Override
     public int getInt(Record rec) {
+        if (!isIntWidthStable && !isRowStable) {
+            final long l = getLong(rec);
+            return l != Numbers.LONG_NULL ? (int) l : Numbers.INT_NULL;
+        }
         if (!isValidValue) {
             value = fn.getInt(rec);
             isValidValue = true;

@@ -5140,6 +5140,99 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinKeyedIndexAmortizationOverInteriorSlaveGap() throws Exception {
+        // The rebuild gate credits lastSlaveTimestamp per INDEXED ROW rather than per SEARCHED
+        // horizon, so a slave gap wider than the lookahead margin defeats it. The scan searches the
+        // whole horizon, finds only the row before the gap, and credits that row's timestamp; every
+        // following master row then sees masterTimestampHi > lastSlaveTimestamp and re-fires the
+        // gate - slaveData.clear(), slaveAllocator.clear() and a full re-scan that finds nothing
+        // new - once per master row. The index is valid up to the horizon it SEARCHED, not up to
+        // the last row it happened to find. Both spellings return the same rows, so only the
+        // rebuild count can tell them apart.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, m LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // One slave row on 01-01, then a two-day gap. The two master groups make the index scan
+            // end in each of the ways the credit has to be sound for:
+            //   01-01 04:00-07:59 - findRowLo lands on the 00:00 row, then nextFrame() reports the
+            //                       01-03 frame opens past the horizon;
+            //   01-02 04:00-07:59 - window AND horizon sit wholly inside the gap, so findRowLo
+            //                       returns Long.MIN_VALUE and an EMPTY index is credited a horizon.
+            execute("INSERT INTO prices VALUES ('a', 1, '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO prices SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-03T00:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(240)");
+            execute("INSERT INTO trades SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-01T04:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(240)");
+            execute("INSERT INTO trades SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-02T04:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(240)");
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+
+            // Rows first: crediting the horizon must not skip a rebuild that changes a result.
+            // EXCLUDE PREVAILING - only the very first master row's window reaches the 00:00 slave
+            // row; every other window is inside the gap.
+            assertQuery("SELECT count() n, count(a0) c, sum(a0) s FROM (" +
+                    "SELECT t.ts, sum(p.x) AS a0 FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("n\tc\ts\n480\t1\t1\n");
+
+            // INCLUDE PREVAILING - the 00:00 row is the prevailing row for ALL 480 master rows, on
+            // both sides of the gap. This is the assertion that would redden if the longer index
+            // retention corrupted the prevailing lookup.
+            assertQuery("SELECT count() n, count(a0) c, sum(a0) s FROM (" +
+                    "SELECT t.ts, sum(p.x) AS a0 FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("n\tc\ts\n480\t480\t480\n");
+
+            // All four keyed cursors carry their own copy of the gate. The levers that pick each one
+            // are the ones documented on testWindowJoinKeyedIndexAmortizationNonVectorized. Two
+            // rebuilds: one per master group. Crediting the last indexed row instead gives 480.
+
+            // Vectorized, EXCLUDE PREVAILING.
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING",
+                    2
+            );
+
+            // Vectorized, INCLUDE PREVAILING.
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING",
+                    2
+            );
+
+            // Non-vectorized, EXCLUDE PREVAILING (sum reads master column t.m).
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING",
+                    2
+            );
+
+            // Non-vectorized, INCLUDE PREVAILING, no join filter.
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING",
+                    2
+            );
+
+            // Non-vectorized, INCLUDE PREVAILING, with a join filter.
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x > -1 " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING",
+                    2
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinKeyedIndexReuseAcrossMasterRows() throws Exception {
         // The single-threaded keyed (fast) factory prefetches slave rows past the window so that
         // the following master rows reuse the per-symbol index instead of rebuilding it. It sized
@@ -5916,6 +6009,55 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .timestampDesc("ts")
                     .expectSize()
                     .returns(sink);
+        });
+    }
+
+    @Test
+    public void testWindowJoinParallelMasterArrayColumnDoesNotLeak() throws Exception {
+        // Reading an array column through a PARALLEL WINDOW JOIN master had no coverage at all, so
+        // this closes that gap: it drives PageFrameMemoryRecord.getArray() from the async cursor's
+        // master record and pins the values.
+        //
+        // It is deliberately NOT a leak regression test. AsyncWindowJoinRecordCursor.close() frees
+        // that record, whose close() runs Misc.freeObjList(arrayBuffers), but arrayBuffers holds
+        // BorrowedArray - a view over page-frame memory, not an owner - and ArrayView.close() is
+        // empty, so nothing native is released there. Removing the Misc.free(masterRecord) leaves
+        // this test green. The free is worth keeping (it also drops the symbol table cache), but
+        // an array column is not what makes it load bearing.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('a', ARRAY[1.0, 2.0], '2024-01-01T00:00:00.000000Z'),
+                    ('a', ARRAY[3.0, 4.0], '2024-01-01T00:01:00.000000Z'),
+                    ('a', ARRAY[5.0, 6.0], '2024-01-01T00:02:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO prices VALUES
+                    ('a', 10, '2024-01-01T00:00:00.000000Z'),
+                    ('a', 20, '2024-01-01T00:01:00.000000Z'),
+                    ('a', 30, '2024-01-01T00:02:00.000000Z')
+                    """);
+            sqlExecutionContext.setParallelWindowJoinEnabled(true);
+
+            final String query = "SELECT t.ts, t.arr, sum(p.x) AS a0 FROM trades t " +
+                    "WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            // The leak lives only in the async cursor, so pin that this is the factory under test.
+            assertQuery(query).noLeakCheck().assertsPlanContaining("Async Window ");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tarr\ta0
+                            2024-01-01T00:00:00.000000Z\t[1.0,2.0]\t10
+                            2024-01-01T00:01:00.000000Z\t[3.0,4.0]\t30
+                            2024-01-01T00:02:00.000000Z\t[5.0,6.0]\t50
+                            """);
         });
     }
 

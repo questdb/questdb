@@ -392,11 +392,41 @@ map slot — not to be confused with the live `DistinctTimeSeriesRecordCursorFac
 **narrow-chain (window-function) columns of the cached-window LIGHT factory** — all map- or
 chain-backed, where the value has already been copied into a 4-byte slot, so the wrap has genuinely
 happened and reading at long width would over-read. A per-column hybrid record
-(`SortKeyMaterializing`, `CachedWindowLight`) must answer per column: `CachedWindowLight` does, via
-`sourceMap` (base columns delegate, window columns keep the default); `SortKeyMaterializing` keeps
-the default. (`DistinctTimeSeries` itself is reachable only with the distinct-to-GROUP BY rewrite
+(`SortKeyMaterializing`, `CachedWindowLight`) must answer per column, and both now do:
+`CachedWindowLight` via `sourceMap` (base columns delegate, window columns keep the default), and
+`SortKeyMaterializing` via the set of sort-key columns it materialised (a key reads its own
+width-strided buffer slot and keeps the default; every other column is a live pass-through to the
+base `VirtualRecordCursorFactory` and delegates). Answering either one blanket would be wrong in
+both directions — a blanket default truncates an overflowing INT pass-through on store, a blanket
+delegate takes 8 bytes off a 4-byte INT key slot.
+(`DistinctTimeSeries` itself is reachable only with the distinct-to-GROUP BY rewrite
 disabled — a test-only seam — since a running server always rewrites plain `SELECT DISTINCT` to
 GROUP BY; the delegation is a factory-consistency guarantee, not a production store path.)
+
+### Constant folding leaves an overflowing INT expression unfolded
+
+`FunctionParser.functionToConstant0`'s INT arm folds to an `IntConstant` only when both widths agree
+(and to `IntConstant.NULL` only when both carry the sentinel). An overflowing constant arithmetic —
+where `getInt()` wraps and `getLong()` does not — is handed back **unfolded**, so it keeps its INT
+type and its two widths.
+
+It used to fold to a `LongConstant`, which made the *declared type* of a compile-time-constant
+expression depend on its *runtime value*, and put the literal spelling at odds with the column one.
+Three user-visible consequences follow from removing that, and all three are the price of the
+"literal, column and bind-variable spellings agree" rule:
+
+- `SELECT 1000000*1000000` is an INT column returning `-727379968`, not a LONG returning
+  `1000000000000`. Over pgwire the OID moves from `int8` to `int4`.
+- `CREATE TABLE t AS (SELECT 1000000*1000000 AS v)` creates an **INT** column storing the wrap.
+  The persisted schema no longer depends on the arithmetic's value.
+- `INSERT INTO <existing INT column> SELECT 1000000*1000000` **stores the wrap** where it used to
+  throw `ImplicitCastException` ("inconvertible value") — the LONG source is gone, so
+  `SqlUtil.implicitCastLongAsInt` is no longer on the path. A loud error became a silent
+  truncation, matching what the column spelling has always done.
+
+`::LONG` still reaches the wide value on every spelling, and a CTAS over the cast still creates a
+LONG column. `IntArithmeticOverflowFoldingTest#testCtasOfOverflowingConstantKeepsIntColumnType` pins
+all of it.
 
 ### Reading a function at two widths
 

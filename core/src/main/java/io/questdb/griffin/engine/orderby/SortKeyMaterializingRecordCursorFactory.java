@@ -33,10 +33,12 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 
 public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final BitSet materializedColumns = new BitSet();
     private RecordCursorFactory base;
     private SortKeyMaterializingRecordCursor cursor;
 
@@ -51,6 +53,9 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
         assert base.recordCursorSupportsRandomAccess()
                 : "SortKeyMaterializingRecordCursorFactory requires a base factory that supports random access";
         this.base = base;
+        for (int i = 0, n = materializedColIndices.size(); i < n; i++) {
+            materializedColumns.set(materializedColIndices.getQuick(i));
+        }
         this.cursor = new SortKeyMaterializingRecordCursor(
                 metadata.getColumnCount(),
                 materializedColIndices,
@@ -79,6 +84,24 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
+    }
+
+    @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // MaterializedRecord splits per column: a sort key it materialised reads from its own
+        // buffer slot, every other column reads the live base record straight through. A key slot
+        // is strided by the column's own width, so a 4-byte INT key must keep the default true -
+        // delegating there would make getLong() take 8 bytes off it. A pass-through column carries
+        // whatever the base projection carries, so an overflowing INT expression must widen on
+        // store exactly as it does without the sort.
+        return materializedColumns.get(columnIndex) || base.isColumnIntWidthStable(columnIndex);
+    }
+
+    @Override
+    public boolean isColumnRowStable(int columnIndex) {
+        // Paired with isColumnIntWidthStable above, through the same split. A materialised key has
+        // been copied into its slot, and reading stored bytes twice gives the same value.
+        return materializedColumns.get(columnIndex) || base.isColumnRowStable(columnIndex);
     }
 
     @Override

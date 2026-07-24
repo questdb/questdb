@@ -180,7 +180,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 );
             }
         } catch (Throwable th) {
-            close();
+            releaseAdoptedStateOnConstructorFailure();
             throw th;
         }
     }
@@ -329,6 +329,30 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         // free after the cursor keeps it that way if a caller ever closes the factory first.
         failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * Releases what THIS constructor adopted, and only that.
+     * <p>
+     * The base factories and the join metadata belong to {@code SqlCodeGenerator} until the
+     * constructor returns - the contract the async siblings already honour, and the one the
+     * generator's own catch implements (it frees master, slave and the join metadata itself).
+     * Calling {@link #close()} here instead released them a second time. That is a no-op for an
+     * {@link io.questdb.cairo.AbstractRecordCursorFactory}, whose {@code close()} is flag-guarded,
+     * but not for a factory implementing {@code RecordCursorFactory} directly: for instance
+     * {@code CoveringIndexRecordCursorFactory.close()} frees its partition-frame factory and its
+     * functions unguarded, so a master of that shape was double freed. {@link JoinRecordMetadata}
+     * is reference counted, so the second close drove its count below zero as well.
+     * <p>
+     * Nulling the three fields before {@code close()} keeps the release of the adopted handles -
+     * the join filter, the window bound functions, the group-by functions, the cursor and the map
+     * value - in one place.
+     */
+    private void releaseAdoptedStateOnConstructorFailure() {
+        masterFactory = null;
+        slaveFactory = null;
+        joinMetadata = null;
+        close();
     }
 
     private class WindowJoinRecordCursor implements NoRandomAccessRecordCursor {

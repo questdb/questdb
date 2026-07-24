@@ -2511,6 +2511,8 @@ impl ParquetDecoder {
             let null_count = statistics.and_then(|s| s.null_count);
             let num_values = column_chunk_meta.map(|m| m.num_values);
 
+            let qdb_column_type = packed_filter.qdb_column_type();
+
             if op == FILTER_OP_IS_NULL {
                 if null_count == Some(0) {
                     return Ok(true);
@@ -2518,9 +2520,14 @@ impl ParquetDecoder {
                 continue;
             }
             if op == FILTER_OP_IS_NOT_NULL {
-                if let (Some(nc), Some(nv)) = (null_count, num_values) {
-                    if nc == nv {
-                        return Ok(true);
+                // A row group wholly inside a BYTE or SHORT column top reports every value null,
+                // yet those rows decode to 0 and IS NOT NULL is a constant TRUE over them; see
+                // is_null_free_type. Skipping it would drop rows native storage returns.
+                if !Self::is_null_free_type(qdb_column_type) {
+                    if let (Some(nc), Some(nv)) = (null_count, num_values) {
+                        if nc == nv {
+                            return Ok(true);
+                        }
                     }
                 }
                 continue;
@@ -2533,6 +2540,7 @@ impl ParquetDecoder {
             };
             let physical_type = column_metadata.physical_type();
             let has_nulls = null_count.is_none_or(|c| c > 0);
+            let has_implicit_zeros = Self::has_matchable_zero_nulls(qdb_column_type, has_nulls);
 
             let (min_bytes, max_bytes) = statistics
                 .map(|s| {
@@ -2541,11 +2549,22 @@ impl ParquetDecoder {
                     (min, max)
                 })
                 .unwrap_or((None, None));
+            let mut zero_widened_min = [0u8; 4];
+            let mut zero_widened_max = [0u8; 4];
+            let (min_bytes, max_bytes) = if has_implicit_zeros {
+                Self::widen_int32_stats_to_include_zero(
+                    min_bytes,
+                    max_bytes,
+                    &mut zero_widened_min,
+                    &mut zero_widened_max,
+                )
+            } else {
+                (min_bytes, max_bytes)
+            };
 
             match op {
                 FILTER_OP_EQ => {
                     let is_decimal = Self::is_decimal_type(column_metadata);
-                    let qdb_column_type = packed_filter.qdb_column_type();
 
                     let bitset =
                         parquet2::bloom_filter::read_from_slice(column_metadata, file_data)
@@ -2556,6 +2575,7 @@ impl ParquetDecoder {
                             &physical_type,
                             &filter_desc,
                             has_nulls,
+                            has_implicit_zeros,
                             is_decimal,
                             qdb_column_type,
                         )?;
@@ -2590,7 +2610,6 @@ impl ParquetDecoder {
                 }
                 FILTER_OP_LT | FILTER_OP_LE | FILTER_OP_GT | FILTER_OP_GE | FILTER_OP_BETWEEN => {
                     let is_decimal = Self::is_decimal_type(column_metadata);
-                    let qdb_column_type = packed_filter.qdb_column_type();
                     let col_type_tag = qdb_column_type & 0xFF;
                     let is_ipv4 = col_type_tag == ColumnTypeTag::IPv4 as i32;
                     let is_date = col_type_tag == ColumnTypeTag::Date as i32;
@@ -2684,11 +2703,17 @@ impl ParquetDecoder {
         millis.div_euclid(MILLIS_PER_DAY) as i32
     }
 
+    /// `has_implicit_zeros` comes from [`Self::has_matchable_zero_nulls`]: the row group holds
+    /// column-top rows that decode to 0 and were never hashed into the bloom set, so a 0 probe must
+    /// be treated as present. Widening the statistics cannot express that for a bloom filter, which
+    /// stores exact hashes rather than a range.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn all_values_absent_from_bloom(
         bitset: &[u8],
         physical_type: &PhysicalType,
         filter_desc: &ColumnFilterValues,
         has_nulls: bool,
+        has_implicit_zeros: bool,
         is_decimal: bool,
         qdb_column_type: i32,
     ) -> ParquetResult<bool> {
@@ -2731,6 +2756,9 @@ impl ParquetDecoder {
                             if has_nulls {
                                 return Ok(false);
                             }
+                        } else if v == 0 && has_implicit_zeros {
+                            // Column-top rows decode to 0 and were never hashed into the set.
+                            return Ok(false);
                         } else if parquet2::bloom_filter::is_in_set(
                             bitset,
                             parquet2::bloom_filter::hash_native(v),
@@ -3131,6 +3159,80 @@ impl ParquetDecoder {
                 Ok(true)
             }
             _ => Ok(false),
+        }
+    }
+
+    /// Reports whether this row group holds rows that decode to 0 but appear in no statistic.
+    ///
+    /// A column top - the region of a partition that predates an `ALTER TABLE ADD COLUMN` - is
+    /// written at definition level 0, which keeps those rows out of the min/max statistics and out
+    /// of the bloom set. For BYTE, SHORT and CHAR they nonetheless decode back to a plain 0, which
+    /// a predicate can match: BYTE and SHORT have no NULL at all, and while `(char) 0` IS CHAR's
+    /// NULL, `c = null::char` is compiled to an ordinary equality against 0 rather than to
+    /// `IS NULL`, and CHAR equality is a raw comparison. So every pruning decision below saw a row
+    /// group whose values look like `[5, 6]` while it also contained matchable zeros, and consulted
+    /// `null_count` only when the FILTER value was the type's own null sentinel. `WHERE b = 0`,
+    /// `WHERE b < 1` and `WHERE c = null::char` skipped the group and lost rows.
+    ///
+    /// BOOLEAN is deliberately absent: no EQ or range filter is ever emitted for it (the value arms
+    /// end at `default: supported = false`) and its physical type is Boolean, so there is nothing to
+    /// widen - but it DOES belong to [`Self::is_null_free_type`]. GEOBYTE and GEOSHORT have a real
+    /// out-of-domain sentinel (-1), so their column tops decode to a genuine NULL. IPv4's NULL is 0,
+    /// but every pruning path already special-cases that against `has_nulls`.
+    pub(crate) fn has_matchable_zero_nulls(qdb_column_type: i32, has_nulls: bool) -> bool {
+        if !has_nulls {
+            return false;
+        }
+        let tag = qdb_column_type & 0xFF;
+        tag == ColumnTypeTag::Byte as i32
+            || tag == ColumnTypeTag::Short as i32
+            || tag == ColumnTypeTag::Char as i32
+    }
+
+    /// Reports the types with no NULL representation whatsoever, for which `IS NOT NULL` is a
+    /// constant TRUE and `IS NULL` a constant FALSE.
+    ///
+    /// Definition level 0 is the only way a column top can be recorded, so a row group lying wholly
+    /// inside one reports `null_count == num_values` - which both decoders read as "every value is
+    /// null" and skip. For BYTE and SHORT that is wrong in the losing direction: those rows read
+    /// back as 0 and native storage returns every one of them for `IS NOT NULL`.
+    ///
+    /// CHAR is excluded here even though it shares the zero-decoding problem above, because
+    /// `(char) 0` genuinely IS its NULL - so for CHAR the `null_count == num_values` skip is right.
+    /// BOOLEAN belongs here for the same reason BYTE and SHORT do: `bool = NULL` folds to constant
+    /// FALSE, so `IS NOT NULL` is a constant TRUE over it. It never reaches the value-carrying arms
+    /// above (no EQ or range filter is emitted for it, and its physical type is Boolean), so it is
+    /// deliberately absent from `has_matchable_zero_nulls`.
+    ///
+    /// These three plus CHAR are exactly the types `parquet_write::schema` declares Optional purely
+    /// to carry a column top, so the set is closed: every other type has a real sentinel that
+    /// `Nullable::is_null` reports, making def-level 0 equivalent to a genuine NULL.
+    pub(crate) fn is_null_free_type(qdb_column_type: i32) -> bool {
+        let tag = qdb_column_type & 0xFF;
+        tag == ColumnTypeTag::Boolean as i32
+            || tag == ColumnTypeTag::Byte as i32
+            || tag == ColumnTypeTag::Short as i32
+    }
+
+    /// Folds the implicit 0 of [`Self::has_matchable_zero_nulls`] into 4-byte little-endian INT32
+    /// statistics, so a predicate matching 0 can no longer prune the row group while one that
+    /// excludes 0 still can. Anything that is not a well-formed 4-byte pair is left alone: the
+    /// callers already decline to prune on a statistic they cannot parse.
+    pub(crate) fn widen_int32_stats_to_include_zero<'a>(
+        min_bytes: Option<&'a [u8]>,
+        max_bytes: Option<&'a [u8]>,
+        min_buf: &'a mut [u8; 4],
+        max_buf: &'a mut [u8; 4],
+    ) -> (Option<&'a [u8]>, Option<&'a [u8]>) {
+        match (min_bytes, max_bytes) {
+            (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => {
+                let min_val = i32::from_le_bytes(min_b.try_into().unwrap()).min(0);
+                let max_val = i32::from_le_bytes(max_b.try_into().unwrap()).max(0);
+                *min_buf = min_val.to_le_bytes();
+                *max_buf = max_val.to_le_bytes();
+                (Some(&min_buf[..]), Some(&max_buf[..]))
+            }
+            _ => (min_bytes, max_bytes),
         }
     }
 
@@ -4709,5 +4811,193 @@ mod copy_columns_tests {
         let aux = unsafe { std::slice::from_raw_parts(dst_col.aux_ptr, dst_col.aux_size) };
         assert_eq!(data, &[1u8, 2, 3, 4]);
         assert_eq!(aux, &[10u8, 20]);
+    }
+}
+
+#[cfg(test)]
+mod column_top_zero_tests {
+    use super::*;
+
+    fn qdb_type(tag: ColumnTypeTag) -> i32 {
+        tag as i32
+    }
+
+    #[test]
+    fn has_matchable_zero_nulls_needs_both_a_zero_decoding_type_and_nulls() {
+        // BYTE, SHORT and CHAR all decode a column top to a matchable 0.
+        assert!(ParquetDecoder::has_matchable_zero_nulls(
+            qdb_type(ColumnTypeTag::Byte),
+            true
+        ));
+        assert!(ParquetDecoder::has_matchable_zero_nulls(
+            qdb_type(ColumnTypeTag::Short),
+            true
+        ));
+        // No nulls in the row group means no column top to account for.
+        assert!(!ParquetDecoder::has_matchable_zero_nulls(
+            qdb_type(ColumnTypeTag::Byte),
+            false
+        ));
+        assert!(!ParquetDecoder::has_matchable_zero_nulls(
+            qdb_type(ColumnTypeTag::Short),
+            false
+        ));
+        // CHAR shares the zero decoding: c = null::char compiles to an ordinary equality on 0.
+        assert!(ParquetDecoder::has_matchable_zero_nulls(
+            qdb_type(ColumnTypeTag::Char),
+            true
+        ));
+        // Everything else has a null sentinel the existing has_nulls checks already handle.
+        for tag in [
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Long,
+            ColumnTypeTag::Date,
+            ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Float,
+            ColumnTypeTag::Double,
+            ColumnTypeTag::IPv4,
+            ColumnTypeTag::GeoByte,
+            ColumnTypeTag::GeoShort,
+        ] {
+            assert!(
+                !ParquetDecoder::has_matchable_zero_nulls(qdb_type(tag), true),
+                "{tag:?} must keep the existing sentinel handling"
+            );
+        }
+    }
+
+    #[test]
+    fn has_matchable_zero_nulls_ignores_the_high_type_bits() {
+        // qdb_column_type packs extra information above the low byte.
+        let packed = qdb_type(ColumnTypeTag::Byte) | (7 << 8);
+        assert!(ParquetDecoder::has_matchable_zero_nulls(packed, true));
+    }
+
+    #[test]
+    fn widen_int32_stats_pulls_the_range_over_zero() {
+        let mut min_buf = [0u8; 4];
+        let mut max_buf = [0u8; 4];
+        let min = 5i32.to_le_bytes();
+        let max = 6i32.to_le_bytes();
+        let (widened_min, widened_max) = ParquetDecoder::widen_int32_stats_to_include_zero(
+            Some(&min),
+            Some(&max),
+            &mut min_buf,
+            &mut max_buf,
+        );
+        assert_eq!(
+            i32::from_le_bytes(widened_min.unwrap().try_into().unwrap()),
+            0
+        );
+        assert_eq!(
+            i32::from_le_bytes(widened_max.unwrap().try_into().unwrap()),
+            6
+        );
+    }
+
+    #[test]
+    fn widen_int32_stats_pulls_a_negative_range_up_to_zero() {
+        let mut min_buf = [0u8; 4];
+        let mut max_buf = [0u8; 4];
+        let min = (-6i32).to_le_bytes();
+        let max = (-5i32).to_le_bytes();
+        let (widened_min, widened_max) = ParquetDecoder::widen_int32_stats_to_include_zero(
+            Some(&min),
+            Some(&max),
+            &mut min_buf,
+            &mut max_buf,
+        );
+        assert_eq!(
+            i32::from_le_bytes(widened_min.unwrap().try_into().unwrap()),
+            -6
+        );
+        assert_eq!(
+            i32::from_le_bytes(widened_max.unwrap().try_into().unwrap()),
+            0
+        );
+    }
+
+    #[test]
+    fn widen_int32_stats_leaves_a_range_that_already_spans_zero() {
+        let mut min_buf = [0u8; 4];
+        let mut max_buf = [0u8; 4];
+        let min = (-1i32).to_le_bytes();
+        let max = 1i32.to_le_bytes();
+        let (widened_min, widened_max) = ParquetDecoder::widen_int32_stats_to_include_zero(
+            Some(&min),
+            Some(&max),
+            &mut min_buf,
+            &mut max_buf,
+        );
+        assert_eq!(
+            i32::from_le_bytes(widened_min.unwrap().try_into().unwrap()),
+            -1
+        );
+        assert_eq!(
+            i32::from_le_bytes(widened_max.unwrap().try_into().unwrap()),
+            1
+        );
+    }
+
+    #[test]
+    fn widen_int32_stats_passes_through_what_it_cannot_parse() {
+        let mut min_buf = [0u8; 4];
+        let mut max_buf = [0u8; 4];
+        // A missing statistic: the callers already decline to prune on it.
+        let max = 6i32.to_le_bytes();
+        let (widened_min, widened_max) = ParquetDecoder::widen_int32_stats_to_include_zero(
+            None,
+            Some(&max),
+            &mut min_buf,
+            &mut max_buf,
+        );
+        assert!(widened_min.is_none());
+        assert_eq!(
+            i32::from_le_bytes(widened_max.unwrap().try_into().unwrap()),
+            6
+        );
+
+        // A width the INT32 arms cannot decode either.
+        let mut min_buf = [0u8; 4];
+        let mut max_buf = [0u8; 4];
+        let wide_min = 5i64.to_le_bytes();
+        let wide_max = 6i64.to_le_bytes();
+        let (widened_min, widened_max) = ParquetDecoder::widen_int32_stats_to_include_zero(
+            Some(&wide_min),
+            Some(&wide_max),
+            &mut min_buf,
+            &mut max_buf,
+        );
+        assert_eq!(widened_min.unwrap(), &wide_min[..]);
+        assert_eq!(widened_max.unwrap(), &wide_max[..]);
+    }
+    #[test]
+    fn is_null_free_type_covers_boolean_byte_and_short() {
+        // These three have no NULL at all, so IS NOT NULL is a constant TRUE and a wholly
+        // column-top row group must NOT be skipped for it.
+        assert!(ParquetDecoder::is_null_free_type(qdb_type(
+            ColumnTypeTag::Boolean
+        )));
+        assert!(ParquetDecoder::is_null_free_type(qdb_type(
+            ColumnTypeTag::Byte
+        )));
+        assert!(ParquetDecoder::is_null_free_type(qdb_type(
+            ColumnTypeTag::Short
+        )));
+        // CHAR decodes its column top to (char) 0, which IS its NULL, so the skip is correct there.
+        for tag in [
+            ColumnTypeTag::Char,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Long,
+            ColumnTypeTag::IPv4,
+            ColumnTypeTag::GeoByte,
+            ColumnTypeTag::GeoShort,
+        ] {
+            assert!(
+                !ParquetDecoder::is_null_free_type(qdb_type(tag)),
+                "{tag:?} has a NULL representation"
+            );
+        }
     }
 }

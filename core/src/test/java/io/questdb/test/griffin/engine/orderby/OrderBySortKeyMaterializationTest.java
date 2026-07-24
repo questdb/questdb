@@ -637,6 +637,37 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDelegateIntWidthOnStore() throws Exception {
+        // Only the sort key is materialised into its own 4-byte slot; v stays a live pass-through
+        // that MaterializedRecord reads straight off the base VirtualRecord. So the factory has to
+        // answer the width question PER COLUMN - a blanket true wraps an overflowing INT projection
+        // on store while ::LONG over the same expression widens, and a blanket delegate would read
+        // 8 bytes off the 4-byte key slot.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, i INT, j INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, 2_000_000_000, 2_000_000_000, '2024-01-01T00:00:00.000000Z')
+                    """);
+            final String query = "SELECT (a + b) * (c + d) AS x, i + j AS v FROM t ORDER BY x";
+            // The projection itself is a plain INT read, so it wraps.
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Materialize sort keys")
+                    .returns("""
+                            x\tv
+                            10.0\t-294967296
+                            """);
+
+            // The store into a LONG column must widen it, matching the cast.
+            execute("CREATE TABLE dest (l LONG)");
+            execute("INSERT INTO dest SELECT v FROM (" + query + ")");
+            assertQuery("SELECT l FROM dest").noLeakCheck().expectSize().returns("l\n4000000000\n");
+        });
+    }
+
+    @Test
     public void testDelegateLong128() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v UUID, ts TIMESTAMP) TIMESTAMP(ts)");

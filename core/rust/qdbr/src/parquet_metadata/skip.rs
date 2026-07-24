@@ -84,6 +84,7 @@ pub fn can_skip_row_group(
             None
         };
         let num_values = Some(chunk.num_values as i64);
+        let qdb_column_type = packed_filter.qdb_column_type();
 
         if op == FILTER_OP_IS_NULL {
             if null_count == Some(0) {
@@ -92,9 +93,14 @@ pub fn can_skip_row_group(
             continue;
         }
         if op == FILTER_OP_IS_NOT_NULL {
-            if let (Some(nc), Some(nv)) = (null_count, num_values) {
-                if nc == nv {
-                    return Ok(true);
+            // See ParquetDecoder::is_null_free_type: a row group wholly inside a BYTE or SHORT
+            // column top reports every value null, but those rows decode to 0 and IS NOT NULL is a
+            // constant TRUE over them.
+            if !ParquetDecoder::is_null_free_type(qdb_column_type) {
+                if let (Some(nc), Some(nv)) = (null_count, num_values) {
+                    if nc == nv {
+                        return Ok(true);
+                    }
                 }
             }
             continue;
@@ -119,7 +125,6 @@ pub fn can_skip_row_group(
             _ => continue,
         };
         let has_nulls = null_count.is_none_or(|c| c > 0);
-        let qdb_column_type = packed_filter.qdb_column_type();
         let col_type_tag = qdb_column_type & 0xFF;
 
         let is_decimal = matches!(
@@ -208,6 +213,23 @@ pub fn can_skip_row_group(
             None
         };
 
+        // See ParquetDecoder::has_matchable_zero_nulls: a BYTE, SHORT or CHAR column top decodes
+        // back to a plain 0 that neither the statistics nor the bloom set record.
+        let has_implicit_zeros =
+            ParquetDecoder::has_matchable_zero_nulls(qdb_column_type, has_nulls);
+        let mut zero_widened_min = [0u8; 4];
+        let mut zero_widened_max = [0u8; 4];
+        let (min_bytes, max_bytes) = if has_implicit_zeros {
+            ParquetDecoder::widen_int32_stats_to_include_zero(
+                min_bytes,
+                max_bytes,
+                &mut zero_widened_min,
+                &mut zero_widened_max,
+            )
+        } else {
+            (min_bytes, max_bytes)
+        };
+
         match op {
             FILTER_OP_EQ => {
                 // Bloom filter bitset lookup via footer feature section.
@@ -247,6 +269,7 @@ pub fn can_skip_row_group(
                         &physical_type,
                         &filter_desc,
                         has_nulls,
+                        has_implicit_zeros,
                         is_decimal,
                         qdb_column_type,
                     )?;

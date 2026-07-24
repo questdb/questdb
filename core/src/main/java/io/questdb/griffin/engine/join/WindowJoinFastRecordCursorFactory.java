@@ -103,6 +103,21 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
      * the final say. A scan ends for one of two reasons and only the first completes the index - the
      * slave ran out of rows, or the next frame merely starts past the lookahead horizon (see
      * {@link #indexLookaheadHi(long)}), which says nothing about the rows beyond it.
+     * <p>
+     * When the index is NOT complete, the four scans credit the horizon they SEARCHED rather than the
+     * last row they happened to find. Both are upper bounds on what the index holds, but a slave gap
+     * wider than the lookahead margin leaves the last indexed row far below the horizon, and
+     * crediting it re-fires the gate on every following master row for a re-scan that finds nothing
+     * new. Crediting the horizon is sound because a scan consumed every slave row up to it: it stops
+     * on the first row past the horizon, on a frame that opens past the horizon, or on a
+     * {@code findRowLo()} that found nothing in the whole interval. The master is ascending and the
+     * window bounds are constant here (a dynamic window never reaches this factory), so a later
+     * row's lower bound only moves up, staying inside the range the index already covers - and the
+     * aggregation re-filters the index against each master row's own window regardless.
+     * <p>
+     * The pre-scan {@code lastSlaveTimestamp = Long.MIN_VALUE} therefore has one remaining reader:
+     * a circuit breaker firing mid-scan leaves the partial index credited nothing, so the next call
+     * rebuilds instead of trusting a horizon the scan never reached.
      */
     private static final long INDEX_COMPLETE = Long.MAX_VALUE;
     // Index lookahead multiplier. Defines the size of the time interval used to build per-symbol
@@ -258,7 +273,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.slaveSymbolIndex = slaveSymbolIndex;
             this.masterSymbolIndex = masterSymbolIndex;
         } catch (Throwable th) {
-            close();
+            releaseAdoptedStateOnConstructorFailure();
             throw th;
         }
     }
@@ -464,6 +479,28 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         }
         // Saturate rather than wrap: the horizon must stay at or above the window's upper bound.
         return addSaturating(windowTimestampHi, indexLookaheadMargin);
+    }
+
+    /**
+     * Releases what THIS constructor adopted, and only that.
+     * <p>
+     * The base factories and the join metadata belong to {@code SqlCodeGenerator} until the
+     * constructor returns - the contract the async siblings already honour, and the one the
+     * generator's own catch implements (it frees master, slave and the join metadata itself).
+     * Calling {@link #close()} here instead released them a second time. That is a no-op for an
+     * {@link io.questdb.cairo.AbstractRecordCursorFactory}, whose {@code close()} is flag-guarded,
+     * but not for a factory implementing {@code RecordCursorFactory} directly: for instance
+     * {@code CoveringIndexRecordCursorFactory.close()} frees its partition-frame factory and its
+     * functions unguarded, so a master of that shape was double freed.
+     * <p>
+     * Nulling the three fields before {@code close()} keeps the release of the adopted handles -
+     * the join filter, the group-by functions, the cursor and the map value - in one place.
+     */
+    private void releaseAdoptedStateOnConstructorFailure() {
+        masterFactory = null;
+        slaveFactory = null;
+        joinMetadata = null;
+        close();
     }
 
     private abstract class AbstractWindowJoinFastRecordCursor implements NoRandomAccessRecordCursor {
@@ -680,7 +717,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             break;
                         }
 
-                        lastSlaveTimestamp = slaveTimestamp;
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
                         final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
@@ -708,6 +744,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 }
                 if (isIndexComplete) {
                     lastSlaveTimestamp = INDEX_COMPLETE;
+                } else {
+                    // The horizon searched, not the last row found; see INDEX_COMPLETE.
+                    lastSlaveTimestamp = slaveTimestampHi;
                 }
             }
 
@@ -989,7 +1028,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             break;
                         }
 
-                        lastSlaveTimestamp = slaveTimestamp;
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
                         final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
@@ -1029,6 +1067,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 }
                 if (isIndexComplete) {
                     lastSlaveTimestamp = INDEX_COMPLETE;
+                } else {
+                    // The horizon searched, not the last row found; see INDEX_COMPLETE.
+                    lastSlaveTimestamp = slaveTimestampHi;
                 }
             }
 
@@ -1247,7 +1288,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             break;
                         }
 
-                        lastSlaveTimestamp = slaveTimestamp;
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
                         final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
@@ -1275,6 +1315,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 }
                 if (isIndexComplete) {
                     lastSlaveTimestamp = INDEX_COMPLETE;
+                } else {
+                    // The horizon searched, not the last row found; see INDEX_COMPLETE.
+                    lastSlaveTimestamp = slaveTimestampHi;
                 }
             }
 
@@ -1493,7 +1536,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             break;
                         }
 
-                        lastSlaveTimestamp = slaveTimestamp;
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
                         final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
@@ -1521,6 +1563,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 }
                 if (isIndexComplete) {
                     lastSlaveTimestamp = INDEX_COMPLETE;
+                } else {
+                    // The horizon searched, not the last row found; see INDEX_COMPLETE.
+                    lastSlaveTimestamp = slaveTimestampHi;
                 }
             }
 

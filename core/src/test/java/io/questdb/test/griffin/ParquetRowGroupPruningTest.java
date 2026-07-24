@@ -1139,6 +1139,237 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testByteAndShortColumnTopRowsSurvivePruning() throws Exception {
+        // BYTE and SHORT have no NULL sentinel, so a column top reads back as a perfectly ordinary
+        // 0. The parquet writer marks those rows definition-level 0, which keeps them out of the
+        // min/max statistics and the bloom set - and the pruning code only consults null_count when
+        // the FILTER value is the type's null sentinel, which for these two types does not exist.
+        // So a row group whose real values are 5 and 6 reports min=5/max=6 and gets skipped for
+        // "= 0" and "< 1", losing the column-top rows that native storage returns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x ADD COLUMN b BYTE");
+            execute("ALTER TABLE x ADD COLUMN s SHORT");
+            // The 2024-01-02 row keeps 2024-01-01 out of the active slot so it can convert.
+            execute("""
+                    INSERT INTO x VALUES
+                    (3, '2024-01-01T02:00:00.000000Z', 5, 5),
+                    (4, '2024-01-01T03:00:00.000000Z', 6, 6),
+                    (5, '2024-01-02T01:00:00.000000Z', 7, 7)
+                    """);
+
+            final String eqByte = """
+                    id\tb
+                    1\t0
+                    2\t0
+                    """;
+            final String eqShort = """
+                    id\ts
+                    1\t0
+                    2\t0
+                    """;
+
+            // Native storage: the column-top rows read as 0 and match.
+            assertQuery("SELECT id, b FROM x WHERE b = 0").noLeakCheck().returns(eqByte);
+            assertQuery("SELECT id, b FROM x WHERE b < 1").noLeakCheck().returns(eqByte);
+            assertQuery("SELECT id, s FROM x WHERE s = 0").noLeakCheck().returns(eqShort);
+            assertQuery("SELECT id, s FROM x WHERE s < 1").noLeakCheck().returns(eqShort);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertHasParquetPartitions("x", true);
+
+            // Parquet must agree with native on every one of them.
+            assertQuery("SELECT id, b FROM x WHERE b = 0").noLeakCheck().returns(eqByte);
+            assertQuery("SELECT id, b FROM x WHERE b < 1").noLeakCheck().returns(eqByte);
+            assertQuery("SELECT id, s FROM x WHERE s = 0").noLeakCheck().returns(eqShort);
+            assertQuery("SELECT id, s FROM x WHERE s < 1").noLeakCheck().returns(eqShort);
+
+            // A bound that genuinely excludes both the stored values and the column-top 0 must
+            // still prune, so the fix does not simply switch pruning off for these columns.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT id, b FROM x WHERE b = 9").noLeakCheck().returns("id\tb\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // The bloom filter is the third pruning mechanism and needs its own guard: statistics
+            // can be widened to cover the implicit 0, a set of exact hashes cannot. The column-top
+            // rows were never hashed in, so a 0 probe must not come back "absent".
+            execute("CREATE TABLE y (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO y VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE y ADD COLUMN b BYTE");
+            execute("""
+                    INSERT INTO y VALUES
+                    (3, '2024-01-01T02:00:00.000000Z', 5),
+                    (4, '2024-01-01T03:00:00.000000Z', 6),
+                    (5, '2024-01-02T01:00:00.000000Z', 7)
+                    """);
+            execute("ALTER TABLE y CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02' " +
+                    "WITH (bloom_filter_columns = 'b')");
+            assertHasParquetPartitions("y", true);
+
+            assertQuery("SELECT id, b FROM y WHERE b = 0").noLeakCheck().returns(eqByte);
+            assertQuery("SELECT id, b FROM y WHERE b = 5")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tb
+                            3\t5
+                            """);
+            // 3 sits INSIDE the widened [0,6] statistics, so only the bloom set can prune it.
+            // This is what proves the bloom path above is genuinely consulted, and therefore that
+            // the 0 probe needs its own guard rather than riding on the widened statistics.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT id, b FROM y WHERE b = 3").noLeakCheck().returns("id\tb\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // A value outside both the statistics and the bloom set still prunes.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT id, b FROM y WHERE b = 9").noLeakCheck().returns("id\tb\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testByteColumnTopRowsSurviveIsNotNullPruning() throws Exception {
+        // The same family as testByteAndShortColumnTopRowsSurvivePruning, on the fourth pruning
+        // path. BYTE and SHORT have no NULL sentinel, so "b IS NOT NULL" is a constant TRUE over
+        // them - a column-top row reads as 0 and 0 IS NOT NULL. The parquet writer marks those rows
+        // definition-level 0 though, so a row group lying wholly inside the column top reports
+        // null_count == num_values, which the decoders take as "every value is null" and skip. The
+        // rows vanish. Only a partition entirely predating the ADD COLUMN shows it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE z (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO z VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE z ADD COLUMN b BYTE");
+            execute("ALTER TABLE z ADD COLUMN s SHORT");
+            execute("ALTER TABLE z ADD COLUMN f BOOLEAN");
+            // 2024-01-02 is the only partition with data for these, so 2024-01-01 is wholly top.
+            execute("INSERT INTO z VALUES (3, '2024-01-02T00:00:00.000000Z', 7, 7, true)");
+
+            final String expectedByte = """
+                    id\tb
+                    1\t0
+                    2\t0
+                    3\t7
+                    """;
+            final String expectedShort = """
+                    id\ts
+                    1\t0
+                    2\t0
+                    3\t7
+                    """;
+            final String expectedBool = """
+                    id\tf
+                    1\tfalse
+                    2\tfalse
+                    3\ttrue
+                    """;
+            assertQuery("SELECT id, b FROM z WHERE b IS NOT NULL").noLeakCheck().expectSize().returns(expectedByte);
+            assertQuery("SELECT id, s FROM z WHERE s IS NOT NULL").noLeakCheck().expectSize().returns(expectedShort);
+            assertQuery("SELECT id, f FROM z WHERE f IS NOT NULL").noLeakCheck().expectSize().returns(expectedBool);
+
+            execute("ALTER TABLE z CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertHasParquetPartitions("z", true);
+
+            assertQuery("SELECT id, b FROM z WHERE b IS NOT NULL").noLeakCheck().expectSize().returns(expectedByte);
+            assertQuery("SELECT id, s FROM z WHERE s IS NOT NULL").noLeakCheck().expectSize().returns(expectedShort);
+            assertQuery("SELECT id, f FROM z WHERE f IS NOT NULL").noLeakCheck().expectSize().returns(expectedBool);
+
+            // The mirror image stays prunable: IS NULL is a constant FALSE over these types.
+            assertQuery("SELECT id, b FROM z WHERE b IS NULL").noLeakCheck().returns("id\tb\n");
+        });
+    }
+
+    @Test
+    public void testInfinityRowsAgreeOnNullnessAcrossStorage() throws Exception {
+        // Numbers.isNull(double) is an exponent-bits test, so +/-Infinity IS NULL to QuestDB while
+        // the Rust writer's Nullable for f64 is is_nan() alone. If those two ever disagreed on what
+        // goes into null_count, the IS_NULL pushdown - which skips a row group on
+        // "null_count == 0" - would drop every infinity row that native storage returns.
+        //
+        // They do NOT disagree today: both directions below return the same rows before and after
+        // the conversion, and no row group is skipped for either. Pinned so a change to either side
+        // of that agreement reddens here rather than silently losing rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE inf (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO inf VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (1e308 * 10, '2024-01-01T01:00:00.000000Z'),
+                    (2.0, '2024-01-02T00:00:00.000000Z')
+                    """);
+            // A genuine +Infinity, not a NaN: it is greater than zero and equal to itself.
+            assertQuery("SELECT count() c FROM inf WHERE d > 0").noLeakCheck().noRandomAccess().expectSize().returns("c\n2\n");
+            assertQuery("SELECT count() c FROM inf WHERE d != d").noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+
+            final String nulls = """
+                    d
+                    null
+                    """;
+            final String nonNulls = """
+                    d
+                    1.0
+                    2.0
+                    """;
+            assertQuery("SELECT d FROM inf WHERE d IS NULL").noLeakCheck().returns(nulls);
+            assertQuery("SELECT d FROM inf WHERE d IS NOT NULL").noLeakCheck().returns(nonNulls);
+
+            execute("ALTER TABLE inf CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertHasParquetPartitions("inf", true);
+
+            assertQuery("SELECT d FROM inf WHERE d IS NULL").noLeakCheck().returns(nulls);
+            assertQuery("SELECT d FROM inf WHERE d IS NOT NULL").noLeakCheck().returns(nonNulls);
+        });
+    }
+
+    @Test
+    public void testCharColumnTopRowsSurviveEqualityPruning() throws Exception {
+        // CHAR's column top decodes to (char) 0, which IS its NULL - but `c = null::char` is not
+        // rewritten to IS NULL. It compiles to an ordinary equality against 0, and CHAR equality is
+        // a raw comparison, so native storage matches those rows. The statistics never recorded the
+        // zeros, so parquet pruned the row group and lost them. IS NULL, which DOES consult
+        // null_count, was never affected - that is why CHAR needs the statistics widening but not
+        // the IS NOT NULL guard BYTE and SHORT need.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cc (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO cc VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE cc ADD COLUMN c CHAR");
+            execute("""
+                    INSERT INTO cc VALUES
+                    (3, '2024-01-01T02:00:00.000000Z', 'x'),
+                    (4, '2024-01-02T00:00:00.000000Z', 'y')
+                    """);
+
+            final String expected = """
+                    id
+                    1
+                    2
+                    """;
+            assertQuery("SELECT id FROM cc WHERE c = null::char").noLeakCheck().returns(expected);
+
+            execute("ALTER TABLE cc CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertHasParquetPartitions("cc", true);
+
+            assertQuery("SELECT id FROM cc WHERE c = null::char").noLeakCheck().returns(expected);
+        });
+    }
+
+    @Test
     public void testCharValueOnByteColumnMatchesNative() throws Exception {
         // A CHAR bound against a BYTE column compares as the digit it spells: overload
         // resolution picks EqShortFunctionFactory, so the row filter reads '1' through
