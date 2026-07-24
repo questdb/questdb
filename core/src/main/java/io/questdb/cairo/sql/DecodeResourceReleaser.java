@@ -24,7 +24,9 @@
 
 package io.questdb.cairo.sql;
 
-/** Releases an opaque resource that keeps decoded column views alive. */
+/**
+ * Releases an opaque resource that keeps decoded column views alive.
+ */
 public interface DecodeResourceReleaser {
     void releaseDecodeResource(long resource);
 }

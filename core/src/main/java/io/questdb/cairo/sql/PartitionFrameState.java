@@ -27,7 +27,9 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Unsafe;
 
-/** Stable Java view of the fixed ABI header in an opaque Rust partition-state handle. */
+/**
+ * Stable Java view of the fixed ABI header in an opaque Rust partition-state handle.
+ */
 public final class PartitionFrameState {
     private static final int HEADER_HAS_CUSTOM_FRAMES = 3;
     private static final int HEADER_LOGICAL_ROWS = 2;

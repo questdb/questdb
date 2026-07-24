@@ -82,7 +82,9 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         }
     }
 
-    /** Copies the query tracker binding without exposing the tracker object. */
+    /**
+     * Copies the query tracker binding without exposing the tracker object.
+     */
     public void copyMemoryTrackerFrom(RowGroupBuffers source) {
         this.memoryTracker = source.memoryTracker;
     }
