@@ -28,13 +28,16 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.Arrays;
 
 /**
  * Restores the persistent chunked ring shared by the partitioned window functions
@@ -109,16 +112,36 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     public static final int VALUE_KIND_DOUBLE = 0;
     public static final int VALUE_KIND_LONG = 1;
     public static final int VALUE_KIND_NONE = 8;
+    /**
+     * Data segments one restore keeps mapped at a time. A cadence seal appends
+     * each partition's new rows as a fresh chunk in its own boundary's data
+     * segment and carries the older chunks forward by reference, so one
+     * partition's ring spans up to {@link LiveViewCheckpointRingSeal#MAX_LIVE_CHUNKS}
+     * segments - and every other partition of the same function spans the same
+     * ones. A restore walks the partitions one after another, so a reader that
+     * maps a single segment re-opens that whole span once per partition. A cache
+     * that covers the span maps each segment once per restore instead.
+     * <p>
+     * Direct-mapped on the segment id, which the seal mints sequentially, so a
+     * span that fits collides nowhere. A span that does not fit (a sparse
+     * partition can hold its chunk cap over a much wider run of boundaries)
+     * degrades to the single-segment behaviour for the ids that collide.
+     */
+    private static final int DATA_SEGMENT_CACHE_SIZE = Numbers.ceilPow2(LiveViewCheckpointRingSeal.MAX_LIVE_CHUNKS);
     private static final int FLAGS = 0;
     private static final int SCALAR_FIXED_WORDS = 4;
     private final Path checkpointsDir = new Path();
-    private final LiveViewCheckpointDataSegmentReader dataReader;
+    private final CairoConfiguration configuration;
+    private final LiveViewCheckpointDataSegmentReader[] dataReaders =
+            new LiveViewCheckpointDataSegmentReader[DATA_SEGMENT_CACHE_SIZE];
+    private final long[] dataSegmentIds = new long[DATA_SEGMENT_CACHE_SIZE];
     private final LiveViewCheckpointStateCodec.Scratch scratch;
     private long frameSize;
     private int headOffset;
     private boolean initialized;
     private long lastTimestamp;
-    private long openSegmentId = -1;
+    // The segment reader the last openPage bound; the decoders read the page off it.
+    private LiveViewCheckpointDataSegmentReader openReader;
     private long rowCount;
     private long scalarWord0;
     private long scalarWord1;
@@ -137,8 +160,9 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
             @NotNull CairoConfiguration configuration,
             @Nullable MemoryTracker memoryTracker
     ) {
-        dataReader = new LiveViewCheckpointDataSegmentReader(configuration);
+        this.configuration = configuration;
         scratch = new LiveViewCheckpointStateCodec.Scratch(memoryTracker);
+        Arrays.fill(dataSegmentIds, -1);
     }
 
     /**
@@ -190,13 +214,33 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
 
     @Override
     public void close() {
-        Misc.free(dataReader);
+        for (int i = 0; i < DATA_SEGMENT_CACHE_SIZE; i++) {
+            dataReaders[i] = Misc.free(dataReaders[i]);
+            dataSegmentIds[i] = -1;
+        }
         Misc.free(scratch);
         Misc.free(checkpointsDir);
         initialized = false;
-        openSegmentId = -1;
+        openReader = null;
         segmentDirectory = null;
         statePageRefs = new LiveViewCheckpointStatePageRef[0];
+    }
+
+    /**
+     * Unmaps every cached data segment while keeping the readers themselves, so a
+     * reader that outlives one restore holds no mapping into files a later retire,
+     * repair or compaction deletes - and cannot serve a page out of a segment id
+     * a rebuilt timeline re-minted. The next walk re-opens what it touches.
+     */
+    public void detach() {
+        for (int i = 0; i < DATA_SEGMENT_CACHE_SIZE; i++) {
+            final LiveViewCheckpointDataSegmentReader reader = dataReaders[i];
+            if (reader != null) {
+                reader.close();
+            }
+            dataSegmentIds[i] = -1;
+        }
+        openReader = null;
     }
 
     /**
@@ -306,7 +350,12 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
             @NotNull LiveViewCheckpointPartitionMapEntry entry
     ) {
         ofMetadata(entry);
-        this.checkpointsDir.of(checkpointsDir);
+        if (!Utf8s.equals(this.checkpointsDir, checkpointsDir)) {
+            // Segment ids are unique within one view's checkpoint directory and
+            // nowhere else, so cached segments of another view cannot be reused.
+            detach();
+            this.checkpointsDir.of(checkpointsDir);
+        }
         this.segmentDirectory = segmentDirectory;
     }
 
@@ -323,7 +372,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
      */
     public void ofMetadata(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
         initialized = false;
-        openSegmentId = -1;
+        openReader = null;
         this.segmentDirectory = null;
         final byte[] scalar = entry.getScalarState();
         if (scalar.length < scalarStateBytes(1)) {
@@ -581,13 +630,35 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         return timestampRef.getRowCount();
     }
 
+    /**
+     * Maps {@code segmentId}, or returns the cached mapping of it. The slot a
+     * segment id lands in is fixed, so a slot holding another id re-opens: see
+     * {@link #DATA_SEGMENT_CACHE_SIZE} for why that is the right trade here.
+     */
+    private LiveViewCheckpointDataSegmentReader dataSegmentReader(long segmentId, long fileLength) {
+        final int slot = (int) (segmentId & (DATA_SEGMENT_CACHE_SIZE - 1));
+        LiveViewCheckpointDataSegmentReader reader = dataReaders[slot];
+        if (reader == null) {
+            reader = new LiveViewCheckpointDataSegmentReader(configuration);
+            dataReaders[slot] = reader;
+        } else if (dataSegmentIds[slot] == segmentId) {
+            return reader;
+        }
+        // A failed open leaves the slot mapping nothing, so clear the id before it
+        // rather than let a throw strand a slot that claims a segment it lost.
+        dataSegmentIds[slot] = -1;
+        reader.of(checkpointsDir, segmentId, fileLength);
+        dataSegmentIds[slot] = segmentId;
+        return reader;
+    }
+
     private void decodeTimestamps(LiveViewCheckpointStatePageRef ref, long targetAddress) {
         openPage(ref, TIMESTAMP_PAGE_KIND);
         final int consumed = LiveViewCheckpointStateCodec.decodeTimestamps(
-                dataReader.getPageAddress(), dataReader.getPageStoredLength(), ref.getCodec(), ref.getRowCount(),
+                openReader.getPageAddress(), openReader.getPageStoredLength(), ref.getCodec(), ref.getRowCount(),
                 targetAddress, LiveViewCheckpointStateCodec.CHUNK_ROWS
         );
-        dataReader.assertFullyConsumed(consumed, ref.getDecodedLength(), ref.getRowCount());
+        openReader.assertFullyConsumed(consumed, ref.getDecodedLength(), ref.getRowCount());
     }
 
     private void decodeValues(LiveViewCheckpointStatePageRef ref, long targetAddress) {
@@ -599,16 +670,16 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         final int consumed;
         if (isLongColumn(valueKind)) {
             consumed = LiveViewCheckpointStateCodec.decodeLongs(
-                    dataReader.getPageAddress(), dataReader.getPageStoredLength(), ref.getCodec(), words,
+                    openReader.getPageAddress(), openReader.getPageStoredLength(), ref.getCodec(), words,
                     targetAddress, LiveViewCheckpointStateCodec.CHUNK_ROWS
             );
         } else {
             consumed = LiveViewCheckpointStateCodec.decodeDoubles(
-                    dataReader.getPageAddress(), dataReader.getPageStoredLength(), ref.getCodec(), words,
+                    openReader.getPageAddress(), openReader.getPageStoredLength(), ref.getCodec(), words,
                     targetAddress, LiveViewCheckpointStateCodec.CHUNK_ROWS
             );
         }
-        dataReader.assertFullyConsumed(consumed, ref.getDecodedLength(), ref.getRowCount());
+        openReader.assertFullyConsumed(consumed, ref.getDecodedLength(), ref.getRowCount());
     }
 
     private void ensureBound() {
@@ -631,11 +702,8 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         } catch (CairoException e) {
             throw invalid("RANGE ring page references unknown data segment, segmentId=").put(ref.getSegmentId());
         }
-        if (openSegmentId != ref.getSegmentId()) {
-            dataReader.of(checkpointsDir, ref.getSegmentId(), fileLength);
-            openSegmentId = ref.getSegmentId();
-        }
-        dataReader.openPage(
+        openReader = dataSegmentReader(ref.getSegmentId(), fileLength);
+        openReader.openPage(
                 ref,
                 pageKind,
                 ref.getCodec(),

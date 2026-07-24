@@ -81,6 +81,26 @@ public class LiveViewCheckpointMetaStore implements Closeable {
         isOpen = false;
     }
 
+    /**
+     * Closes this binding so the store can be re-opened, releasing the mapped
+     * superblock and every metadata segment the bounded validation mapped, and
+     * forgetting the generation it installed. What survives is the reader
+     * instances themselves, which {@link #of(Path)} rebinds.
+     * <p>
+     * A re-open re-reads the superblock rather than trusting the generation it
+     * installed before: publication advances the A/B slots under a reader, and a
+     * retired timeline may even be rebuilt from an id space that restarts, so
+     * nothing derived from the previous binding carries over.
+     */
+    public void detach() {
+        superblock.close();
+        rowPositionDeltaReader.detach();
+        segmentDirectoryReader.detach();
+        timelineReader.detach();
+        generationTracker.clear();
+        isOpen = false;
+    }
+
     public LiveViewCheckpointSuperblock getSuperblock() {
         ensureOpen();
         return superblock;

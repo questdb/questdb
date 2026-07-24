@@ -84,23 +84,33 @@ public class LiveViewCheckpointGenerationTracker implements QuietCloseable {
     private long currentNormalizedBaseSeqTxn = -1;
 
     /**
-     * Releases pooled pins and clears the current-generation snapshot. Asserts no pin
-     * is still outstanding: an outstanding pin at close is a reader that never
-     * released its generation.
+     * Forgets the current-generation snapshot, leaving the tracker ready to record
+     * a generation of another timeline - one whose ids need not continue this
+     * one's. Asserts no pin is still outstanding, for the reason {@link #close()}
+     * states.
      */
-    @Override
-    public synchronized void close() {
+    public synchronized void clear() {
         assert pinnedGenerations.size() == 0
                 : "live view checkpoint generation pins leaked: " + pinnedGenerations.size();
         pinnedGenerations.clear();
         pinnedNormalizedBaseSeqTxns.clear();
-        pool.clear();
         currentGeneration = NO_GENERATION;
         currentNormalizedBaseSeqTxn = -1;
         currentCoveredLvSeqTxn = -1;
         currentTimelineRootRef.clear();
         currentRowPositionDeltaRootRef.clear();
         currentSegmentDirectoryRootRef.clear();
+    }
+
+    /**
+     * Releases pooled pins and clears the current-generation snapshot. Asserts no pin
+     * is still outstanding: an outstanding pin at close is a reader that never
+     * released its generation.
+     */
+    @Override
+    public synchronized void close() {
+        clear();
+        pool.clear();
     }
 
     /**

@@ -80,6 +80,21 @@ public class LiveViewCheckpointRowPositionDeltaReader implements Closeable {
     }
 
     /**
+     * Unmaps every cached metadata segment while keeping the readers themselves,
+     * so a reader that outlives one restore holds no mapping into files a later
+     * retire, repair or compaction deletes.
+     */
+    public void detach() {
+        for (int i = 0; i < SEGMENT_CACHE_SIZE; i++) {
+            if (segReaders[i] != null) {
+                segReaders[i].close();
+            }
+            segReaderSegId[i] = -1;
+        }
+        segReaderClock = 0;
+    }
+
+    /**
      * @return the effective cumulative {@code lvRowPosition} of {@code entry} in the
      * generation rooted at {@code rootRef}: the entry's stored
      * {@code baseLvRowPosition} plus the prefix sum at the entry's search key.

@@ -119,18 +119,58 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         isOpen = false;
     }
 
+    /**
+     * Ends this binding, unmapping every file the restore touched but keeping the
+     * readers themselves, so the next {@link #of(Path)} rebinds a reader that is
+     * already built instead of building one. A worker holds one reader across its
+     * whole life this way, rather than a reader per restored root.
+     * <p>
+     * Nothing derived from the previous binding survives: mappings are dropped
+     * because the timeline they name may be retired, repaired, compacted - or
+     * rebuilt from a segment id space that restarts - before the next bind, and
+     * the meta store re-reads the superblock for the same reason.
+     */
+    public void detach() {
+        for (int i = 0; i < DATA_READER_CACHE_SIZE; i++) {
+            if (dataReaders[i] != null) {
+                dataReaders[i].close();
+            }
+            dataSegmentIds[i] = -1;
+        }
+        dataReaderClock = 0;
+        anchorRoot.detach();
+        deltaReader.detach();
+        functionDirectory.detach();
+        functionRoot.detach();
+        metaStore.detach();
+        partitionReader.detach();
+        ringStateReader.detach();
+        root.detach();
+        segmentDirectory.detach();
+        timelineReader.detach();
+        isOpen = false;
+    }
+
     public void of(@Transient @NotNull Path checkpointsDir) {
         if (isOpen) {
             throw CairoException.critical(0).put("live view checkpoint timeline restore reader already open");
         }
         this.checkpointsDir.of(checkpointsDir);
-        metaStore.of(checkpointsDir);
-        if (!metaStore.isValid()) {
-            throw invalid("has no valid generation to restore");
+        try {
+            metaStore.of(checkpointsDir);
+            if (!metaStore.isValid()) {
+                throw invalid("has no valid generation to restore");
+            }
+            deltaReader.of(checkpointsDir);
+            partitionReader.of(checkpointsDir);
+            timelineReader.of(checkpointsDir);
+        } catch (Throwable t) {
+            // A reader that outlives the failed bind must not keep the meta store
+            // half-open: the next bind would meet it already open and fail there
+            // instead, for good.
+            detach();
+            throw t;
         }
-        deltaReader.of(checkpointsDir);
-        partitionReader.of(checkpointsDir);
-        timelineReader.of(checkpointsDir);
         isOpen = true;
     }
 

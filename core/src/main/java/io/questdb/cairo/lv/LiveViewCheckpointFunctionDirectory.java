@@ -54,6 +54,15 @@ public class LiveViewCheckpointFunctionDirectory implements Closeable {
         Misc.free(reader);
     }
 
+    /**
+     * Unmaps the metadata segment this root was read from while keeping the
+     * reader itself, so a reader that outlives one restore holds no mapping into
+     * files a later retire, repair or compaction deletes.
+     */
+    public void detach() {
+        reader.close();
+    }
+
     public boolean find(@NotNull byte[] identity, @NotNull LiveViewCheckpointPageRef out) {
         int lo = 0;
         int hi = identities.length;

@@ -59,6 +59,15 @@ public class LiveViewCheckpointRoot implements Closeable {
         Misc.free(reader);
     }
 
+    /**
+     * Unmaps the metadata segment this root was read from while keeping the
+     * reader itself, so a reader that outlives one restore holds no mapping into
+     * files a later retire, repair or compaction deletes.
+     */
+    public void detach() {
+        reader.close();
+    }
+
     public void getAnchorRootRef(@NotNull LiveViewCheckpointPageRef out) {
         out.of(anchorRootRef.getSegmentId(), anchorRootRef.getOffset(), anchorRootRef.getLength());
     }

@@ -42,8 +42,11 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -56,6 +59,8 @@ import java.util.List;
 
 public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
 
+    private static final String DATA_SEGMENT_PATH_FRAGMENT =
+            LiveViewCheckpointLayout.DATA_DIR_NAME + Files.SEPARATOR + LiveViewCheckpointLayout.DATA_SEGMENT_PREFIX;
     private static final byte[] KEY = new byte[]{1, 2, 3};
     private static final String LV_DIR = "lv_avg_range_chunks";
 
@@ -140,6 +145,85 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     Assert.assertEquals(5, reader.getHeadOffset());
                     Assert.assertEquals(4_104, reader.getRowCount());
                     Assert.assertEquals(Double.doubleToRawLongBits(-0.0), reader.getScalarBits());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testChunksSpanningManySegmentsMapEachSegmentOncePerBinding() throws Exception {
+        // A cadence seal appends each boundary's rows as a fresh chunk in that
+        // boundary's own data segment and carries the older chunks forward by
+        // reference, so one partition's ring spans as many segments as boundaries
+        // it survived - and a restore walks that same span again for every
+        // partition it rehydrates. Prove the reader maps each segment once and
+        // reuses the mapping for every later binding, until detach drops it.
+        final int boundaries = 40;
+        final int rowsPerBoundary = 3;
+        final int[] dataSegmentOpens = {0};
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.containsAscii(name, DATA_SEGMENT_PATH_FRAGMENT)) {
+                    dataSegmentOpens[0]++;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final LongList timestamps = new LongList();
+            final LongList values = new LongList();
+            try (Catalogue directory = new Catalogue()) {
+                LiveViewCheckpointPartitionMapEntry root = null;
+                for (int boundary = 0; boundary < boundaries; boundary++) {
+                    final long segmentId = boundary + 1;
+                    final LiveViewCheckpointPartitionMapEntry sealed = new LiveViewCheckpointPartitionMapEntry();
+                    try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                         LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                         Path dir = new Path()) {
+                        if (root == null) {
+                            builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
+                        } else {
+                            builder.of(root, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
+                        }
+                        writer.of(checkpointsDir(dir), segmentId);
+                        for (int i = 0; i < rowsPerBoundary; i++) {
+                            final long ts = (boundary * rowsPerBoundary + i) * 1_000L;
+                            final long bits = Double.doubleToRawLongBits(ts / 1_000.0);
+                            timestamps.add(ts);
+                            values.add(bits);
+                            builder.append(writer, ts, bits);
+                        }
+                        builder.freeze(writer, KEY, 0L, 0, 0, 0, timestamps.size(), sealed);
+                        directory.addSegment(segmentId, writer.commit());
+                    }
+                    root = sealed;
+                }
+
+                // One chunk - a timestamp page and a value page - per boundary, each
+                // in the segment that boundary sealed.
+                Assert.assertEquals(2 * boundaries, root.getStatePageCount());
+                for (int i = 0; i < root.getStatePageCount(); i++) {
+                    Assert.assertEquals(i / 2 + 1, root.getStatePageRef(i).getSegmentId());
+                }
+
+                try (LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
+                     Path dir = new Path()) {
+                    dataSegmentOpens[0] = 0;
+                    assertWalked(reader, dir, directory, root, timestamps, values);
+                    Assert.assertEquals(boundaries, dataSegmentOpens[0]);
+
+                    // A second binding of the same partition - the shape a restore
+                    // takes for every partition after the first - reads the whole
+                    // span off the mappings the first one made.
+                    assertWalked(reader, dir, directory, root, timestamps, values);
+                    Assert.assertEquals(boundaries, dataSegmentOpens[0]);
+
+                    // Detach drops them, so nothing survives into a timeline that may
+                    // be retired, repaired or compacted in between.
+                    reader.detach();
+                    assertWalked(reader, dir, directory, root, timestamps, values);
+                    Assert.assertEquals(2 * boundaries, dataSegmentOpens[0]);
                 }
             }
         });
@@ -595,6 +679,29 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         Assert.assertEquals(expected.getCodec(), actual.getCodec());
         Assert.assertEquals(expected.getRowCount(), actual.getRowCount());
         Assert.assertEquals(expected.getFlags(), actual.getFlags());
+    }
+
+    /**
+     * Rebinds {@code reader} to {@code entry} and asserts the whole ring reads
+     * back, so the caller can drive several bindings through one reader.
+     */
+    private static void assertWalked(
+            LiveViewCheckpointRangeRingStateReader reader,
+            Path dir,
+            Catalogue directory,
+            LiveViewCheckpointPartitionMapEntry entry,
+            LongList expectedTimestamps,
+            LongList expectedValues
+    ) {
+        reader.of(checkpointsDir(dir), directory.reader, entry);
+        Assert.assertEquals(expectedTimestamps.size(), reader.getRowCount());
+        final int[] index = {0};
+        reader.forEachRow((timestamp, value) -> {
+            final int i = index[0]++;
+            Assert.assertEquals(expectedTimestamps.getQuick(i), timestamp);
+            Assert.assertEquals(expectedValues.getQuick(i), value);
+        });
+        Assert.assertEquals(expectedTimestamps.size(), index[0]);
     }
 
     private static void assertRestored(

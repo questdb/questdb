@@ -192,6 +192,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // feed the compiled copier when materialising the un-flushed lead into the LV
     // WAL. Reused across rows; rebound via of() before each copy.
     private final LiveViewBufferRecord bufferRecord = new LiveViewBufferRecord();
+    // Restores of versioned-timeline roots: the out-of-order resume anchor, the
+    // seed resume, restart recovery and the repair plan's anchor search. Lazily
+    // allocated on this worker's first restore and rebound per call, so a worker
+    // builds the reader tree once rather than once per restored root. Bound only
+    // for the duration of one restore - see borrowCheckpointTimelineStoreReader.
+    private LiveViewCheckpointTimelineStoreReader checkpointTimelineStoreReader;
     // Publisher for versioned-timeline roots: the in-order cadence append and the
     // out-of-order range splice. Lazily allocated on this worker's first seal.
     private LiveViewCheckpointTimelineStoreWriter checkpointTimelineStoreWriter;
@@ -366,6 +372,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(addressCache);
         Misc.free(memoryPool);
         Misc.free(applyJob);
+        checkpointTimelineStoreReader = Misc.free(checkpointTimelineStoreReader);
         checkpointTimelineStoreWriter = Misc.free(checkpointTimelineStoreWriter);
         stagingBuffer = Misc.free(stagingBuffer);
         Misc.free(rowsBounds);
@@ -5974,6 +5981,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Binds this worker's checkpoint timeline store reader to {@code checkpointsDir}
+     * and hands it to the caller for exactly one restore.
+     * <p>
+     * The reader is built on first use and rebound per call rather than rebuilt,
+     * which is what keeps a per-commit resume off the allocation path: the tree
+     * behind it - meta store, delta reader, partition map reader, ring state
+     * reader, per-segment readers - is the same one every restore of every view
+     * this worker drives goes through.
+     * <p>
+     * The caller must {@link LiveViewCheckpointTimelineStoreReader#detach()} on
+     * every exit path. Detaching drops every mapping and forgets the generation,
+     * so the reader holds nothing between restores and the next bind re-reads what
+     * a retire, repair or compaction may have changed in between. A bind that
+     * meets a reader still attached is a caller that lost its {@code finally};
+     * that raises rather than silently restoring against the wrong view.
+     */
+    private LiveViewCheckpointTimelineStoreReader borrowCheckpointTimelineStoreReader(
+            @Transient Path checkpointsDir
+    ) {
+        if (checkpointTimelineStoreReader == null) {
+            checkpointTimelineStoreReader = new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration());
+        }
+        checkpointTimelineStoreReader.of(checkpointsDir);
+        return checkpointTimelineStoreReader;
+    }
+
+    /**
      * Restores the logical checkpoint root the repair plan chose as its resume
      * anchor, identified by the timeline's composite {@code (maxTimestamp,
      * checkpointId)} key. The caller has already cleared the per-function
@@ -5994,22 +6028,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long anchorMaxTs,
             long anchorCheckpointId
     ) {
-        try (
-                Path checkpointsDir = new Path();
-                LiveViewCheckpointTimelineStoreReader reader =
-                        new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration())
-        ) {
+        try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-            reader.of(checkpointsDir);
-            return reader.restore(
-                    anchorMaxTs,
-                    anchorCheckpointId,
-                    instance.getLiveViewToken().getTableId(),
-                    windowFactory.getWindowFunctions(),
-                    instance.getAnchorWindow()
-            ).effectiveLvRowPosition;
+            final LiveViewCheckpointTimelineStoreReader reader =
+                    borrowCheckpointTimelineStoreReader(checkpointsDir);
+            try {
+                return reader.restore(
+                        anchorMaxTs,
+                        anchorCheckpointId,
+                        instance.getLiveViewToken().getTableId(),
+                        windowFactory.getWindowFunctions(),
+                        instance.getAnchorWindow()
+                ).effectiveLvRowPosition;
+            } finally {
+                reader.detach();
+            }
         } catch (CairoException ce) {
             LOG.critical().$("could not restore live view O3 resume anchor [view=")
                     .$(instance.getDefinition().getViewName())
@@ -6056,11 +6091,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             RestoredSeedState out
     ) {
         out.reset();
-        try (
-                Path checkpointsDir = new Path();
-                LiveViewCheckpointTimelineStoreReader reader =
-                        new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration())
-        ) {
+        try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
@@ -6070,28 +6101,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // reader raises when it is asked to restore from nothing.
                 return false;
             }
-            reader.of(checkpointsDir);
-            // Open the (lazy) window cursor before writing restored state into it:
-            // allocates the per-partition maps and marks the cursor open so the
-            // first post-restore incremental refresh preserves the restored state
-            // rather than re-bootstrapping (which would clobber it).
-            windowFactory.openForLiveViewRestore(executionContext);
-            final LiveViewCheckpointTimelineStoreReader.Result restored = reader.restoreLatest(
-                    instance.getLiveViewToken().getTableId(),
-                    windowFactory.getWindowFunctions(),
-                    instance.getAnchorWindow()
-            );
-            if (restored.seedCursorOffset == Numbers.LONG_NULL) {
-                LOG.info().$("live view timeline holds no seed resume point [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", generation=").$(restored.generation).I$();
-                return false;
+            final LiveViewCheckpointTimelineStoreReader reader =
+                    borrowCheckpointTimelineStoreReader(checkpointsDir);
+            try {
+                // Open the (lazy) window cursor before writing restored state into it:
+                // allocates the per-partition maps and marks the cursor open so the
+                // first post-restore incremental refresh preserves the restored state
+                // rather than re-bootstrapping (which would clobber it).
+                windowFactory.openForLiveViewRestore(executionContext);
+                final LiveViewCheckpointTimelineStoreReader.Result restored = reader.restoreLatest(
+                        instance.getLiveViewToken().getTableId(),
+                        windowFactory.getWindowFunctions(),
+                        instance.getAnchorWindow()
+                );
+                if (restored.seedCursorOffset == Numbers.LONG_NULL) {
+                    LOG.info().$("live view timeline holds no seed resume point [view=")
+                            .$(instance.getDefinition().getViewName())
+                            .$(", generation=").$(restored.generation).I$();
+                    return false;
+                }
+                out.resumeDataOffset = restored.seedCursorOffset;
+                out.maxTimestamp = restored.maxTimestamp;
+                out.lvRowsTotal = restored.effectiveLvRowPosition;
+                out.stateBytes = restored.logicalStateBytes;
+                return true;
+            } finally {
+                reader.detach();
             }
-            out.resumeDataOffset = restored.seedCursorOffset;
-            out.maxTimestamp = restored.maxTimestamp;
-            out.lvRowsTotal = restored.effectiveLvRowPosition;
-            out.stateBytes = restored.logicalStateBytes;
-            return true;
         } catch (Throwable t) {
             return handleCorruptSeedTimeline(instance, t);
         }
@@ -6215,9 +6251,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             LiveViewCheckpointTimelineStoreReader.Result restored;
-            try (LiveViewCheckpointTimelineStoreReader timelineReader =
-                         new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration())) {
-                timelineReader.of(checkpointsDir);
+            final LiveViewCheckpointTimelineStoreReader timelineReader =
+                    borrowCheckpointTimelineStoreReader(checkpointsDir);
+            try {
                 // Allocate/open the caller-owned maps before the page reader
                 // validates and restores into them, matching legacy restore.
                 windowFactory.openForLiveViewRestore(executionContext);
@@ -6230,6 +6266,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         windowFactory.getWindowFunctions(),
                         instance.getAnchorWindow()
                 );
+            } finally {
+                timelineReader.detach();
             }
 
             if (restored.corruptCeilingMaxTs != Numbers.LONG_NULL) {
@@ -6247,9 +6285,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                             .put("live view checkpoint corrupt-root reconstruction failed");
                 }
-                try (LiveViewCheckpointTimelineStoreReader healedReader =
-                             new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration())) {
-                    healedReader.of(checkpointsDir);
+                final LiveViewCheckpointTimelineStoreReader healedReader =
+                        borrowCheckpointTimelineStoreReader(checkpointsDir);
+                try {
                     restored = healedReader.restoreLatestCompatible(
                             durableFrontierTimestamp,
                             durableBaseSeqTxn,
@@ -6259,6 +6297,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             windowFactory.getWindowFunctions(),
                             instance.getAnchorWindow()
                     );
+                } finally {
+                    healedReader.detach();
                 }
                 if (restored.corruptCeilingMaxTs != Numbers.LONG_NULL) {
                     throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
@@ -8491,12 +8531,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * boundary the timeline holds is a candidate, so however old a correction is,
      * the search still answers with the newest boundary below it.
      * <p>
-     * The lookup opens the timeline store per search rather than holding a reader
-     * across the repair. A repair runs at most two searches, both during planning
-     * and both before anything is staged, so the open costs one superblock read
-     * and the root metadata pages on the search path. The generation each search
-     * pins is released before it returns, which is what lets the repair's own
-     * capture pin the generation it splices into.
+     * The lookup binds the worker's timeline store reader per search rather than
+     * holding it bound across the repair. A repair runs at most two searches, both
+     * during planning and both before anything is staged, so a bind costs one
+     * superblock read and the root metadata pages on the search path. The
+     * generation each search pins is released before it returns, and the bind
+     * itself ends with it, which is what lets the repair's own capture pin the
+     * generation it splices into.
      * <p>
      * A view with no readable timeline - never sealed, retired by an earlier
      * repair, or corrupt - reports no anchor rather than raising, so the plan
@@ -8507,16 +8548,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         @Override
         public boolean findAnchorBelow(long ceilTs, @NotNull LiveViewCheckpointTimelineEntry out) {
-            try (
-                    Path checkpointsDir = new Path();
-                    LiveViewCheckpointTimelineStoreReader reader =
-                            new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration())
-            ) {
+            try (Path checkpointsDir = new Path()) {
                 checkpointsDir.of(engine.getConfiguration().getDbRoot())
                         .concat(instance.getLiveViewToken())
                         .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-                reader.of(checkpointsDir);
-                return reader.predecessor(ceilTs, out);
+                final LiveViewCheckpointTimelineStoreReader reader =
+                        borrowCheckpointTimelineStoreReader(checkpointsDir);
+                try {
+                    return reader.predecessor(ceilTs, out);
+                } finally {
+                    reader.detach();
+                }
             } catch (Throwable t) {
                 LOG.info().$("live view checkpoint timeline holds no resume anchor [view=")
                         .$(instance.getDefinition().getViewName())

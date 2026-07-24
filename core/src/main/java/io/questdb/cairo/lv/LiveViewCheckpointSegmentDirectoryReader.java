@@ -92,6 +92,22 @@ public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
     }
 
     /**
+     * Unmaps every cached metadata segment while keeping the readers themselves,
+     * so a reader that outlives one restore holds no mapping into files a later
+     * retire, repair or compaction deletes.
+     */
+    public void detach() {
+        for (int i = 0; i < SEGMENT_CACHE_SIZE; i++) {
+            if (segReaders[i] != null) {
+                segReaders[i].close();
+            }
+            segReaderSegId[i] = -1;
+        }
+        segReaderClock = 0;
+        rootRef.clear();
+    }
+
+    /**
      * Point lookup by {@code segmentId}. Fills {@code out} and returns true when
      * the segment is catalogued.
      */

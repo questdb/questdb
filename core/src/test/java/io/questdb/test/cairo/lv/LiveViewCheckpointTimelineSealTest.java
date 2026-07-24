@@ -370,6 +370,110 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testOneReaderRestoresAcrossViewsAfterDetach() throws Exception {
+        // A refresh worker holds one reader for its whole life and rebinds it per
+        // restore, so a bind must start from nothing the previous one left behind:
+        // another view's generation does not continue this one's, and its segment
+        // ids name entirely different files.
+        assertMemoryLeak(() -> {
+            createView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1);
+                appendAndRefresh(job, 20, 2);
+                appendAndRefresh(job, 30, 3);
+
+                // Created after three seals, so its generations start well below the
+                // first view's - which is what the reader must not carry over.
+                execute(
+                        "CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM NOW AS " +
+                                "SELECT ts, sym, sum(x) OVER (" +
+                                "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW" +
+                                ") s FROM base"
+                );
+                appendAndRefresh(job, 40, 4);
+
+                final LiveViewInstance first = engine.getLiveViewRegistry().getViewInstance("lv");
+                final LiveViewInstance second = engine.getLiveViewRegistry().getViewInstance("lv2");
+                Assert.assertNotNull(first);
+                Assert.assertNotNull(second);
+                final ObjList<WindowFunction> firstFunctions = unwrapWindowFunctions(first);
+                final ObjList<WindowFunction> secondFunctions = unwrapWindowFunctions(second);
+                final RuntimeSnapshot firstState = snapshotRuntime(firstFunctions, first.getAnchorWindow());
+                final RuntimeSnapshot secondState = snapshotRuntime(secondFunctions, second.getAnchorWindow());
+
+                try (LiveViewCheckpointTimelineStoreReader reader =
+                             new LiveViewCheckpointTimelineStoreReader(configuration)) {
+                    // A bind that fails must leave nothing half-open behind it, or
+                    // every later bind of this reader would fail on that instead.
+                    try (Path missingDir = new Path().of(configuration.getDbRoot())
+                            .concat("no_such_view")
+                            .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)) {
+                        reader.of(missingDir);
+                        Assert.fail("expected a bind to a directory with no timeline to fail");
+                    } catch (CairoException ignore) {
+                    }
+
+                    final long firstGeneration;
+                    try (Path checkpointsDir = checkpointsDir(first)) {
+                        reader.of(checkpointsDir);
+                        firstGeneration = reader.restoreLatest(
+                                first.getLiveViewToken().getTableId(),
+                                firstFunctions,
+                                first.getAnchorWindow()
+                        ).generation;
+                        assertRuntimeSnapshot(firstState, firstFunctions, first.getAnchorWindow());
+                        // A bind that meets a reader still attached is a caller that
+                        // lost its finally, and must raise rather than restore against
+                        // whatever the previous bind left open.
+                        try {
+                            reader.of(checkpointsDir);
+                            Assert.fail("expected an already-open reader to refuse a second bind");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "already open");
+                        }
+                        reader.detach();
+                    }
+
+                    final long secondGeneration;
+                    try (Path checkpointsDir = checkpointsDir(second)) {
+                        reader.of(checkpointsDir);
+                        secondGeneration = reader.restoreLatest(
+                                second.getLiveViewToken().getTableId(),
+                                secondFunctions,
+                                second.getAnchorWindow()
+                        ).generation;
+                        assertRuntimeSnapshot(secondState, secondFunctions, second.getAnchorWindow());
+                        reader.detach();
+                    }
+                    Assert.assertTrue(
+                            "the second view sealed at generation " + secondGeneration
+                                    + ", not below the first view's " + firstGeneration,
+                            secondGeneration < firstGeneration
+                    );
+
+                    // And back, which is the ordinary case: the same view restored
+                    // again through a reader that has meanwhile served another one.
+                    try (Path checkpointsDir = checkpointsDir(first)) {
+                        reader.of(checkpointsDir);
+                        Assert.assertEquals(
+                                firstGeneration,
+                                reader.restoreLatest(
+                                        first.getLiveViewToken().getTableId(),
+                                        firstFunctions,
+                                        first.getAnchorWindow()
+                                ).generation
+                        );
+                        assertRuntimeSnapshot(firstState, firstFunctions, first.getAnchorWindow());
+                        reader.detach();
+                    }
+                }
+                assertNoRefreshFaults("lv");
+                assertNoRefreshFaults("lv2");
+            }
+        });
+    }
+
+    @Test
     public void testRestoreNewestAndOldestLogicalRoot() throws Exception {
         assertMemoryLeak(() -> {
             createView(true);

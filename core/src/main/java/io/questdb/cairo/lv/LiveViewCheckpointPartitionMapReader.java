@@ -63,6 +63,21 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         Misc.free(checkpointsDir);
     }
 
+    /**
+     * Unmaps every cached metadata segment while keeping the readers themselves,
+     * so a reader that outlives one restore holds no mapping into files a later
+     * retire, repair or compaction deletes.
+     */
+    public void detach() {
+        for (int i = 0; i < SEGMENT_CACHE_SIZE; i++) {
+            if (segmentReaders[i] != null) {
+                segmentReaders[i].close();
+            }
+            segmentIds[i] = -1;
+        }
+        segmentClock = 0;
+    }
+
     public boolean find(
             @NotNull LiveViewCheckpointPageRef rootRef,
             @NotNull byte[] key,
