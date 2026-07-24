@@ -79,7 +79,7 @@ public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public int getScanDirection() {
-        return SortedRecordCursorFactory.getScanDirection(sortColumnFilter);
+        return SortedRecordCursorFactory.getScanDirection(sortColumnFilter, getMetadata().getTimestampIndex());
     }
 
     @Override

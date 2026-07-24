@@ -80,6 +80,11 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public int getScanDirection() {
+        // Only a top-K on the designated timestamp leaves the output ordered by that timestamp; a top-K
+        // on any other column does not, so report OTHER to stop generateOrderBy eliding an ORDER BY ts.
+        if (columnIndex != getMetadata().getTimestampIndex()) {
+            return SCAN_DIRECTION_OTHER;
+        }
         return ascending ? SCAN_DIRECTION_FORWARD : SCAN_DIRECTION_BACKWARD;
     }
 
