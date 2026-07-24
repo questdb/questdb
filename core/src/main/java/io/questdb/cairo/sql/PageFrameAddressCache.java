@@ -403,6 +403,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return coveredColumns.getQuick(frameIndex) != null;
     }
 
+    public boolean isFrameSingleKeyCovered(int frameIndex) {
+        return isFrameCovered(frameIndex) && coveredKeys.getQuick(frameIndex) != SymbolTable.VALUE_NOT_FOUND;
+    }
+
     /**
      * Freeze every per-partition posting reader backing a covered frame, so that
      * {@link IndexReader#reloadConditionally()} becomes a no-op and the value /

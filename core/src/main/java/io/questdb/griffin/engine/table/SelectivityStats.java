@@ -36,7 +36,7 @@ import io.questdb.std.Unsafe;
  * <p>
  * Late materialization benefits:
  * - Low selectivity -> most rows filtered -> avoid decoding unused column data
- * - Only applicable to Parquet format (columnar storage requiring decoding)
+ * - Only applicable to decode-backed frames such as Parquet and single-key covering frames
  * <p>
  * A thread-safe filter hands out no per-worker slots, so every reducing worker, the query owner
  * and any work-stealing thread share one instance. {@link #update(long, long)} therefore has to

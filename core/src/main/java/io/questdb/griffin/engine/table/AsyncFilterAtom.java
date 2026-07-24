@@ -297,8 +297,8 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         lateMatSkipColumnIndexes = skipSet;
     }
 
-    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {
-        if (!isParquetFrame) {
+    public boolean shouldUseLateMaterialization(int slotId, boolean isDecodeBackedFrame, boolean isCountOnly) {
+        if (!isDecodeBackedFrame) {
             return false;
         }
         if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
