@@ -74,6 +74,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long ROW_COUNT_OFFSET = MAX_TIMESTAMP_OFFSET + Long.BYTES;
     public static final long RESERVED_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
     public static final long RECORD_SIZE = RESERVED_OFFSET + Long.BYTES;
+    private static final long CHECKSUM_CAPABILITY_MAGIC = 0x54584E434B533031L; // TXNCKS01
+    private static final long HEADER_CHECKSUM_MAGIC_OFFSET = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES;
+    private static final long HEADER_CHECKSUM_FROM_TXN_OFFSET = HEADER_CHECKSUM_MAGIC_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     private final CairoConfiguration configuration;
@@ -247,6 +250,15 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         maxTxn.set(lastTxn);
+        if (txnMem.getLong(HEADER_CHECKSUM_MAGIC_OFFSET) != CHECKSUM_CAPABILITY_MAGIC) {
+            // Upgrade an existing V2 log in place. Records below lastTxn remain genuine legacy records;
+            // every subsequently appended record is positively declared checksummed. Publish the
+            // capability before writing such a record so a torn checksum cannot masquerade as legacy.
+            txnMem.putLong(HEADER_CHECKSUM_FROM_TXN_OFFSET, lastTxn);
+            txnMem.putLong(HEADER_CHECKSUM_MAGIC_OFFSET, CHECKSUM_CAPABILITY_MAGIC);
+            txnMem.sync(false);
+            ff.fdatasync(txnMem.getFd());
+        }
         partTransactionCount = txnMem.getInt(HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
             throw new CairoException().put("invalid sequencer file part size [size=").put(partTransactionCount).put(", path=").put(path).put(']');
@@ -291,6 +303,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(partTransactionCount);
+        txnMem.putLong(HEADER_CHECKSUM_MAGIC_OFFSET, CHECKSUM_CAPABILITY_MAGIC);
+        txnMem.putLong(HEADER_CHECKSUM_FROM_TXN_OFFSET, 0L);
         sync0();
     }
 
@@ -406,6 +420,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         private long txnCount = -1;
         private long txnLo;
         private long txnOffset;
+        private long checksumFromTxn = Long.MAX_VALUE;
 
         public TransactionLogCursorImpl(FilesFacade ff, boolean bypassWalFdCache, long txnLo, final @Transient Path path, int partTransactionCount) {
             rootPath = new Path();
@@ -546,7 +561,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             final long recordBase = address + txnOffset;
             final long stored = Unsafe.getLong(recordBase + RESERVED_OFFSET);
             if (stored == 0L) {
-                if (Unsafe.getInt(recordBase + TX_LOG_WAL_ID_OFFSET) == 0) {
+                if (txn >= checksumFromTxn || Unsafe.getInt(recordBase + TX_LOG_WAL_ID_OFFSET) == 0) {
                     throw CairoException.critical(CairoException.METADATA_VALIDATION)
                             .put("absent/torn sequencer txnlog record beyond the durable frontier [txn=").put(txn)
                             .put(", txnOffset=").put(txnOffset)
@@ -628,6 +643,17 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             this.headerFd = openFileRO(ff, path, bypassFdCache);
             this.bypassFdCache = bypassFdCache;
             long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
+            final long checksumMagic = ff.readNonNegativeLong(headerFd, HEADER_CHECKSUM_MAGIC_OFFSET);
+            checksumFromTxn = checksumMagic == CHECKSUM_CAPABILITY_MAGIC
+                    ? ff.readNonNegativeLong(headerFd, HEADER_CHECKSUM_FROM_TXN_OFFSET)
+                    : Long.MAX_VALUE;
+            if (checksumMagic == CHECKSUM_CAPABILITY_MAGIC
+                    && (checksumFromTxn < 0 || checksumFromTxn > newTxnCount)) {
+                throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                        .put("invalid sequencer checksum capability header [path=").put(path)
+                        .put(", checksumFromTxn=").put(checksumFromTxn)
+                        .put(", maxTxn=").put(newTxnCount).put(']');
+            }
             rootPath.of(path);
 
             if (newTxnCount > -1L) {

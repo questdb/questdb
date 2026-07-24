@@ -576,6 +576,36 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testRemoveAdaptiveEpochArtifactsFailsClosedWhenArtifactSurvives() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            execute("create table remove_fail (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("remove_fail");
+            final FilesFacade refusingFf = new TestFilesFacadeImpl() {
+                @Override
+                public boolean removeQuiet(LPSZ name) {
+                    if (Utf8s.containsAscii(name, TableUtils.SNAPSHOT_FILE_NAME)) {
+                        return false;
+                    }
+                    return super.removeQuiet(name);
+                }
+            };
+            try (Path p = new Path()) {
+                final int rootLen = p.of(configuration.getDbRoot()).concat(token).size();
+                try {
+                    RecoveryCoordinator.removeAdaptiveEpochArtifacts(refusingFf, p, rootLen);
+                    Assert.fail("surviving marker must abort stale-lineage cleanup");
+                } catch (CairoException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(),
+                            "could not remove stale adaptive epoch artifact");
+                }
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
     /**
      * SP-B — per-table failure isolation. A genuine I/O error while restoring ONE adaptive table's
      * durable epoch cut must not strand its healthy siblings or brick boot. {@code recover()} must catch

@@ -84,6 +84,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private long batchO3MaxLag;
     private long batchSize;
     private int commitMode = io.questdb.cairo.CommitMode.UNSET;
+    private boolean commitModeSpecified;
     private int defaultSymbolCapacity = -1;
     private boolean ignoreIfExists;
     private String likeTableName;
@@ -608,6 +609,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     public void setCommitMode(int commitMode) {
         this.commitMode = commitMode;
+        this.commitModeSpecified = true;
     }
 
     public void setTimestampColumnNamePosition(int timestampColumnNamePosition) {
@@ -623,7 +625,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.walEnabled = likeTableMetadata.isWalEnabled();
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
         this.tableFormat = likeTableMetadata.getTableFormat();
-        this.commitMode = likeTableMetadata.getCommitMode();
+        if (!commitModeSpecified) {
+            this.commitMode = likeTableMetadata.getCommitMode();
+        }
         columnNames.clear();
         columnBits.clear();
         coveringColumnIndicesList.clear();

@@ -286,7 +286,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             // When a backup checkpoint is in progress, skip deletion — the checkpoint may reference
             // these partitions via snapshotted metadata even if the scoreboard is not pinned yet.
             boolean rangeUnlocked = !checkpointInProgress
-                    && nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
+                    && nameTxn < lastTxn
+                    && txnScoreboard.isRangeAvailable(nameTxn, lastTxn)
+                    && isEpochRangeAvailable(tableToken, nameTxn, lastTxn);
 
             path.trimTo(tableRootLen);
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn - 1);
@@ -305,6 +307,11 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 break;
             }
         }
+    }
+
+    private boolean isEpochRangeAvailable(TableToken tableToken, long fromTxn, long toTxn) {
+        return !tableToken.isWal()
+                || engine.getTableSequencerAPI().getTxnTracker(tableToken).isRangeAvailableToEpoch(fromTxn, toTxn);
     }
 
     private void processPartition(
@@ -384,7 +391,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
                 boolean rangeUnlocked = !checkpointInProgress
                         && previousNameVersion < nextNameVersion
-                        && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
+                        && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion)
+                        && isEpochRangeAvailable(tableToken, previousNameVersion, nextNameVersion);
 
                 // Sometimes TableWriter can create a partition folder before committing the transaction
                 // and then clean it before committing because it was not necessary to do a copy on write.

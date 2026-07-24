@@ -126,22 +126,13 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
     }
 
     /**
-     * DETERMINISTIC repro of the CRIT-2 mid-flight window (Task 1b). The residual: between a writer's seqTxn
-     * assignment (which advances the shared {@code tracker.seqTxn}) and its durable-ack pin registration, a
-     * PEER writer's flush that EMPTIES the pin map advances the shared frontier to
-     * {@code getSeqTxn()} — i.e. onto the just-sequenced-but-not-device-durable txn (an acknowledged-data
-     * over-claim of the same class as CRITICAL-2).
-     *
-     * <p>Rather than hope a nanosecond thread race hits it, this drives it deterministically: writer B is the
-     * ONLY pending pin, then writer A commits and the {@link WalWriter#deferredCommitInterceptor} seam fires
-     * INSIDE A's mid-flight window, where the test flushes B out of order (peer {@code markWriterDurable}).
-     * A counting facade independently proves A's own segment was NEVER device-flushed, so A's txn is genuinely
-     * non-durable at that instant. PRE-FIX the frontier reaches A's seqTxn (the over-claim); POST-FIX A's pin
-     * is already in the map (registered atomically with the seqTxn assignment in the sequencer), so the frontier
-     * stays at the contiguous prefix ({@code < A's seqTxn}).
+     * Deterministically exercises the seqTxn-assignment/pending-registration window with two writers. The safe
+     * W>0 fallback makes A's private WAL durable before sequencing; when B flushes the shared sequencer inside
+     * the interceptor, A's atomic pending registration still keeps the ack frontier conservative. The counting
+     * facade independently proves the private barrier happened before that peer flush.
      */
     @Test
-    public void testMidFlightWindowNeverOverClaimsDurableAck() throws Exception {
+    public void testMidFlightPeerFlushIsSafeAfterPrivateWalBarrier() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
@@ -184,13 +175,10 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
                         }
                         final int eventsNowA = facade.walEventFdatasyncs(writerA.getWalId());
                         final long frontier = tracker.getLocalDurableSeqTxn();
-                        if (eventsNowA != eventsBeforeA) {
-                            violation[0] = new AssertionError("test setup broken: A's segment was device-flushed");
+                        if (eventsNowA <= eventsBeforeA) {
+                            violation[0] = new AssertionError("A's private event files were not durable before sequencing");
                         } else if (frontier >= seqTxn) {
-                            // A's txn is NOT device-durable (its segment _event was never fdatasync'd), yet the
-                            // frontier claims it -> the CRIT-2 mid-flight over-claim.
-                            violation[0] = new AssertionError("MID-FLIGHT DURABLE-ACK OVER-CLAIM: localDurableSeqTxn ("
-                                    + frontier + ") reached A's non-device-durable seqTxn (" + seqTxn + ")");
+                            violation[0] = new AssertionError("pending registration failed to keep the ack frontier conservative");
                         }
                     };
                     try {
@@ -204,13 +192,13 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
                     if (violation[0] != null) {
                         throw new AssertionError(violation[0].getMessage(), violation[0]);
                     }
-                    // The frontier must never have covered A's still-non-durable seqTxn ...
-                    Assert.assertTrue("frontier (" + tracker.getLocalDurableSeqTxn() + ") must remain below A's "
-                                    + "un-flushed seqTxn (" + seqA[0] + ")",
+                    // The safe fallback makes A's private WAL durable before sequencing, while the atomic
+                    // pending registration conservatively holds the durable-ack frontier until A's own batch
+                    // completion is observed.
+                    Assert.assertTrue("pending registration must keep the ack frontier below A",
                             tracker.getLocalDurableSeqTxn() < seqA[0]);
-                    // ... and A's segment was independently proven to have NEVER been device-flushed.
-                    Assert.assertEquals("A's segment must never have been device-flushed",
-                            eventsBeforeA, facade.walEventFdatasyncs(writerA.getWalId()));
+                    Assert.assertTrue("A's private event files must have been device-flushed before sequencing",
+                            facade.walEventFdatasyncs(writerA.getWalId()) > eventsBeforeA);
                 } finally {
                     a.close();
                     b.close();

@@ -57,6 +57,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
     private int commitMode = io.questdb.cairo.CommitMode.UNSET;
+    private boolean commitModeSpecified;
     private int defaultSymbolCapacity;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
@@ -131,7 +132,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             if (likeTableNameToken == null) {
                 throw SqlException.tableDoesNotExist(likeTableNameExpr.position, likeTableNameExpr.token);
             }
-            return new CreateTableOperationImpl(
+            final CreateTableOperationImpl op = new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
@@ -143,6 +144,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     likeTableNameExpr.position,
                     ignoreIfExists
             );
+            if (commitModeSpecified) {
+                op.setCommitMode(commitMode);
+            }
+            return op;
         }
 
         CreateTableOperationImpl op = new CreateTableOperationImpl(
@@ -177,6 +182,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         batchO3MaxLag = -1;
         batchSize = -1;
         commitMode = io.questdb.cairo.CommitMode.UNSET;
+        commitModeSpecified = false;
         tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
         tableFormatPosition = 0;
         defaultSymbolCapacity = 0;
@@ -300,6 +306,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setCommitMode(int commitMode) {
         this.commitMode = commitMode;
+        this.commitModeSpecified = true;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

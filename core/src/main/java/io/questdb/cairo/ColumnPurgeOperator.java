@@ -156,7 +156,10 @@ public class ColumnPurgeOperator implements Closeable {
     private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {
         long updateTxn = task.getUpdateTxn();
         try {
-            return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn);
+            return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn)
+                    || task.getTableToken().isWal()
+                    && !engine.getTableSequencerAPI().getTxnTracker(task.getTableToken())
+                    .isRangeAvailableToEpoch(columnVersion + 1, updateTxn);
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")

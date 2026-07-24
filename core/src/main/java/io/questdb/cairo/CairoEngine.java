@@ -671,7 +671,21 @@ public class CairoEngine implements Closeable, WriterSource {
      * Recovers database from checkpoint after restoring data from a snapshot.
      */
     public final void checkpointRecover() {
-        checkpointAgent.recover();
+        try {
+            checkpointAgent.recover();
+            // Runtime/test invocation historically completes cleanup synchronously. Startup invokes this
+            // before completeInit is done and deliberately defers cleanup until adaptive baselines publish.
+            if (isCompleteInitDone) {
+                tableNameRegistry.reload();
+                new RecoveryCoordinator(this, checkpointAgent.hasRecoveredCheckpoint()).recover();
+                checkpointAgent.completeRecovery();
+            }
+        } catch (Throwable th) {
+            if (CairoException.isDataSyncFailure(th)) {
+                handleDataSyncFailure(th);
+            }
+            throw th;
+        }
     }
 
     public void checkpointRelease() throws SqlException {
@@ -787,7 +801,17 @@ public class CairoEngine implements Closeable, WriterSource {
         // ApplyWal2TableJob) or table open: for each adaptive WAL table with a durable epoch it rewinds
         // _txn/_cv to the epoch cut so the boot path idempotently re-applies (epoch.seqTxn, frontier]
         // from the durable WAL. No-op for non-adaptive engines and for tables without a _snapshot.
-        new RecoveryCoordinator(this).recover();
+        new RecoveryCoordinator(this, checkpointAgent.hasRecoveredCheckpoint()).recover();
+        // Only now is it safe to remove the restore trigger/checkpoint. Until every missing adaptive baseline
+        // above is durable, a crash must leave enough evidence for the next startup to repeat restoration.
+        try {
+            checkpointAgent.completeRecovery();
+        } catch (Throwable th) {
+            if (CairoException.isDataSyncFailure(th)) {
+                handleDataSyncFailure(th);
+            }
+            throw th;
+        }
         this.sqlCompilerPool = new SqlCompilerPool(this);
         if (configuration.isPartitionO3OverwriteControlEnabled()) {
             enablePartitionOverwriteControl();

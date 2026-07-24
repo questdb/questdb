@@ -11,6 +11,141 @@ import org.junit.Test;
 public class CrashFaultFilesFacadeTest extends AbstractTest {
 
     @Test
+    public void testCrashDropsNewFileWithoutParentFsync() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("namespace-new-unsynced").getAbsolutePath();
+        ff.markDurableBaseline(dir);
+        try (Path file = new Path().of(dir).concat("new.d")) {
+            writeAndSync(ff, file, (byte) 1);
+            ff.crash(dir);
+            Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(file.toString())));
+        }
+    }
+
+    @Test
+    public void testCrashKeepsNewFileAfterParentFsync() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("namespace-new-synced").getAbsolutePath();
+        ff.markDurableBaseline(dir);
+        try (Path file = new Path().of(dir).concat("new.d")) {
+            writeAndSync(ff, file, (byte) 2);
+            syncDirectory(ff, dir);
+            ff.crash(dir);
+            assertFileBytes(file, (byte) 2);
+        }
+    }
+
+    @Test
+    public void testCrashKeepsNewFileAfterNoCacheParentFsyncAndClose() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("namespace-new-nocache-synced").getAbsolutePath();
+        ff.markDurableBaseline(dir);
+        try (Path file = new Path().of(dir).concat("new.d"); Path directory = new Path().of(dir)) {
+            writeAndSync(ff, file, (byte) 8);
+            final long dirFd = ff.openRONoCache(directory.$());
+            Assert.assertTrue(dirFd > -1);
+            ff.fsyncAndClose(dirFd);
+            ff.crash(dir);
+            assertFileBytes(file, (byte) 8);
+        }
+    }
+
+    @Test
+    public void testCrashRestoresUnlinkedFileWithoutParentFsync() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("namespace-unlink-unsynced").getAbsolutePath();
+        try (Path file = new Path().of(dir).concat("old.d")) {
+            writeAndSync(ff, file, (byte) 3);
+            syncDirectory(ff, dir);
+            ff.markDurableBaseline(dir);
+            ff.remove(file.$());
+            Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(file.toString())));
+            ff.crash(dir);
+            assertFileBytes(file, (byte) 3);
+        }
+    }
+
+    @Test
+    public void testCrashKeepsSyncedUnlinkAbsent() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("namespace-unlink-synced").getAbsolutePath();
+        try (Path file = new Path().of(dir).concat("old.d")) {
+            writeAndSync(ff, file, (byte) 4);
+            syncDirectory(ff, dir);
+            ff.markDurableBaseline(dir);
+            ff.remove(file.$());
+            Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(file.toString())));
+            syncDirectory(ff, dir);
+            ff.crash(dir);
+            Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(file.toString())));
+        }
+    }
+
+    @Test
+    public void testCrashRestoresSameParentRenameWithoutParentFsync() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("namespace-rename-unsynced").getAbsolutePath();
+        try (Path oldFile = new Path().of(dir).concat("old.d"); Path newFile = new Path().of(dir).concat("new.d")) {
+            writeAndSync(ff, oldFile, (byte) 5);
+            syncDirectory(ff, dir);
+            ff.markDurableBaseline(dir);
+            Assert.assertEquals(0, ff.rename(oldFile.$(), newFile.$()));
+            ff.crash(dir);
+            assertFileBytes(oldFile, (byte) 5);
+            Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(newFile.toString())));
+        }
+    }
+
+    @Test
+    public void testCrashRestoresBothFilesAfterUnsyncedRenameOverwrite() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("namespace-rename-overwrite").getAbsolutePath();
+        try (Path oldFile = new Path().of(dir).concat("old.d"); Path targetFile = new Path().of(dir).concat("target.d")) {
+            writeAndSync(ff, oldFile, (byte) 1);
+            writeAndSync(ff, targetFile, (byte) 2);
+            syncDirectory(ff, dir);
+            ff.markDurableBaseline(dir);
+            Assert.assertEquals(0, ff.rename(oldFile.$(), targetFile.$()));
+            ff.crash(dir);
+            assertFileBytes(oldFile, (byte) 1);
+            assertFileBytes(targetFile, (byte) 2);
+        }
+    }
+
+    @Test
+    public void testCrashKeepsSameParentRenameAfterParentFsync() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("namespace-rename-synced").getAbsolutePath();
+        try (Path oldFile = new Path().of(dir).concat("old.d"); Path newFile = new Path().of(dir).concat("new.d")) {
+            writeAndSync(ff, oldFile, (byte) 6);
+            syncDirectory(ff, dir);
+            ff.markDurableBaseline(dir);
+            Assert.assertEquals(0, ff.rename(oldFile.$(), newFile.$()));
+            syncDirectory(ff, dir);
+            ff.crash(dir);
+            Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(oldFile.toString())));
+            assertFileBytes(newFile, (byte) 6);
+        }
+    }
+
+    @Test
+    public void testSyncfsPersistsNamespaceChanges() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("namespace-syncfs").getAbsolutePath();
+        ff.markDurableBaseline(dir);
+        try (Path file = new Path().of(dir).concat("new.d")) {
+            final long fd = openAndWrite(ff, file, (byte) 7);
+            try {
+                ff.syncfs(fd);
+            } finally {
+                ff.close(fd);
+            }
+            ff.crash(dir);
+            assertFileBytes(file, (byte) 7);
+        }
+    }
+
+    @Test
     public void testCrashTruncatesToLastFsyncedSize() throws Exception {
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
         final String dir = temp.newFolder("crashroot").getAbsolutePath();
@@ -152,6 +287,46 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
                 Unsafe.free(rb, 64, MemoryTag.NATIVE_DEFAULT);
                 ff.close(rd);
             }
+        }
+    }
+
+    private static void assertFileBytes(Path file, byte value) throws Exception {
+        final byte[] expected = new byte[8];
+        java.util.Arrays.fill(expected, value);
+        Assert.assertArrayEquals(expected, java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(file.toString())));
+    }
+
+    private static long openAndWrite(CrashFaultFilesFacade ff, Path file, byte value) {
+        final long fd = ff.openRW(file.$(), CairoConfiguration.O_NONE);
+        Assert.assertTrue(fd > -1);
+        final long buf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().setMemory(buf, 8, value);
+            Assert.assertEquals(8, ff.write(fd, buf, 8, 0));
+        } finally {
+            Unsafe.free(buf, 8, MemoryTag.NATIVE_DEFAULT);
+        }
+        return fd;
+    }
+
+    private static void syncDirectory(CrashFaultFilesFacade ff, String dir) {
+        try (Path path = new Path().of(dir)) {
+            final long fd = ff.openRO(path.$());
+            Assert.assertTrue(fd > -1);
+            try {
+                ff.fsync(fd);
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
+    private static void writeAndSync(CrashFaultFilesFacade ff, Path file, byte value) {
+        final long fd = openAndWrite(ff, file, value);
+        try {
+            ff.fsync(fd);
+        } finally {
+            ff.close(fd);
         }
     }
 }

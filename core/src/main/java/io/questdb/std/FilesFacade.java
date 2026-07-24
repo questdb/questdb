@@ -107,6 +107,14 @@ public interface FilesFacade {
         throw CairoException.critical(Os.errno()).put("could not syncfs [fd=").put(fd).put(']');
     }
 
+    /**
+     * Returns whether {@link #syncfs(long)} flushes the entire filesystem containing {@code fd}.
+     * Linux provides that guarantee; the macOS and Windows implementations flush only the supplied file.
+     */
+    default boolean isSyncfsFileSystemWide() {
+        return Os.isLinux();
+    }
+
     long getDirSize(Path path);
 
     long getDiskFreeSpace(LPSZ path);

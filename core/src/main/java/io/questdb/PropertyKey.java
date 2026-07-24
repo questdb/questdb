@@ -63,9 +63,9 @@ public enum PropertyKey implements ConfigPropertyKey {
     // (bounded by the epoch cadence). See TableWriter.doClose.
     CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE("cairo.adaptive.epoch.flush.on.close"),
     // Deferred 2 (the RPO knob): adaptive GROUP-COMMIT window in microseconds. Default 50_000 (50ms):
-    // the WAL fdatasync is BATCHED across an adaptive table's commits within this window: commit0 returns
-    // after the txn is sequenced (msync'd to page cache, NOT yet device-durable) and the fdatasync is
-    // performed by a batched flush, so RPO <= W. localDurableSeqTxn (the durable-ack frontier) advances
+    // writer-private WAL is durable before sequencing; the shared sequencer fdatasync is BATCHED across
+    // commits within this window. commit0 returns with that sequencer pointer not yet device-durable, so
+    // RPO <= W. localDurableSeqTxn (the durable-ack frontier) advances
     // only when the batch fdatasync completes. 0 keeps today's fully synchronous fsync-before-return
     // (every acked commit is immediately device-durable, zero loss) instead. See WalWriter group-commit +
     // WalPurgeJob background flusher.

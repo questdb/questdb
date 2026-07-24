@@ -245,13 +245,13 @@ public interface CairoConfiguration {
     /**
      * The adaptive GROUP-COMMIT window in MICROSECONDS (the RPO knob,
      * {@code cairo.adaptive.commit.group.window}). Default {@code 50_000} (50ms): under
-     * {@link CommitMode#ADAPTIVE}, {@code commit0} returns after the txn is sequenced
-     * (segment/events/sequencer msync'd to the page cache and ordered, but NOT yet device-durable)
-     * and the WAL fdatasync (the device flush) is BATCHED across an adaptive table's commits within
-     * this window — bounded to {@code <= W} even when commits stop, by the background flusher in
+     * {@link CommitMode#ADAPTIVE}, {@code commit0} first makes the writer-private segment/events
+     * durable, then returns after the shared sequencer record is page-cache visible but not yet
+     * device-durable. The shared sequencer fdatasync is BATCHED across commits within this window —
+     * bounded to {@code <= W} even when commits stop, by the background flusher in
      * {@code WalPurgeJob}. A crash loses only commits whose batch fdatasync had not completed (RPO
      * {@code <= W}); a torn tail is handled by the integrity CRCs + recovery frontier. {@code
-     * localDurableSeqTxn} (the durable-ack frontier) advances ONLY when the batch fdatasync
+     * localDurableSeqTxn} (the durable-ack frontier) advances ONLY when the sequencer batch fdatasync
      * completes, so a durable-ack'd txn always survives a crash.
      *
      * <p>Set {@code 0} to keep today's fully synchronous fsync-before-return instead: every acked

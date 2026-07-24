@@ -22,10 +22,10 @@ There are two frontiers: the **WAL** (the durable log of what was committed) and
 the **materialized table** (the applied result that readers see). `adaptive`
 splits their durability guarantees:
 
-- **The WAL commit is made durable** — an `fdatasync` of the small, append-only
-  log (segment column data → WAL-e events → sequencer record, in that order)
-  before the commit is acknowledged. So **every acknowledged transaction is
-  recoverable**.
+- **The WAL commit follows strict durability ordering** — segment column data → WAL-e
+  events → sequencer record. With `W=0`, all three are durable before acknowledgement.
+  With `W>0`, writer-private data/events are durable before sequencing while the shared
+  sequencer flush is batched; the last acknowledged window remains within the configured RPO.
 - **The table apply stays lazy** — the materialized partitions are an `msync`-only
   (page-cache) *rebuildable cache* of the durable WAL, exactly as under `nosync`.
   The apply path issues **no per-commit column `fdatasync`** under adaptive.
@@ -35,8 +35,8 @@ the read path. A background **durable epoch** periodically pins a consistent
 applied cut of the table so that after a crash, recovery replays only the bounded
 WAL tail past the last epoch, rather than the entire WAL.
 
-**When to use it.** Choose `adaptive` when you want crash-safe recovery — every
-acked write survives a power loss — but cannot pay `sync`'s cost of flushing the
+**When to use it.** Choose `adaptive` when you want crash-safe recovery with a
+configured RPO (`W=0` makes every ack survive) but cannot pay `sync`'s cost of flushing the
 whole table on every commit. It targets "crash-safe recovery **and** good write
 performance." Stay on `nosync` if you accept losing recent un-flushed commits on
 power loss; use `sync` if you specifically need every table partition column
@@ -133,12 +133,13 @@ cairo.adaptive.commit.group.window=50ms     # default 50ms (RPO <= 50ms); 0 = sy
   returns; it is immediately device-durable. RPO is exactly zero. Cost is
   `sync`-class per-commit latency (you are paying a device flush per commit). Use
   when RPO must be 0.
-- **`W > 0` (default: `50_000` us / 50 ms) — RPO ≤ `W`.** The commit returns after the transaction is sequenced
-  (`msync`'d to the page cache, **not** yet device-durable); the `fdatasync` is
-  performed by a batched flush within the window `W`, shared across concurrent
-  commits. A power loss can therefore lose at most the last `W` microseconds of
+- **`W > 0` (default: `50_000` us / 50 ms) — RPO ≤ `W`.** Writer-private segment
+  data and event/index/checksum files are `fdatasync`'d before sequencing. The commit
+  returns after the shared sequencer record is page-cache visible but not yet device-durable;
+  its `fdatasync` is performed by a batched flush within `W`. A power loss can therefore
+  lose at most the last `W` microseconds of
   acknowledged commits. The durable-ack frontier (`localDurableSeqTxn`) advances
-  only when the batch `fdatasync` completes.
+  only when the sequencer batch `fdatasync` completes.
 
 > **Idle-tail caveat — the effective RPO bound is `W` + the background flush-sweep
 > cadence, not `W` alone.** While commits keep arriving, each commit re-arms the
@@ -154,39 +155,19 @@ cairo.adaptive.commit.group.window=50ms     # default 50ms (RPO <= 50ms); 0 = sy
 > `shared.worker.sleep.timeout` short too, or accept that the *idle-tail* worst case
 > is the sleep cadence rather than `W`.
 
-**Recommended starting point: `W` = 1–10 ms** (`1000`–`10000` us) for a
-throughput-oriented deployment — RPO of 1–10 ms with latency approaching `nosync`.
+**Recommended starting point: `W` = 1–10 ms** (`1000`–`10000` us), then benchmark
+on production-like storage and choose the smallest acceptable RPO.
 
-**The throughput trade-off is workload-dependent:**
+For correctness across concurrent WAL writers, the current safe fallback makes each
+writer's private WAL column/event files durable **before** sequencing and batches only
+the shared sequencer barrier. Consequently, `W > 0` can amortize sequencer flushes but
+still pays per-commit private-file `fdatasync`; it must not be expected to approach
+`nosync` latency, and wide tables may retain substantial per-commit cost. The benefit is
+workload- and filesystem-dependent. Prior measurements taken before this safe fallback
+are not representative and are intentionally omitted.
 
-- **Small-batch / high-commit-rate** ingestion benefits most: the window batches
-  many small per-commit flushes into one device flush, collapsing per-commit
-  latency toward `nosync`.
-- **Large-batch** ingestion is nearly `W`-insensitive: at thousands of rows per
-  commit the single `fdatasync` is already amortized over the batch, so the window
-  has little to batch. Leave `W` small.
-- **Wide tables** (many columns) have the highest `W = 0` cost (one segment-column
-  `fdatasync` per column) and therefore benefit most from `W > 0`.
-- Gains **saturate**: past the point where the flush is fully amortized, a larger
-  `W` buys little more throughput but a strictly larger RPO. Bigger is not better
-  past the knee.
-
-> **Performance figures below are directional only** (single shared dev box, short
-> JMH runs, relative magnitudes). They establish direction, **not** absolute
-> numbers, and are **not** a GA verdict — absolutes require controlled, quiesced
-> hardware. Source: `docs/superpowers/specs/2026-07-17-adaptive-sp-c-perf-validation-design.md`.
-
-Directional, from the SP-C harness (shared box, high-commit-rate `SMALL_BATCH`
-workload, p99 commit latency):
-
-| Config | p99 commit latency | vs `nosync` |
-|---|---|---|
-| `nosync` | ~37 us | 1× (baseline) |
-| `adaptive`, `W = 0` (zero-loss) | ~24.7 ms | `sync`-class |
-| `adaptive`, `W = 5 ms` | ~45 us | ~1.2× |
-
-Reading: at the recommended production window, adaptive's p99 commit latency is
-close to `nosync`; at `W = 0` it is `sync`-class, by design.
+Gains **saturate**: a larger `W` eventually buys little more throughput while imposing
+a strictly larger RPO. Bigger is not better past the knee.
 
 Confirmed in source: key `cairo.adaptive.commit.group.window`
 (`PropertyKey.java:67`), default `50_000` (50ms), clamped to ≥ 0

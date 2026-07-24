@@ -55,6 +55,7 @@ public class WalEventCursor {
     private static final int REPLACE_RANGE_LO_OFFSET = REPLACE_RANGE_HI_OFFSET + Long.BYTES;
     private static final int REPLACE_RANGE_EXTRA_OFFSET = REPLACE_RANGE_LO_OFFSET + Long.BYTES;
     private static final int DEDUP_FOOTER_SIZE = REPLACE_RANGE_EXTRA_OFFSET;
+    private final MemoryCMR checksumMem;
     private final DataInfo dataInfo = new DataInfo();
     private final MemoryCMR eventMem;
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
@@ -66,9 +67,11 @@ public class WalEventCursor {
     private long offset = Integer.BYTES; // skip wal meta version
     private long txn = END_OF_EVENTS;
     private byte type = NONE;
+    private boolean checksumRequired;
 
-    public WalEventCursor(MemoryCMR eventMem) {
+    public WalEventCursor(MemoryCMR eventMem, MemoryCMR checksumMem) {
         this.eventMem = eventMem;
+        this.checksumMem = checksumMem;
     }
 
     public void drain() {
@@ -158,41 +161,39 @@ public class WalEventCursor {
         return true;
     }
 
-    // Verify the per-record checksum trailer if present. Magic-gated: a record without the trailer
-    // (written before this change) is read unverified. A present-but-mismatched trailer means the
-    // record body was torn/partially written -> throw loudly so apply suspends the table.
     private void verifyRecordChecksum(long recordStart, int length) {
-        final long bodyLen = (long) length - WALE_CHECKSUM_TRAILER_SIZE;
-        if (bodyLen <= 0 || memSize < recordStart + length) {
-            // bodyLen <= 0: corrupt/degenerate length. memSize guard: the record isn't fully mapped, so
-            // we can't hash it here; a genuinely torn tail is still caught downstream (checksum mismatch
-            // below, or magic-absence -> treated as legacy). memSize is the mapped size, not ff.length(fd).
+        if (!checksumRequired) {
             return;
         }
-        final long trailerOffset = recordStart + bodyLen;
-        if (eventMem.getLong(trailerOffset) != WALE_CHECKSUM_MAGIC) {
-            return; // legacy record without a checksum trailer
-        }
-        final long stored = eventMem.getLong(trailerOffset + Long.BYTES);
-        final long actual = TableUtils.calculateCvAreaChecksum(eventMem.addressOf(recordStart), bodyLen);
-        if (actual != stored) {
+        if (length <= Integer.BYTES || memSize < recordStart + length) {
             throw CairoException.critical(CairoException.METADATA_VALIDATION)
-                    .put("torn WAL event record [offset=").put(recordStart)
-                    .put(", len=").put(length)
-                    .put(", expected=").put(stored)
-                    .put(", actual=").put(actual)
-                    .put(']');
+                    .put("invalid checksummed WAL event record [offset=").put(recordStart).put(", len=").put(length).put(']');
+        }
+        final long recordTxn = eventMem.getLong(recordStart + Integer.BYTES);
+        if (recordTxn < 0 || recordTxn > Integer.MAX_VALUE) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("invalid checksummed WAL event txn [txn=").put(recordTxn).put(']');
+        }
+        final long entryOffset = WALE_CHECKSUM_HEADER_SIZE + recordTxn * WALE_CHECKSUM_ENTRY_SIZE;
+        if (entryOffset + WALE_CHECKSUM_ENTRY_SIZE > checksumMem.size()) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("WAL event checksum sidecar is truncated [txn=").put(recordTxn).put(']');
+        }
+        final long storedOffset = checksumMem.getLong(entryOffset + WALE_CHECKSUM_ENTRY_OFFSET_OFFSET);
+        final int storedLength = checksumMem.getInt(entryOffset + WALE_CHECKSUM_ENTRY_LENGTH_OFFSET);
+        final long stored = checksumMem.getLong(entryOffset + WALE_CHECKSUM_ENTRY_VALUE_OFFSET);
+        final long actual = TableUtils.calculateCvAreaChecksum(eventMem.addressOf(recordStart), length);
+        if (storedOffset != recordStart || storedLength != length || stored == 0 || actual != stored) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("torn WAL event record [txn=").put(recordTxn)
+                    .put(", offset=").put(recordStart).put(", len=").put(length)
+                    .put(", storedOffset=").put(storedOffset).put(", storedLen=").put(storedLength)
+                    .put(", expected=").put(stored).put(", actual=").put(actual).put(']');
         }
     }
 
-    // Offset of the end of the record body (excludes the per-record checksum trailer, if present).
-    // Readers that locate optional trailing fields by distance from the record end MUST use this
-    // rather than nextOffset, since the trailer sits between the body and nextOffset.
-    private long bodyEndOffset() {
-        return nextOffset >= WALE_CHECKSUM_TRAILER_SIZE
-                && eventMem.getLong(nextOffset - WALE_CHECKSUM_TRAILER_SIZE) == WALE_CHECKSUM_MAGIC
-                ? nextOffset - WALE_CHECKSUM_TRAILER_SIZE
-                : nextOffset;
+    void setChecksumRequired(boolean checksumRequired) {
+        this.checksumRequired = checksumRequired;
     }
 
     public void reset() {
@@ -448,25 +449,20 @@ public class WalEventCursor {
             replaceRangeTsLow = 0;
             replaceRangeTsHi = 0;
 
-            // The body ends at nextOffset, but if a checksum trailer is present the trailer
-            // bytes sit between the actual body and nextOffset.  Strip them before looking for
-            // the optional dedup footer so both new-format and legacy records are handled correctly.
-            final long bodyEndOffset = bodyEndOffset();
-
-            if (bodyEndOffset - offset >= Integer.BYTES + DEDUP_FOOTER_SIZE) {
+            if (nextOffset - offset >= Integer.BYTES + DEDUP_FOOTER_SIZE) {
                 // This is big enough to contain the footer.
                 // But it can be still populated with symbol map values instead of the footer.
                 // Check that the last symbol map diff entry contains the END of symbol diffs marker.
 
                 // Read column index before the footer.
-                int symbolColIndex = eventMem.getInt(bodyEndOffset - (Integer.BYTES + DEDUP_FOOTER_SIZE));
+                int symbolColIndex = eventMem.getInt(nextOffset - (Integer.BYTES + DEDUP_FOOTER_SIZE));
 
                 if (symbolColIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
-                    dedupMode = eventMem.getByte(bodyEndOffset - DEDUP_MODE_OFFSET);
+                    dedupMode = eventMem.getByte(nextOffset - DEDUP_MODE_OFFSET);
                     if (dedupMode >= 0 && dedupMode <= WAL_DEDUP_MODE_MAX) {
-                        replaceRangeExtra = eventMem.getLong(bodyEndOffset - REPLACE_RANGE_EXTRA_OFFSET);
-                        replaceRangeTsLow = eventMem.getLong(bodyEndOffset - REPLACE_RANGE_LO_OFFSET);
-                        replaceRangeTsHi = eventMem.getLong(bodyEndOffset - REPLACE_RANGE_HI_OFFSET);
+                        replaceRangeExtra = eventMem.getLong(nextOffset - REPLACE_RANGE_EXTRA_OFFSET);
+                        replaceRangeTsLow = eventMem.getLong(nextOffset - REPLACE_RANGE_LO_OFFSET);
+                        replaceRangeTsHi = eventMem.getLong(nextOffset - REPLACE_RANGE_HI_OFFSET);
                     } else {
                         // This WAL record does not have dedup mode recognised, clean unrecognised mode value
                         dedupMode = WAL_DEDUP_MODE_DEFAULT;
@@ -546,19 +542,14 @@ public class WalEventCursor {
             error.clear();
             error.put(readStr());
 
-            // Strip the checksum trailer (if present) before using nextOffset as a guard for
-            // optional fields, so that legacy-format records (without lastPeriodHi / refreshIntervals)
-            // are not misread as containing those fields.
-            final long bodyEndOffset = bodyEndOffset();
-
-            if (bodyEndOffset - offset >= Long.BYTES) {
+            if (nextOffset - offset >= Long.BYTES) {
                 lastPeriodHi = readLong();
             } else {
                 lastPeriodHi = Numbers.LONG_NULL;
             }
 
             refreshIntervals.clear();
-            if (bodyEndOffset - offset >= Long.BYTES + Integer.BYTES) {
+            if (nextOffset - offset >= Long.BYTES + Integer.BYTES) {
                 refreshIntervalsBaseTxn = readLong();
                 final int intervalsLen = readInt();
                 for (int i = 0; i < intervalsLen; i++) {

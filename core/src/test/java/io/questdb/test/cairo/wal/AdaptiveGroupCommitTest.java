@@ -180,8 +180,9 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
 
     /**
      * (c) W&gt;0: rapid commits within the window (on a HELD writer — the real high-rate ingestion shape,
-     * where the WAL writer is kept across many commits) BATCH the WAL fdatasync — far fewer WAL fdatasyncs
-     * than commits — and {@code localDurableSeqTxn} LAGS the committed seqTxn until a flush fires.
+     * where the WAL writer is kept across many commits) keeps each writer-private WAL durable before
+     * sequencing while BATCHING the shared sequencer fdatasync, and {@code localDurableSeqTxn} LAGS the
+     * committed seqTxn until that shared-frontier flush fires.
      *
      * <p>NB: each {@code execute("insert")} round-trips the WAL-writer pool and RELEASES the writer, which
      * (correctly) flushes its pending tail on the clean handoff — so batching is only observable while the
@@ -214,12 +215,16 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
                     commitRow(w, (i) * 60_000_000L, i);
                 }
 
-                // MECHANISM 1: the WAL device flush is batched — far fewer WAL fdatasyncs than commits
-                // (deferred path issues ZERO per-commit WAL fdatasyncs while the writer is held).
+                // Safe W>0 fallback: writer-private data/events are fdatasync'd for every commit before
+                // sequencing, but the shared sequencer flush is deferred. This prevents one writer's flush
+                // from publishing another writer's private, not-yet-durable WAL record.
                 Assert.assertTrue(
-                        "W>0 must BATCH the WAL fdatasync: expected far fewer than " + n + " WAL fdatasyncs, got "
-                                + ff.walFdatasyncs(),
-                        ff.walFdatasyncs() < n
+                        "W>0 must make every writer-private commit durable before sequencing",
+                        ff.privateWalFdatasyncs() >= n
+                );
+                Assert.assertTrue(
+                        "W>0 must batch the shared sequencer fdatasync",
+                        ff.sequencerFdatasyncs() < n
                 );
                 // MECHANISM 2: the durable frontier LAGS the sequenced frontier (the un-flushed tail is NOT
                 // yet device-durable, so the durable-ack must not have advanced over it).
@@ -689,6 +694,27 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
             fdatasyncPaths.clear();
         }
 
+        public int privateWalFdatasyncs() {
+            int c = 0;
+            for (int i = 0, n = fdatasyncPaths.size(); i < n; i++) {
+                final String p = fdatasyncPaths.get(i);
+                if ((p.contains("/wal") || p.contains("\\wal")) && !isSequencerFile(p)) {
+                    c++;
+                }
+            }
+            return c;
+        }
+
+        public int sequencerFdatasyncs() {
+            int c = 0;
+            for (int i = 0, n = fdatasyncPaths.size(); i < n; i++) {
+                if (isSequencerFile(fdatasyncPaths.get(i))) {
+                    c++;
+                }
+            }
+            return c;
+        }
+
         public int walFdatasyncs() {
             int c = 0;
             for (int i = 0, n = fdatasyncPaths.size(); i < n; i++) {
@@ -751,12 +777,15 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
             return track(super.openRW(name, opts), name);
         }
 
-        private static boolean isWalCommitFile(String p) {
-            final boolean inWalDir = p.contains("/wal") || p.contains("\\wal");
-            final boolean isSeqFile = p.contains(WalUtils.TXNLOG_PARTS_DIR)
+        private static boolean isSequencerFile(String p) {
+            return p.contains(WalUtils.TXNLOG_PARTS_DIR)
                     || p.endsWith(WalUtils.TXNLOG_FILE_NAME)
                     || p.endsWith(WalUtils.TXNLOG_FILE_NAME + ".");
-            return inWalDir || isSeqFile;
+        }
+
+        private static boolean isWalCommitFile(String p) {
+            final boolean inWalDir = p.contains("/wal") || p.contains("\\wal");
+            return inWalDir || isSequencerFile(p);
         }
 
         private long track(long fd, LPSZ name) {

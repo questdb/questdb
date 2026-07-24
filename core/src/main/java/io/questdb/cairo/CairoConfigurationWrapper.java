@@ -124,6 +124,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isAdaptiveRecoveryRollForwardEnabled() {
+        return getDelegate().isAdaptiveRecoveryRollForwardEnabled();
+    }
+
+    @Override
     public boolean getAsyncMunmapEnabled() {
         return getDelegate().getAsyncMunmapEnabled();
     }

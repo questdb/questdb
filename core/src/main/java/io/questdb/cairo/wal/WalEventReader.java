@@ -42,6 +42,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalEventReader implements Closeable {
     private final WalEventCursor eventCursor;
+    private final MemoryCMR eventChecksumMem;
     private final MemoryCMR eventIndexMem;
     private final MemoryCMR eventMem;
     private final FilesFacade ff;
@@ -49,15 +50,17 @@ public class WalEventReader implements Closeable {
     public WalEventReader(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
         boolean bypassFdCache = configuration.getBypassWalFdCache();
+        eventChecksumMem = Vm.getCMRInstance(bypassFdCache);
         eventIndexMem = Vm.getCMRInstance(bypassFdCache);
         eventMem = Vm.getCMRInstance(bypassFdCache);
-        eventCursor = new WalEventCursor(eventMem);
+        eventCursor = new WalEventCursor(eventMem, eventChecksumMem);
     }
 
     @Override
     public void close() {
         // WalEventReader is re-usable after close, don't assign nulls.
         // Closing is also idempotent.
+        Misc.free(eventChecksumMem);
         Misc.free(eventIndexMem);
         Misc.free(eventMem);
     }
@@ -83,6 +86,52 @@ public class WalEventReader implements Closeable {
                     CairoConfiguration.O_NONE,
                     -1
             );
+
+            final int version = eventMem.getInt(WAL_FORMAT_OFFSET_32);
+            final short formatVersion = Numbers.decodeLowShort(version);
+            final short checksumFeature = Numbers.decodeHighShort(version);
+            if (formatVersion != WALE_FORMAT_VERSION && formatVersion != WALE_MAT_VIEW_FORMAT_VERSION && formatVersion != WALE_VIEW_FORMAT_VERSION) {
+                throw TableUtils.validationException()
+                        .put("WAL events file version does not match runtime version [expected=")
+                        .put(WALE_FORMAT_VERSION).put(", ").put(WALE_MAT_VIEW_FORMAT_VERSION).put(" or ").put(WALE_VIEW_FORMAT_VERSION)
+                        .put(", actual=").put(formatVersion).put(']');
+            }
+            final boolean checksumRequired;
+            path.trimTo(pathLen).concat(EVENT_CHECKSUM_FILE_NAME);
+            if (checksumFeature == WALE_CHECKSUM_FEATURE_VERSION) {
+                checksumRequired = true;
+                final long checksumSize = ff.length(path.$());
+                if (checksumSize < WALE_CHECKSUM_HEADER_SIZE) {
+                    throw TableUtils.validationException().put("WAL event checksum sidecar is truncated [path=")
+                            .put(path).put(", size=").put(checksumSize).put(']');
+                }
+                // Map the actual sidecar length, not an untrusted _event maxTxn-derived size. The cursor
+                // validates that the requested transaction's entry is present before reading it.
+                eventChecksumMem.of(
+                        ff,
+                        path.$(),
+                        ff.getPageSize(),
+                        checksumSize,
+                        MemoryTag.MMAP_TABLE_WAL_READER,
+                        CairoConfiguration.O_NONE,
+                        Files.POSIX_MADV_RANDOM
+                );
+                if (eventChecksumMem.getLong(0) != WALE_CHECKSUM_MAGIC
+                        || eventChecksumMem.getInt(Long.BYTES) != WALE_CHECKSUM_FILE_VERSION
+                        || eventChecksumMem.getInt(Long.BYTES + Integer.BYTES) != WALE_CHECKSUM_ENTRY_SIZE) {
+                    throw TableUtils.validationException().put("invalid WAL event checksum sidecar header [path=").put(path).put(']');
+                }
+            } else if (checksumFeature == 0) {
+                checksumRequired = false;
+                eventChecksumMem.close();
+                if (ff.exists(path.$())) {
+                    throw TableUtils.validationException().put("WAL checksum sidecar exists without capability marker [path=").put(path).put(']');
+                }
+            } else {
+                throw TableUtils.validationException().put("unsupported WAL event checksum feature [version=").put(checksumFeature).put(']');
+            }
+            eventCursor.setChecksumRequired(checksumRequired);
+            path.trimTo(pathLen).concat(EVENT_FILE_NAME);
 
             if (segmentTxn > -1) {
                 final int maxTxn = eventMem.getInt(WALE_MAX_TXN_OFFSET_32);
@@ -183,18 +232,6 @@ public class WalEventReader implements Closeable {
                 eventCursor.openOffset(-1);
             }
 
-            // Check only lower short to match the version
-            // Higher short can be used to make a forward compatible change
-            // by adding more data at the footer of each record
-            final int version = eventMem.getInt(WAL_FORMAT_OFFSET_32);
-            final short formatVersion = Numbers.decodeLowShort(version);
-            if (formatVersion != WALE_FORMAT_VERSION && formatVersion != WALE_MAT_VIEW_FORMAT_VERSION && formatVersion != WALE_VIEW_FORMAT_VERSION) {
-                throw TableUtils.validationException()
-                        .put("WAL events file version does not match runtime version [expected=")
-                        .put(WALE_FORMAT_VERSION).put(", ").put(WALE_MAT_VIEW_FORMAT_VERSION).put(" or ").put(WALE_VIEW_FORMAT_VERSION)
-                        .put(", actual=").put(formatVersion)
-                        .put(']');
-            }
             return eventCursor;
         } catch (Throwable e) {
             close();

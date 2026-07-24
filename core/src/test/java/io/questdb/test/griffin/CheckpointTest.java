@@ -42,6 +42,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -1921,10 +1922,15 @@ public class CheckpointTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(
-                    "checkpoint recover must clear the stale adaptive durable-epoch anchor "
-                            + "(_snapshot/_txn.epoch/_cv.epoch); otherwise RecoveryCoordinator -- which does NOT "
-                            + "lineage-check the epoch -- could rewind the freshly-restored _txn/_cv to the stale cut",
-                    epochTrioExists(token));
+                    "checkpoint recover must remove stale legacy epoch copies before publishing a fresh baseline",
+                    legacyEpochCopiesExist(token));
+            try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                markerPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                marker.of(markerPath.$());
+                Assert.assertTrue(
+                        "runtime checkpoint recovery must publish a valid replacement baseline before cleanup",
+                        marker.tryLoad());
+            }
         });
     }
 
@@ -1948,7 +1954,14 @@ public class CheckpointTest extends AbstractCairoTest {
         try (Path p = new Path()) {
             final int len = p.of(configuration.getDbRoot()).concat(token).size();
             return ff.exists(p.trimTo(len).concat(TableUtils.SNAPSHOT_FILE_NAME).$())
-                    || ff.exists(p.trimTo(len).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$())
+                    || legacyEpochCopiesExist(token);
+        }
+    }
+
+    private boolean legacyEpochCopiesExist(TableToken token) {
+        try (Path p = new Path()) {
+            final int len = p.of(configuration.getDbRoot()).concat(token).size();
+            return ff.exists(p.trimTo(len).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$())
                     || ff.exists(p.trimTo(len).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$());
         }
     }

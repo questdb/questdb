@@ -90,16 +90,17 @@ fi
 # WITHOUT --add-exports ...jdk.internal.vm=ALL-UNNAMED the worker continuation class
 # fails to init and QuestDB runs DEGRADED (workers dead) — invalidating the test.
 QDB_JVM="--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED"
-# IMG: the sparse image file that backs the loop device.
-# Put this on a REAL block device (ext4 / xfs on a spinning disk or SSD) — NOT tmpfs.
-# /data is preferred (real disk); fall back to HOME.
+# Every run owns uniquely named destructive resources. User overrides are allowed, but collisions are
+# rejected rather than cleaned up: this script must never remove another run's mapper/image/mount.
+RUN_ID="${RUN_ID:-$$}"
+[[ "$RUN_ID" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "ERROR: invalid RUN_ID '$RUN_ID'" >&2; exit 1; }
 if [ -d /data ] && [ -w /data ]; then
-    IMG="${IMG:-/data/qdb-pcut.img}"
+    IMG="${IMG:-/data/qdb-pcut-$RUN_ID.img}"
 else
-    IMG="${IMG:-$HOME/qdb-pcut.img}"
+    IMG="${IMG:-$HOME/qdb-pcut-$RUN_ID.img}"
 fi
-MNT="${MNT:-/mnt/qdbpcut}"
-DM_NAME="qdbflakey"
+MNT="${MNT:-/mnt/qdbpcut-$RUN_ID}"
+DM_NAME="${DM_NAME:-qdbflakey-$RUN_ID}"
 DM_DEV="/dev/mapper/$DM_NAME"
 
 # Filesystem under test: ext4 (default) or xfs. Pass as the FIRST ARG so it survives
@@ -130,31 +131,44 @@ fi
 # CLEANUP TRAP
 # ============================================================
 LOOP=""
-cleanup() {
-    local rc=$?
-    echo "--- cleanup (exit code $rc) ---"
-    # Kill any stray writer process
+HAS_IMAGE=0
+HAS_LOOP=0
+HAS_DM=0
+HAS_MOUNT=0
+HAS_MNT_DIR=0
+cleanup_cycle() {
     if [ -n "${WRITER_PID:-}" ] && kill -0 "$WRITER_PID" 2>/dev/null; then
         kill -9 "$WRITER_PID" 2>/dev/null || true
         wait "$WRITER_PID" 2>/dev/null || true
     fi
-    # Unmount
-    if mountpoint -q "$MNT" 2>/dev/null; then
-        umount -l "$MNT" 2>/dev/null || true
-    fi
-    # Remove dm device
-    if dmsetup info "$DM_NAME" &>/dev/null; then
-        dmsetup remove "$DM_NAME" 2>/dev/null || true
-    fi
-    # Detach loop device
-    if [ -n "$LOOP" ] && losetup "$LOOP" &>/dev/null; then
-        losetup -d "$LOOP" 2>/dev/null || true
-    fi
-    # Remove image
-    rm -f "$IMG" 2>/dev/null || true
-    echo "--- cleanup done ---"
+    WRITER_PID=""
+    if [ "$HAS_MOUNT" -eq 1 ]; then umount -l "$MNT" 2>/dev/null || true; HAS_MOUNT=0; fi
+    if [ "$HAS_DM" -eq 1 ]; then dmsetup remove "$DM_NAME" 2>/dev/null || true; HAS_DM=0; fi
+    if [ "$HAS_LOOP" -eq 1 ] && [ -n "$LOOP" ]; then losetup -d "$LOOP" 2>/dev/null || true; HAS_LOOP=0; LOOP=""; fi
+    if [ "$HAS_IMAGE" -eq 1 ]; then rm -f "$IMG" 2>/dev/null || true; HAS_IMAGE=0; fi
+    if [ "$HAS_MNT_DIR" -eq 1 ]; then rmdir "$MNT" 2>/dev/null || true; HAS_MNT_DIR=0; fi
 }
+cleanup() { local rc=$?; cleanup_cycle; exit "$rc"; }
 trap cleanup EXIT
+
+reject_resource_collisions() {
+    [ ! -e "$IMG" ] || { echo "ERROR: image already exists: $IMG" >&2; return 1; }
+    ! dmsetup info "$DM_NAME" &>/dev/null || { echo "ERROR: mapper already exists: $DM_NAME" >&2; return 1; }
+    ! mountpoint -q "$MNT" 2>/dev/null || { echo "ERROR: mountpoint already mounted: $MNT" >&2; return 1; }
+    if [ -d "$MNT" ] && [ -n "$(find "$MNT" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+        echo "ERROR: mount directory is not empty: $MNT" >&2
+        return 1
+    fi
+}
+
+create_cycle_resources() {
+    local size="$1"
+    reject_resource_collisions
+    truncate -s "$size" "$IMG"; HAS_IMAGE=1
+    LOOP=$(losetup -f --show "$IMG"); HAS_LOOP=1
+    SECTORS=$(blockdev --getsz "$LOOP")
+    mkdir -p "$MNT"; HAS_MNT_DIR=1
+}
 
 # ============================================================
 # HELPERS
@@ -214,18 +228,10 @@ run_one() {
     echo "  POWER-CUT CYCLE: commitMode=$MODE  W(group.window.us)=$W  batchedColumnSync=$BATCHED"
     echo "======================================================"
 
-    # ---- 1. Create 4 GB sparse image on a real disk ----
+    # ---- 1/2. Create uniquely owned sparse image and loop device ----
     echo "  [1] creating 4G sparse image: $IMG"
-    # Remove any leftover from a previous failed run
-    rm -f "$IMG"
-    truncate -s 4G "$IMG"
-
-    # ---- 2. Attach loop device ----
-    echo "  [2] attaching loop device"
-    LOOP=$(losetup -f --show "$IMG")
-    echo "      LOOP=$LOOP"
-    SECTORS=$(blockdev --getsz "$LOOP")
-    echo "      SECTORS=$SECTORS"
+    create_cycle_resources 4G
+    echo "      LOOP=$LOOP  SECTORS=$SECTORS"
 
     # ---- 3. Create dm-flakey in UP (pass-through) mode ----
     # Table: "0 <sectors> flakey <dev> <offset> <up_interval> <down_interval>"
@@ -234,13 +240,14 @@ run_one() {
     echo "  [3] creating dm-flakey (always UP / pass-through)"
     echo "      table: $UP_TABLE"
     dmsetup create "$DM_NAME" --table "$UP_TABLE"
+    HAS_DM=1
 
     # ---- 4. Format and mount ----
     echo "  [4] mkfs.$FSTYPE on $DM_DEV"
     mkfs_dev "$DM_DEV"
-    mkdir -p "$MNT"
     echo "  [4] mounting $DM_DEV → $MNT"
     mount "$DM_DEV" "$MNT"
+    HAS_MOUNT=1
 
     # ---- 5. Start CrashIngestWriter ----
     local DBDIR="$MNT/db"
@@ -278,6 +285,10 @@ run_one() {
     local COMMITTED
     # First line = committed row count in all modes (adaptive appends C=/Wm= below); head -1 handles both.
     COMMITTED=$(head -1 "$PROGRESS_FILE" 2>/dev/null || echo 0)
+    if ! [[ "$COMMITTED" =~ ^[1-9][0-9]*$ ]]; then
+        echo "ERROR: invalid committed watermark '$COMMITTED'" >&2
+        return 1
+    fi
     echo "  [7] COMMITTED=$COMMITTED (captured before power cut)"
 
     # ---- 8. Kill the writer (page cache still intact) ----
@@ -304,6 +315,7 @@ run_one() {
     dmsetup resume "$DM_NAME"
     echo "      umount $MNT (writeback is DROPPED — un-fsync'd pages lost)"
     umount "$MNT"
+    HAS_MOUNT=0
     echo "      --- power cut complete ---"
 
     # ---- 10. Restore dm-flakey to UP mode and remount ----
@@ -314,6 +326,7 @@ run_one() {
     dmsetup resume "$DM_NAME"
     echo "       remounting $DM_DEV → $MNT"
     mount "$DM_DEV" "$MNT"
+    HAS_MOUNT=1
 
     # ---- 11. Verify ----
     echo ""
@@ -325,70 +338,43 @@ run_one() {
     VERIFY_OUT=$(java $QDB_JVM -cp "$CP" -DcommitMode="$MODE" -Dgroup.window.us="$W" \
         org.questdb.CrashVerifier "$DBDIR" 2>&1) || VERIFY_EXIT=$?
     echo "$VERIFY_OUT"
+    if [ "$VERIFY_EXIT" -ne 0 ]; then
+        echo "ERROR: verifier failed [exit=$VERIFY_EXIT]" >&2
+        return 1
+    fi
 
     # Extract count from verifier output
     local COUNT
-    COUNT=$(echo "$VERIFY_OUT" | grep -oP '(?<=count=)\d+' | tail -1 || echo "unknown")
+    COUNT=$(echo "$VERIFY_OUT" | grep -oP '(?<=count=)\d+' | tail -1 || true)
 
     echo ""
     echo "--- INTERPRETATION (MODE=$MODE W=$W) ---"
     if [ "$MODE" = "adaptive" ]; then
-        # Expected verdict per the SP-D4 oracle: W=0 ⇒ DURABLE (zero loss), W>0 ⇒ RPO_OK (acked survives).
         local EXPECT
-        if [ "$W" -eq 0 ] 2>/dev/null; then EXPECT="DURABLE"; else EXPECT="RPO_OK"; fi
-        echo "  (adaptive W=$W → expected verdict: $EXPECT)"
-        if echo "$VERIFY_OUT" | grep -q '^SILENT_CORRUPTION'; then
-            echo "GA_BLOCKER: SILENT_CORRUPTION after power cut (adaptive W=$W) — the no-corruption HARD bar failed"
-            echo "*** every recovered row must bit-match its formula; this blocks GA ***"
-        elif echo "$VERIFY_OUT" | grep -q '^DURABILITY_FAILURE'; then
-            echo "DURABILITY_FAILURE: an ACKED txn was lost, or the table stayed suspended (adaptive W=$W)"
-            echo "*** SERIOUS: the durable-ack contract (acked ⇒ survives) was broken ***"
-        elif echo "$VERIFY_OUT" | grep -q "^$EXPECT"; then
-            echo "PASS: adaptive W=$W met its bar ($EXPECT) — every acked txn survived the power cut"
-        elif echo "$VERIFY_OUT" | grep -q '^LOUD_FAILURE'; then
-            echo "LOUD_FAILURE: engine detected a torn state (adaptive W=$W); acceptable only if a clean"
-            echo "    committed prefix reads back — inspect the verifier output above."
-        else
-            echo "UNKNOWN_RESULT: could not parse verifier verdict (exit=$VERIFY_EXIT)"
+        if [ "$W" -eq 0 ]; then EXPECT="DURABLE"; else EXPECT="RPO_OK"; fi
+        if ! echo "$VERIFY_OUT" | grep -q "^$EXPECT"; then
+            echo "ERROR: adaptive verifier did not produce exact expected verdict $EXPECT" >&2
+            return 1
         fi
+        echo "PASS: adaptive W=$W met its bar ($EXPECT)"
     elif [ "$MODE" = "SYNC" ]; then
-        if echo "$VERIFY_OUT" | grep -q '^CONSISTENT'; then
-            if [ "$COUNT" != "unknown" ] && [ "$COUNT" -ge "$COMMITTED" ] 2>/dev/null; then
-                echo "DURABLE: SYNC committed data survived power cut (count=$COUNT >= committed=$COMMITTED)"
-            else
-                # CONSISTENT but count < COMMITTED — partial loss
-                echo "DURABILITY_FAILURE: SYNC-committed rows lost after power cut (count=$COUNT < committed=$COMMITTED)"
-                echo "*** SERIOUS FINDING: SYNC mode is not delivering durability on this storage stack ***"
-            fi
-        elif echo "$VERIFY_OUT" | grep -q '^SILENT_CORRUPTION'; then
-            echo "DURABILITY_FAILURE: SILENT_CORRUPTION after power cut (count=$COUNT, committed=$COMMITTED)"
-            echo "*** SERIOUS FINDING: SYNC mode is not delivering durability on this storage stack ***"
-        elif echo "$VERIFY_OUT" | grep -q '^LOUD_FAILURE'; then
-            echo "LOUD_FAILURE: engine detected torn state (count=$COUNT, committed=$COMMITTED)"
-            echo "    This may indicate un-fsync'd metadata survived but data did not — investigate."
-            echo "    For SYNC mode a loud failure is unexpected; could be metadata journaling gap."
-        else
-            echo "UNKNOWN_RESULT: could not parse verifier output (exit=$VERIFY_EXIT)"
+        if ! echo "$VERIFY_OUT" | grep -q '^CONSISTENT' || ! [[ "$COUNT" =~ ^[0-9]+$ ]] || [ "$COUNT" -lt "$COMMITTED" ]; then
+            echo "ERROR: SYNC durability failed (count=${COUNT:-unknown}, committed=$COMMITTED)" >&2
+            return 1
         fi
+        echo "DURABLE: SYNC committed data survived power cut"
     else
-        # NOSYNC — loss or corruption is expected; just report what happened
-        if echo "$VERIFY_OUT" | grep -q '^CONSISTENT'; then
-            echo "(NOSYNC: CONSISTENT count=$COUNT committed=$COMMITTED — this iteration the data happened to survive)"
-            echo "(NOSYNC: loss is not promised but not guaranteed either; rerun to see variability)"
-        else
-            echo "(NOSYNC: data lost or corrupt after power cut — count=$COUNT, committed=$COMMITTED)"
+        if ! echo "$VERIFY_OUT" | grep -Eq '^(CONSISTENT|LOUD_FAILURE|SILENT_CORRUPTION)'; then
+            echo "ERROR: NOSYNC verifier output is unparseable" >&2
+            return 1
         fi
-        echo "(NOSYNC: loss is expected — durability not promised without SYNC mode)"
+        echo "NOSYNC control result accepted; durability is not promised"
     fi
 
     # ---- 12. Teardown this iteration ----
     echo ""
     echo "  [12] tearing down iteration (mode=$MODE)..."
-    umount "$MNT" 2>/dev/null || true
-    dmsetup remove "$DM_NAME" 2>/dev/null || true
-    losetup -d "$LOOP" 2>/dev/null || true
-    LOOP=""
-    rm -f "$IMG"
+    cleanup_cycle
     echo "  [12] done"
 }
 
@@ -403,16 +389,14 @@ prove_cut_drops_unsynced() {
     echo "  PREFLIGHT: proving the power cut actually DROPS un-fsync'd data"
     echo "  (control: sync'd file must survive; un-sync'd file must vanish)"
     echo "======================================================"
-    rm -f "$IMG"
-    truncate -s 1G "$IMG"
-    LOOP=$(losetup -f --show "$IMG")
-    SECTORS=$(blockdev --getsz "$LOOP")
+    create_cycle_resources 1G
     local UP_TABLE="0 $SECTORS flakey $LOOP 0 180 0"
     local DROP_TABLE="0 $SECTORS flakey $LOOP 0 0 180 1 drop_writes"
     dmsetup create "$DM_NAME" --table "$UP_TABLE"
+    HAS_DM=1
     mkfs_dev "$DM_DEV"
-    mkdir -p "$MNT"
     mount "$DM_DEV" "$MNT"
+    HAS_MOUNT=1
 
     # Durable file: write then sync the WHOLE fs so data + dir entry are on the device.
     echo "DURABLE_MARKER_KEEPME" > "$MNT/durable.txt"
@@ -428,10 +412,12 @@ prove_cut_drops_unsynced() {
     dmsetup load "$DM_NAME" --table "$DROP_TABLE"
     dmsetup resume "$DM_NAME"
     umount "$MNT"
+    HAS_MOUNT=0
     dmsetup suspend "$DM_NAME"
     dmsetup load "$DM_NAME" --table "$UP_TABLE"
     dmsetup resume "$DM_NAME"
     mount "$DM_DEV" "$MNT"
+    HAS_MOUNT=1
 
     local durable_ok=0 ephemeral_dropped=0
     if [ -f "$MNT/durable.txt" ] && grep -q DURABLE_MARKER_KEEPME "$MNT/durable.txt" 2>/dev/null; then durable_ok=1; fi
@@ -443,16 +429,14 @@ prove_cut_drops_unsynced() {
         echo "  ==> CUT VERIFIED: model keeps fsync'd data, drops un-fsync'd data."
         echo "      A SYNC 'DURABLE' result below is therefore CONCLUSIVE."
     else
-        echo "  ==> CUT INEFFECTIVE on this stack: the cut is NOT dropping un-fsync'd data,"
-        echo "      so any SYNC 'survival' below is INCONCLUSIVE. Investigate the dm-flakey setup."
+        echo "  ==> CUT INEFFECTIVE on this stack" >&2
+        cleanup_cycle
+        return 1
     fi
 
-    umount "$MNT" 2>/dev/null || true
-    dmsetup remove "$DM_NAME" 2>/dev/null || true
-    losetup -d "$LOOP" 2>/dev/null || true
-    LOOP=""
-    rm -f "$IMG"
+    cleanup_cycle
     echo ""
+    return 0
 }
 
 # ============================================================
@@ -478,6 +462,17 @@ echo "  SYNC:  fsync before commit → data survives → DURABLE"
 echo "  NOSYNC: no fsync → data lost → expected (shows why the durable modes matter)"
 echo ""
 
+# Complete non-destructive preflight before creating any resource.
+[ "${EUID:-$(id -u)}" -eq 0 ] || { echo "ERROR: run as root" >&2; exit 1; }
+for tool in dmsetup losetup blockdev mount umount mountpoint truncate find grep dd sync; do
+    command -v "$tool" >/dev/null || { echo "ERROR: missing required tool: $tool" >&2; exit 1; }
+done
+IMG_PARENT=$(dirname "$IMG")
+mkdir -p "$IMG_PARENT" || { echo "ERROR: cannot create image directory: $IMG_PARENT" >&2; exit 1; }
+BACKING_FS=$(stat -f -c %T "$IMG_PARENT")
+case "$BACKING_FS" in tmpfs|ramfs) echo "ERROR: image backing filesystem must be persistent, got $BACKING_FS" >&2; exit 1 ;; esac
+reject_resource_collisions || exit 1
+
 # Check JAR (do NOT build under root — maven would use /root/.m2 and re-download everything).
 if [ ! -f "$JAR" ]; then
     echo "ERROR: benchmarks jar not found at: $JAR" >&2
@@ -490,7 +485,7 @@ fi
 ensure_dmflakey
 
 # PREFLIGHT: prove the cut drops un-fsync'd data before trusting any durability result.
-prove_cut_drops_unsynced
+prove_cut_drops_unsynced || { echo "ERROR: power-cut preflight failed" >&2; exit 4; }
 
 # Default run-set (run_one MODE W BATCHED):
 #   1) adaptive W=0      — the zero-loss SUBJECT (adaptive == SYNC); expect DURABLE
@@ -498,11 +493,16 @@ prove_cut_drops_unsynced
 #   3) SYNC batched on   — CONTROL / regression guard on the existing non-WAL path; expect DURABLE
 #   4) SYNC batched off  — per-file msync(MS_SYNC) baseline
 #   5) NOSYNC            — CONTROL; total loss expected (shows why the durable modes matter)
-run_one adaptive 0     true
-run_one adaptive 50000 true
-run_one SYNC     0     true
-run_one SYNC     0     false
-run_one NOSYNC   0     true
+FAILURES=0
+run_one adaptive 0     true  || { cleanup_cycle; FAILURES=$((FAILURES + 1)); }
+run_one adaptive 50000 true  || { cleanup_cycle; FAILURES=$((FAILURES + 1)); }
+run_one SYNC     0     true  || { cleanup_cycle; FAILURES=$((FAILURES + 1)); }
+run_one SYNC     0     false || { cleanup_cycle; FAILURES=$((FAILURES + 1)); }
+run_one NOSYNC   0     true  || { cleanup_cycle; FAILURES=$((FAILURES + 1)); }
+if [ "$FAILURES" -ne 0 ]; then
+    echo "ERROR: $FAILURES power-cut cycle(s) failed" >&2
+    exit 5
+fi
 
 echo ""
 echo "======================================================"

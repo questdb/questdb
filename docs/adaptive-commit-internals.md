@@ -67,7 +67,7 @@ flowchart TD
     AP --> TBL["materialize: partition &lt;col&gt;.d/.i, index .k/.v, symbols .o/.c<br/>then _cv, then _txn (published last). NO per-commit device flush."]
     TBL --> EP{"epoch trigger: interval elapsed<br/>OR rows-since-epoch ≥ cap ?"}
     EP -->|no| AP
-    EP -->|yes| ADV["advance(): fsyncMaterializedState → _snapshot marker<br/>→ scoreboard pin → publish durableEpochSeqTxn"]
+    EP -->|yes| ADV["advance(): fsyncMaterializedState → reserve scoreboard pin<br/>→ _snapshot marker → publish durableEpochSeqTxn"]
     ADV --> PURGE["WalPurgeJob floors WAL retention at durableEpochSeqTxn"]
 ```
 
@@ -114,9 +114,11 @@ syncIfRequired(commitMode):
   deferDeviceFlush = (commitMode == ADAPTIVE) && (W > 0)
   async            = (commitMode == ASYNC) || deferDeviceFlush
   for each column:  column.sync(async)                  # msync MS_SYNC or MS_ASYNC
-  if commitMode == ADAPTIVE && !deferDeviceFlush:       # W = 0
-      ff.fdatasync(column.fd)                            # per-column device flush
-  events.sync(commitMode)                               # msync (+ fdatasync _event/_event.i if W=0)
+  if commitMode == ADAPTIVE:
+      ff.fdatasync(column.fd)                            # private data durable before sequencing
+  events.sync(commitMode)
+  if commitMode == ADAPTIVE && deferDeviceFlush:
+      events.fdatasync()                                 # private event sidecars durable before sequencing
   # sequencer durability happens inside getSequencerTxn → TableTransactionLogV2.sync0
 ```
 
@@ -129,13 +131,15 @@ syncIfRequired(commitMode):
   sequencer part+header, synchronously in order. Then `commit0` calls
   `setLocalDurableSeqTxn(seqTxn)` **on the commit thread** — the durable‑ack frontier
   advances immediately.
-- **ADAPTIVE, W>0** — columns/events/sequencer get `msync(MS_ASYNC)` only (page cache,
-  ordered, not yet device‑durable). `commit0` calls `recordPendingDurable(seqTxn)`,
-  registers the writer on the flush queue, and if the oldest pending age ≥ W flushes now.
-  `localDurableSeqTxn` is **not** advanced here.
+- **ADAPTIVE, W>0** — columns and event/index/checksum files are `fdatasync`'d before
+  sequencing, preventing one writer's shared-sequencer flush from publishing another writer's
+  missing private WAL. The sequencer remains page-cache-only until the batch flush. `commit0`
+  calls `recordPendingDurable(seqTxn)`, registers the writer on the flush queue, and if the oldest
+  pending age ≥ W flushes now. `localDurableSeqTxn` is **not** advanced here.
 
-**The batched flush** (`WalWriter.flushPendingDurable`, W>0): `fdatasync` all columns →
-`events.fdatasync()` → `sequencer.fdatasyncTxnLog()` → `setLocalDurableSeqTxn(flushTo)`.
+**The batched flush** (`WalWriter.flushPendingDurable`, W>0):
+`sequencer.fdatasyncTxnLog()` → `setLocalDurableSeqTxn(flushTo)`. Private columns/events
+were already durable before sequencing.
 The frontier advances **only** here, after the device flush. Also driven by the background
 `forceDurableIfPending(now, W)` (age‑gated, bounds RPO ≤ W even when commits stop) and
 defensively at segment open/roll.
@@ -290,9 +294,9 @@ step's effect is durable before the next is published):
 advance():
   re-check local durability (demote-in-window guard)
   1. writer.fsyncMaterializedState()          # make columns/_cv/_txn durable + write .epoch copies
-  2. snapshotMarker.write(epochSeqTxn, epochTxn, now)   # _snapshot — the crash boundary
-  3. scoreboard.incrementTxn(newSlot, epochTxn)         # pin NEW epoch (ping-pong)
-     scoreboard.releaseTxn(priorSlot, priorTxn)         # release prior (pin-before-release)
+  2. scoreboard.incrementTxn(newSlot, epochTxn)         # reserve NEW pin before marker
+  3. snapshotMarker.write(epochSeqTxn, epochTxn, now)   # _snapshot — the crash boundary
+     scoreboard.releaseTxn(priorSlot, priorTxn)         # release prior only after marker
   4. setDurableEpochSeqTxn(epochSeqTxn)        # publish the WAL-purge floor
      setLastEpochTs(now); resetRowsSinceEpoch()          # cadence + backlog reset, LAST
 ```
@@ -358,7 +362,7 @@ flowchart TD
     CM -->|SYNC| S["WAL: msync sync<br/>apply: msync→sync_file_range→syncfs<br/>epoch: never"]
     CM -->|ADAPTIVE| AD{"W = 0 ?"}
     AD -->|W=0| A0["WAL: msync + fdatasync NOW (data→events→seq)<br/>localDurableSeqTxn ↑ on commit thread"]
-    AD -->|"W&gt;0"| AW["WAL: msync async now; fdatasync BATCHED ≤ W<br/>localDurableSeqTxn ↑ after batch flush (RPO ≤ W)"]
+    AD -->|"W&gt;0"| AW["private WAL fdatasync before seq; sequencer BATCHED ≤ W<br/>localDurableSeqTxn ↑ after batch flush (RPO ≤ W)"]
     A0 --> ADAP["apply: LAZY (no per-commit column flush)<br/>epoch (interval OR row-cap): syncfs + _cv/_txn fsync + .epoch + _snapshot"]
     AW --> ADAP
 ```
@@ -372,7 +376,7 @@ skipped; **(G)** = reads the *global* mode):
 | **ASYNC** | msync⊘ | msync⊘ | msync⊘ | msync⊘ | msync⊘ | never |
 | **SYNC** | msync! | msync! | msync! | msync!→syncfs | msync! | never |
 | **ADAPTIVE W=0** | msync!+**fdatasync** | msync!+**fdatasync** | msync!+**fdatasync** | — (lazy) | per global | interval OR row‑cap |
-| **ADAPTIVE W>0** | msync⊘; fdatasync **deferred ≤W** | msync⊘; deferred | msync⊘; deferred | — (lazy) | per global | interval OR row‑cap |
+| **ADAPTIVE W>0** | msync⊘ + **fdatasync before seq** | msync⊘ + **fdatasync before seq** | msync⊘; fdatasync deferred ≤W | — (lazy) | per global | interval OR row‑cap |
 
 ---
 

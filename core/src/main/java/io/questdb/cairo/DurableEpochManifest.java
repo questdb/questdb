@@ -40,6 +40,27 @@ public final class DurableEpochManifest {
             int partitionBy,
             long nowMs
     ) {
+        publishBaseline(configuration, tableToken, timestampType, partitionBy, nowMs, true);
+    }
+
+    public static void publishCheckpointRestored(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            int timestampType,
+            int partitionBy,
+            long nowMs
+    ) {
+        publishBaseline(configuration, tableToken, timestampType, partitionBy, nowMs, false);
+    }
+
+    private static void publishBaseline(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            int timestampType,
+            int partitionBy,
+            long nowMs,
+            boolean requireInitialSeqTxn
+    ) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path tablePath = new Path(); Path src = new Path(); Path dst = new Path()) {
             tablePath.of(configuration.getDbRoot()).concat(tableToken);
@@ -67,7 +88,7 @@ public final class DurableEpochManifest {
                 txn = txReader.getTxn();
                 columnVersion = txReader.getColumnVersion();
             }
-            if (seqTxn != 0) {
+            if (requireInitialSeqTxn && seqTxn != 0) {
                 throw CairoException.critical(0).put("initial adaptive baseline is not at sequencer transaction zero [table=")
                         .put(tableToken.getTableName()).put(", seqTxn=").put(seqTxn).put(']');
             }

@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -143,6 +144,87 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testMarkerlessLegacyWalTableEnrollsWhenAdaptiveBecomesDefault() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            execute("create table legacy_enroll (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into legacy_enroll values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("legacy_enroll");
+            engine.releaseInactive();
+
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                final int tablePathLen = path.of(configuration.getDbRoot()).concat(token).size();
+                RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, path, tablePathLen);
+
+                path.trimTo(tablePathLen).concat(TableUtils.META_FILE_NAME);
+                final int current = peekInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+                final int downgraded = Numbers.encodeLowHighShorts(
+                        Numbers.decodeLowShort(current),
+                        TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT
+                );
+                pokeInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION, downgraded);
+
+                path.trimTo(tablePathLen).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                Assert.assertFalse("legacy precondition: no adaptive marker", ff.exists(path.$()));
+            }
+
+            node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            engine.getTableSequencerAPI().getTxnTracker(token).setCommitMode(CommitMode.UNSET);
+            new RecoveryCoordinator(engine).recover();
+
+            try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
+                Assert.assertEquals("enrolled legacy table must keep inheriting the server default",
+                        CommitMode.UNSET, writer.getMetadata().getCommitMode());
+                Assert.assertEquals(CommitMode.ADAPTIVE, writer.getEffectiveCommitMode());
+            }
+            engine.releaseInactive();
+
+            try (Path path = new Path(); TableReaderMetadata metadata = new TableReaderMetadata(configuration, token)) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                Assert.assertTrue("opening the writer must publish the enrollment baseline", ff.exists(path.$()));
+                metadata.loadMetadata();
+                Assert.assertEquals(CommitMode.UNSET, metadata.getCommitMode());
+
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                final int upgraded = peekInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+                Assert.assertTrue("enrollment must upgrade metadata to the commit-mode-aware format",
+                        Numbers.decodeHighShort(upgraded) >= TableUtils.META_FORMAT_MINOR_VERSION_COMMIT_MODE);
+            }
+
+            new RecoveryCoordinator(engine).recover();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestorePublishesBaselineForNextOrdinaryStartup() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertMemoryLeak(() -> {
+            execute("create table checkpoint_enroll (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into checkpoint_enroll values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("checkpoint_enroll");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (Path path = new Path()) {
+                final int tableRootLen = path.of(configuration.getDbRoot()).concat(token).size();
+                RecoveryCoordinator.removeAdaptiveEpochArtifacts(configuration.getFilesFacade(), path, tableRootLen);
+            }
+
+            // The checkpoint-aware startup must do more than grant a one-process exemption: it publishes a
+            // bound baseline that an immediately following ordinary startup can validate and recover.
+            new RecoveryCoordinator(engine, true).recover();
+            assertArtifactExists(token, TableUtils.SNAPSHOT_FILE_NAME);
+            new RecoveryCoordinator(engine, false).recover();
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals(1L, reader.size());
+            }
+        });
+    }
+
     // ------------------------------------------------------------------------------------------------
     // Artifacts 2 & 3: the _snapshot marker and the _txn.epoch / _cv.epoch copies.
     // ------------------------------------------------------------------------------------------------
@@ -231,8 +313,8 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
 
             // Adaptive took a durable epoch: the trio is on disk.
             assertArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME);
-            assertArtifactExists(tt, TableUtils.TXN_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX);
-            assertArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX);
+            assertCurrentEpochArtifactExists(tt, TableUtils.TXN_FILE_NAME);
+            assertCurrentEpochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME);
 
             // Downgrade this table to nosync.
             execute("alter table d set param commit_mode='nosync'");
@@ -256,7 +338,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
 
             // Leftover artifacts remain, inert (nothing on the live path opens them).
             assertArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME);
-            assertArtifactExists(tt, TableUtils.TXN_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX);
+            assertCurrentEpochArtifactExists(tt, TableUtils.TXN_FILE_NAME);
         });
     }
 
@@ -365,6 +447,18 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             marker.of(p);
             Assert.assertTrue("marker must load", marker.tryLoad());
             return marker.getEpochSeqTxn();
+        }
+    }
+
+    private void assertCurrentEpochArtifactExists(TableToken tt, CharSequence baseFileName) {
+        try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
+            markerPath.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
+            marker.of(markerPath);
+            Assert.assertTrue("marker must load", marker.tryLoad());
+            final int generation = marker.getGeneration();
+            final String fileName = baseFileName + TableUtils.EPOCH_COPY_SUFFIX
+                    + (generation == SnapshotMarker.LEGACY_GENERATION ? "" : "." + generation);
+            assertArtifactExists(tt, fileName);
         }
     }
 

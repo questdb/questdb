@@ -25,12 +25,15 @@
 package io.questdb.test.cairo.wal.seq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -47,6 +50,17 @@ import static org.junit.Assert.assertTrue;
  * directly, so the tracker's contiguity math is verified without the WAL plumbing.
  */
 public class SeqTxnTrackerContiguousFrontierTest {
+
+    @Test
+    public void testCommitModePublicationRejectsOlderAppliedAlter() {
+        final SeqTxnTracker tracker = newTracker();
+        tracker.setCommitModeAtSeqTxn(CommitMode.ADAPTIVE, 12);
+        tracker.setCommitModeAtSeqTxn(CommitMode.NOSYNC, 11);
+        assertEquals("older asynchronous apply must not overwrite the newer sequenced mode",
+                CommitMode.ADAPTIVE, tracker.getCommitMode());
+        tracker.setCommitModeAtSeqTxn(CommitMode.SYNC, 13);
+        assertEquals(CommitMode.SYNC, tracker.getCommitMode());
+    }
 
     /**
      * A DROPPED (distressed / crash-torn) writer that never flushed must LEAVE its pin: the frontier can
@@ -204,6 +218,38 @@ public class SeqTxnTrackerContiguousFrontierTest {
         tracker.markWriterDurable(1);
         assertEquals(tracker.getSeqTxn(), tracker.getLocalDurableSeqTxn());
         assertEquals(7, tracker.getLocalDurableSeqTxn());
+    }
+
+    @Test
+    public void testConcurrentW0PublicationKeepsMaximum() throws Exception {
+        for (int run = 0; run < 100; run++) {
+            final SeqTxnTracker tracker = newTracker();
+            tracker.initTxns(0, 2, false);
+            final CountDownLatch start = new CountDownLatch(1);
+            final Thread low = new Thread(() -> {
+                await(start);
+                tracker.setLocalDurableSeqTxn(1);
+            });
+            final Thread high = new Thread(() -> {
+                await(start);
+                tracker.setLocalDurableSeqTxn(2);
+            });
+            low.start();
+            high.start();
+            start.countDown();
+            low.join();
+            high.join();
+            assertEquals(2, tracker.getLocalDurableSeqTxn());
+        }
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        }
     }
 
     @NotNull

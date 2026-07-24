@@ -255,6 +255,9 @@ public class TableTransactionLog implements Closeable {
         fullSync();
         Unsafe.storeFence();
         long txn = lastTxn = txnLogFile.endMetadataChangeEntry();
+        // endMetadataChangeEntry publishes MAX_TXN after the pre-sync above. Flush that commit pointer too;
+        // otherwise an acknowledged idle structural ALTER can disappear on crash.
+        txnLogFile.fullSync();
         maxMetadataVersion.incrementAndGet();
         return txn;
     }

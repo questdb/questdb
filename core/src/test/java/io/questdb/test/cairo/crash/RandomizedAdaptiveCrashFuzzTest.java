@@ -401,7 +401,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
         runWithCrashFacade(() -> {
             SweepResult r = forEachAdaptiveCrashPoint(new ConvertPartitionWorkload());
-            Assert.assertFalse("convert-partition sweep truncated (N > cap) — raise the cap", r.truncated);
+            Assert.assertEquals("W=0 convert atomic boundary drifted", 12, r.atomicCommitDurabilityOpCount);
+            Assert.assertFalse("convert-partition sweep truncated (atomic ops > cap) — raise the cap", r.truncated);
         });
     }
 
@@ -497,6 +498,16 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                 fp = fingerprint(CVT_TABLE);
             }
             return new TableToken[]{token};
+        }
+
+        @Override
+        public int atomicCommitDurabilityOpCount(int countedOps) {
+            // Both W=0 and the safe W>0 fallback have N=26. Production convert semantics establish the
+            // durable transaction through op 12; op 13 starts the explicitly best-effort epoch/purge tail.
+            // A fault there is allowed to be consumed because the conversion transaction and logical rows
+            // are already durable; the oracle still verifies no suspension or data change after reboot.
+            Assert.assertEquals("unexpected convert durability-op count", 26, countedOps);
+            return 12;
         }
 
         @Override

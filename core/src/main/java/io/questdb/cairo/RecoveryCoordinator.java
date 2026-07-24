@@ -25,11 +25,15 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 
@@ -69,14 +73,20 @@ import io.questdb.std.str.Path;
  */
 public class RecoveryCoordinator {
     private static final Log LOG = LogFactory.getLog(RecoveryCoordinator.class);
+    private final boolean checkpointRestored;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
 
     public RecoveryCoordinator(CairoEngine engine) {
+        this(engine, false);
+    }
+
+    public RecoveryCoordinator(CairoEngine engine, boolean checkpointRestored) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
+        this.checkpointRestored = checkpointRestored;
     }
 
     /**
@@ -93,6 +103,7 @@ public class RecoveryCoordinator {
         // ADAPTIVE override on a NOSYNC instance still has a creation baseline and must be recovered.
         // Every adaptive WAL table must have a trustworthy marker/generation; absence fails startup closed.
         final ObjHashSet<TableToken> tokens = new ObjHashSet<>();
+        final ObjList<TableToken> checkpointEnrollments = new ObjList<>();
         engine.getTableTokens(tokens, false);
 
         try (Path src = new Path(); Path dst = new Path(); Path dir = new Path()) {
@@ -112,6 +123,20 @@ public class RecoveryCoordinator {
                     if (engine.getTableSequencerAPI().resolveEffectiveCommitMode(token) != CommitMode.ADAPTIVE) {
                         continue;
                     }
+                    tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    if (!ff.exists(dir.$()) && checkpointRestored) {
+                        // A checkpoint restore is a trustworthy, internally consistent materialized cut, but
+                        // checkpoint metadata intentionally excludes adaptive epoch anchors. Record the table
+                        // for synchronous baseline publication below. A one-startup in-memory exemption is not
+                        // sufficient: a second restart before WAL apply must find a durable marker.
+                        checkpointEnrollments.add(token);
+                        continue;
+                    }
+                    if (!ff.exists(dir.$()) && isLegacyAdaptiveEnrollmentCandidate(token, dir)) {
+                        // Pre-commit-mode tables cannot have an anchor. Their TableWriter constructor performs
+                        // the crash-safe metadata-discriminated enrollment before adaptive apply.
+                        continue;
+                    }
                     recoverTable(token, src, dst, dir);
                 } catch (CairoException | CairoError e) {
                     if (CairoException.isDataSyncFailure(e)) {
@@ -125,6 +150,48 @@ public class RecoveryCoordinator {
                     throw e;
                 }
             }
+        }
+
+        // Do this only after the validation/restoration pass has completed for every table. Publish directly
+        // from the restored files rather than opening TableWriter: constructor maintenance (index/purge repair)
+        // must not mutate checkpoint state before the caller's configured recovery jobs run.
+        for (int i = 0, n = checkpointEnrollments.size(); i < n; i++) {
+            final TableToken token = checkpointEnrollments.getQuick(i);
+            try (TableMetadata metadata = engine.getTableMetadata(token);
+                 Path markerPath = new Path();
+                 SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                DurableEpochManifest.publishCheckpointRestored(
+                        configuration,
+                        token,
+                        metadata.getTimestampType(),
+                        metadata.getPartitionBy(),
+                        configuration.getMicrosecondClock().getTicks() / 1000L
+                );
+                markerPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                marker.of(markerPath.$());
+                if (!marker.tryLoad()) {
+                    throw CairoException.critical(0)
+                            .put("checkpoint-restored adaptive baseline marker is invalid [table=")
+                            .put(token.getTableName()).put(']');
+                }
+                pinRecoveredEpoch(token, marker.getEpochTxn(), marker.getEpochSeqTxn());
+            } catch (CairoException | CairoError e) {
+                if (CairoException.isDataSyncFailure(e)) {
+                    engine.handleDataSyncFailure(e);
+                }
+                throw e;
+            }
+        }
+    }
+
+    private boolean isLegacyAdaptiveEnrollmentCandidate(TableToken token, Path metaPath) {
+        tablePath(metaPath, token).concat(TableUtils.META_FILE_NAME);
+        final long size = ff.length(metaPath.$());
+        if (size <= 0) {
+            return false;
+        }
+        try (MemoryCMR metaMem = Vm.getCMRInstance(ff, metaPath.$(), size, MemoryTag.MMAP_TABLE_READER)) {
+            return !TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_COMMIT_MODE);
         }
     }
 
@@ -221,8 +288,31 @@ public class RecoveryCoordinator {
         // Bump the in-memory recovery incarnation counter ONLY on a successful validated restore
         // (not on no-op/skip/absent-marker/torn-copy paths). The tracker is initialised lazily on
         // first WAL apply, but the object itself always exists (getSeqTxnTracker creates it).
-        engine.getTableSequencerAPI().getTxnTracker(token).bumpRecoveryIncarnation();
+        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+        pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn);
+        tracker.bumpRecoveryIncarnation();
         engine.getMetrics().walMetrics().incrementRecoveryEvents();
+    }
+
+    private void pinRecoveredEpoch(TableToken token, long epochTxn, long epochSeqTxn) {
+        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+        if (tracker.getPinnedEpochTxn() == epochTxn) {
+            tracker.setDurableEpochSeqTxn(epochSeqTxn);
+            return;
+        }
+        boolean slotA = true;
+        try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
+            if (!scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_A, epochTxn)) {
+                slotA = false;
+                if (!scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_B, epochTxn)) {
+                    throw CairoException.critical(0)
+                            .put("could not pin recovered adaptive epoch [table=").put(token.getTableName())
+                            .put(", epochTxn=").put(epochTxn).put(']');
+                }
+            }
+        }
+        tracker.setPinnedEpoch(epochTxn, slotA);
+        tracker.setDurableEpochSeqTxn(epochSeqTxn);
     }
 
     /**
@@ -469,7 +559,7 @@ public class RecoveryCoordinator {
     }
 
     /**
-     * Best-effort removal of the adaptive durable-epoch anchor for ONE table — the {@code _snapshot}
+     * Fail-closed removal of the adaptive durable-epoch anchor for ONE table — the {@code _snapshot}
      * marker plus the immutable {@code _txn.epoch}/{@code _cv.epoch} copies — given {@code path} positioned
      * at the table root and {@code tableRootLen} = the length of that table-root prefix.
      * <p>
@@ -481,20 +571,27 @@ public class RecoveryCoordinator {
      *   <li>a primary-&gt;replica <b>demote</b> (a replica never advances the epoch and recovers by
      *       re-download, so any local epoch is a stale primary-tenure artifact).</li>
      * </ul>
-     * Removing the anchor makes {@code recover()} take its conservative no-marker fallback (leave the table
-     * untouched). {@code removeQuiet} no-ops on an absent file, so this is safe and idempotent for
-     * non-adaptive / never-epoch'd tables. Only the {@code .epoch} copies + marker are removed; the LIVE
+     * Removing the anchor prevents recovery from selecting a stale lineage. Absent files are accepted so
+     * this remains idempotent for non-adaptive / never-epoch'd tables, but any artifact that still exists
+     * after deletion is a hard restore failure. Only the {@code .epoch} copies + marker are removed; the LIVE
      * {@code _txn}/{@code _cv} are never touched. Leaves {@code path} trimmed back to the table root.
      */
     public static void removeAdaptiveEpochArtifacts(FilesFacade ff, Path path, int tableRootLen) {
-        ff.removeQuiet(path.trimTo(tableRootLen).concat(TableUtils.SNAPSHOT_FILE_NAME).$());
-        ff.removeQuiet(path.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$());
-        ff.removeQuiet(path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$());
+        removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.SNAPSHOT_FILE_NAME));
+        removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX));
+        removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX));
         for (int generation = 0; generation < 2; generation++) {
-            ff.removeQuiet(path.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation).$());
-            ff.removeQuiet(path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation).$());
-            ff.removeQuiet(path.trimTo(tableRootLen).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation).$());
+            removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation));
+            removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation));
+            removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation));
         }
         path.trimTo(tableRootLen);
+    }
+
+    private static void removeAdaptiveEpochArtifactOrFail(FilesFacade ff, Path path) {
+        if (ff.exists(path.$()) && !ff.removeQuiet(path.$()) && ff.exists(path.$())) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not remove stale adaptive epoch artifact [path=").put(path).put(']');
+        }
     }
 }

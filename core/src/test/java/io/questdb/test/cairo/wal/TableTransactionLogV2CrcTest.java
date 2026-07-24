@@ -38,6 +38,7 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.wal.seq.TableTransactionLogFile.HEADER_SEQ_PART_SIZE_32;
 import static io.questdb.cairo.wal.seq.TableTransactionLogV2.RECORD_SIZE;
 import static io.questdb.cairo.wal.seq.TableTransactionLogV2.RESERVED_OFFSET;
 
@@ -47,7 +48,7 @@ import static io.questdb.cairo.wal.seq.TableTransactionLogV2.RESERVED_OFFSET;
  * Each V2 txnlog record ends with a reserved trailing {@code long} at {@code RESERVED_OFFSET}.
  * After this change the writer stores {@code calculateCvAreaChecksum(body)} there instead of 0.
  * The reader verifies it on every {@code hasNext()} call; a mismatch suspends the table.
- * A stored 0 means "legacy record" and is skipped for backward compatibility.
+ * A stored 0 is accepted only when the txnlog header positively identifies the record as legacy.
  */
 public class TableTransactionLogV2CrcTest extends AbstractCairoTest {
 
@@ -167,6 +168,57 @@ public class TableTransactionLogV2CrcTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testOversizedChecksumBoundarySuspends() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, SEQ_PART_TXN_COUNT);
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            final TableToken tt = engine.verifyTableName("x");
+            engine.releaseInactive();
+
+            final CairoConfiguration cfg = engine.getConfiguration();
+            try (Path path = new Path()) {
+                path.of(cfg.getDbRoot())
+                        .concat(tt.getDirName())
+                        .concat(WalUtils.SEQ_DIR)
+                        .concat(WalUtils.TXNLOG_FILE_NAME);
+                pokeLong(cfg, path.$(), HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + Long.BYTES, 1_000_000L);
+            }
+
+            drainWalQueue();
+            Assert.assertTrue("checksum capability boundary beyond maxTxn must suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+        });
+    }
+
+    @Test
+    public void testZeroChecksumInCapabilityDeclaredRecordSuspends() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, SEQ_PART_TXN_COUNT);
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            final TableToken tt = engine.verifyTableName("x");
+            engine.releaseInactive();
+
+            final CairoConfiguration cfg = engine.getConfiguration();
+            try (Path path = new Path()) {
+                path.of(cfg.getDbRoot())
+                        .concat(tt.getDirName())
+                        .concat(WalUtils.SEQ_DIR)
+                        .concat(WalUtils.TXNLOG_PARTS_DIR)
+                        .slash().put(0L);
+                pokeLong(cfg, path.$(), RESERVED_OFFSET, 0L);
+            }
+
+            drainWalQueue();
+            Assert.assertTrue(
+                    "a capability-declared record may not downgrade a missing checksum to legacy",
+                    engine.getTableSequencerAPI().isSuspended(tt)
+            );
+        });
+    }
+
     /**
      * LEGACY back-compat test.
      * <p>
@@ -196,8 +248,15 @@ public class TableTransactionLogV2CrcTest extends AbstractCairoTest {
                         .slash().put(0L);
 
                 // Zero the reserved/CRC slot in the first record (offset = RESERVED_OFFSET in record 0).
-                // This simulates a "legacy" record: the body is intact, only the CRC slot is 0.
                 pokeLong(cfg, path.$(), RESERVED_OFFSET, 0L);
+
+                // Positively identify the existing records as legacy by removing the checksum-capability
+                // header. A reader may skip verification only under this file-level discriminator.
+                path.of(cfg.getDbRoot())
+                        .concat(tt.getDirName())
+                        .concat(WalUtils.SEQ_DIR)
+                        .concat(WalUtils.TXNLOG_FILE_NAME);
+                pokeLong(cfg, path.$(), HEADER_SEQ_PART_SIZE_32 + Integer.BYTES, 0L);
             }
 
             drainWalQueue();

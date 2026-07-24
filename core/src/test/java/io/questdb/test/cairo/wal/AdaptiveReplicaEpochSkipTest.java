@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
@@ -97,6 +98,17 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
             engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("x");
+            final long baselineEpochSeqTxn;
+            final long baselineEpochTxn;
+            final int baselineGeneration;
+            try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                markerPath.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                marker.of(markerPath);
+                Assert.assertTrue("adaptive enrollment baseline marker must load", marker.tryLoad());
+                baselineEpochSeqTxn = marker.getEpochSeqTxn();
+                baselineEpochTxn = marker.getEpochTxn();
+                baselineGeneration = marker.getGeneration();
+            }
 
             // The demote-in-window policy: ENABLED on the gate call (the 1st isLocalDurabilityEnabled() of the
             // apply's maybeAdvanceDurableEpoch), DISABLED on advance()'s re-check (and every call thereafter).
@@ -130,13 +142,16 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                 Assert.assertEquals("a demote in the epoch window must not publish an epoch (lastEpochTs stays 0)",
                         0L, tracker.getLastEpochTs());
 
-                // The epoch trio must NOT have been (re-)created on the demoted node.
-                Assert.assertFalse("_snapshot must not be created in the demote window",
-                        epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
-                Assert.assertFalse("_txn.epoch must not be created in the demote window",
-                        epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, TableUtils.EPOCH_COPY_SUFFIX));
-                Assert.assertFalse("_cv.epoch must not be created in the demote window",
-                        epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, TableUtils.EPOCH_COPY_SUFFIX));
+                // Safe legacy enrollment may have published an epoch-0 baseline before this window. The
+                // demoted node must not advance or replace that marker.
+                try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    markerPath.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    marker.of(markerPath);
+                    Assert.assertTrue("enrollment baseline marker must remain loadable", marker.tryLoad());
+                    Assert.assertEquals(baselineEpochSeqTxn, marker.getEpochSeqTxn());
+                    Assert.assertEquals(baselineEpochTxn, marker.getEpochTxn());
+                    Assert.assertEquals(baselineGeneration, marker.getGeneration());
+                }
 
                 // Visibility is unaffected — lazy apply still wrote the columns.
                 assertQuery("select count() from x")

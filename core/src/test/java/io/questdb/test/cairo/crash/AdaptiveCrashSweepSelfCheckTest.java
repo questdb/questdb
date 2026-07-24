@@ -25,10 +25,12 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.str.Path;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -78,9 +80,14 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
             LOG.info().$("[self-check] N=").$(r.n).$(", sweptPoints=").$(r.sweptPoints)
                     .$(", recoveredByK=").$(Arrays.toString(r.recoveredByK())).$();
 
-            // The sweep actually ran over 1..N with N > 0.
+            // The sweep actually ran over every declared atomic durability op with N > 0.
             Assert.assertTrue("N must be > 0", r.n > 0);
-            Assert.assertEquals("default cap must not truncate this small workload", r.n, r.sweptPoints);
+            Assert.assertEquals(
+                    "default cap must sweep every declared atomic durability op",
+                    r.atomicCommitDurabilityOpCount,
+                    r.sweptPoints
+            );
+            Assert.assertTrue("post-commit apply tail must use a declared boundary", r.stoppedAtDeclaredBoundary);
             Assert.assertFalse("small workload must not be truncated", r.truncated);
 
             // Distinct injection points: the per-k recovered committed-row count is non-decreasing in k
@@ -99,9 +106,9 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
                     r.recoveredByK()[1] < ROWS
             );
 
-            // Upper bound: at the LAST crash point k=N, recovery restores ALL committed rows.
+            // Upper bound: at the last declared atomic point, every W=0 WAL commit has returned durably.
             Assert.assertEquals(
-                    "k=N must recover ALL committed rows (W=0 => every returned commit's WAL is durable)",
+                    "last atomic point must recover ALL committed rows",
                     ROWS, r.recoveredByK()[r.sweptPoints]
             );
         }));
@@ -123,6 +130,49 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
         }));
     }
 
+    @Test
+    public void testDeclaredPostCommitBoundaryExcludesOnlyDeclaredTail() throws Exception {
+        runWithCrashFacade(() -> {
+            final SweepResult r = forEachAdaptiveCrashPoint(new SwallowedFaultWorkload(1));
+            Assert.assertEquals(3, r.n);
+            Assert.assertEquals(1, r.atomicCommitDurabilityOpCount);
+            Assert.assertEquals(1, r.sweptPoints);
+            Assert.assertTrue(r.stoppedAtDeclaredBoundary);
+            Assert.assertFalse(r.truncated);
+        });
+    }
+
+    @Test
+    public void testInvalidAtomicDurabilityBoundariesFail() throws Exception {
+        runWithCrashFacade(() -> {
+            assertInvalidBoundary(0);
+            assertInvalidBoundary(4);
+        });
+    }
+
+    @Test
+    public void testUndeclaredSwallowedFaultFails() throws Exception {
+        runWithCrashFacade(() -> {
+            final AssertionError error = Assert.assertThrows(
+                    AssertionError.class,
+                    () -> forEachAdaptiveCrashPoint(new SwallowedFaultWorkload(-1))
+            );
+            Assert.assertTrue(error.getMessage(), error.getMessage().contains("undeclared swallowed durability fault"));
+            Assert.assertTrue(error.getMessage(), error.getMessage().contains("k=2"));
+        });
+    }
+
+    private void assertInvalidBoundary(int declaredOps) {
+        final AssertionError error = Assert.assertThrows(
+                AssertionError.class,
+                () -> forEachAdaptiveCrashPoint(new SwallowedFaultWorkload(declaredOps))
+        );
+        Assert.assertTrue(
+                error.getMessage(),
+                error.getMessage().contains("declared atomic durability-op count must be in [1, N]")
+        );
+    }
+
     private void withAdaptiveW0(RunnableEx body) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0"); // W = 0 (synchronous)
@@ -142,12 +192,78 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
     }
 
     /**
+     * Three deterministic file fsyncs. The second deliberately consumes and swallows the injected fault,
+     * modelling a genuine post-commit best-effort operation. A negative declaration uses the interface
+     * default, so the self-check can prove that an undeclared swallowed fault fails closed.
+     */
+    private final class SwallowedFaultWorkload implements AdaptiveCrashWorkload {
+        private final int declaredOps;
+        private long fd = -1;
+
+        private SwallowedFaultWorkload(int declaredOps) {
+            this.declaredOps = declaredOps;
+        }
+
+        @Override
+        public int atomicCommitDurabilityOpCount(int countedOps) {
+            return declaredOps < 0 ? AdaptiveCrashWorkload.super.atomicCommitDurabilityOpCount(countedOps) : declaredOps;
+        }
+
+        @Override
+        public void commit() {
+            try {
+                crashFf.fsync(fd);
+                try {
+                    crashFf.fsync(fd);
+                } catch (CrashSimulationError deliberatelySwallowed) {
+                    // Synthetic post-commit best-effort operation for validating the driver's boundary contract.
+                }
+                crashFf.fsync(fd);
+            } finally {
+                crashFf.close(fd);
+                fd = -1;
+            }
+        }
+
+        @Override
+        public int oracle(int k, int n) {
+            return k;
+        }
+
+        @Override
+        public TableToken[] setup(int iteration) {
+            try (Path path = new Path().of(engine.getConfiguration().getDbRoot())
+                    .concat("boundary-self-check-").put(declaredOps).put('-').put(iteration).put(".d")) {
+                fd = crashFf.openRW(path.$(), CairoConfiguration.O_NONE);
+            }
+            Assert.assertTrue("self-check file must open", fd > -1);
+            return new TableToken[0];
+        }
+
+        @Override
+        public void teardown() {
+            if (fd > -1) {
+                crashFf.close(fd);
+                fd = -1;
+            }
+        }
+    }
+
+    /**
      * W0 — the anchor workload: an ADAPTIVE {@code (ts timestamp, v long)} WAL table, identity
      * {@code v = 0..ROWS-1}, one row per commit followed by a synchronous {@code drainWalQueue()}.
      */
     private final class IdentityWorkload implements AdaptiveCrashWorkload {
+        private int atomicCommitOps;
         private String table;
         private TableToken tt;
+
+        @Override
+        public int atomicCommitDurabilityOpCount(int countedOps) {
+            Assert.assertTrue("identity workload must record at least one atomic commit op", atomicCommitOps > 0);
+            Assert.assertTrue("identity workload must retain a post-commit apply tail", atomicCommitOps < countedOps);
+            return atomicCommitOps;
+        }
 
         @Override
         public TableToken[] setup(int iteration) throws Exception {
@@ -162,10 +278,16 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
 
         @Override
         public void commit() throws Exception {
+            final int opsBeforeAtomicCommits = crashFf.durabilityOpCount();
             for (int i = 0; i < ROWS; i++) {
                 // W=0: the WAL commit fdatasyncs synchronously here -> an armed crash on that op
                 // propagates a CrashSimulationError out of execute().
                 execute("insert into " + table + " values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
+                if (i == ROWS - 1) {
+                    // Every W=0 WAL commit has now returned durably. Only the final materialized apply/epoch
+                    // tail remains, so no later atomic commit is excluded by this explicit boundary.
+                    atomicCommitOps = crashFf.durabilityOpCount() - opsBeforeAtomicCommits;
+                }
                 // ADAPTIVE apply + durable epoch -> more durability ops. An armed crash here is swallowed
                 // by ApplyWal2TableJob's catch(Throwable) into a table SUSPEND (no throw).
                 drainWalQueue();
@@ -204,9 +326,9 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
                     rows.size() <= recovered
             );
 
-            if (k == n) {
-                Assert.assertEquals("k=N: recovery must restore ALL committed rows", ROWS, recovered);
-                Assert.assertEquals("k=N: the full identity set must read back clean", ROWS, rows.size());
+            if (k == atomicCommitOps) {
+                Assert.assertEquals("last atomic op: recovery must restore ALL committed rows", ROWS, recovered);
+                Assert.assertEquals("last atomic op: the full identity set must read back clean", ROWS, rows.size());
             }
 
             // Clean reopen: a follow-up write + read must succeed on the recovered table.

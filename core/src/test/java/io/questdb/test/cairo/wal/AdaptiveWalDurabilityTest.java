@@ -26,6 +26,11 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.SnapshotMarker;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
@@ -759,6 +764,32 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
      * isAdaptiveEpochColumnSyncBatched()} branch in {@code syncColumns()}.
      */
     @Test
+    public void testEpochMarkerDoesNotAdvanceWhenNextPinSlotIsBusy() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        assertMemoryLeak(() -> {
+            execute("create table pin_busy (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into pin_busy values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("pin_busy");
+            final long occupiedTxn = 1_000_000L;
+            try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token);
+                 TableWriter writer = getWriter(token)) {
+                writer.advanceDurableEpoch(100L);
+                final int generationBefore = readMarkerGeneration(token);
+                Assert.assertTrue(scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_B, occupiedTxn));
+                try {
+                    writer.advanceDurableEpoch(200L);
+                    Assert.assertEquals("a busy pin slot must leave the prior marker authoritative",
+                            generationBefore, readMarkerGeneration(token));
+                } finally {
+                    scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_B, occupiedTxn);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSyncModeNoSyncfs() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         final SyscallCountingFacade ff = new SyscallCountingFacade();
@@ -801,9 +832,27 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    private int readMarkerGeneration(TableToken token) {
+        try (io.questdb.std.str.Path p = new io.questdb.std.str.Path();
+             SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+            marker.of(p);
+            Assert.assertTrue("durable epoch marker must load", marker.tryLoad());
+            return marker.getGeneration();
+        }
+    }
+
     private void assertEpochCopyExists(io.questdb.cairo.TableToken tt, String baseFileName) {
-        try (io.questdb.std.str.Path p = new io.questdb.std.str.Path()) {
+        try (io.questdb.std.str.Path p = new io.questdb.std.str.Path();
+                SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
+            marker.of(p);
+            Assert.assertTrue("durable epoch marker must load", marker.tryLoad());
+            final int generation = marker.getGeneration();
             p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(baseFileName).put(".epoch");
+            if (generation != SnapshotMarker.LEGACY_GENERATION) {
+                p.put('.').put(generation);
+            }
             Assert.assertTrue(
                     "durable epoch copy must exist: " + p,
                     engine.getConfiguration().getFilesFacade().exists(p.$())

@@ -61,6 +61,9 @@ public class WalUtils {
     public static final int DROP_TABLE_WAL_ID = -2;
     public static final String EVENT_FILE_NAME = "_event";
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
+    // Additive checksum sidecar. _event and _event.i retain their legacy byte layout so an older
+    // binary can drain WAL produced by a newer binary without mis-locating optional record footers.
+    public static final String EVENT_CHECKSUM_FILE_NAME = "_event.c";
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
     public static final int METADATA_WALID = -1;
     public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
@@ -98,12 +101,17 @@ public class WalUtils {
     public static final String TXNLOG_FILE_NAME_META_VAR = "_txnlog.meta.d";
     public static final String TXNLOG_PARTS_DIR = "_txn_parts";
     public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
-    // Per-record checksum trailer for _event records, mirroring the _cv body-checksum trailer
-    // (see TableUtils.CV_CHECKSUM_MAGIC). 8-byte MAGIC followed by an 8-byte xxh3 checksum of the
-    // record body. Magic-gated for back-compat: records written before this change lack the trailer
-    // and are read unverified.
-    public static final long WALE_CHECKSUM_MAGIC = 0x57414C45434B5331L; // 'WALECKS1' as a BE hex mnemonic; on-disk bytes (LE): '1','S','K','C','E','L','A','W'
-    public static final int WALE_CHECKSUM_TRAILER_SIZE = 2 * Long.BYTES;
+    // The high half of the existing format word is ignored by old readers and positively declares
+    // that _event.c is mandatory. The sidecar header is followed by fixed-size entries indexed by
+    // segment txn: [recordOffset:long, recordLength:int, reserved:int, checksum:long].
+    public static final short WALE_CHECKSUM_FEATURE_VERSION = 1;
+    public static final long WALE_CHECKSUM_MAGIC = 0x57414C45434B5331L;
+    public static final int WALE_CHECKSUM_FILE_VERSION = 1;
+    public static final int WALE_CHECKSUM_HEADER_SIZE = 2 * Long.BYTES;
+    public static final int WALE_CHECKSUM_ENTRY_SIZE = 3 * Long.BYTES;
+    public static final int WALE_CHECKSUM_ENTRY_OFFSET_OFFSET = 0;
+    public static final int WALE_CHECKSUM_ENTRY_LENGTH_OFFSET = Long.BYTES;
+    public static final int WALE_CHECKSUM_ENTRY_VALUE_OFFSET = 2 * Long.BYTES;
     public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
     // DEFAULT DEDUP mode means following the table definition. If the table has dedup enabled, then
     // the commit will deduplicate the data, otherwise it will not.

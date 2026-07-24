@@ -165,7 +165,8 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
                     Assert.assertNotEquals("two held writers must be distinct WALs sharing one tracker",
                             a.getWalId(), b.getWalId());
 
-                    // A commits the LOWER seqTxn, B the HIGHER; both pending (msync'd, NOT device-durable).
+                    // A commits the LOWER seqTxn, B the HIGHER. Their private WAL is durable before
+                    // sequencing; the shared sequencer frontier remains pending until a batch flush.
                     setCurrentMicros(CLOCK_START + 1000L);
                     commitRow(a, tsA, 10);
                     seqA = tracker.getSeqTxn();
@@ -178,8 +179,8 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
                     Assert.assertEquals("B must have sequenced right after A", seqA + 1, seqB1);
                     committedRows.add(new long[]{tsB1, 11, seqB1});
 
-                    // B flushes its whole batch OUT OF ORDER (commit-driven trigger past W); A stays un-flushed,
-                    // so A's seqTxn is the oldest device-durable hole.
+                    // B flushes the shared sequencer OUT OF ORDER (commit-driven trigger past W). The
+                    // conservative pending map may keep the ack frontier behind A even though private WAL is safe.
                     final long tsB2 = ts("2024-01-01T03:00:00.000000Z");
                     setCurrentMicros(CLOCK_START + WINDOW_US + 2000L);
                     commitRow(b, tsB2, 12);
@@ -234,21 +235,22 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
                 // torn un-acked tail suspended the table.) ===
                 assertEveryAckedRowSurvives(ackedSeqTxn, committedRows, recovered);
 
-                // === (5) NEGATIVE CONTROL — prove the no-loss assertion is not vacuous. A's un-flushed row
-                // (v=10, seqTxn=seqA) was genuinely rolled back, so it is absent after recovery. Had the ack
-                // path over-claimed to seqA (the pre-fix behaviour), the SAME assertion must FIRE. ===
-                Assert.assertNull("negative-control premise: A's un-flushed row must be lost after the power loss",
-                        recovered.get(tsA));
+                // === (5) NEGATIVE CONTROL — prove the no-loss assertion is not vacuous. Under the safe W>0
+                // fallback A's private WAL survives (and B's peer sequencer flush can publish it). Remove A
+                // from a copy of the recovered result, then verify that an ack covering seqA is rejected. ===
+                Assert.assertEquals("safe fallback must preserve A's private WAL row",
+                        Long.valueOf(10L), recovered.get(tsA));
+                final Map<Long, Long> missingAckedRow = new HashMap<>(recovered);
+                missingAckedRow.remove(tsA);
                 boolean overClaimCaught = false;
                 try {
-                    // Deliberately-too-high ack frontier: it covers A's lost seqTxn.
-                    assertEveryAckedRowSurvives(seqA, committedRows, recovered);
+                    assertEveryAckedRowSurvives(seqA, committedRows, missingAckedRow);
                 } catch (AssertionError expected) {
                     overClaimCaught = true;
                 }
                 Assert.assertTrue(
                         "NEGATIVE CONTROL FAILED: assertEveryAckedRowSurvives did NOT fire for a deliberately-too-high"
-                                + " (pre-fix over-claim) ack frontier (" + seqA + ") that covers A's rolled-back row"
+                                + " ack frontier (" + seqA + ") when an acknowledged row is missing"
                                 + " — the no-acknowledged-loss proof would be vacuous",
                         overClaimCaught);
 

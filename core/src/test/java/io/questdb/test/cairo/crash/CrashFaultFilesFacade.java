@@ -14,7 +14,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -137,9 +139,9 @@ import java.util.stream.Stream;
 public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     // fds are tracked so fsync can map a fd back to its file; only fsync advances durableSize.
     private final Map<Long, String> fdToPath = new HashMap<>();
-    // Non-cached opens (openRWNoCache/openRONoCache): tracked separately from fdToPath (they are NOT part of
-    // the path-keyed durability model) so the sweep driver can reclaim any left open by an fsync-interrupted
-    // operation — modelling the OS closing them on the process death a live-JVM crash cannot actually cause.
+    // Non-cached opens (openRWNoCache/openRONoCache): tracked separately so the sweep driver can reclaim any
+    // left open by an fsync-interrupted operation. No-cache DIRECTORY fds are also mapped in fdToPath: their
+    // fsync persists namespace entries even though ordinary no-cache file fds remain outside the content model.
     private final Set<Long> noCacheOpenFds = new LinkedHashSet<>();
     private final Map<String, Long> durableSize = new HashMap<>();
     private final Map<String, List<long[]>> tornTails = new HashMap<>();
@@ -170,6 +172,17 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private final Map<String, Long> writtenDataEnd = new HashMap<>();
     private final Map<String, Long> syncedDataEnd = new HashMap<>();
     private final Map<String, Long> journaledDataEnd = new HashMap<>();
+
+    // Directory entries have an independent durability boundary. A parent-directory fsync snapshots only
+    // that directory's immediate namespace; syncfs snapshots every baseline root. Content durability remains
+    // governed by the existing per-file model above. File bytes are retained here only while an unsynced
+    // unlink/rename has hidden a durable name; ordinary namespace snapshots therefore add no duplicate
+    // full-file images, and a directory fsync/syncfs releases the pending images.
+    private final Set<String> namespaceRoots = new LinkedHashSet<>();
+    private final Set<String> durableDirectories = new HashSet<>();
+    private final Set<String> durableFileEntries = new HashSet<>();
+    private final Map<String, byte[]> namespaceFileImages = new HashMap<>();
+    private final Map<String, byte[]> pendingRenameTargetImages = new HashMap<>();
 
     /**
      * Whether a journal commit on ANY file persists EVERY tracked file's pending extent conversions
@@ -237,6 +250,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         long fd = super.openRONoCache(name);
         if (fd > -1) {
             noCacheOpenFds.add(fd);
+            fdToPath.put(fd, toAbsPath(name));
         }
         return fd;
     }
@@ -246,6 +260,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         long fd = super.openRWNoCache(name, opts);
         if (fd > -1) {
             noCacheOpenFds.add(fd);
+            fdToPath.put(fd, toAbsPath(name));
         }
         return fd;
     }
@@ -361,6 +376,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     public void syncfs(long fd) {
         super.syncfs(fd);
         syncfsCount++;
+        for (String root : namespaceRoots) {
+            snapshotNamespaceTree(Paths.get(root));
+        }
         String p = fdToPath.get(fd);
         if (p != null) {
             syncOrder.add(p);
@@ -390,39 +408,53 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     public void fsync(long fd) {
         super.fsync(fd);
         String p = fdToPath.get(fd);
+        final boolean directory = p != null && Files.isDirectory(Paths.get(p));
+        if (directory) {
+            snapshotDirectory(Paths.get(p));
+        }
         if (p != null) {
             syncOrder.add(p);
-            // fsync: JOURNAL COMMIT + data-at-device + DEVICE FLUSH (like fdatasync for this model).
-            track(p);
-            byte[] now = readCurrent(p);
-            deviceCacheContent.put(p, now);
-            advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
-            journalCommit(p);
-            doFlush();
+            if (!directory) {
+                // fsync: JOURNAL COMMIT + data-at-device + DEVICE FLUSH (like fdatasync for this model).
+                track(p);
+                byte[] now = readCurrent(p);
+                deviceCacheContent.put(p, now);
+                advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
+                journalCommit(p);
+                doFlush();
+            }
         }
-        recordDurable(fd);
+        if (!directory) {
+            recordDurable(fd);
+        }
         bumpDurabilityOp();
     }
 
     @Override
     public void fsyncAndClose(long fd) {
         final String p = fdToPath.get(fd);
-        final long size = p != null ? super.length(fd) : -1L;
-        final byte[] snapshot = p != null ? readCurrent(p) : null; // read BEFORE close drops the fd
-        super.fsyncAndClose(fd); // performs fsync + close; close() below drops the fd
-        noCacheOpenFds.remove(fd); // fsyncAndClose closes the OS fd WITHOUT routing through close(), so drop it here
+        final boolean directory = p != null && Files.isDirectory(Paths.get(p));
+        final long size = p != null && !directory ? super.length(fd) : -1L;
+        final byte[] snapshot = p != null && !directory ? readCurrent(p) : null; // read BEFORE close drops the fd
+        super.fsyncAndClose(fd); // performs fsync + close without routing through close()
+        fdToPath.remove(fd);
+        noCacheOpenFds.remove(fd);
         if (p != null) {
             syncOrder.add(p);
-            if (size >= 0L) {
-                durableSize.put(p, size);
+            if (directory) {
+                snapshotDirectory(Paths.get(p));
+            } else {
+                if (size >= 0L) {
+                    durableSize.put(p, size);
+                }
+                // fsync + close: JOURNAL COMMIT + data-at-device + DEVICE FLUSH. Snapshot+advance+commit+flush.
+                // writtenDataEnd is keyed by path so it survives the close above.
+                track(p);
+                deviceCacheContent.put(p, snapshot);
+                advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
+                journalCommit(p);
+                doFlush();
             }
-            // fsync + close: JOURNAL COMMIT + data-at-device + DEVICE FLUSH. Snapshot+advance+commit+flush.
-            // writtenDataEnd is keyed by path so it survives the close above.
-            track(p);
-            deviceCacheContent.put(p, snapshot);
-            advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
-            journalCommit(p);
-            doFlush();
         }
         bumpDurabilityOp();
     }
@@ -430,9 +462,13 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     @Override
     public boolean removeQuiet(LPSZ name) {
         final String removedPath = toAbsPath(name);
+        final byte[] restoreImage = durableFileEntries.contains(removedPath) ? durableImage(removedPath) : null;
         final boolean removed = super.removeQuiet(name);
         if (removed) {
             evictDurability(removedPath, false);
+            if (restoreImage != null) {
+                namespaceFileImages.put(removedPath, restoreImage);
+            }
         }
         return removed;
     }
@@ -440,6 +476,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     @Override
     public boolean rmdir(io.questdb.std.str.Path name, boolean haltOnError) {
         final String removedRoot = toAbsPath(name.$());
+        preserveDurableSubtreeImages(removedRoot);
         final boolean removed = super.rmdir(name, haltOnError);
         if (removed) {
             // FilesFacadeImpl's recursive rmdir bypasses removeQuiet for the children, so evict the entire
@@ -457,15 +494,64 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public int rename(LPSZ from, LPSZ to) {
+        final String fromPath = toAbsPath(from);
+        final String toPath = toAbsPath(to);
+        final byte[] restoreImage = durableFileEntries.contains(fromPath) ? durableImage(fromPath) : null;
+        final byte[] overwrittenImage = durableFileEntries.contains(toPath) ? durableImage(toPath) : null;
+        preserveDurableSubtreeImages(fromPath);
+        // rename-overwrite must also retain the destination's previous durable inode/image until the parent
+        // directory is fsynced; an unsynced crash restores both original names.
+        preserveDurableSubtreeImages(toPath);
         final int res = super.rename(from, to);
         if (res == io.questdb.std.Files.FILES_RENAME_OK) {
             // POSIX rename carries the inode's durable data to the new name, so the path-keyed durability
             // model must follow the file(s): re-key every tracked entry from the old path -- or old-dir
             // prefix, for a directory rename -- to the new one. Without this a synced-then-renamed file is
             // wrongly seen as never-synced and crash() truncates it to 0.
-            rekeyDurability(toAbsPath(from), toAbsPath(to));
+            rekeyDurability(fromPath, toPath);
+            duplicateDurableNamespaceDescendants(fromPath, toPath);
+            if (restoreImage != null) {
+                pendingRenameTargetImages.put(toPath, restoreImage);
+            }
+            if (overwrittenImage != null) {
+                // The destination name itself was already durable. Until its parent directory is fsynced,
+                // crash rollback must restore that prior inode rather than the renamed source bytes.
+                durableContent.put(toPath, overwrittenImage);
+                durableSize.put(toPath, (long) overwrittenImage.length);
+            }
+            if (restoreImage != null) {
+                namespaceFileImages.put(fromPath, restoreImage);
+            }
         }
         return res;
+    }
+
+    private void preserveDurableSubtreeImages(String root) {
+        final String prefix = root + File.separator;
+        for (String path : new ArrayList<>(durableFileEntries)) {
+            if (path.equals(root) || path.startsWith(prefix)) {
+                namespaceFileImages.putIfAbsent(path, durableImage(path));
+            }
+        }
+    }
+
+    private void duplicateDurableNamespaceDescendants(String fromPath, String toPath) {
+        final String prefix = fromPath + File.separator;
+        for (String path : new ArrayList<>(durableDirectories)) {
+            if (path.startsWith(prefix)) {
+                durableDirectories.add(toPath + path.substring(fromPath.length()));
+            }
+        }
+        for (String path : new ArrayList<>(durableFileEntries)) {
+            if (path.startsWith(prefix)) {
+                final String destination = toPath + path.substring(fromPath.length());
+                durableFileEntries.add(destination);
+                final byte[] image = namespaceFileImages.get(path);
+                if (image != null) {
+                    namespaceFileImages.put(destination, image);
+                }
+            }
+        }
     }
 
     private void rekeyDurability(String fromPath, String toPath) {
@@ -615,6 +701,11 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         writtenDataEnd.clear();
         syncedDataEnd.clear();
         journaledDataEnd.clear();
+        namespaceRoots.clear();
+        durableDirectories.clear();
+        durableFileEntries.clear();
+        namespaceFileImages.clear();
+        pendingRenameTargetImages.clear();
         durabilityOps = 0;
         crashAtOp = -1;
         // NB: modelSharedJournal is a configured policy, NOT per-cycle state -> intentionally NOT reset here.
@@ -624,6 +715,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      * Record current sizes (and content) of all files under dbRoot as durable ("prior committed, log-journaled").
      */
     public void markDurableBaseline(CharSequence dbRoot) {
+        final Path root = Paths.get(dbRoot.toString()).toAbsolutePath();
+        namespaceRoots.add(root.toString());
+        snapshotNamespaceTree(root);
         walk(dbRoot, p -> {
             String key = p.toAbsolutePath().toString();
             try {
@@ -659,6 +753,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      * model never tracked falls back to truncation at its last-durable size.
      */
     public void crash(CharSequence dbRoot) {
+        restoreNamespace(Paths.get(dbRoot.toString()).toAbsolutePath());
         walk(dbRoot, p -> {
             String key = p.toAbsolutePath().toString();
             byte[] durable = durableContent.get(key);
@@ -674,9 +769,18 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 } else {
                     // No content snapshot for this file: original size-only rollback.
                     Long durableSz = durableSize.get(key);
-                    long target = durableSz != null ? durableSz : 0L;
-                    if (ch.size() > target) {
-                        ch.truncate(target);
+                    if (durableSz != null) {
+                        if (ch.size() > durableSz) {
+                            ch.truncate(durableSz);
+                        }
+                    } else {
+                        final byte[] namespaceImage = namespaceFileImages.get(key);
+                        if (namespaceImage != null) {
+                            ch.write(ByteBuffer.wrap(namespaceImage), 0);
+                            ch.truncate(namespaceImage.length);
+                        } else {
+                            ch.truncate(0L);
+                        }
                     }
                 }
                 List<long[]> ranges = tornTails.get(key);
@@ -694,6 +798,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 throw new UncheckedIOException(e);
             }
         });
+        pendingRenameTargetImages.clear();
     }
 
     /**
@@ -1022,11 +1127,140 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
     }
 
+    private byte[] durableImage(String path) {
+        final byte[] durable = durableContent.get(path);
+        if (durable != null) {
+            return durable;
+        }
+        final byte[] pending = namespaceFileImages.get(path);
+        return pending != null ? pending : readCurrent(path);
+    }
+
+    private void restoreNamespace(Path root) {
+        if (!namespaceRoots.contains(root.toString()) || !Files.exists(root)) {
+            return;
+        }
+        try (Stream<Path> stream = Files.walk(root)) {
+            stream.sorted(Comparator.reverseOrder()).forEach(path -> {
+                if (path.equals(root)) {
+                    return;
+                }
+                if (!isNamespaceEntryDurable(root, path)) {
+                    try {
+                        Files.deleteIfExists(path);
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                }
+            });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        durableDirectories.stream()
+                .filter(path -> isNamespaceEntryDurable(root, Paths.get(path)))
+                .sorted(Comparator.comparingInt(String::length))
+                .forEach(path -> {
+                    try {
+                        Files.createDirectories(Paths.get(path));
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+        durableFileEntries.stream()
+                .filter(path -> isNamespaceEntryDurable(root, Paths.get(path)))
+                .forEach(path -> {
+                    final Path file = Paths.get(path);
+                    if (!Files.exists(file)) {
+                        try {
+                            Files.createDirectories(file.getParent());
+                            final byte[] image = namespaceFileImages.get(path);
+                            final byte[] durable = durableContent.get(path);
+                            Files.write(file, image != null ? image : durable != null ? durable : new byte[0]);
+                        } catch (IOException e) {
+                            throw new UncheckedIOException(e);
+                        }
+                    }
+                });
+    }
+
+    private boolean isNamespaceEntryDurable(Path root, Path path) {
+        final String key = path.toAbsolutePath().toString();
+        if (!durableDirectories.contains(key) && !durableFileEntries.contains(key)) {
+            return false;
+        }
+        // fsyncing a child directory persists its immediate entries, but not the child's own dentry in
+        // its parent. An entry survives only when every directory component back to the namespace root is
+        // durable; otherwise losing one ancestor necessarily loses the entire subtree.
+        for (Path parent = path.toAbsolutePath().getParent(); parent != null && !parent.equals(root.toAbsolutePath()); parent = parent.getParent()) {
+            if (!durableDirectories.contains(parent.toString())) {
+                return false;
+            }
+        }
+        return path.toAbsolutePath().startsWith(root.toAbsolutePath());
+    }
+
+    private void snapshotDirectory(Path directory) {
+        final String prefix = directory.toAbsolutePath().toString() + File.separator;
+        durableDirectories.removeIf(path -> path.startsWith(prefix) && path.indexOf(File.separator, prefix.length()) < 0);
+        durableFileEntries.removeIf(path -> path.startsWith(prefix) && path.indexOf(File.separator, prefix.length()) < 0);
+        namespaceFileImages.keySet().removeIf(path -> path.startsWith(prefix) && path.indexOf(File.separator, prefix.length()) < 0);
+        if (!Files.isDirectory(directory)) {
+            return;
+        }
+        try (Stream<Path> entries = Files.list(directory)) {
+            entries.forEach(path -> {
+                final String key = path.toAbsolutePath().toString();
+                if (Files.isDirectory(path)) {
+                    durableDirectories.add(key);
+                } else if (Files.isRegularFile(path)) {
+                    durableFileEntries.add(key);
+                    final byte[] renamedImage = pendingRenameTargetImages.remove(key);
+                    if (renamedImage != null) {
+                        durableContent.put(key, renamedImage);
+                        durableSize.put(key, (long) renamedImage.length);
+                        namespaceFileImages.remove(key);
+                    }
+                }
+            });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private void snapshotNamespaceTree(Path root) {
+        final String rootKey = root.toAbsolutePath().toString();
+        final String prefix = rootKey + File.separator;
+        durableDirectories.removeIf(path -> path.equals(rootKey) || path.startsWith(prefix));
+        durableFileEntries.removeIf(path -> path.startsWith(prefix));
+        namespaceFileImages.keySet().removeIf(path -> path.startsWith(prefix));
+        pendingRenameTargetImages.keySet().removeIf(path -> path.startsWith(prefix));
+        if (!Files.exists(root)) {
+            return;
+        }
+        try (Stream<Path> stream = Files.walk(root)) {
+            stream.forEach(path -> {
+                final String key = path.toAbsolutePath().toString();
+                if (Files.isDirectory(path)) {
+                    durableDirectories.add(key);
+                } else if (Files.isRegularFile(path)) {
+                    durableFileEntries.add(key);
+                }
+            });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     /**
      * Convert LPSZ (null-terminated native bytes) to a canonical absolute path String.
      */
     private static String toAbsPath(LPSZ name) {
-        return Paths.get(Utf8String.newInstance(name).toString()).toAbsolutePath().toString();
+        String path = Utf8String.newInstance(name).toString();
+        final int nul = path.indexOf('\0');
+        if (nul > -1) {
+            path = path.substring(0, nul);
+        }
+        return Paths.get(path).toAbsolutePath().toString();
     }
 
     private static void walk(CharSequence dbRoot, java.util.function.Consumer<Path> fileFn) {

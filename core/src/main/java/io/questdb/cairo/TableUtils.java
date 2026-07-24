@@ -2003,6 +2003,7 @@ public final class TableUtils {
      * @param columnVersionReader Column version reader (or writer, which extends reader)
      * @param symbolTableProvider Symbol table provider
      * @param configuration       Cairo configuration for parquet encoder options
+     * @param commitMode          effective commit mode of the owning table
      * @param bloomFilterColumns  Comma-separated column names for bloom filters, or null
      * @param bloomFilterFpp      Bloom filter false-positive probability, or NaN for default
      * @param bloomFilterIndexes  Reusable DirectIntList for bloom filter column indexes. Must be non-null;
@@ -2024,6 +2025,7 @@ public final class TableUtils {
             ColumnVersionReader columnVersionReader,
             SymbolTableProvider symbolTableProvider,
             CairoConfiguration configuration,
+            int commitMode,
             @Nullable CharSequence bloomFilterColumns,
             double bloomFilterFpp,
             DirectIntList bloomFilterIndexes,
@@ -2248,7 +2250,6 @@ public final class TableUtils {
                 // a parquet_meta_file_size that resolves only if the _pm bytes survive a
                 // crash. fsync the parent dir too because _pm is a brand-new file in a
                 // brand-new partition directory.
-                final int commitMode = configuration.getCommitMode();
                 if (commitMode != CommitMode.NOSYNC) {
                     // fsync data.parquet before _pm (data before metadata, mirrors syncColumns0 ordering)
                     setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);

@@ -138,6 +138,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         boolean isRewrite = false;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
+        final boolean isSync = tableWriter.getEffectiveCommitMode() != CommitMode.NOSYNC;
         final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
         ctx.clear();
         final ParquetPartitionDecoder partitionDecoder = ctx.getPartitionDecoder();
@@ -672,7 +673,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // _pm header is published below, so a power loss cannot leave a
                 // committed _pm pointing at data-file bytes still in the page
                 // cache. commitParquetMeta only makes _pm durable, not the data.
-                if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
+                if (isSync) {
                     final long parquetNameTxn = isRewrite ? txn : srcNameTxn;
                     path.of(pathToTable);
                     setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
@@ -691,7 +692,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // publishes the header; that is safe because _txn is unchanged
                 // and a pinned reader walks back to the committed footer (see
                 // commit_parquet_meta).
-                partitionUpdater.commitParquetMeta(cairoConfiguration.getCommitMode() != CommitMode.NOSYNC);
+                partitionUpdater.commitParquetMeta(isSync);
             } catch (Throwable e) {
                 if (isRewrite) {
                     // Rewrite mode: original is intact. Remove the new directory.
@@ -753,7 +754,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // fsyncAndClose closes the fd even on failure (no leak), and a
                         // non-durable dead tail is harmless -- the next update rewrites it.
                         long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
-                        if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
+                        if (isSync) {
                             ff.fsyncAndClose(fd);
                         } else {
                             ff.close(fd);
@@ -4262,6 +4263,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long partitionRowCount = srcOooHi - srcOooLo + 1;
         final FilesFacade ff = tableWriter.getFilesFacade();
         final CairoConfiguration configuration = tableWriter.getConfiguration();
+        final boolean isSync = tableWriter.getEffectiveCommitMode() != CommitMode.NOSYNC;
         final long partitionNameTxn = txn - 1;
         final long mergeIndexAddr = sortedTimestampsAddr + srcOooLo * TableWriter.TIMESTAMP_MERGE_ENTRY_BYTES;
 
@@ -4363,7 +4365,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             parquetFileSize = ff.length(parquetPath.$());
 
-            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+            if (isSync) {
+                // Data before metadata: the freshly encoded parquet data must be durable before _pm.
+                final long parquetDataFd = TableUtils.openRW(ff, parquetPath.$(), LOG, configuration.getWriterFileOpenOpts());
+                try {
+                    ff.fsync(parquetDataFd);
+                } finally {
+                    ff.close(parquetDataFd);
+                }
                 ff.fsync(parquetMetaFd);
             }
 

@@ -55,6 +55,8 @@ public class SeqTxnTracker {
     // by TableSequencerAPI.resolveEffectiveCommitMode for any WAL-side reader that needs it before either.
     // volatile: written by a writer/apply thread, read by WalWriter/purge/observability threads.
     private volatile int commitMode = io.questdb.cairo.CommitMode.UNSET;
+    // Sequencer transaction that last changed commitMode. -1 denotes metadata/registration initialization.
+    private long commitModeSeqTxn = -1;
     // The last seqTxn that has been made durable as an adaptive epoch.
     // Default 0 means "no epoch committed yet — retain all WAL" (safe conservative default for a
     // fresh adaptive table; the epoch job advances this as epochs are confirmed durable).
@@ -77,10 +79,10 @@ public class SeqTxnTracker {
     // pins the new epoch txn in the FREE ping-pong slot, then releases this prior one from the other
     // slot (INV-5 pin-before-release; the brief double-pin is safe). Like the scoreboard itself these
     // are in-memory, reset on restart; recovery re-establishes the pin.
-    private long pinnedEpochTxn = -1;
+    private volatile long pinnedEpochTxn = -1;
     // Which ping-pong slot currently holds pinnedEpochTxn: true => EPOCH_ID_A, false => EPOCH_ID_B.
     // The next epoch pins into the OTHER slot. Initial value is arbitrary (no pin held yet).
-    private boolean pinnedEpochSlotIsA = false;
+    private volatile boolean pinnedEpochSlotIsA = false;
     // The highest seqTxn whose WAL commit is device-durable under ADAPTIVE mode (data→events→seq) AND is
     // part of the CONTIGUOUS durable prefix across ALL concurrent writers of this table (see the pending map
     // below). Default -1 means "no local-fsync guarantee yet" — only ADAPTIVE tables advance this.
@@ -352,8 +354,27 @@ public class SeqTxnTracker {
      * {@code _meta} unless the table genuinely defers to the global, in which case pass the resolved
      * global value). Idempotent; safe to call repeatedly from the writer/apply path.
      */
-    public void setCommitMode(int commitMode) {
-        this.commitMode = commitMode;
+    public synchronized void setCommitMode(int commitMode) {
+        if (commitModeSeqTxn < 0) {
+            this.commitMode = commitMode;
+        }
+    }
+
+    public synchronized void setCommitModeAtSeqTxn(int commitMode, long seqTxn) {
+        if (seqTxn >= commitModeSeqTxn) {
+            this.commitMode = commitMode;
+            this.commitModeSeqTxn = seqTxn;
+        }
+    }
+
+    public synchronized void setCommitModeIfUnset(int commitMode) {
+        if (this.commitMode == io.questdb.cairo.CommitMode.UNSET && commitModeSeqTxn < 0) {
+            this.commitMode = commitMode;
+        }
+    }
+
+    public synchronized void strengthenCommitModeToAdaptive() {
+        this.commitMode = io.questdb.cairo.CommitMode.ADAPTIVE;
     }
 
     public void setDurableEpochSeqTxn(long durableEpochSeqTxn) {
@@ -372,11 +393,8 @@ public class SeqTxnTracker {
      * (config-fixed), so these two callers never race for the same tracker.
      */
     public void setLocalDurableSeqTxn(long seqTxn) {
-        if (seqTxn > localDurableSeqTxn) {
-            // Push the delta to the global durable-frontier gauge, clamping the -1 initial to 0
-            // (mirrors the addSeqTxn(newSeqTxn - Math.max(0, stxn)) pattern above).
-            metrics.walMetrics().addLocalDurableSeqTxn(seqTxn - Math.max(0, localDurableSeqTxn));
-            localDurableSeqTxn = seqTxn;
+        synchronized (durableFrontierLock) {
+            setLocalDurableSeqTxnLocked(seqTxn);
         }
     }
 
@@ -413,7 +431,7 @@ public class SeqTxnTracker {
                 pendingLoSeqTxns.removeIndex(idx);
             }
             final long target = pendingWalIds.size() == 0 ? seqTxn : minPendingLoSeqTxn() - 1;
-            setLocalDurableSeqTxn(target);
+            setLocalDurableSeqTxnLocked(target);
         }
     }
 
@@ -424,6 +442,7 @@ public class SeqTxnTracker {
      * distressed/crash-torn writer left behind, so a reused/fresh writer recomputes from an empty map.
      */
     public void resetDurableFrontier() {
+        clearPinnedEpoch();
         synchronized (durableFrontierLock) {
             pendingWalIds.clear();
             pendingLoSeqTxns.clear();
@@ -432,6 +451,14 @@ public class SeqTxnTracker {
                 metrics.walMetrics().addLocalDurableSeqTxn(-current);
             }
             localDurableSeqTxn = -1L;
+        }
+    }
+
+    private void setLocalDurableSeqTxnLocked(long seqTxn) {
+        if (seqTxn > localDurableSeqTxn) {
+            final long previous = localDurableSeqTxn;
+            metrics.walMetrics().addLocalDurableSeqTxn(seqTxn - Math.max(0, previous));
+            localDurableSeqTxn = seqTxn;
         }
     }
 
@@ -466,9 +493,20 @@ public class SeqTxnTracker {
      * Record the epoch txn now pinned in the scoreboard (or -1 when none) and which ping-pong slot
      * holds it (true => EPOCH_ID_A). Set after advance() completes the pin handover.
      */
-    public void setPinnedEpoch(long pinnedEpochTxn, boolean slotIsA) {
+    public synchronized void setPinnedEpoch(long pinnedEpochTxn, boolean slotIsA) {
         this.pinnedEpochTxn = pinnedEpochTxn;
         this.pinnedEpochSlotIsA = slotIsA;
+    }
+
+    public synchronized void clearPinnedEpoch() {
+        pinnedEpochTxn = -1;
+        pinnedEpochSlotIsA = false;
+        durableEpochSeqTxn = 0;
+    }
+
+    public boolean isRangeAvailableToEpoch(long fromTxn, long toTxn) {
+        final long epochTxn = pinnedEpochTxn;
+        return epochTxn < fromTxn || epochTxn >= toTxn;
     }
 
     public void setUnsuspended() {

@@ -313,6 +313,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return command;
     }
 
+    public int getSetCommitModeValue() {
+        assert command == SET_PARAM_COMMIT_MODE;
+        return (int) extraInfo.getQuick(0);
+    }
+
     @Override
     public boolean isForceWalBypass() {
         return command == FORCE_DROP_PARTITION;
