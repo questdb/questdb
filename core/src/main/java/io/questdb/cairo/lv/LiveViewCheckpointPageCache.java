@@ -316,7 +316,10 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
     /**
      * @return the fraction of pages, by identity hash, the cache admits. One
      * means every page; zero means the cache is closed to new pages but still
-     * serves what it holds
+     * serves what it holds. Surfaced via
+     * {@code live_views().checkpoint_page_cache_admission_ratio}, where it is what
+     * separates a hit ratio held down by the cap from one held down by a cache
+     * still warming
      */
     public double getAdmissionFraction() {
         return (double) admissionThreshold / ADMISSION_FULL;
@@ -326,10 +329,19 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
         return epoch;
     }
 
+    /**
+     * @return page probes this cache served. Surfaced via
+     * {@code live_views().checkpoint_page_cache_hits}; resets when the view
+     * rebuilds the cache, not only on restart
+     */
     public long getHits() {
         return hits;
     }
 
+    /**
+     * @return page probes that went on to map the segment and decode. Surfaced via
+     * {@code live_views().checkpoint_page_cache_misses}
+     */
     public long getMisses() {
         return misses;
     }
@@ -357,7 +369,8 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
 
     /**
      * @return the native bytes this cache holds. Counts whole slabs, not the
-     * pages inside them, because a slab stays with the cache once allocated
+     * pages inside them, because a slab stays with the cache once allocated.
+     * Surfaced via {@code live_views().checkpoint_page_cache_bytes}
      */
     public long getUsedBytes() {
         return (long) slabs.size() * SLAB_BYTES;
@@ -367,7 +380,9 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
      * @return what holding every page one restore reads would cost this cache,
      * smoothed over the restores it has seen. Zero until the first
      * {@link #endRestore()}, which is when the admission fraction stops being a
-     * guess
+     * guess. Surfaced via
+     * {@code live_views().checkpoint_page_cache_working_set_bytes}, which is the
+     * figure to size the engine-wide cap from
      */
     public long getWorkingSetBytes() {
         return (long) workingSetBytes;
