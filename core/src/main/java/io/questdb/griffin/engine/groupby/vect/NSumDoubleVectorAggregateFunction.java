@@ -154,6 +154,14 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
         return Rosti.keyedIntNSumDoubleWrapUp(pRosti, valueOffset, transientSum, transientCount, transientC);
     }
 
+    @Override
+    public void wrapUpNullSlot(long pRosti, long slotAddress) {
+        // mirrors the empty slot normalization in keyedIntNSumDoubleWrapUp
+        if (Unsafe.getLong(slotAddress + Rosti.getValueOffset(pRosti, valueOffset + 2)) == 0) {
+            Unsafe.putDouble(slotAddress + Rosti.getValueOffset(pRosti, valueOffset), Double.NaN);
+        }
+    }
+
     private void computeSum() {
         double sum = 0;
         long count = 0;

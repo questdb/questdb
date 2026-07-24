@@ -151,4 +151,12 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
         }
         return Rosti.keyedIntSumDoubleWrapUp(pRosti, valueOffset, sum, count);
     }
+
+    @Override
+    public void wrapUpNullSlot(long pRosti, long slotAddress) {
+        // mirrors the empty slot normalization in keyedIntSumDoubleWrapUp
+        if (Unsafe.getLong(slotAddress + Rosti.getValueOffset(pRosti, valueOffset + 1)) == 0) {
+            Unsafe.putDouble(slotAddress + Rosti.getValueOffset(pRosti, valueOffset), Double.NaN);
+        }
+    }
 }

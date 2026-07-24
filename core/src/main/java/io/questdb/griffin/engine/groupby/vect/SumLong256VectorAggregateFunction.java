@@ -165,6 +165,18 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
         return Rosti.keyedIntSumLong256WrapUp(pRosti, valueOffset, sumA.getLong0(), sumA.getLong1(), sumA.getLong2(), sumA.getLong3(), count.sum());
     }
 
+    @Override
+    public void wrapUpNullSlot(long pRosti, long slotAddress) {
+        // mirrors the empty slot normalization in keyedIntSumLong256WrapUp
+        if (Unsafe.getLong(slotAddress + Rosti.getValueOffset(pRosti, valueOffset + 1)) == 0) {
+            final long pValue = slotAddress + Rosti.getValueOffset(pRosti, valueOffset);
+            Unsafe.putLong(pValue, Numbers.LONG_NULL);
+            Unsafe.putLong(pValue + Long.BYTES, Numbers.LONG_NULL);
+            Unsafe.putLong(pValue + 2 * Long.BYTES, Numbers.LONG_NULL);
+            Unsafe.putLong(pValue + 3 * Long.BYTES, Numbers.LONG_NULL);
+        }
+    }
+
     private Long256Impl sumLong256(Long256Impl sum, long address, long count) {
         boolean hasData = false;
         long offset = 0;

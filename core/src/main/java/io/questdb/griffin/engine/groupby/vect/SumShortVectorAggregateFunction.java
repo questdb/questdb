@@ -129,4 +129,12 @@ public class SumShortVectorAggregateFunction extends LongFunction implements Vec
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntSumLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
+
+    @Override
+    public void wrapUpNullSlot(long pRosti, long slotAddress) {
+        // mirrors the empty slot normalization in keyedIntSumLongWrapUp
+        if (Unsafe.getLong(slotAddress + Rosti.getValueOffset(pRosti, valueOffset + 1)) == 0) {
+            Unsafe.putLong(slotAddress + Rosti.getValueOffset(pRosti, valueOffset), Numbers.LONG_NULL);
+        }
+    }
 }

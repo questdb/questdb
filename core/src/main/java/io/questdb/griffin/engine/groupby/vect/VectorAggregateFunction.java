@@ -105,4 +105,19 @@ public interface VectorAggregateFunction extends Function, Mutable {
      * @return true if wrapUp was fine and false if it failed on memory allocation
      */
     boolean wrapUp(long pRosti);
+
+    /**
+     * Used for keyed aggregates only. Runs after every {@link #wrapUp(long)} call once the
+     * owning factory has materialized the null key slot for key column tops. When this
+     * function's cells in that slot still hold the untouched initial values, i.e. no row
+     * contributed to the null key group for this function, the implementation writes the
+     * same empty value {@link #wrapUp(long)} normalization produces for empty slots. The
+     * default is a no-op for functions whose initial slot values already represent the
+     * empty result.
+     *
+     * @param pRosti      pointer to rosti
+     * @param slotAddress address of the null key slot
+     */
+    default void wrapUpNullSlot(long pRosti, long slotAddress) {
+    }
 }

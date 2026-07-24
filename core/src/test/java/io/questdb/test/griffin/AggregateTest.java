@@ -1821,6 +1821,21 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRostiWithKeyColTopsAllNullsAndIdleWorkers() throws Exception {
+        executeWithPool(4, 16, AggregateTest::runKeyColTopsAllNullsTest);
+    }
+
+    @Test
+    public void testRostiWithKeyColTopsAllNullsAndManyWorkers() throws Exception {
+        executeWithPool(4, 32, AggregateTest::runKeyColTopsAllNullsTest);
+    }
+
+    @Test
+    public void testRostiWithKeyColTopsAllNullsAndNoWorkers() throws Exception {
+        executeWithPool(0, 0, AggregateTest::runKeyColTopsAllNullsTest);
+    }
+
+    @Test
     public void testRostiWithKeyColTopsAndIdleWorkers() throws Exception {
         executeWithPool(4, 16, AggregateTest::runCountTestWithKeyColTops);
     }
@@ -2151,6 +2166,35 @@ public class AggregateTest extends AbstractCairoTest {
                 .expectSize()
                 .noRandomAccess()
                 .returns("cnt\n1000000\n");
+    }
+
+    private static void runKeyColTopsAllNullsTest(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws Exception {
+        // The key column top assigns whole page frames to the null key group while every
+        // aggregated column is also a column top (or null) there, so no aggregate function
+        // accumulates a value for the group. The group must still be present in the result,
+        // with each aggregate reporting its empty value.
+        engine.execute("create table x ( tstmp " + timestampTypeName + " ) timestamp (tstmp) partition by hour", sqlExecutionContext);
+        engine.execute("insert into x values (0::timestamp), (1::timestamp), ((3600L*1000000)::timestamp)", sqlExecutionContext);
+        engine.execute("alter table x add column k int", sqlExecutionContext);
+        engine.execute("insert into x values ((1+3600L*1000000)::timestamp, 6), ((2*3600L*1000000)::timestamp, null)", sqlExecutionContext);
+        engine.execute("alter table x add column i int, l long, d double, dat date", sqlExecutionContext);
+        engine.execute("insert into x values ((1+2*3600L*1000000)::timestamp, 6, 5, 5, 5.0, cast(5 as date))", sqlExecutionContext);
+
+        assertQuery(engine, sqlExecutionContext,
+                "select k, " +
+                        "sum(i) si, min(i) mni, max(i) mxi, avg(i) ai, count(i) ci, " +
+                        "sum(l) sl, min(l) mnl, max(l) mxl, " +
+                        "sum(d) sd, min(d) mnd, max(d) mxd, avg(d) ad, ksum(d) kd, nsum(d) nd, " +
+                        "sum(dat) sdat, min(dat) mndat, max(dat) mxdat, " +
+                        "count(*) cstar " +
+                        "from x order by k")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        k\tsi\tmni\tmxi\tai\tci\tsl\tmnl\tmxl\tsd\tmnd\tmxd\tad\tkd\tnd\tsdat\tmndat\tmxdat\tcstar
+                        null\tnull\tnull\tnull\tnull\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t\t\t4
+                        6\t5\t5\t5\t5.0\t1\t5\t5\t5\t5.0\t5.0\t5.0\t5.0\t5.0\t5.0\t5\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.005Z\t2
+                        """);
     }
 
     private static void runGroupByWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws Exception {

@@ -82,7 +82,7 @@ public final class Rosti {
     }
 
     public static long getInitialValueSlot(long pRosti, int columnIndex) {
-        return getInitialValuesSlot(pRosti) + Unsafe.getInt(getValueOffsets(pRosti) + columnIndex * 4L);
+        return getInitialValuesSlot(pRosti) + getValueOffset(pRosti, columnIndex);
     }
 
     public static long getInitialValuesSlot(long pRosti) {
@@ -105,8 +105,25 @@ public final class Rosti {
         return Unsafe.getLong(pRosti + Long.BYTES);
     }
 
+    public static int getValueOffset(long pRosti, int columnIndex) {
+        return Unsafe.getInt(getValueOffsets(pRosti) + columnIndex * 4L);
+    }
+
     public static long getValueOffsets(long pRosti) {
         return Unsafe.getLong(pRosti + 7 * Long.BYTES);
+    }
+
+    /**
+     * Inserts the null key into the map unless it is already present. A newly created slot
+     * receives the configured initial values. The null key value itself lives in the key
+     * cell at the head of the initial values slot, so that cell doubles as a single-element
+     * key vector here.
+     *
+     * @param pRosti pointer to rosti
+     * @return true if the null key is present and false if rosti failed to allocate memory
+     */
+    public static boolean insertNullKey(long pRosti) {
+        return keyedIntDistinct(pRosti, getInitialValuesSlot(pRosti), 1);
     }
 
     public static native boolean keyedIntAvgDoubleWrapUp(long pRosti, int valueOffset, double valueAtNull, long valueAtNullCount);

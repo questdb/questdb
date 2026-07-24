@@ -135,4 +135,12 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntAvgLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
+
+    @Override
+    public void wrapUpNullSlot(long pRosti, long slotAddress) {
+        // mirrors the count == 0 division result in keyedIntAvgLongWrapUp
+        if (Unsafe.getLong(slotAddress + Rosti.getValueOffset(pRosti, valueOffset + 1)) == 0) {
+            Unsafe.putDouble(slotAddress + Rosti.getValueOffset(pRosti, valueOffset), Double.NaN);
+        }
+    }
 }

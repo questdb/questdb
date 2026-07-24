@@ -2034,6 +2034,201 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedVectorizedColumnTopDoubleAggregates() throws Exception {
+        // The key column top routes whole page frames into the null key group. When the
+        // aggregated DOUBLE column is also a column top there, every accumulator stays
+        // empty and the group must still surface with NULL values.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO y VALUES ('2024-01-01T00:00:00.000000Z')");
+            execute("ALTER TABLE y ADD COLUMN k INT");
+            execute("INSERT INTO y VALUES ('2024-01-02T00:00:00.000000Z', 1)");
+            execute("ALTER TABLE y ADD COLUMN d DOUBLE");
+            execute("INSERT INTO y VALUES ('2024-01-03T00:00:00.000000Z', 1, 1.5)");
+
+            assertQuery("SELECT k, min(d) m FROM y ORDER BY k")
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .expectSize()
+                    .returns("k\tm\nnull\tnull\n1\t1.5\n");
+
+            assertQuery("SELECT k, max(d) m FROM y ORDER BY k")
+                    .expectSize()
+                    .returns("k\tm\nnull\tnull\n1\t1.5\n");
+
+            assertQuery("SELECT k, sum(d) s FROM y ORDER BY k")
+                    .expectSize()
+                    .returns("k\ts\nnull\tnull\n1\t1.5\n");
+
+            assertQuery("SELECT k, avg(d) a FROM y ORDER BY k")
+                    .expectSize()
+                    .returns("k\ta\nnull\tnull\n1\t1.5\n");
+
+            assertQuery("SELECT k, ksum(d) ks FROM y ORDER BY k")
+                    .expectSize()
+                    .returns("k\tks\nnull\tnull\n1\t1.5\n");
+
+            assertQuery("SELECT k, nsum(d) ns FROM y ORDER BY k")
+                    .expectSize()
+                    .returns("k\tns\nnull\tnull\n1\t1.5\n");
+
+            // count(*) creates the null key slot in its own wrapUp, after min(d) has already
+            // normalized the map; min(d) must still report NULL rather than the raw Infinity
+            // sentinel of a freshly initialized slot.
+            assertQuery("SELECT k, min(d) m, count(*) c FROM y ORDER BY k")
+                    .expectSize()
+                    .returns("k\tm\tc\nnull\tnull\t1\n1\t1.5\t2\n");
+        });
+    }
+
+    @Test
+    public void testKeyedVectorizedColumnTopIntKey() throws Exception {
+        // https://github.com/questdb/questdb/issues/5150
+        // The first partition predates both columns, so its frame has a key column top and
+        // the whole frame belongs to the null key group. max(id2) sees no values for it and
+        // used to drop the group entirely.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES ('2024-11-08T06:54:47.803364Z')");
+            execute("ALTER TABLE x ADD COLUMN id INT");
+            execute("INSERT INTO x VALUES ('2025-11-08T06:54:47.803364Z', 42)");
+            execute("ALTER TABLE x ADD COLUMN id2 INT");
+            execute("INSERT INTO x VALUES ('2026-11-08T06:54:47.803364Z', 42, 42)");
+
+            assertQuery("SELECT id, max(id2) m FROM x ORDER BY id")
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .expectSize()
+                    .returns("id\tm\nnull\tnull\n42\t42\n");
+
+            assertQuery("SELECT id, min(id2) m FROM x ORDER BY id")
+                    .expectSize()
+                    .returns("id\tm\nnull\tnull\n42\t42\n");
+
+            assertQuery("SELECT id, sum(id2) s FROM x ORDER BY id")
+                    .expectSize()
+                    .returns("id\ts\nnull\tnull\n42\t42\n");
+
+            assertQuery("SELECT id, avg(id2) a FROM x ORDER BY id")
+                    .expectSize()
+                    .returns("id\ta\nnull\tnull\n42\t42.0\n");
+
+            assertQuery("SELECT id, count(id2) c FROM x ORDER BY id")
+                    .expectSize()
+                    .returns("id\tc\nnull\t0\n42\t1\n");
+
+            assertQuery("SELECT id, count(*) c FROM x ORDER BY id")
+                    .expectSize()
+                    .returns("id\tc\nnull\t1\n42\t2\n");
+        });
+    }
+
+    @Test
+    public void testKeyedVectorizedColumnTopKeyMixedWithDataNulls() throws Exception {
+        // Rows from key column top frames and rows with explicit null keys must land in a
+        // single null key group.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('2024-01-01T00:00:00.000000Z')");
+            execute("ALTER TABLE m ADD COLUMN k INT");
+            execute("""
+                    INSERT INTO m VALUES
+                    ('2024-01-02T00:00:00.000000Z', null),
+                    ('2024-01-02T01:00:00.000000Z', 5)""");
+            execute("ALTER TABLE m ADD COLUMN v INT");
+            execute("""
+                    INSERT INTO m VALUES
+                    ('2024-01-03T00:00:00.000000Z', null, 100),
+                    ('2024-01-04T00:00:00.000000Z', 5, 50)""");
+
+            assertQuery("SELECT k, count(*) c, sum(v) s, max(v) m FROM m ORDER BY k")
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .expectSize()
+                    .returns("k\tc\ts\tm\nnull\t3\t100\t100\n5\t2\t50\t50\n");
+        });
+    }
+
+    @Test
+    public void testKeyedVectorizedColumnTopKeyPhantomZeroAggregates() throws Exception {
+        // count(*) inserts the null key slot during its wrapUp, which runs after sum()/avg()
+        // have already normalized empty slots. The freshly created slot must not leak the
+        // initial accumulator values (0) into the result.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO p VALUES ('2024-01-01T00:00:00.000000Z')");
+            execute("ALTER TABLE p ADD COLUMN k INT");
+            execute("INSERT INTO p VALUES ('2024-01-02T00:00:00.000000Z', 7)");
+            execute("ALTER TABLE p ADD COLUMN b INT");
+            execute("INSERT INTO p VALUES ('2024-01-03T00:00:00.000000Z', 7, 3)");
+
+            assertQuery("SELECT k, sum(b) s, count(*) c FROM p ORDER BY k")
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .expectSize()
+                    .returns("k\ts\tc\nnull\tnull\t1\n7\t3\t2\n");
+
+            assertQuery("SELECT k, avg(b) a, count(*) c FROM p ORDER BY k")
+                    .expectSize()
+                    .returns("k\ta\tc\nnull\tnull\t1\n7\t3.0\t2\n");
+        });
+    }
+
+    @Test
+    public void testKeyedVectorizedColumnTopKeyWithValuesBelowKeyTop() throws Exception {
+        // The value column predates the key column, so the null key group does aggregate
+        // real values; the aggregate wrapUp inserts the group itself. This path worked
+        // before the column top fix and must keep working.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE z (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO z VALUES ('2024-01-01T00:00:00.000000Z', 5)");
+            execute("ALTER TABLE z ADD COLUMN k INT");
+            execute("INSERT INTO z VALUES ('2024-01-02T00:00:00.000000Z', 7, 42)");
+
+            assertQuery("SELECT k, sum(v) s, max(v) m, count(v) c FROM z ORDER BY k")
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .expectSize()
+                    .returns("k\ts\tm\tc\nnull\t5\t5\t1\n42\t7\t7\t1\n");
+        });
+    }
+
+    @Test
+    public void testKeyedVectorizedColumnTopSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('2024-01-01T00:00:00.000000Z')");
+            execute("ALTER TABLE s ADD COLUMN sym SYMBOL");
+            execute("""
+                    INSERT INTO s VALUES
+                    ('2024-01-02T00:00:00.000000Z', 'a'),
+                    ('2024-01-02T01:00:00.000000Z', null)""");
+            execute("ALTER TABLE s ADD COLUMN v INT");
+            execute("INSERT INTO s VALUES ('2024-01-03T00:00:00.000000Z', 'a', 10)");
+
+            // the column top row and the explicit null symbol row must form a single
+            // null group; a null symbol key renders as an empty string
+            assertQuery("SELECT sym, max(v) m FROM s ORDER BY sym")
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .expectSize()
+                    .returns("sym\tm\n\tnull\na\t10\n");
+        });
+    }
+
+    @Test
+    public void testKeyedVectorizedNoColumnTops() throws Exception {
+        // Control: no column tops means no implicit null key group; the fix must not
+        // manufacture a phantom null row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO n VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 10),
+                    ('2024-01-02T00:00:00.000000Z', 2, 20)""");
+
+            assertQuery("SELECT k, max(v) m FROM n ORDER BY k")
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .expectSize()
+                    .returns("k\tm\n1\t10\n2\t20\n");
+        });
+    }
+
+    @Test
     public void testLatestByImplicitGroupBy1() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));

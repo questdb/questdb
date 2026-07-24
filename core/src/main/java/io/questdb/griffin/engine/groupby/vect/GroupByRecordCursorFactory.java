@@ -73,6 +73,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
@@ -85,6 +86,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
     private final PageFrameAddressCache frameAddressCache;
+    private final AtomicBoolean hasNullKeyFrames = new AtomicBoolean();
     private final int keyColumnIndex;
     private final AtomicInteger oomCounter = new AtomicInteger();
     private final PerWorkerLocks perWorkerLocks; // used to protect pRosti and VAF's internal slots
@@ -213,6 +215,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         oomCounter.set(0);
+        hasNullKeyFrames.set(false);
         // clear maps
         for (int i = 0, n = pRosti.length; i < n; i++) {
             raf.clear(pRosti[i]);
@@ -292,6 +295,22 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         for (int i = start; i < end; i++) {
             columnSkewIndex.add(Unsafe.getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));
         }
+    }
+
+    private static long findNullKeySlot(long pRosti) {
+        final long ctrl = Rosti.getCtrl(pRosti);
+        final long slots = Rosti.getSlots(pRosti);
+        final long shift = Rosti.getSlotShift(pRosti);
+        final int nullKey = Unsafe.getInt(Rosti.getInitialValuesSlot(pRosti));
+        for (long i = 0, n = Rosti.getCapacity(pRosti); i < n; i++) {
+            if ((Unsafe.getByte(ctrl + i) & 0x80) == 0) {
+                final long slot = slots + (i << shift);
+                if (Unsafe.getInt(slot) == nullKey) {
+                    return slot;
+                }
+            }
+        }
+        return 0;
     }
 
     private static int runWhatsLeft(
@@ -608,6 +627,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     VectorAggregateEntry.aggregateUnsafe(
                                             workerId,
                                             oomCounter,
+                                            hasNullKeyFrames,
                                             frameIndex,
                                             frameRowCount,
                                             keyColumnIndex,
@@ -638,6 +658,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                         startedCounter,
                                         doneLatch,
                                         oomCounter,
+                                        hasNullKeyFrames,
                                         raf,
                                         perWorkerLocks,
                                         sharedCircuitBreaker
@@ -763,6 +784,30 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     .setOutOfMemory(true);
                         }
                         raf.updateMemoryUsage(pRostiBig, oldSize);
+                    }
+                }
+
+                if (hasNullKeyFrames.get()) {
+                    // Key column tops routed whole frames into the null key group. When the
+                    // group's values are also column tops, or are all null, no aggregate
+                    // function inserts the null key during wrapUp and the group would go
+                    // missing. Materialize the slot with initial values and let each function
+                    // normalize its cells the same way wrapUp treats empty slots.
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    long oldSize = Rosti.getAllocMemory(pRostiBig);
+                    if (!Rosti.insertNullKey(pRostiBig)) {
+                        resetRostiMemorySize();
+                        throw CairoException.nonCritical()
+                                .put("could not insert null key into rosti hash table")
+                                .setOutOfMemory(true);
+                    }
+                    raf.updateMemoryUsage(pRostiBig, oldSize);
+                    final long slotAddress = findNullKeySlot(pRostiBig);
+                    assert slotAddress != 0;
+                    if (slotAddress != 0) {
+                        for (int j = 0; j < vafCount; j++) {
+                            vafList.getQuick(j).wrapUpNullSlot(pRostiBig, slotAddress);
+                        }
                     }
                 }
             } catch (Throwable t) {

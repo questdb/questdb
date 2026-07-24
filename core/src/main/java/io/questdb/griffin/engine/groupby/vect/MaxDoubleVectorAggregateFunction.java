@@ -129,4 +129,13 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntMaxDoubleWrapUp(pRosti, valueOffset, max.get());
     }
+
+    @Override
+    public void wrapUpNullSlot(long pRosti, long slotAddress) {
+        // mirrors the sentinel to NaN normalization in keyedIntMaxDoubleWrapUp
+        final long pValue = slotAddress + Rosti.getValueOffset(pRosti, valueOffset);
+        if (Unsafe.getDouble(pValue) == Double.NEGATIVE_INFINITY) {
+            Unsafe.putDouble(pValue, Double.NaN);
+        }
+    }
 }

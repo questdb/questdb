@@ -37,6 +37,7 @@ import io.questdb.std.RostiAllocFacade;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class VectorAggregateEntry implements Mutable {
@@ -46,6 +47,7 @@ public class VectorAggregateEntry implements Mutable {
     private ObjList<PageFrameMemoryPool> frameMemoryPools;
     private long frameRowCount;
     private VectorAggregateFunction func;
+    private AtomicBoolean hasNullKeyFrames;
     private int keyColIndex;
     private AtomicInteger oomCounter;
     private long[] pRosti;
@@ -57,6 +59,7 @@ public class VectorAggregateEntry implements Mutable {
     public static void aggregateUnsafe(
             int workerId,
             @Nullable AtomicInteger oomCounter,
+            @Nullable AtomicBoolean hasNullKeyFrames,
             int frameIndex,
             long frameRowCount,
             int keyColIndex,
@@ -96,6 +99,13 @@ public class VectorAggregateEntry implements Mutable {
                     raf.updateMemoryUsage(pRosti[slot], oldSize);
                 }
             } else {
+                if (pRosti != null && frameRowCount > 0 && hasNullKeyFrames != null) {
+                    // Keyed aggregation over a frame whose key column page is missing due to
+                    // a column top: every row in the frame belongs to the implicit null key
+                    // group. Raise the flag so that the factory materializes the group even
+                    // when no aggregate function observes a value for it.
+                    hasNullKeyFrames.set(true);
+                }
                 func.aggregate(valueAddress, frameRowCount, slot);
             }
         } finally {
@@ -111,6 +121,7 @@ public class VectorAggregateEntry implements Mutable {
         this.startedCounter = null;
         this.doneLatch = null;
         this.oomCounter = null;
+        this.hasNullKeyFrames = null;
         this.raf = null;
         this.perWorkerLocks = null;
         this.circuitBreaker = null;
@@ -121,6 +132,7 @@ public class VectorAggregateEntry implements Mutable {
 
     public void run(int workerId, Sequence seq, long cursor) {
         AtomicInteger oomCounter = this.oomCounter;
+        AtomicBoolean hasNullKeyFrames = this.hasNullKeyFrames;
         int frameIndex = this.frameIndex;
         long frameRowCount = this.frameRowCount;
         int keyColIndex = this.keyColIndex;
@@ -138,6 +150,7 @@ public class VectorAggregateEntry implements Mutable {
         aggregate(
                 workerId,
                 oomCounter,
+                hasNullKeyFrames,
                 frameIndex,
                 frameRowCount,
                 keyColIndex,
@@ -156,6 +169,7 @@ public class VectorAggregateEntry implements Mutable {
     private static void aggregate(
             int workerId,
             AtomicInteger oomCounter,
+            AtomicBoolean hasNullKeyFrames,
             int frameIndex,
             long frameRowCount,
             int keyColIndex,
@@ -180,6 +194,7 @@ public class VectorAggregateEntry implements Mutable {
             aggregateUnsafe(
                     workerId,
                     oomCounter,
+                    hasNullKeyFrames,
                     frameIndex,
                     frameRowCount,
                     keyColIndex,
@@ -208,6 +223,7 @@ public class VectorAggregateEntry implements Mutable {
             @NotNull CountDownLatchSPI doneLatch,
             // OOM is not possible when aggregation is not keyed
             @Nullable AtomicInteger oomCounter,
+            @Nullable AtomicBoolean hasNullKeyFrames,
             @Nullable RostiAllocFacade raf,
             @NotNull PerWorkerLocks perWorkerLocks,
             @NotNull ExecutionCircuitBreaker circuitBreaker
@@ -222,6 +238,7 @@ public class VectorAggregateEntry implements Mutable {
         this.startedCounter = startedCounter;
         this.doneLatch = doneLatch;
         this.oomCounter = oomCounter;
+        this.hasNullKeyFrames = hasNullKeyFrames;
         this.raf = raf;
         this.perWorkerLocks = perWorkerLocks;
         this.circuitBreaker = circuitBreaker;

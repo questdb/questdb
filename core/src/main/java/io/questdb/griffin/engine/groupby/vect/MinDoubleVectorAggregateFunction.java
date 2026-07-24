@@ -135,4 +135,13 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntMinDoubleWrapUp(pRosti, valueOffset, this.min.get());
     }
+
+    @Override
+    public void wrapUpNullSlot(long pRosti, long slotAddress) {
+        // mirrors the sentinel to NaN normalization in keyedIntMinDoubleWrapUp
+        final long pValue = slotAddress + Rosti.getValueOffset(pRosti, valueOffset);
+        if (Unsafe.getDouble(pValue) == Double.POSITIVE_INFINITY) {
+            Unsafe.putDouble(pValue, Double.NaN);
+        }
+    }
 }
