@@ -591,15 +591,13 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // its plan admits. Both NULL until the view runs one; the denial
                         // stays NULL for a repair that read exactly its localized
                         // interval.
-                        case COLUMN_CHECKPOINT_REPAIR_LAST_DISPOSITION ->
-                                LiveViewCheckpointRepairPlan.dispositionName(
-                                        instance.getCheckpointRepairLastDisposition(),
-                                        instance.getCheckpointRepairLastDenialReason()
-                                );
-                        case COLUMN_CHECKPOINT_REPAIR_LAST_DENIAL ->
-                                LiveViewCheckpointRepairPlan.denialReasonName(
-                                        instance.getCheckpointRepairLastDenialReason()
-                                );
+                        case COLUMN_CHECKPOINT_REPAIR_LAST_DISPOSITION -> LiveViewCheckpointRepairPlan.dispositionName(
+                                instance.getCheckpointRepairLastDisposition(),
+                                instance.getCheckpointRepairLastDenialReason()
+                        );
+                        case COLUMN_CHECKPOINT_REPAIR_LAST_DENIAL -> LiveViewCheckpointRepairPlan.denialReasonName(
+                                instance.getCheckpointRepairLastDenialReason()
+                        );
                         default -> null;
                     };
                 }

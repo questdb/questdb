@@ -551,10 +551,10 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         final int expectedPageKind = valuePageKind(valueKind);
         final boolean isKindValid = isLongColumn(valueKind)
                 ? ref.getPageKind() == expectedPageKind
-                && ref.getCodec() == LiveViewCheckpointStateCodec.LONG_RAW_64
+                  && ref.getCodec() == LiveViewCheckpointStateCodec.LONG_RAW_64
                 : ref.getPageKind() == expectedPageKind
-                && (ref.getCodec() == LiveViewCheckpointStateCodec.DOUBLE_RAW_64
-                || ref.getCodec() == LiveViewCheckpointStateCodec.DOUBLE_XOR);
+                  && (ref.getCodec() == LiveViewCheckpointStateCodec.DOUBLE_RAW_64
+                      || ref.getCodec() == LiveViewCheckpointStateCodec.DOUBLE_XOR);
         if (!isKindValid) {
             throw invalid("RANGE ring value page kind or codec invalid")
                     .put(" [valueKind=").put(valueKind).put(", kind=").put(ref.getPageKind())

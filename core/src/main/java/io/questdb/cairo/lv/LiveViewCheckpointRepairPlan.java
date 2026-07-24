@@ -356,8 +356,7 @@ public final class LiveViewCheckpointRepairPlan {
      */
     public static @Nullable String dispositionName(int disposition, int denialReason) {
         return switch (disposition) {
-            case DISPOSITION_BOUNDARY_REBUILD ->
-                    denialReason == DENIAL_NONE ? "localized rebuild" : "boundary rebuild";
+            case DISPOSITION_BOUNDARY_REBUILD -> denialReason == DENIAL_NONE ? "localized rebuild" : "boundary rebuild";
             case DISPOSITION_RESUME_FROM_ANCHOR -> "resume from anchor";
             default -> null;
         };
