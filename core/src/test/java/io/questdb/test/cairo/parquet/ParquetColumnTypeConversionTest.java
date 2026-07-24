@@ -1753,39 +1753,46 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMalformedVarcharToIntIsNullInLazyAndO3Conversions() throws Exception {
+    public void testMalformedVarcharToFixedIsNullInLazyAndO3Conversions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE pt (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pt (val VARCHAR, uid VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
             try (TableWriter writer = getWriter("pt")) {
                 TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-01T00:00:02.000000Z"));
                 row.putVarchar(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.putVarchar(1, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
                 row.append();
 
                 row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-02T00:00:00.000000Z"));
                 row.putVarchar(0, new Utf8String("3"));
+                row.putVarchar(1, new Utf8String("00000000-0000-0000-0000-000000000003"));
                 row.append();
                 writer.commit();
             }
 
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             execute("ALTER TABLE pt ALTER COLUMN val TYPE INT");
+            // The UUID target guards the null that a malformed UTF-8 decode yields:
+            // Uuid.checkDashesAndLength() dereferences it and throws NPE, which the
+            // NumericException catch does not cover. The INT target alone does not
+            // exercise this - Numbers.parseInt() rejects null with NumericException.
+            execute("ALTER TABLE pt ALTER COLUMN uid TYPE UUID");
 
-            assertQuery("SELECT val FROM pt WHERE ts < '2024-01-02' ORDER BY ts")
+            assertQuery("SELECT val, uid FROM pt WHERE ts < '2024-01-02' ORDER BY ts")
                     .noLeakCheck()
                     .returns("""
-                            val
-                            null
+                            val\tuid
+                            null\t
                             """);
 
-            execute("INSERT INTO pt VALUES (2, '2024-01-01T00:00:01.000000Z')");
+            execute("INSERT INTO pt VALUES (2, '00000000-0000-0000-0000-000000000002', '2024-01-01T00:00:01.000000Z')");
 
-            assertQuery("SELECT val FROM pt WHERE ts < '2024-01-02' ORDER BY ts")
+            assertQuery("SELECT val, uid FROM pt WHERE ts < '2024-01-02' ORDER BY ts")
                     .noLeakCheck()
                     .returns("""
-                            val
-                            2
-                            null
+                            val\tuid
+                            2\t00000000-0000-0000-0000-000000000002
+                            null\t
                             """);
         });
     }
