@@ -275,10 +275,11 @@ No allocations on the data path.
 When O3 (out-of-order) rows land inside a parquet partition that has a pending lazy
 conversion, `O3PartitionJob` materialises the conversion at **write** time while merging the
 rows in (a `MERGE` action interleaves them via `mergeRowGroup`; a non-overlapping row group
-that still needs the new schema is re-encoded via `rewriteParquetRowGroupWithConversions`).
+that still needs the new schema is re-encoded via `ParquetRowGroupMaterializer.materialize`).
 
-That write path — the merge-action dispatch, the shared `prepareParquetSourceColumn`
-conversion and its allocations, and how **deduplication** interacts with it — is documented
+That write path — the merge-action dispatch, the shared
+`ParquetColumnTypeConverter.prepareSourceColumn` conversion and its allocations, and how
+**deduplication** interacts with it — is documented
 separately in `cairo/CLAUDE.md` ("Writing Parquet Partitions with Pending Column
 Conversions"). This file (griffin) owns the conversion *semantics* and the *read* path; the
 write path lives with `O3PartitionJob` / `TableWriter` in cairo.

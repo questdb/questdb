@@ -158,7 +158,7 @@ public class AsyncFilteredRecordCursorFactoryCleanupTest extends AbstractCairoTe
             try {
                 record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
                 recordB = new PageFrameMemoryRecord(record, PageFrameMemoryRecord.RECORD_B_LETTER);
-                frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
+                frameMemoryPool = new PageFrameMemoryPool(configuration);
             } catch (Throwable th) {
                 Misc.free(record);
                 Misc.free(recordB);
