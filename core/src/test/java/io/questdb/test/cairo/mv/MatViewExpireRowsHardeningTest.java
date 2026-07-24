@@ -320,7 +320,70 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScalarCleanupMemoryLimitBreachDefersWithBackoffAndRecovers() throws Exception {
+        // Real memory-tracker coverage on the scalar destructive path: cleanupTable0 binds the sweep's
+        // execution context to a MAT_VIEW_REFRESH-workload tracker before compiling the survivor queries.
+        // The survivor scan of a small native partition reaches no tracker-wired allocator on its own, so
+        // the predicate carries the dev-mode alloc_tracked(l) function - the designated way to drive a
+        // per-workload breach from SQL (see WorkloadMemoryTrackerTest). With the limit at 1 byte the
+        // survivor-query compile charges the tracker and throws, the per-partition catch marks the sweep
+        // failed, and nothing is reclaimed. The job's scheduler then applies the failure backoff (no
+        // re-discovery until it elapses). Raising the limit and letting the backoff elapse resumes
+        // reclamation: the fully-expired partition is wiped and the partial one compacts to its survivors.
+        // The 1h cadence makes the recovery retry at +1s reachable only through the 1s failure backoff, so
+        // the test fails if the backoff scheduling disappears.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(JAN_10);
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES " +
+                    "('A', -1.0, '2024-01-01T00:00:00.000000Z')," +  // expired (v < 0); 01-01 partial -> REPLACE
+                    "('B', 8.0, '2024-01-01T00:00:00.000000Z')," +   // kept survivor in 01-01
+                    "('A', -5.0, '2024-01-02T00:00:00.000000Z')," +  // expired; 01-02 fully expired -> DROP
+                    "('A', 9.0, '2024-01-03T00:00:00.000000Z')");    // kept (active partition)
+            drainWalAndMatViewQueues();
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)
+                    EXPIRE ROWS WHEN v < 0 AND alloc_tracked(1024) = 42 CLEANUP EVERY 1h""");
+            drainWalAndMatViewQueues();
+            engine.getMetadataCache().hydrateAllTables();
+
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1L);
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                // The survivor query trips the 1-byte budget: the sweep fails, reclaims nothing.
+                Assert.assertFalse("breached sweep must not reclaim", job.runNow());
+                assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
+                        .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
+
+                // Failure backoff: until it elapses, the scheduler does not even re-discover policies.
+                final long discoveryCountAfterFailure = job.getPolicyDiscoveryCount();
+                setCurrentMicros(JAN_10 + 500_000L); // inside the 1s backoff
+                Assert.assertFalse(job.runNow());
+                Assert.assertEquals(
+                        "sweep must defer within the failure backoff window",
+                        discoveryCountAfterFailure, job.getPolicyDiscoveryCount()
+                );
+                assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
+                        .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
+
+                // Raised limit + elapsed backoff: reclamation resumes and completes.
+                setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 256L * 1024 * 1024);
+                setCurrentMicros(JAN_10 + 1_000_000L); // backoff elapsed
+                Assert.assertTrue("recovered sweep must reclaim", job.runNow());
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().returns("k\tv\nA\t9.0\nB\t8.0\n");
+        });
+    }
+
+    @Test
     public void testStructuralCleanupRemainsDeferredAfterMemoryLimitChange() throws Exception {
+        // A structural (KEEP HIGHEST) policy exits cleanupTable0 before the memory tracker is even
+        // acquired, so the limit set here is inert by design: this test pins that structural cleanup
+        // stays deferred REGARDLESS of the memory budget, not the tracker itself. The tracker's
+        // breach/backoff/recovery behavior is covered by
+        // testScalarCleanupMemoryLimitBreachDefersWithBackoffAndRecovers.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base VALUES " +
