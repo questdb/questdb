@@ -112,10 +112,14 @@ public class InStrVarcharArrayFunctionFactory implements FunctionFactory {
             ArrayView arrayView = arrayFunc.getArray(null);
             for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
                 Utf8Sequence element = arrayView.getVarchar(i);
-                CharSequence value = element == null
-                        ? null
-                        : Utf8s.utf8ToUtf16OrView(element, Misc.getThreadLocalSink());
-                set.add(value);
+                if (element == null) {
+                    set.addNull();
+                    continue;
+                }
+                CharSequence value = Utf8s.utf8ToUtf16OrView(element, Misc.getThreadLocalSink());
+                if (value != null) {
+                    set.add(value);
+                }
             }
         }
 

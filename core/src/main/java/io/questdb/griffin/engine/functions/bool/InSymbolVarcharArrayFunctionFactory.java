@@ -122,12 +122,16 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
 
             for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
                 Utf8Sequence value = arrayView.getVarchar(i);
-                CharSequence symbol = value == null
-                        ? null
-                        : Utf8s.utf8ToUtf16OrView(value, Misc.getThreadLocalSink());
-                int key = symbolTable.keyOf(symbol);
-                if (key != SymbolTable.VALUE_NOT_FOUND) {
-                    intSet.add(key);
+                if (value == null) {
+                    intSet.add(SymbolTable.VALUE_IS_NULL);
+                    continue;
+                }
+                CharSequence symbol = Utf8s.utf8ToUtf16OrView(value, Misc.getThreadLocalSink());
+                if (symbol != null) {
+                    int key = symbolTable.keyOf(symbol);
+                    if (key != SymbolTable.VALUE_NOT_FOUND) {
+                        intSet.add(key);
+                    }
                 }
             }
         }
@@ -189,10 +193,14 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
             ArrayView arrayView = arrayFunc.getArray(null);
             for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
                 Utf8Sequence value = arrayView.getVarchar(i);
-                CharSequence symbol = value == null
-                        ? null
-                        : Utf8s.utf8ToUtf16OrView(value, Misc.getThreadLocalSink());
-                strSet.add(symbol);
+                if (value == null) {
+                    strSet.addNull();
+                    continue;
+                }
+                CharSequence symbol = Utf8s.utf8ToUtf16OrView(value, Misc.getThreadLocalSink());
+                if (symbol != null) {
+                    strSet.add(symbol);
+                }
             }
         }
 

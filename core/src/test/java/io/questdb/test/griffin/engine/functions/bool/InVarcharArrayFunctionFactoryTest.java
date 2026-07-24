@@ -39,7 +39,11 @@ public class InVarcharArrayFunctionFactoryTest extends AbstractCairoTest {
     public void testMalformedVarcharArrayDoesNotMatchDecodedPrefix() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (str STRING, sym SYMBOL)");
-            execute("INSERT INTO x VALUES ('abc', 'abc')");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('abc', 'abc'),
+                        (NULL, NULL)
+                    """);
             sqlExecutionContext.getBindVariableService().setArray(
                     0,
                     new TestVarcharArray(new Utf8String(new byte[]{'a', 'b', 'c', (byte) 0xC3}, false))
@@ -51,6 +55,7 @@ public class InVarcharArrayFunctionFactoryTest extends AbstractCairoTest {
                     .returns("""
                             matched
                             false
+                            false
                             """);
             assertQuery("SELECT cast(str AS symbol) IN ($1) matched FROM x")
                     .noLeakCheck()
@@ -58,12 +63,14 @@ public class InVarcharArrayFunctionFactoryTest extends AbstractCairoTest {
                     .returns("""
                             matched
                             false
+                            false
                             """);
             assertQuery("SELECT sym IN ($1) matched FROM x")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
                             matched
+                            false
                             false
                             """);
         });
