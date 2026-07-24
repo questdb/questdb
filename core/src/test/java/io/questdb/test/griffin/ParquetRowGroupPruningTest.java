@@ -1292,26 +1292,28 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInfinityRowsAgreeOnNullnessAcrossStorage() throws Exception {
-        // Numbers.isNull(double) is an exponent-bits test, so +/-Infinity IS NULL to QuestDB while
-        // the Rust writer's Nullable for f64 is is_nan() alone. If those two ever disagreed on what
-        // goes into null_count, the IS_NULL pushdown - which skips a row group on
-        // "null_count == 0" - would drop every infinity row that native storage returns.
+    public void testInfinityRowsSurviveIsNullPruning() throws Exception {
+        // Numbers.isNull(double) is an exponent-bits test, so QuestDB calls every non-finite value
+        // NULL - NaN and +/-Infinity alike - while the parquet writer's Nullable for f32/f64 reports
+        // is_nan() alone. An infinity is therefore written as an ordinary value and left out of
+        // null_count, so the IS_NULL pushdown skipped the whole row group on "null_count == 0" and
+        // dropped a row native storage returns.
         //
-        // They do NOT disagree today: both directions below return the same rows before and after
-        // the conversion, and no row group is skipped for either. Pinned so a change to either side
-        // of that agreement reddens here rather than silently losing rows.
+        // The infinity has to arrive through a NON-CONSTANT expression: FunctionParser folds a
+        // constant one through DoubleConstant#newInstance, which maps every non-finite value onto
+        // NULL, so "1e308 * 10" stores a NaN and the writer and reader agree on it.
         assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (m DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO src VALUES (10.0, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE inf (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO inf VALUES
-                    (1.0, '2024-01-01T00:00:00.000000Z'),
-                    (1e308 * 10, '2024-01-01T01:00:00.000000Z'),
-                    (2.0, '2024-01-02T00:00:00.000000Z')
-                    """);
-            // A genuine +Infinity, not a NaN: it is greater than zero and equal to itself.
-            assertQuery("SELECT count() c FROM inf WHERE d > 0").noLeakCheck().noRandomAccess().expectSize().returns("c\n2\n");
-            assertQuery("SELECT count() c FROM inf WHERE d != d").noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+            execute("INSERT INTO inf VALUES (1.0, '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO inf SELECT 1e308 * m, ts FROM src");
+            execute("INSERT INTO inf VALUES (2.0, '2024-01-02T00:00:00.000000Z')");
+
+            // A genuine infinity, not a NaN: only an infinity is greater than the largest finite
+            // double, and a NaN would fail this comparison.
+            assertQuery("SELECT count() c FROM inf WHERE d > 1e308")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
 
             final String nulls = """
                     d

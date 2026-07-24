@@ -87,7 +87,9 @@ pub fn can_skip_row_group(
         let qdb_column_type = packed_filter.qdb_column_type();
 
         if op == FILTER_OP_IS_NULL {
-            if null_count == Some(0) {
+            // See ParquetDecoder::has_non_finite_nulls: a FLOAT or DOUBLE row group can hold an
+            // infinity the writer did not count as null but QuestDB does.
+            if null_count == Some(0) && !ParquetDecoder::has_non_finite_nulls(qdb_column_type) {
                 return Ok(true);
             }
             continue;

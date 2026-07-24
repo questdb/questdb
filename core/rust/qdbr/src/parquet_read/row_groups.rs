@@ -2514,7 +2514,9 @@ impl ParquetDecoder {
             let qdb_column_type = packed_filter.qdb_column_type();
 
             if op == FILTER_OP_IS_NULL {
-                if null_count == Some(0) {
+                // A FLOAT or DOUBLE row group can hold an infinity the writer did not count as
+                // null but QuestDB does; see has_non_finite_nulls.
+                if null_count == Some(0) && !Self::has_non_finite_nulls(qdb_column_type) {
                     return Ok(true);
                 }
                 continue;
@@ -3187,6 +3189,23 @@ impl ParquetDecoder {
         tag == ColumnTypeTag::Byte as i32
             || tag == ColumnTypeTag::Short as i32
             || tag == ColumnTypeTag::Char as i32
+    }
+
+    /// Reports the types whose NULL set is wider than the parquet writer's.
+    ///
+    /// `Numbers.isNull(double)` is an exponent-bits test, so QuestDB calls every non-finite value -
+    /// NaN AND +/-Infinity - NULL, and `Numbers.isNull(float)` says so explicitly. The writer's
+    /// `Nullable` impls for `f32`/`f64` report `is_nan()` alone, so an infinity is written as an
+    /// ordinary value and never counted in `null_count`. A row group holding one therefore reports
+    /// `null_count == 0` while QuestDB considers that row null, and skipping `IS NULL` on that count
+    /// drops a row native storage returns.
+    ///
+    /// Only that direction is unsound. `null_count == num_values` means every row is a NaN, which
+    /// QuestDB also calls null, so the `IS NOT NULL` skip stays correct; and an infinity merely keeps
+    /// the count below `num_values`, which declines rather than over-prunes.
+    pub(crate) fn has_non_finite_nulls(qdb_column_type: i32) -> bool {
+        let tag = qdb_column_type & 0xFF;
+        tag == ColumnTypeTag::Float as i32 || tag == ColumnTypeTag::Double as i32
     }
 
     /// Reports the types with no NULL representation whatsoever, for which `IS NOT NULL` is a
@@ -4997,6 +5016,32 @@ mod column_top_zero_tests {
             assert!(
                 !ParquetDecoder::is_null_free_type(qdb_type(tag)),
                 "{tag:?} has a NULL representation"
+            );
+        }
+    }
+    #[test]
+    fn has_non_finite_nulls_covers_only_float_and_double() {
+        // QuestDB calls every non-finite value NULL; the writer counts only NaN, so an infinity
+        // leaves null_count at 0 while the row is null to a reader.
+        assert!(ParquetDecoder::has_non_finite_nulls(qdb_type(
+            ColumnTypeTag::Float
+        )));
+        assert!(ParquetDecoder::has_non_finite_nulls(qdb_type(
+            ColumnTypeTag::Double
+        )));
+        for tag in [
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Char,
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Long,
+            ColumnTypeTag::Timestamp,
+            ColumnTypeTag::IPv4,
+        ] {
+            assert!(
+                !ParquetDecoder::has_non_finite_nulls(qdb_type(tag)),
+                "{tag:?} has no non-finite values"
             );
         }
     }
