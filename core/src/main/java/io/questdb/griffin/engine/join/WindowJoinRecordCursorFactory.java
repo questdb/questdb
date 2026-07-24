@@ -80,6 +80,7 @@ import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.
  * @see AsyncWindowJoinRecordCursorFactory for the multi-threaded variant
  */
 public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final @Nullable IntList columnIndex;
     private final int hiSign;
     private final char hiTimeUnit;
     private final boolean includePrevailing;
@@ -122,6 +123,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     ) {
         super(metadata);
         try {
+            this.columnIndex = columnIndex;
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.joinMetadata = joinMetadata;
@@ -210,6 +212,22 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public int getScanDirection() {
         return masterFactory.getScanDirection();
+    }
+
+    @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // A window join hands the master cursor's live record straight through JoinRecord for columns
+        // below the split (master.getInt/getLong), while the window-aggregate columns at and above the
+        // split live in a materialised SimpleMapValue (groupByRecord). So master columns delegate to the
+        // master factory - like AbstractJoinRecordCursorFactory - and an overflowing INT master projection
+        // widens on store; aggregate columns keep the default true. When a projection cross-index is
+        // present the cursor wraps the join record in a SelectedRecord, so map the output column through
+        // it first.
+        final int joinColumnIndex = this.columnIndex != null ? this.columnIndex.getQuick(columnIndex) : columnIndex;
+        if (joinColumnIndex < masterFactory.getMetadata().getColumnCount()) {
+            return masterFactory.isColumnIntWidthStable(joinColumnIndex);
+        }
+        return true;
     }
 
     @Override

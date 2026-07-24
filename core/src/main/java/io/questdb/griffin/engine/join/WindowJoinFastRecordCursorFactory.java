@@ -112,6 +112,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     private static final int INDEX_LOOKAHEAD = 2;
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
+    private final @Nullable IntList columnIndex;
     private final boolean includePrevailing;
     private final long indexLookaheadMargin;
     private final int masterSymbolIndex;
@@ -147,6 +148,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     ) {
         super(metadata);
         try {
+            this.columnIndex = columnIndex;
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.joinMetadata = joinMetadata;
@@ -293,6 +295,20 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public int getScanDirection() {
         return masterFactory.getScanDirection();
+    }
+
+    @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // Same live-master pass-through as the general window join: JoinRecord hands columns below the
+        // split to the master cursor's live record and materialises the window-aggregate columns in a
+        // SimpleMapValue. Master columns delegate to the master factory so an overflowing INT master
+        // projection widens on store; aggregate columns keep the default true. A projection cross-index,
+        // when present, wraps the join record in a SelectedRecord, so map the output column through it.
+        final int joinColumnIndex = this.columnIndex != null ? this.columnIndex.getQuick(columnIndex) : columnIndex;
+        if (joinColumnIndex < masterFactory.getMetadata().getColumnCount()) {
+            return masterFactory.isColumnIntWidthStable(joinColumnIndex);
+        }
+        return true;
     }
 
     @Override

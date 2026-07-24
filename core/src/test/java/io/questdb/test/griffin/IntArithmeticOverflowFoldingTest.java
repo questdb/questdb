@@ -462,6 +462,123 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertIntoWiderColumnWidensThroughSetOpsWindowJoinsAndCachedWindow() throws Exception {
+        // The forcing function for the INT-width store rule. isColumnIntWidthStable defaults to the
+        // UNSAFE direction (true) for a live pass-through, so a factory that hands an overflowing INT
+        // projection through and forgets the override truncates it on store while ::LONG over the same
+        // expression widens - a silent, plan-shape-dependent stored value. The per-shape tests above each
+        // pin exactly one factory, so by construction they cannot catch a factory nobody added a test for.
+        //
+        // This test drives INSERT INTO wide_long_col SELECT <overflowing-int-expr> through EVERY remaining
+        // operator that can sit atop a projection as a LIVE pass-through - UNION distinct, EXCEPT / EXCEPT
+        // ALL, INTERSECT / INTERSECT ALL, the serial and fast window joins, and the cached-window LIGHT
+        // factory - and asserts the stored value is the widened 4000000000, matching the direct INSERT and
+        // UNION ALL. Each SELECT pins the factory in its plan, so a rewrite that stops reaching a factory
+        // reddens here rather than passing silently. The projection itself wraps to -294967296 (a plain
+        // INT read), so the store widening is what these assert.
+        //
+        // Two shapes that must NOT widen are pinned at the end, and they carry different weight. The
+        // group-by HORIZON JOIN is a real guard: it emits a VirtualRecord over the aggregation map, so a
+        // delegating override there would read 8 bytes off a 4-byte map slot and change the stored value,
+        // reddening the assertion. The streaming Window only DOCUMENTS its case - its outer v is a plain
+        // width-stable Column reference whose getLong() already re-wraps, so it stores -294967296 whether
+        // or not the factory delegates. Both keep the default true and store the wrapped value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT)");
+            execute("INSERT INTO t VALUES (2_000_000_000, 2_000_000_000)"); // a+b = 4000000000 wraps to -294967296
+            execute("CREATE TABLE u (c INT, d INT)");
+            execute("INSERT INTO u VALUES (1_500_000_000, 1_500_000_000)"); // c+d = 3000000000 wraps to -1294967296
+            execute("CREATE TABLE t2 (a INT, b INT)");
+            execute("INSERT INTO t2 VALUES (2_000_000_000, 2_000_000_000)"); // a+b = 4000000000, matches t for INTERSECT
+
+            // Each operator's SELECT is pinned to its factory via the plan; the overflowing projection it
+            // carries reads -294967296 as a plain INT. The store into the LONG column is what must widen it
+            // to 4000000000 - a value a 32-bit wrap cannot hold, so the stored value alone proves widening.
+
+            // UNION distinct: UnionRecord delegates getInt/getLong to the active leg, so both legs widen
+            // when both are function-backed (the both-legs rule, like UNION ALL). Store widens both.
+            assertQuery("SELECT a+b AS v FROM t UNION SELECT c+d AS v FROM u").assertsPlanContaining("Union");
+            execute("CREATE TABLE d_union (l LONG)");
+            execute("INSERT INTO d_union SELECT a+b FROM t UNION SELECT c+d FROM u");
+            assertQuery("SELECT l FROM d_union ORDER BY l").noLeakCheck().expectSize().returns("l\n3000000000\n4000000000\n");
+
+            // EXCEPT / EXCEPT ALL emit only leg A's live record, so the width answer is leg A's.
+            assertQuery("SELECT a+b AS v FROM t EXCEPT SELECT c+d AS v FROM u").assertsPlanContaining("Except");
+            execute("CREATE TABLE d_except (l LONG)");
+            execute("INSERT INTO d_except SELECT a+b FROM t EXCEPT SELECT c+d FROM u");
+            assertQuery("SELECT l FROM d_except").noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+            assertQuery("SELECT a+b AS v FROM t EXCEPT ALL SELECT c+d AS v FROM u").assertsPlanContaining("Except All");
+            execute("CREATE TABLE d_except_all (l LONG)");
+            execute("INSERT INTO d_except_all SELECT a+b FROM t EXCEPT ALL SELECT c+d FROM u");
+            assertQuery("SELECT l FROM d_except_all").noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+            // INTERSECT / INTERSECT ALL emit only leg A's live record too.
+            assertQuery("SELECT a+b AS v FROM t INTERSECT SELECT a+b AS v FROM t2").assertsPlanContaining("Intersect");
+            execute("CREATE TABLE d_intersect (l LONG)");
+            execute("INSERT INTO d_intersect SELECT a+b FROM t INTERSECT SELECT a+b FROM t2");
+            assertQuery("SELECT l FROM d_intersect").noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+            assertQuery("SELECT a+b AS v FROM t INTERSECT ALL SELECT a+b AS v FROM t2").assertsPlanContaining("Intersect All");
+            execute("CREATE TABLE d_intersect_all (l LONG)");
+            execute("INSERT INTO d_intersect_all SELECT a+b FROM t INTERSECT ALL SELECT a+b FROM t2");
+            assertQuery("SELECT l FROM d_intersect_all").noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+            execute("CREATE TABLE wt (a INT, b INT, sym SYMBOL, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO wt VALUES (2_000_000_000, 2_000_000_000, 'x', 1, '2024-01-01T00:00:00.000000Z')");
+            execute("CREATE TABLE wp (sym SYMBOL, k INT, price INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO wp VALUES ('x', 1, 1, '2024-01-01T00:00:00.000000Z')");
+
+            // Fast (symbol-keyed) serial window join: JoinRecord hands the live master through for master
+            // columns, so an overflowing INT master projection widens on store.
+            final String wjFast = "SELECT v FROM (SELECT (a+b) AS v, sym, ts FROM wt) t " +
+                    "WINDOW JOIN wp p ON (t.sym = p.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING";
+            assertQuery(wjFast).assertsPlanContaining("Window Fast Join");
+            execute("CREATE TABLE d_wj_fast (l LONG)");
+            execute("INSERT INTO d_wj_fast " + wjFast);
+            assertQuery("SELECT l FROM d_wj_fast").noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+            // General (non-symbol-keyed) serial window join.
+            final String wjSerial = "SELECT v FROM (SELECT (a+b) AS v, k, ts FROM wt) t " +
+                    "WINDOW JOIN wp p ON (t.k = p.k) RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING";
+            assertQuery(wjSerial).assertsPlanContaining("Window Join");
+            execute("CREATE TABLE d_wj_serial (l LONG)");
+            execute("INSERT INTO d_wj_serial " + wjSerial);
+            assertQuery("SELECT l FROM d_wj_serial").noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+            // Cached-window LIGHT: WindowLightRecord reads base columns from the live base cursor record
+            // (sourceMap code >= 0), so the base projection column a+b widens on store. The window-function
+            // columns (row_number/avg/sum) come from the materialised narrow chain and are stored verbatim.
+            final String cwl = "SELECT (a+b) AS v, row_number() OVER (PARTITION BY sym) r1, " +
+                    "avg(k) OVER () a1, sum(k) OVER () s1 FROM wt";
+            assertQuery(cwl).assertsPlanContaining("CachedWindowLight");
+            execute("CREATE TABLE d_cwl (l LONG, r1 LONG, a1 DOUBLE, s1 LONG)");
+            execute("INSERT INTO d_cwl " + cwl);
+            assertQuery("SELECT l FROM d_cwl").noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+            // Boundary 1 (documenting, not guarding) - streaming Window: the outer v is a plain column
+            // reference over the base projection, and IntColumn.getLong() is intToLong(getInt()), so the
+            // wide value is already gone by the time the copier reads it. The store keeps the wrap either
+            // way; this pins the behaviour rather than catching a wrong override.
+            final String stream = "SELECT v FROM (SELECT (a+b) AS v, ts, row_number() OVER (ORDER BY ts) rn FROM wt)";
+            assertQuery(stream).assertsPlanContaining("Window");
+            execute("CREATE TABLE d_stream (l LONG)");
+            execute("INSERT INTO d_stream " + stream);
+            assertQuery("SELECT l FROM d_stream").noLeakCheck().expectSize().returns("l\n-294967296\n");
+
+            // Boundary 2 - HORIZON JOIN is a markout GROUP BY: the overflowing key is copied into the map
+            // before the VirtualRecord emits it, so the store must KEEP the wrap (a long-width read would
+            // over-read the 4-byte key slot).
+            final String horizon = "SELECT v FROM (SELECT (a+b) AS v, sym, ts FROM wt) t " +
+                    "HORIZON JOIN wp AS p ON (t.sym = p.sym) RANGE FROM 0s TO 0s STEP 1s AS h GROUP BY v";
+            assertQuery(horizon).assertsPlanContaining("Horizon Join");
+            execute("CREATE TABLE d_horizon (l LONG)");
+            execute("INSERT INTO d_horizon " + horizon);
+            assertQuery("SELECT l FROM d_horizon").noLeakCheck().expectSize().returns("l\n-294967296\n");
+        });
+    }
+
+    @Test
     public void testInsertIntoWiderColumnWidensThroughWindowJoinNullPad() throws Exception {
         // A WINDOW JOIN with a constant-false residual ON filter degenerates to the master with its
         // window-aggregate columns null-padded by ExtraNullColumnCursorFactory. Its base columns

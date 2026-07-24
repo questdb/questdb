@@ -495,6 +495,21 @@ public final class QueryRunner {
     }
 
     /**
+     * Builds the per-output-column FLOAT/DOUBLE mask for a projection. Cell
+     * {@code i} of a materialized row is FP-typed iff {@code mask[i]} is true;
+     * only those cells get the floating-point reduction-order tolerance, so an
+     * exact (integer / non-FP) column always compares bit for bit.
+     */
+    private static boolean[] buildFpColumnMask(RecordMetadata metadata, int columnCount) {
+        boolean[] mask = new boolean[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            int type = metadata.getColumnType(i);
+            mask[i] = type == ColumnType.FLOAT || type == ColumnType.DOUBLE;
+        }
+        return mask;
+    }
+
+    /**
      * Formats a per-cursor-check failure message: the reason, the SQL, and the
      * first-pass row dump. When {@code secondPass} is non-null (the toTop
      * re-iteration diff) it is appended as a second dump so the divergence is
@@ -969,21 +984,6 @@ public final class QueryRunner {
             return "ok, " + outcome.rowsRead + " rows:\n" + rows;
         }
         return outcome.exceptionClass + ": " + outcome.exceptionMessage;
-    }
-
-    /**
-     * Builds the per-output-column FLOAT/DOUBLE mask for a projection. Cell
-     * {@code i} of a materialized row is FP-typed iff {@code mask[i]} is true;
-     * only those cells get the floating-point reduction-order tolerance, so an
-     * exact (integer / non-FP) column always compares bit for bit.
-     */
-    private static boolean[] buildFpColumnMask(RecordMetadata metadata, int columnCount) {
-        boolean[] mask = new boolean[columnCount];
-        for (int i = 0; i < columnCount; i++) {
-            int type = metadata.getColumnType(i);
-            mask[i] = type == ColumnType.FLOAT || type == ColumnType.DOUBLE;
-        }
-        return mask;
     }
 
     /**

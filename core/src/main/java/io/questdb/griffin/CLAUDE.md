@@ -360,20 +360,40 @@ source can answer `false`.
 A factory answers `false` only if its cursor hands the base record through — re-positioning it
 by row id counts. Delegating today: limit, filter, column selection, light sort / top-K,
 latest by, query progress, stale view check, the **master columns of a join** (`JoinRecord`
-hands the master record straight through; the master is never value-materialised), the **base
-columns of an extra-null-column pad**, **UNION ALL** — a live leg pass-through that
-delegates a column only when *both* legs are width-unstable, because if either leg is a real INT
-column its `getLong()` would over-read the 4-byte slot, forcing the whole column to INT width —
-and **`DistinctTimeSeries`**, whose cursor hands the base record straight through and uses its
-`dataMap` only to detect adjacent duplicates, never to materialise the returned value.
-Keeping the default `true`: full sort, group by, **distinct-over-map** (`DistinctRecordCursorFactory`,
-whose cursor copies each row into a 4-byte map slot — not to be confused with the live
-`DistinctTimeSeriesRecordCursorFactory` above), the **slave columns of a
-value-materialised join**, the **aggregate columns of a window join**, other set operations —
-all map- or chain-backed, where the value has already been copied into a 4-byte slot, so the
-wrap has genuinely happened and reading at long width would over-read. A per-column hybrid
-record (`SortKeyMaterializing`, `CachedWindowLight`) must keep the default unless it answers per
-column. (`DistinctTimeSeries` itself is reachable only with the distinct-to-GROUP BY rewrite
+hands the master record straight through; the master is never value-materialised) — including
+the **master columns of the serial and fast window joins** (`WindowJoinRecordCursorFactory`,
+`WindowJoinFastRecordCursorFactory`), which delegate master columns to the master factory just like
+`AbstractJoinRecordCursorFactory` and keep the default on the window-aggregate columns — the **base
+columns of an extra-null-column pad**, **UNION ALL** and **UNION distinct**
+(`UnionRecordCursorFactory`) — live leg pass-throughs (`UnionRecord`/`UnionCastRecord` delegate
+`getInt`/`getLong` to the active leg) that delegate a column only when *both* legs are
+width-unstable, because if either leg is a real INT column its `getLong()` would over-read the
+4-byte slot, forcing the whole column to INT width — the **leg-A columns of EXCEPT / INTERSECT
+and their ALL variants**, which emit only leg A's live record (`getRecord()` returns
+`cursorA.getRecord()`, or — when a sibling column forces a cast — a `UnionCastRecord` pinned to leg A;
+the maps hold only dedup/membership keys either way) so the answer is leg A's. Those set ops carry the
+same cast-path caveat as UNION ALL: on the cast path an INT-to-INT column goes through
+`IntColumn.getLong()`, which re-wraps, so a column reported unstable still stores the wrapped value
+there — safe, never an over-read, but it makes the stored value depend on an unrelated sibling.
+Also delegating: the
+**base columns of the cached-window LIGHT factory** (`CachedWindowLightRecordCursorFactory`, where
+`WindowLightRecord` reads a base column from the live base cursor via a non-negative `sourceMap`
+code), and **`DistinctTimeSeries`**, whose cursor hands the base record straight through and uses
+its `dataMap` only to detect adjacent duplicates, never to materialise the returned value.
+Keeping the default `true`: full sort, group by — including the markout **HORIZON JOIN** family
+(`HorizonJoin{,NotKeyed}RecordCursorFactory`, `MultiHorizonJoin{,NotKeyed}RecordCursorFactory`),
+whose emitted record is a `VirtualRecord` over the aggregation map / `MapValue`, so the live join
+record is only the aggregation *input* and every output column is a materialised map slot — the
+async window/horizon joins (their master is a stored-column `PageFrameMemoryRecord`),
+**distinct-over-map** (`DistinctRecordCursorFactory`, whose cursor copies each row into a 4-byte
+map slot — not to be confused with the live `DistinctTimeSeriesRecordCursorFactory` above), the
+**slave columns of a value-materialised join**, the **aggregate columns of a window join** and the
+**narrow-chain (window-function) columns of the cached-window LIGHT factory** — all map- or
+chain-backed, where the value has already been copied into a 4-byte slot, so the wrap has genuinely
+happened and reading at long width would over-read. A per-column hybrid record
+(`SortKeyMaterializing`, `CachedWindowLight`) must answer per column: `CachedWindowLight` does, via
+`sourceMap` (base columns delegate, window columns keep the default); `SortKeyMaterializing` keeps
+the default. (`DistinctTimeSeries` itself is reachable only with the distinct-to-GROUP BY rewrite
 disabled — a test-only seam — since a running server always rewrites plain `SELECT DISTINCT` to
 GROUP BY; the delegation is a factory-consistency guarantee, not a production store path.)
 

@@ -59,6 +59,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     private final ObjList<ObjList<WindowFunction>> orderedFunctions;
     private final int orderedGroupCount;
     private final ObjList<IntList> sortKeys;
+    private final IntList sourceMap;
     private final ObjList<WindowFunction> unordered2PassFunctions;
     @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
@@ -85,6 +86,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         DirectLongList baseRowIds = null;
         try {
             this.base = base;
+            this.sourceMap = sourceMap;
             this.orderedGroupCount = sortKeys.size();
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;
@@ -219,6 +221,18 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
+    }
+
+    @Override
+    public boolean isColumnIntWidthStable(int columnIndex) {
+        // WindowLightRecord fans each output column out through sourceMap: a non-negative code reads the
+        // live base cursor record (base.getInt/getLong at that base index), a negative code reads the
+        // materialised narrow chain that stores the window-function results. A base column is therefore a
+        // live pass-through and delegates to the base factory - an overflowing INT base projection widens
+        // on store; a window (narrow-chain) column has been copied into its own slot and keeps the
+        // default true.
+        final int encoded = sourceMap.getQuick(columnIndex);
+        return encoded < 0 || base.isColumnIntWidthStable(encoded);
     }
 
     @Override
