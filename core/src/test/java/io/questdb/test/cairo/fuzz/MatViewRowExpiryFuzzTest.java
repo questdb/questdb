@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -54,31 +55,45 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Concurrency/stress fuzz for EXPIRE ROWS on passthrough materialized views, built on the standard parallel
  * WAL fuzz harness ({@link AbstractFuzzTest} / {@link FuzzRunner}). The base table is hammered by the usual
  * multi-threaded fuzz transactions (inserts, O3, REPLACE inserts, cancels, rollbacks, nulls) while, in the
- * background, mat-view refresh jobs, WAL apply, an EXPIRE cleanup job (optionally) and read queries all run
- * against the SAME policied view at once.
+ * background, mat-view refresh jobs, WAL apply, an EXPIRE cleanup job (optionally), a SET/DROP EXPIRE policy
+ * churn job (optionally) and read queries all run against the SAME policied view at once.
  * <ul>
- *     <li>{@link #testConcurrentRefreshAndReads()} runs ingest + refresh + apply + concurrent reads of the
- *     view; cleanup runs only once the system quiesces, so the read filter must then show EXACTLY the keep-set
- *     of the final base data, and the view must answer a battery of query shapes identically to that keep-set
- *     expressed independently as {@code LATEST ON}.</li>
+ *     <li>{@link #testConcurrentRefreshAndReads()} runs ingest + refresh + apply + concurrent reads of a
+ *     keep-latest view; cleanup runs only once the system quiesces, so the read filter must then show EXACTLY
+ *     the keep-set of the final base data, and the view must answer a battery of query shapes identically to
+ *     that keep-set expressed independently as {@code LATEST ON}.</li>
  *     <li>{@link #testConcurrentCleanup()} additionally runs {@link RowExpiryCleanupJob} CONCURRENTLY with the
- *     fuzz (the worst case for the cleanup concurrency gate) and holds to the SAME exact read-set equality as
- *     the quiescent path: cleanup and the refresh job are mutually exclusive per view (both take
- *     {@code MatViewState#tryLock()}, see {@link RowExpiryCleanupJob#cleanupTable}), so a back-fill can never
- *     be dropped between cleanup's survivor scan and its REPLACE_RANGE commit. It also checks no suspended
- *     table, no worker error, no leak, and that the view stays queryable in the keep-latest "one row per key"
- *     shape.</li>
+ *     fuzz. A keep-latest policy preserves physical history ({@code cleanupTable0} returns before any
+ *     destructive work), so this variant exercises the per-view {@code MatViewState#tryLock()} mutual
+ *     exclusion, discovery, and read-filter correctness under load - not reclamation.</li>
+ *     <li>{@link #testConcurrentCleanupScalarWhen()} is the destructive-path stress: a scalar value policy
+ *     ({@code when c3 < 0}) is monotonic, so the concurrent cleanup job runs real survivor scans and
+ *     sequencer-fenced REPLACE_RANGE wipes/compactions WHILE ingest, refresh, reads and a SET/DROP EXPIRE
+ *     policy churn thread race it. Every churned predicate expires a subset of the final canonical policy,
+ *     so the end-of-run keep-set comparison stays exact even though physical reclamation is irreversible.</li>
  * </ul>
- * keep-latest (one row per key) is used so the post-fuzz comparison has a deterministic row order; the
- * single-threaded {@code RowExpiryFuzzTest} covers the other modes against an independent in-Java oracle.
+ * keep-latest (one row per key) gives the post-fuzz comparison a deterministic row order via its key; the
+ * scalar variant relies on distinct timestamps (the equal-ts row probability is zero) and orders by the
+ * designated timestamp. The single-threaded {@code RowExpiryFuzzTest} covers the remaining modes against an
+ * independent in-Java oracle.
  */
 public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
+
+    private static final String SCALAR_PREDICATE = "c3 < 0";
 
     @Test
     public void testConcurrentCleanup() throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rnd = generateRandom(LOG);
-            runExpiryFuzz(rnd, "expire rows keep latest partition by c2", true);
+            runExpiryFuzz(rnd, "expire rows keep latest partition by c2", true, false);
+        });
+    }
+
+    @Test
+    public void testConcurrentCleanupScalarWhen() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = generateRandom(LOG);
+            runExpiryFuzz(rnd, "expire rows when " + SCALAR_PREDICATE, true, true);
         });
     }
 
@@ -86,38 +101,34 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
     public void testConcurrentRefreshAndReads() throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rnd = generateRandom(LOG);
-            runExpiryFuzz(rnd, "expire rows keep latest partition by c2", false);
+            runExpiryFuzz(rnd, "expire rows keep latest partition by c2", false, false);
         });
     }
 
     @Test
     public void testDeterministicBackfillBetweenScanAndCommitSurvives() throws Exception {
-        // M3 DETERMINISTIC data-loss guard (non-fuzz). The core defense against cleanup deleting a row a
-        // concurrent writer back-filled into a NON-ACTIVE partition since the survivor scan is the SEQUENCER-TXN
-        // GATE: the job attempts reclamation only when the view is FULLY APPLIED at sweep start
-        // (racyOpsAllowed = writerTxn == seqTxn). There is no in-job hook to pause exactly between the survivor
-        // scan and the destructive commit, so instead of racing threads we reproduce the gate's trigger state
-        // DETERMINISTICALLY: we leave the view COMMITTED-BUT-NOT-APPLIED (refresh advances the view's sequencer
-        // txn, but we skip the WAL apply, so writerTxn < seqTxn). A back-filled KEPT row is thus invisible to a
-        // reader-based survivor recount -- exactly the window the gate must cover. Cleanup MUST defer (reclaim
-        // nothing); after we apply the view, the back-filled kept row must SURVIVE and be visible.
-        //
-        // What this CAN force deterministically: the writerTxn<seqTxn precondition that makes the survivor scan
-        // miss a committed back-fill, and the requirement that cleanup not reclaim while in that state.
-        // What it CANNOT force without a hook: the exact instruction-level interleave of scan vs commit on two
-        // threads (the concurrent fuzz test exercises that probabilistically; the M3 no-loss assertion there is
-        // the statistical counterpart).
+        // DETERMINISTIC data-loss guard (non-fuzz) for the SCALAR destructive path. Cleanup must never
+        // reclaim while the view has committed-but-unapplied WAL txns: the survivor scan reads only APPLIED
+        // state, so a refresh back-fill committed to the view's sequencer but not yet applied is invisible
+        // to it. There is no in-job hook to pause exactly between the survivor scan and the destructive
+        // commit, so the trigger state is reproduced deterministically: refresh commits the back-fill into
+        // the view's WAL (seqTxn advances) and the view's WAL apply is skipped (writerTxn < seqTxn). The
+        // sweep baselines expectedSeqTxn on its reader's applied txn, so the per-commit sequencer fence
+        // (commitWithParamsIfSeqTxn) rejects the fully-expired partition's wipe -- cleanup defers, reclaiming
+        // nothing. After the view applies, the back-filled kept row must be visible, and a caught-up sweep
+        // must reclaim the fully-expired partition while that row SURVIVES. The instruction-level
+        // scan-vs-commit interleave on live threads is exercised probabilistically by
+        // testConcurrentCleanupScalarWhen.
         assertMemoryLeak(() -> {
             final String base = "m3_base";
             final String view = "m3_mv";
             execute("create table " + base + " (c2 symbol, c3 double, ts timestamp) timestamp(ts) partition by day wal");
-            // Superseded rows in non-active partitions -> genuinely reclaimable once caught up.
             execute("insert into " + base + " values " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // superseded by A@01-03
-                    "('B', 2.0, '2024-01-02T00:00:00.000000Z')," +   // B latest (non-active)
-                    "('A', 3.0, '2024-01-03T00:00:00.000000Z')");    // A latest (active partition)
+                    "('A', -1.0, '2024-01-01T00:00:00.000000Z')," +  // expired (c3 < 0); day 01-01 fully expired -> reclaimable
+                    "('B', -2.0, '2024-01-02T00:00:00.000000Z')," +  // expired; 01-02's APPLIED state is fully expired too
+                    "('A', 3.0, '2024-01-03T00:00:00.000000Z')");    // kept (active partition)
             drainWalAndMatViewQueues();
-            execute("create materialized view " + view + " as (select * from " + base + ") expire rows keep latest partition by c2");
+            execute("create materialized view " + view + " as (select * from " + base + ") expire rows when " + SCALAR_PREDICATE);
             drainWalAndMatViewQueues();
 
             final TableToken viewToken = engine.verifyTableName(view);
@@ -126,13 +137,14 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
                 predicate = m.getExpiryPredicate();
             }
 
-            // Sanity: fully applied, and the keep-set (latest per key) is visible.
+            // Sanity: fully applied, the read filter hides the expired rows, all three partitions are on disk.
             final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
             Assert.assertEquals("precondition: view fully applied", tracker.getSeqTxn(), tracker.getWriterTxn());
-            assertQuery("select c2, c3 from " + view + " order by c2").expectSize().noLeakCheck().returns("c2\tc3\nA\t3.0\nB\t2.0\n");
+            assertQuery("select c2, c3 from " + view + " order by c2").noLeakCheck().returns("c2\tc3\nA\t3.0\n");
+            assertQuery("select count() p from table_partitions('" + view + "')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
 
-            // Back-fill a row that becomes a KEPT (latest) row for a NEW key C in a NON-ACTIVE partition
-            // (01-02), then commit it to the VIEW's WAL via refresh but DO NOT apply -> writerTxn < seqTxn.
+            // Back-fill a KEPT row into the NON-ACTIVE 01-02 partition (whose applied state is fully
+            // expired), then commit it to the VIEW's WAL via refresh but DO NOT apply -> writerTxn < seqTxn.
             execute("insert into " + base + " values ('C', 9.0, '2024-01-02T12:00:00.000000Z')");
             drainWalQueue();                 // apply the base insert (base caught up)
             drainMatViewQueue(engine);       // refresh: commits the back-fill into the VIEW's WAL sequencer...
@@ -143,25 +155,33 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
                     tracker.getWriterTxn() < tracker.getSeqTxn()
             );
 
-            // Run cleanup in this state. The gate must DEFER (racyOpsAllowed=false): no reclamation, so the
-            // committed-but-unapplied kept C row cannot be physically deleted.
+            // The sweep classifies BOTH 01-01 and 01-02 as fully expired and attempts their wipes, but the
+            // refresh txn already advanced the sequencer past the sweep's reader baseline, so the fence
+            // rejects both commits and nothing is reclaimed. This is the data-loss window the fence closes:
+            // an unfenced empty REPLACE_RANGE over 01-02 would sequence AFTER the pending refresh txn and
+            // physically delete the committed-but-unapplied kept C row when applied.
             final boolean reclaimed;
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
                 reclaimed = job.cleanupTable(viewToken, predicate);
             }
-            Assert.assertFalse("cleanup must defer while the view is not fully applied (M3 gate)", reclaimed);
+            Assert.assertFalse("cleanup must defer while the view is not fully applied", reclaimed);
+            assertQuery("select count() p from table_partitions('" + view + "')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
 
-            // Now apply the view fully and assert the back-filled KEPT row SURVIVED (it was never reclaimed).
+            // Now apply the view fully and assert the back-filled KEPT row is visible.
             drainWalAndMatViewQueues();
             Assert.assertEquals("view now fully applied", tracker.getSeqTxn(), tracker.getWriterTxn());
-            assertQuery("select c2, c3 from " + view + " order by c2").expectSize().noLeakCheck().returns("c2\tc3\nA\t3.0\nB\t2.0\nC\t9.0\n");
+            assertQuery("select c2, c3 from " + view + " order by c2").noLeakCheck().returns("c2\tc3\nA\t3.0\nC\t9.0\n");
 
-            // A subsequent caught-up sweep may now reclaim the genuinely superseded A@01-01 -- but C must remain.
+            // A caught-up sweep reclaims: 01-01 is wiped outright and 01-02 compacts to its surviving kept
+            // row. The back-filled row SURVIVES physical reclamation.
+            final boolean reclaimedAfterApply;
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.cleanupTable(viewToken, predicate);
+                reclaimedAfterApply = job.cleanupTable(viewToken, predicate);
             }
+            Assert.assertTrue("caught-up sweep must reclaim the fully-expired partition", reclaimedAfterApply);
             drainWalAndMatViewQueues();
-            assertQuery("select c2, c3 from " + view + " order by c2").expectSize().noLeakCheck().returns("c2\tc3\nA\t3.0\nB\t2.0\nC\t9.0\n");
+            assertQuery("select count() p from table_partitions('" + view + "')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+            assertQuery("select c2, c3 from " + view + " order by c2").noLeakCheck().returns("c2\tc3\nA\t3.0\nC\t9.0\n");
         });
     }
 
@@ -174,9 +194,7 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         spinLockTimeout = 60_000;
     }
 
-    private void assertQueryPatterns(SqlCompiler compiler, String base, String view) throws Exception {
-        // The keep-set of a keep-latest passthrough view, expressed independently of the read filter.
-        final String keepSet = "(select * from " + base + " latest on ts partition by c2)";
+    private void assertQueryPatterns(SqlCompiler compiler, String keepSet, String view) throws Exception {
         final String[] templates = {
                 "select count() c from TBL",
                 "select c2, count() c, max(c3) mx, min(c1) mn from TBL group by c2 order by c2",
@@ -201,9 +219,28 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void runExpiryFuzz(Rnd rnd, String expireClause, boolean concurrentCleanup) throws Exception {
+    private long getPartitionCount(String view) throws SqlException {
+        try (RecordCursorFactory factory = engine.select("select count() from table_partitions('" + view + "')", sqlExecutionContext)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                return cursor.getRecord().getLong(0);
+            }
+        }
+    }
+
+    private void runExpiryFuzz(Rnd rnd, String expireClause, boolean concurrentCleanup, boolean policyChurn) throws Exception {
         final String base = getTestName() + "_0";
         final String view = base + "_mv";
+        final boolean isScalar = expireClause.contains(" when ");
+        // The keep-set of the policied passthrough view, expressed independently of the read filter. The
+        // scalar oracle uses the same CASE keep-filter shape the read filter compiles to, evaluated over the
+        // BASE table, so physical cleanup on the view cannot mask a read-filter defect. Row order: keep-latest
+        // is total on the key; the scalar comparison orders by the designated timestamp with c1 as a
+        // tiebreak (the generator makes duplicate timestamps rare but does not guarantee uniqueness).
+        final String keepSetSql = isScalar
+                ? "(select * from " + base + " where case when (" + SCALAR_PREDICATE + ") then false else true end)"
+                : "(select * from " + base + " latest on ts partition by c2)";
+        final String keepSetOrderBy = isScalar ? "ts, c1" : "c2";
 
         fuzzer.createInitialTableWal(base, "timestamp");
         // createInitialTable appends a few "column top" columns via async WAL ALTERs; apply them BEFORE
@@ -264,6 +301,9 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         if (concurrentCleanup) {
             jobs.add(startCleanupJob(viewToken, predicate, stop, errors, rnd));
         }
+        if (policyChurn) {
+            jobs.add(startPolicyChurnJob(view, stop, errors, rnd));
+        }
 
         engine.releaseInactive();
         final ObjList<ObjList<FuzzTransaction>> all = new ObjList<>();
@@ -301,33 +341,64 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         drainWalAndMatViewQueues();
         fuzzer.checkNoSuspendedTables();
 
+        if (policyChurn) {
+            // Deterministic end state after churn: restore the canonical policy. Every churned predicate
+            // expires a SUBSET of it, so any row physically reclaimed under a churned policy is also expired
+            // by the canonical one and the keep-set oracle below stays exact.
+            execute("alter materialized view " + view + " set expire rows when " + SCALAR_PREDICATE);
+            drainWalAndMatViewQueues();
+        }
+        // Re-read the authoritative predicate: under churn the discovery-time snapshot is stale (cleanup's
+        // own authoritative re-read defers on such a mismatch, so the final sweep must use the current one).
+        final String finalPredicate;
+        try (TableMetadata m = engine.getTableMetadata(viewToken)) {
+            finalPredicate = m.getExpiryPredicate();
+        }
+        Assert.assertNotNull(finalPredicate);
+        if (policyChurn) {
+            TestUtils.assertContains(finalPredicate, SCALAR_PREDICATE);
+        }
+
         // Final cleanup on quiescent data (no ingestion racing the commit), then settle.
         try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-            job.cleanupTable(viewToken, predicate);
+            job.cleanupTable(viewToken, finalPredicate);
+            if (isScalar && getPartitionCount(view) > 1) {
+                // Non-vacuity: a scalar value policy has no bounds threshold, so a quiescent sweep over a
+                // multi-partition view must classify via survivor scans (fresh job => empty generation cache).
+                Assert.assertTrue(
+                        "final scalar sweep must classify partitions via survivor scans",
+                        job.getScalarPartitionScanCount() > 0
+                );
+            }
         }
         drainWalAndMatViewQueues();
 
         if (concurrentCleanup) {
-            // Fast targeted read-filter probe before the exact comparison below: keep-latest must show ONLY
-            // the latest (max-ts) row per key — no visible row is older than its key's max. Null-key safe.
-            assertQuery("select count() stale from (select ts, max(ts) over (partition by c2) mx from " + view + ") where ts < mx").noRandomAccess().expectSize().noLeakCheck().returns("stale\n0\n");
+            // Fast targeted read-filter probe before the exact comparison below. Keep-latest: no visible row
+            // is older than its key's max (null-key safe). Scalar: no visible row satisfies the expiry
+            // predicate.
+            if (isScalar) {
+                assertQuery("select count() stale from " + view + " where " + SCALAR_PREDICATE).noRandomAccess().expectSize().noLeakCheck().returns("stale\n0\n");
+            } else {
+                assertQuery("select count() stale from (select ts, max(ts) over (partition by c2) mx from " + view + ") where ts < mx").noRandomAccess().expectSize().noLeakCheck().returns("stale\n0\n");
+            }
         }
-        // Full correctness for BOTH paths: the read-filtered view == the keep-set (latest per c2) of the final
-        // base, and the view answers a battery of query shapes identically. The CONCURRENT path holds to the
-        // SAME exact equality (no best-effort relaxation): cleanup and the refresh job are mutually exclusive
-        // per view (both take MatViewState#tryLock(), see RowExpiryCleanupJob#cleanupTable), so a back-fill can
-        // never be dropped between cleanup's survivor scan and its REPLACE_RANGE commit — the otherwise
-        // best-effort commit-window race is closed. The deterministic counterpart is
+        // Full correctness for BOTH paths: the read-filtered view == the keep-set of the final base, and the
+        // view answers a battery of query shapes identically. The CONCURRENT path holds to the SAME exact
+        // equality (no best-effort relaxation): cleanup and the refresh job are mutually exclusive per view
+        // (both take MatViewState#tryLock(), see RowExpiryCleanupJob#cleanupTable), and every destructive
+        // commit is fenced on the sequencer txn, so a back-fill can never be dropped between cleanup's
+        // survivor scan and its REPLACE_RANGE commit. The deterministic counterpart is
         // testDeterministicBackfillBetweenScanAndCommitSurvives (cleanup DEFERS while a write is in flight).
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.assertSqlCursors(
                     compiler,
                     sqlExecutionContext,
-                    "select * from " + base + " latest on ts partition by c2 order by c2",
-                    "select * from " + view + " order by c2",
+                    "select * from " + keepSetSql + " order by " + keepSetOrderBy,
+                    "select * from " + view + " order by " + keepSetOrderBy,
                     LOG
             );
-            assertQueryPatterns(compiler, base, view);
+            assertQueryPatterns(compiler, keepSetSql, view);
         }
     }
 
@@ -345,6 +416,40 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
                 Path.clearThreadLocals();
             }
         }, "row-expiry-cleanup");
+        th.start();
+        return th;
+    }
+
+    private Thread startPolicyChurnJob(String view, AtomicBoolean stop, ConcurrentLinkedQueue<Throwable> errors, Rnd outsideRnd) {
+        final Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
+        // Every predicate here expires a SUBSET of the canonical policy (SCALAR_PREDICATE) the run is settled
+        // to at the end: a row physically reclaimed under a churned policy is also expired by the canonical
+        // one, so churn cannot desync the end-of-run keep-set oracle even though reclamation is irreversible.
+        final String[] alters = {
+                "alter materialized view " + view + " set expire rows when c3 < -100",
+                "alter materialized view " + view + " set expire rows when c3 < -10",
+                "alter materialized view " + view + " drop expire",
+                "alter materialized view " + view + " set expire rows when " + SCALAR_PREDICATE,
+        };
+        final Thread th = new Thread(() -> {
+            try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
+                while (!stop.get() && errors.isEmpty()) {
+                    try {
+                        execute(alters[rnd.nextInt(alters.length)], ctx);
+                    } catch (Throwable th2) {
+                        if (!isTolerable(th2)) {
+                            errors.add(th2);
+                            break;
+                        }
+                    }
+                    Os.sleep(rnd.nextInt(40));
+                }
+            } catch (Throwable th2) {
+                errors.add(th2);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, "policy-churn");
         th.start();
         return th;
     }
@@ -418,7 +523,12 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
             return true;
         }
         final String m = th.getMessage();
-        return m != null && (m.contains("cached query") || m.contains("does not exist") || m.contains("table is dropped"));
+        return m != null && (m.contains("cached query")
+                || m.contains("does not exist")
+                || m.contains("table is dropped")
+                // Sustained SET/DROP EXPIRE churn can exhaust a compile's policy-epoch retry budget; that is
+                // an expected outcome of the adversarial churn, not a correctness failure.
+                || m.contains("too many row-expiry policy changes"));
     }
 
     private static void rethrow(ConcurrentLinkedQueue<Throwable> errors) {
