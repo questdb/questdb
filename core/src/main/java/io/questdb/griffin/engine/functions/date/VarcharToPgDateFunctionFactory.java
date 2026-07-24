@@ -78,6 +78,11 @@ public class VarcharToPgDateFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isThreadSafe() {
+            return VarcharDateFunctionUtils.isVarcharGetterThreadSafe(arg);
+        }
+
+        @Override
         public String getName() {
             return "to_pg_date";
         }

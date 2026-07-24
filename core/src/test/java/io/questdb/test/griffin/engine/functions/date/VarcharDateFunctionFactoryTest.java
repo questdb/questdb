@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.date.VarcharToDateFunctionFactory;
+import io.questdb.griffin.engine.functions.date.VarcharToPgDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.VarcharToTimestampVCFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -41,8 +42,9 @@ public class VarcharDateFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testUtf8FunctionsAreThreadSafe() throws SqlException {
-        assertThreadSafe(new VarcharToDateFunctionFactory());
-        assertThreadSafe(new VarcharToTimestampVCFunctionFactory());
+        assertThreadSafe(new VarcharToDateFunctionFactory(), new VarcharColumn(0), new StrConstant("yyyy年MM月dd日"));
+        assertThreadSafe(new VarcharToPgDateFunctionFactory(), new VarcharColumn(0));
+        assertThreadSafe(new VarcharToTimestampVCFunctionFactory(), new VarcharColumn(0), new StrConstant("yyyy年MM月dd日"));
     }
 
     @Override
@@ -50,14 +52,13 @@ public class VarcharDateFunctionFactoryTest extends AbstractFunctionFactoryTest 
         return new VarcharToDateFunctionFactory();
     }
 
-    private void assertThreadSafe(FunctionFactory factory) throws SqlException {
+    private void assertThreadSafe(FunctionFactory factory, Function... functions) throws SqlException {
         ObjList<Function> args = new ObjList<>();
-        args.add(new VarcharColumn(0));
-        args.add(new StrConstant("yyyy年MM月dd日"));
-
         IntList argPositions = new IntList();
-        argPositions.add(0);
-        argPositions.add(0);
+        for (Function function : functions) {
+            args.add(function);
+            argPositions.add(0);
+        }
 
         try (Function function = factory.newInstance(0, args, argPositions, configuration, sqlExecutionContext)) {
             Assert.assertTrue(function.isThreadSafe());
