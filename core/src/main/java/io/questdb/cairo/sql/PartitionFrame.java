@@ -49,7 +49,9 @@ public interface PartitionFrame {
         return null;
     }
 
-    /** Opaque Rust logical-frame state; zero for a base-only partition. */
+    /**
+     * Opaque Rust logical-frame state; zero for a base-only partition.
+     */
     default long getPartitionFrameState() {
         return 0;
     }

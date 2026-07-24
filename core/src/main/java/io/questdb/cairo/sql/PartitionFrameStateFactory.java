@@ -33,9 +33,13 @@ import io.questdb.std.QuietCloseable;
  * instances borrow it while materializing page frames.
  */
 public interface PartitionFrameStateFactory extends QuietCloseable {
-    /** Opens one immutable state and returns its sole owning opaque handle. */
+    /**
+     * Opens one immutable state and returns its sole owning opaque handle.
+     */
     long open(TableReader reader, int partitionIndex, long readerSeqTxn);
 
-    /** Destroys the state owned by TableReader. No other component owns the handle. */
+    /**
+     * Destroys the state owned by TableReader. No other component owns the handle.
+     */
     void destroy(long state);
 }
