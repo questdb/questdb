@@ -293,14 +293,21 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final long frameRowCount = task.getFrameRowCount();
         final AsyncFilterAtom atom = task.getFrameSequence(AsyncFilterAtom.class).getAtom();
 
-        final boolean isLateMaterializationCandidate = task.isParquetFrame() || task.isSingleKeyCoveredFrame();
+        final boolean isParquetFrame = task.isParquetFrame();
+        final boolean isSingleKeyCoveredFrame = task.isSingleKeyCoveredFrame();
+        final boolean isLateMaterializationCandidate = isParquetFrame || isSingleKeyCoveredFrame;
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
         // The slot is held from here on, so everything below belongs inside the try that releases
         // it: populateFrameMemory() navigates to the frame, which decodes parquet and can breach the
         // per-query memory limit. See PerWorkerLocks.acquireSlot().
         try {
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isLateMaterializationCandidate, task.isCountOnly());
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(
+                    filterId,
+                    isParquetFrame,
+                    isSingleKeyCoveredFrame,
+                    task.isCountOnly()
+            );
 
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {

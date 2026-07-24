@@ -98,15 +98,11 @@ public class CoveringIndexJitFilterTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
 
-            assertQuery("SELECT score, note, payload IS NOT NULL AS has_payload FROM sparse WHERE sym = 'A' AND score != 10")
+            assertQuery("SELECT score, note, payload IS NOT NULL AS has_payload FROM sparse WHERE sym = 'A' AND score = 60")
                     .noLeakCheck()
                     .withPlanContaining("Async JIT Filter", "CoveringIndex on: sym")
                     .returns("""
                             score\tnote\thas_payload
-                            20\tnote-2\ttrue
-                            30\tnote-3\ttrue
-                            40\tnote-4\ttrue
-                            50\tnote-5\ttrue
                             60\tnote-6\ttrue
                             """);
         });

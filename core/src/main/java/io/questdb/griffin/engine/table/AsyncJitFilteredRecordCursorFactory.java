@@ -326,8 +326,15 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
 
         try {
-            final boolean isLateMaterializationCandidate = task.isParquetFrame() || task.isSingleKeyCoveredFrame();
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isLateMaterializationCandidate, task.isCountOnly());
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean isSingleKeyCoveredFrame = task.isSingleKeyCoveredFrame();
+            final boolean isLateMaterializationCandidate = isParquetFrame || isSingleKeyCoveredFrame;
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(
+                    filterId,
+                    isParquetFrame,
+                    isSingleKeyCoveredFrame,
+                    task.isCountOnly()
+            );
 
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
