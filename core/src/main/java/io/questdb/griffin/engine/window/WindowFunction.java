@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -489,9 +490,14 @@ public interface WindowFunction extends Function {
      * snapshot framework rehydrates partitions via
      * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue)}. Partitioned
      * functions clear their {@link Map} and zero the tombstone counter here;
-     * native-memory-backed ring/deque functions also truncate their backing
-     * arena and clear their free list. Default no-op (scalar functions hold a
-     * single field that {@code restoreCheckpointState} overwrites directly).
+     * native-memory-backed ring/deque functions also rewind their backing arena
+     * and clear their free list. Default no-op (scalar functions hold a single
+     * field that {@code restoreCheckpointState} overwrites directly).
+     * <p>
+     * The arena rewinds through {@link MemoryA#truncateKeepCapacity()} rather
+     * than {@code truncate()}: the restore about to run refills it to roughly
+     * the size it just held, so handing the pages back only to fault them in
+     * again costs the refresh loop a full re-allocation per replay.
      */
     default void onCheckpointRestoreBegin() {
     }

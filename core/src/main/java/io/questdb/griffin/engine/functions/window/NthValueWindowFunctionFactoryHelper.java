@@ -860,7 +860,7 @@ public class NthValueWindowFunctionFactoryHelper {
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -1241,7 +1241,7 @@ public class NthValueWindowFunctionFactoryHelper {
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override

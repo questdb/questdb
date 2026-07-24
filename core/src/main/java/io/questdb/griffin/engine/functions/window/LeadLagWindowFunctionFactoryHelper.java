@@ -440,7 +440,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override

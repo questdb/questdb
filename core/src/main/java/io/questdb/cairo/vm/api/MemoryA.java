@@ -119,5 +119,21 @@ public interface MemoryA extends Closeable {
 
     void truncate();
 
+    /**
+     * Rewinds the append offset to zero without releasing the memory the buffer
+     * already holds, so the bytes it hands out next come from pages that are
+     * still mapped and warm. Content above the new append offset is stale, not
+     * zeroed - a caller must write every byte it later reads.
+     * <p>
+     * Use this over {@link #truncate()} when a buffer is about to be refilled to
+     * roughly its previous size: truncate shrinks the allocation back to a single
+     * page, so the refill pays a chain of doubling reallocations and faults every
+     * page back in. Implementations that cannot rewind in place fall back to
+     * {@code truncate()}.
+     */
+    default void truncateKeepCapacity() {
+        truncate();
+    }
+
     void zeroMem(int length);
 }

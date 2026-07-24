@@ -740,7 +740,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -1193,7 +1193,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override

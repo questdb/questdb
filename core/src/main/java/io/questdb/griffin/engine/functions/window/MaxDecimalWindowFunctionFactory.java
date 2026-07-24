@@ -1544,10 +1544,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
             if (dequeMemory != null) {
-                dequeMemory.truncate();
+                dequeMemory.truncateKeepCapacity();
             }
             dequeFreeList.clear();
         }
@@ -2068,9 +2068,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             if (dequeMemory != null) {
-                dequeMemory.truncate();
+                dequeMemory.truncateKeepCapacity();
             }
         }
 
@@ -3480,10 +3480,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
             if (dequeMemory != null) {
-                dequeMemory.truncate();
+                dequeMemory.truncateKeepCapacity();
             }
             dequeFreeList.clear();
         }
@@ -3968,9 +3968,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             if (dequeMemory != null) {
-                dequeMemory.truncate();
+                dequeMemory.truncateKeepCapacity();
             }
         }
 
@@ -5334,10 +5334,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
             if (dequeMemory != null) {
-                dequeMemory.truncate();
+                dequeMemory.truncateKeepCapacity();
             }
             dequeFreeList.clear();
         }
@@ -5865,9 +5865,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             if (dequeMemory != null) {
-                dequeMemory.truncate();
+                dequeMemory.truncateKeepCapacity();
             }
         }
 
@@ -7289,10 +7289,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
             if (dequeMemory != null) {
-                dequeMemory.truncate();
+                dequeMemory.truncateKeepCapacity();
             }
             dequeFreeList.clear();
         }
@@ -7777,9 +7777,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             if (dequeMemory != null) {
-                dequeMemory.truncate();
+                dequeMemory.truncateKeepCapacity();
             }
         }
 
@@ -9109,10 +9109,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
             if (dequeMemory != null) {
-                dequeMemory.truncate();
+                dequeMemory.truncateKeepCapacity();
             }
             dequeFreeList.clear();
         }
@@ -9598,9 +9598,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             if (dequeMemory != null) {
-                dequeMemory.truncate();
+                dequeMemory.truncateKeepCapacity();
             }
         }
 
@@ -10933,10 +10933,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
             if (dequeMemory != null) {
-                dequeMemory.truncate();
+                dequeMemory.truncateKeepCapacity();
             }
             dequeFreeList.clear();
         }
@@ -11422,9 +11422,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             if (dequeMemory != null) {
-                dequeMemory.truncate();
+                dequeMemory.truncateKeepCapacity();
             }
         }
 

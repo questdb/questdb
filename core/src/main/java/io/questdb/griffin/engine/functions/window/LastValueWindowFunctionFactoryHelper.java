@@ -1365,7 +1365,7 @@ public class LastValueWindowFunctionFactoryHelper {
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         /**
@@ -2746,7 +2746,7 @@ public class LastValueWindowFunctionFactoryHelper {
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -3139,7 +3139,7 @@ public class LastValueWindowFunctionFactoryHelper {
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         /**

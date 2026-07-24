@@ -1398,7 +1398,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -1856,7 +1856,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override
@@ -3173,7 +3173,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -3571,7 +3571,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override
@@ -4805,7 +4805,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -5278,7 +5278,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override
@@ -6643,7 +6643,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -7059,7 +7059,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override
@@ -8323,7 +8323,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -8741,7 +8741,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override
@@ -9987,7 +9987,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -10387,7 +10387,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override

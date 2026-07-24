@@ -768,7 +768,7 @@ public class NthValueLongWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -1157,7 +1157,7 @@ public class NthValueLongWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override

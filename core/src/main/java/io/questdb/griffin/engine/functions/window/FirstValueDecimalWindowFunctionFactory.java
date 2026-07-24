@@ -2858,7 +2858,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -3236,7 +3236,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override
@@ -4973,7 +4973,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -5344,7 +5344,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override
@@ -7132,7 +7132,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -7516,7 +7516,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override
@@ -9267,7 +9267,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -9638,7 +9638,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override
@@ -11355,7 +11355,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -11726,7 +11726,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override
@@ -13443,7 +13443,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
             freeList.clear();
         }
 
@@ -13814,7 +13814,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncate();
+            memory.truncateKeepCapacity();
         }
 
         @Override
