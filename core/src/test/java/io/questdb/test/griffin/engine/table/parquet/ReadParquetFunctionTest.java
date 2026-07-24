@@ -116,6 +116,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         0.01,
                         0.0,
                         -1,
+                        -1L,
                         -1L
                 );
                 Assert.assertTrue(Files.exists(path.$()));

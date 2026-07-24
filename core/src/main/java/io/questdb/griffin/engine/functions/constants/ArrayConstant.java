@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.arr.NoopArrayWriteState;
@@ -39,7 +40,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.str.StringSink;
 
 public final class ArrayConstant extends ArrayFunction implements ConstantFunction {
-    public static final DirectArray NULL = new DirectArray();
+    public static final BorrowedArray NULL = new BorrowedArray();
     private final DirectArray array = new DirectArray();
 
     public ArrayConstant(FunctionArray arrayIn) {

@@ -27,12 +27,14 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
@@ -295,6 +297,16 @@ public class ArrayTest extends AbstractCairoTest {
                             12.0
                             """);
         });
+    }
+
+    @Test
+    public void testAccessConstantNullIndexFreesArrayLiteral() throws Exception {
+        // A constant NULL index folds the whole access to a NULL constant, which keeps neither
+        // argument, so the factory has to free the array itself. A constant array literal holds
+        // its shape and values in native memory, so dropping that free leaks it.
+        assertQuery("SELECT ARRAY[[1.0, 2], [3.0, 4]][1, NULL::long] x FROM long_sequence(1)")
+                .expectSize()
+                .returns("x\nnull\n");
     }
 
     @Test
@@ -821,6 +833,47 @@ public class ArrayTest extends AbstractCairoTest {
             try (DirectArray array = new DirectArray(configuration)) {
                 array.clear();
             }
+        });
+    }
+
+    @Test
+    public void testArrayConsumersOverSampleByFillPrevGap() throws Exception {
+        // SAMPLE BY ... FILL(PREV) fills a gap from the preceding bucket, but the buckets before a
+        // key's first row have nothing to carry forward. The record has no array to hand out for
+        // those, so every array consumer must see a NULL array there instead of reaching into an
+        // ArrayView that is not there.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, s SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            // Key 'b' starts two buckets late, so its 00:00 and 00:01 buckets have no prevailing row.
+            execute("INSERT INTO tango VALUES " +
+                    "('2023-01-01T00:00:00.000000Z', 'a', ARRAY[1.0, 2.0]), " +
+                    "('2023-01-01T00:02:00.000000Z', 'b', ARRAY[3.0, 4.0, 5.0])");
+            final String filled = "SELECT ts, s, first(arr) a FROM tango SAMPLE BY 1m FILL(PREV) ORDER BY s, ts";
+            // array_sum() reads the array through the ArrayView route, with no column index to take
+            // the direct accessor, so it is the consumer that sees the gap record head-on.
+            assertQuery("SELECT s, array_sum(a) total FROM (" + filled + ")")
+                    .noLeakCheck()
+                    .returns("""
+                            s\ttotal
+                            a\t3.0
+                            a\t3.0
+                            a\t3.0
+                            b\tnull
+                            b\tnull
+                            b\t12.0
+                            """);
+            // dim_length() takes the direct accessor instead, the other of the two routes.
+            assertQuery("SELECT s, dim_length(a, 1) len FROM (" + filled + ")")
+                    .noLeakCheck()
+                    .returns("""
+                            s\tlen
+                            a\t2
+                            a\t2
+                            a\t2
+                            b\tnull
+                            b\tnull
+                            b\t3
+                            """);
         });
     }
 
@@ -2820,6 +2873,64 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLengthColumnTop() throws Exception {
+        // A column added to a table that already has rows has a column top: the rows below it hold no
+        // data for the column, and the page frame hands out a zero aux address for them. dim_length()
+        // reads the shape header straight out of the aux/data vectors, so it has to answer NULL for
+        // those rows rather than reading from address zero. The pre-existing rows below the top are
+        // the only ones that reach that branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tango VALUES " +
+                    "('1970-01-01T00:00:00.000000Z', ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]]), " +
+                    "('1970-01-01T00:00:01.000000Z', ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]])"
+            );
+            execute("ALTER TABLE tango ADD COLUMN arr2 DOUBLE[][]");
+            execute("INSERT INTO tango VALUES " +
+                    "('1970-01-01T00:00:02.000000Z', ARRAY[[1.0, 2]], ARRAY[[1.0, 2, 3], [4.0, 5, 6]])"
+            );
+            // The first two rows sit below the column top: no shape to read, so NULL.
+            assertQuery("SELECT dim_length(arr2, 1) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\nnull\nnull\n2\n");
+            assertQuery("SELECT dim_length(arr2, 2) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\nnull\nnull\n3\n");
+        });
+    }
+
+    @Test
+    public void testLengthConstantArrayInvalidDim() throws Exception {
+        // A constant array argument makes the whole call constant, so the parser folds it by calling
+        // getInt(null) - and folding never runs init(), which is where the dimensionality check used
+        // to live. The check therefore has to happen at compile time, in newInstance(). A NULL array
+        // is no different: a dimension the array does not have is out of bounds whether or not there
+        // is an array to measure, so it must report the error rather than quietly answer NULL.
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck("SELECT dim_length(ARRAY[1.0, 2, 3], 2)",
+                    36, "array dimension out of bounds [dim=2, dims=1]");
+            assertExceptionNoLeakCheck("SELECT dim_length(ARRAY[[1.0, 2], [3.0, 4]], 3)",
+                    45, "array dimension out of bounds [dim=3, dims=2]");
+            assertExceptionNoLeakCheck("SELECT dim_length(NULL::double[], 2)",
+                    34, "array dimension out of bounds [dim=2, dims=1]");
+            assertExceptionNoLeakCheck("SELECT dim_length(NULL::double[][], 3)",
+                    36, "array dimension out of bounds [dim=3, dims=2]");
+            // In bounds, the constant array still folds and answers.
+            assertQuery("SELECT dim_length(ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]], 2) len")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n2\n");
+            // In bounds over a NULL array: no shape to read, so NULL.
+            assertQuery("SELECT dim_length(NULL::double[][], 2) len")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\nnull\n");
+        });
+    }
+
+    @Test
     public void testLengthInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]] arr FROM long_sequence(1))");
@@ -2829,6 +2940,260 @@ public class ArrayTest extends AbstractCairoTest {
                     23, "array dimension out of bounds [dim=3, dims=2]");
             assertExceptionNoLeakCheck("SELECT dim_length(arr, arr[2, 1]::int) len FROM tango",
                     32, "array dimension out of bounds [dim=3, dims=2]");
+        });
+    }
+
+    @Test
+    public void testLengthNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][], n INT)");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]], 1), " +
+                    "(NULL, 1), " +
+                    "(ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]], NULL), " +
+                    "(NULL, NULL)"
+            );
+            // A NULL array carries no shape, so there is no length to report and dim_length() returns
+            // NULL. It must not read the shape it does not have.
+            assertQuery("SELECT dim_length(arr, 1) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n3\nnull\n3\nnull\n");
+            // Same, for a non-constant dimension, which takes the other of the two function paths.
+            // A NULL dimension is not an out-of-range dimension: it is the absence of a dimension to
+            // measure, so it returns NULL instead of failing the query. This matches the sibling
+            // array-access function, where arr[NULL] is NULL.
+            assertQuery("SELECT dim_length(arr, n) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n3\nnull\nnull\nnull\n");
+            // Same, with the dimension NULL at compile time, which takes the constant path.
+            assertQuery("SELECT dim_length(arr, NULL::int) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\nnull\nnull\nnull\nnull\n");
+            // The constant path folds to a NULL constant and keeps neither argument, so it must free
+            // the array argument itself. A constant array literal holds native memory, so dropping
+            // that close() leaks it, and assertMemoryLeak() catches it here.
+            assertQuery("SELECT dim_length(ARRAY[[1.0, 2], [3.0, 4]], NULL::int) len FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\nnull\n");
+        });
+    }
+
+    @Test
+    public void testLengthOverArrayExpression() throws Exception {
+        // Every other dim_length() test passes a plain array column, which takes the shape-header fast
+        // path and never builds an ArrayView. An array-valued expression has no column index, so both
+        // function paths fall back to the ArrayView route instead - the only route that can see a NULL
+        // ArrayView, which carries no shape and so has no length to report.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][], n INT)");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]], 1), " +
+                    "(NULL, 1), " +
+                    "(NULL, NULL)"
+            );
+            // Constant dimension: the ConstFunc path.
+            assertQuery("SELECT dim_length(transpose(arr), 1) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n2\nnull\nnull\n");
+            assertQuery("SELECT dim_length(transpose(arr), 2) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n3\nnull\nnull\n");
+            // Non-constant dimension: the Func path.
+            assertQuery("SELECT dim_length(transpose(arr), n) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n2\nnull\nnull\n");
+        });
+    }
+
+    @Test
+    public void testLengthOverConstantFalseWindowJoin() throws Exception {
+        // A WINDOW JOIN whose ON clause folds to a constant false wraps the master in an
+        // ExtraNullColumnCursorFactory, which splices a synthetic NULL column in for every
+        // aggregate of the vacant right side. That record has no array to hand out for the
+        // spliced columns, so both direct array accessors have to report the array as NULL
+        // instead of reaching into an ArrayView that is not there.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES " +
+                    "('2023-01-01T09:10:00.000000Z', 'AAA', 100.0), " +
+                    "('2023-01-01T09:11:00.000000Z', 'BBB', 200.0)");
+            execute("INSERT INTO prices VALUES ('2023-01-01T09:00:00.000000Z', 'AAA', 1.0)");
+            final String join = "SELECT t.ts ts, array_agg(p.price) arr FROM trades t " +
+                    "WINDOW JOIN prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING";
+            // dim_length() over the spliced aggregate: the getArrayDimLen() accessor.
+            assertQuery("SELECT ts, dim_length(arr, 1) len FROM (" + join + ")")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tlen
+                            2023-01-01T09:10:00.000000Z\tnull
+                            2023-01-01T09:11:00.000000Z\tnull
+                            """);
+            // Indexing the same spliced aggregate: the getArrayDouble1d2d() accessor, which
+            // reads the array the same way and so shares the fault.
+            assertQuery("SELECT ts, arr[1] x FROM (" + join + ")")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx
+                            2023-01-01T09:10:00.000000Z\tnull
+                            2023-01-01T09:11:00.000000Z\tnull
+                            """);
+            // Both accessors above are guarded in Record itself, so they would still return NULL
+            // even if the record handed out a Java null. array_sum() takes the ArrayView route,
+            // which reads the record's array unguarded, and so is the one that pins the record.
+            assertQuery("SELECT ts, array_sum(arr) total FROM (" + join + ")")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ttotal
+                            2023-01-01T09:10:00.000000Z\tnull
+                            2023-01-01T09:11:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLengthOverLateMaterializedParquetFrame() throws Exception {
+        // PageFrameFilteredMemoryRecord is the record an async GROUP BY reducer puts in front of a
+        // parquet frame when it late-materializes: it decodes the filter columns, runs the filter, and
+        // only then reads the rest, mapping each surviving row back to its physical index. Its direct
+        // array accessors have to apply that mapping - one that forwarded the filtered index straight
+        // to the shape header would read a different row's array, and one that fell through to
+        // Record's ArrayView default would silently lose the O(1) shape read.
+        //
+        // Reaching it needs all three: a parquet frame (AsyncFilterContext.shouldUseLateMaterialization
+        // returns false for native ones), an aggregate (the plain filter path uses the unfiltered
+        // record), and a filter over a column the projection does not otherwise read. A WHERE over a
+        // native table meets none of them.
+        //
+        // The two halves carry different shapes, and arr[1, 1] carries the row's own x, so a wrong row
+        // mapping shows up as the wrong dimension length or the wrong sum rather than as no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, tag SYMBOL, arr DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tango SELECT (x * 1_000_000)::timestamp, " +
+                    "CASE WHEN x % 1000 = 0 THEN 'keep' ELSE 'drop' END, " +
+                    "ARRAY[[x::double, 2.0]] FROM long_sequence(5_000)");
+            execute("INSERT INTO tango SELECT ((5_000 + x) * 1_000_000)::timestamp, " +
+                    "CASE WHEN x % 1000 = 0 THEN 'keep' ELSE 'drop' END, " +
+                    "ARRAY[[x::double], [2.0], [3.0]] FROM long_sequence(5_000)");
+            // A row in a later partition seals the first one, which is what CONVERT needs.
+            execute("INSERT INTO tango VALUES ('1970-01-02T00:00:00.000000Z', 'drop', ARRAY[[1.0]])");
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            // Five rows survive the filter in each half: x = 1000..5000 step 1000.
+            assertQuery("SELECT dim_length(arr, 1) d1, count(*) c, sum(arr[1, 1]) total " +
+                    "FROM tango WHERE tag = 'keep' GROUP BY d1 ORDER BY d1")
+                    .noLeakCheck()
+                    .expectSize()
+                    // The async reducer is the only thing that installs the filtered record. Pinned by
+                    // the substring the JIT and non-JIT plans share, since jit mode varies by build.
+                    .withPlanContaining("Group By workers:", "filter: tag='keep'")
+                    .returns("""
+                            d1\tc\ttotal
+                            1\t5\t15000.0
+                            3\t5\t15000.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLengthOverLateMaterializedParquetNullAndColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, marker SYMBOL, tag SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tango SELECT (x * 1_000_000)::timestamp, " +
+                    "CASE WHEN x = 1000 THEN 'a_top' ELSE 'drop' END, " +
+                    "CASE WHEN x = 1000 THEN 'keep' ELSE 'drop' END FROM long_sequence(5_000)");
+            execute("ALTER TABLE tango ADD COLUMN arr DOUBLE[][]");
+            execute("""
+                    INSERT INTO tango VALUES
+                        ('1970-01-01T01:23:21.000000Z', 'b_null', 'keep', NULL),
+                        ('1970-01-01T01:23:22.000000Z', 'c_value', 'keep', ARRAY[[1.0, 2], [3.0, 4]])
+                    """);
+            execute("INSERT INTO tango SELECT ((5_002 + x) * 1_000_000)::timestamp, 'drop', 'drop', " +
+                    "ARRAY[[x::double]] FROM long_sequence(5_000)");
+            execute("INSERT INTO tango VALUES " +
+                    "('1970-01-02T00:00:00.000000Z', 'drop', 'drop', ARRAY[[1.0]])");
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+
+            assertQuery("SELECT marker, dim_length(arr, 1) d1, dim_length(arr, 2) d2, " +
+                    "sum(arr[1, 1]) first FROM tango WHERE tag = 'keep' GROUP BY marker, d1, d2 ORDER BY marker")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Group By workers:", "filter: tag='keep'")
+                    .returns("""
+                            marker\td1\td2\tfirst
+                            a_top\tnull\tnull\tnull
+                            b_null\tnull\tnull\tnull
+                            c_value\t2\t2\t1.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLengthOverParquet() throws Exception {
+        // The parquet scan rebuilds the aux vector in the same layout the native one uses, so the
+        // shape-header fast path is meant to read it identically. Nothing pinned that: every other
+        // dim_length() test runs over a native frame, so a parquet aux layout change would go
+        // unnoticed until it returned wrong lengths. The last row stays native, which puts both frame
+        // types in one scan.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tango VALUES " +
+                    "('1970-01-01T00:00:00.000000Z', ARRAY[[1.0, 2, 3], [4.0, 5, 6]]), " +
+                    "('1970-01-01T00:00:01.000000Z', ARRAY[[1.0, 2]]), " +
+                    "('1970-01-01T00:00:02.000000Z', NULL), " +
+                    "('1970-01-02T00:00:00.000000Z', ARRAY[[1.0], [2.0], [3.0]])"
+            );
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            assertQuery("SELECT dim_length(arr, 1) d1, dim_length(arr, 2) d2, arr[1, 1] first FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d1\td2\tfirst
+                            2\t3\t1.0
+                            1\t2\t1.0
+                            null\tnull\tnull
+                            3\t1\t1.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLengthOverParquetOneDimension() throws Exception {
+        testLengthOverParquetOneDimension(true);
+        testLengthOverParquetOneDimension(false);
+    }
+
+    @Test
+    public void testLengthReadsShapeWithoutMaterializingArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][], n INT)");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 2, 3], [4.0, 5, 6]], 1), " +
+                    "(ARRAY[[1.0, 2]], 2), " +
+                    "(NULL, 3)"
+            );
+            // In a filter the function reads straight off the page frame, which is the path that
+            // reads the shape header directly instead of materializing the array.
+            assertQuery("SELECT n FROM tango WHERE dim_length(arr, 2) = 3")
+                    .noLeakCheck()
+                    .returns("n\n1\n");
+            // A NULL array has no shape, so it matches no length.
+            assertQuery("SELECT n FROM tango WHERE dim_length(arr, 1) IS NULL")
+                    .noLeakCheck()
+                    .returns("n\n3\n");
         });
     }
 
@@ -3167,6 +3532,24 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullArraySingletonSurvivesConsumerClose() throws Exception {
+        assertMemoryLeak(() -> {
+            // The singleton is a BorrowedArray, whose close() is a no-op. A DirectArray would have
+            // gone to UNDEFINED here and failed the type assertion below.
+            final ArrayView first = NullConstant.NULL.getArray(null);
+            Assert.assertEquals(ColumnType.NULL, first.getType());
+            first.close();
+
+            final ArrayView second = NullConstant.NULL.getArray(null);
+            Assert.assertSame(first, second);
+            Assert.assertEquals(ColumnType.NULL, second.getType());
+            Assert.assertEquals(0, second.getDimCount());
+            Assert.assertEquals(0, second.getCardinality());
+            Assert.assertEquals(0, second.getFlatViewLength());
+        });
+    }
+
+    @Test
     public void testOpComposition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0,2.0],[3.0,4.0],[5.0,6.0]] arr FROM long_sequence(1))");
@@ -3368,7 +3751,6 @@ public class ArrayTest extends AbstractCairoTest {
                     33,
                     "dimLength must be an integer"
             );
-
 
             assertExceptionNoLeakCheck(
                     "select rnd_double_array(10, 0, 1000000)",
@@ -4311,5 +4693,61 @@ public class ArrayTest extends AbstractCairoTest {
         for (int i : values) {
             list.add(i);
         }
+    }
+
+    private void testLengthOverParquetOneDimension(boolean rawArrayEncoding) throws Exception {
+        // A 1D double array's length comes from the aux entry's data size rather than from its shape
+        // header (see PageFrameMemoryRecord.getArrayDimLen0): the entry is Double.BYTES * (length + 1)
+        // bytes wide, so reading the shape - and with it a data-vector cache line per row - is
+        // avoidable. Every other page-frame dim_length() test stores DOUBLE[][], which takes the
+        // shape path, so nothing exercised this.
+        // Both parquet array encodings are covered: the raw one copies the native entry verbatim,
+        // while the levels one rebuilds it in the decoder, so only the latter could drift from the
+        // layout the fast path assumes. The last row stays native, putting both frame types in one
+        // scan.
+        // The empty array is pinned on a native frame below rather than here, because the levels
+        // encoding loses it: an ARRAY[] stored in a partition that also holds a NULL array reads back
+        // as a one-element [null]. That is the decoder writing a shape of 1, not this path
+        // misreading it - the fast path's assert agrees with the shape header, and plain SELECT arr
+        // reproduces it on an unmodified master without going near getArrayDimLen0() at all. The raw
+        // encoding, which is the default, round-trips ARRAY[] correctly.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, String.valueOf(rawArrayEncoding));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tango VALUES
+                    ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0, 3.0]),
+                    ('1970-01-01T00:00:01.000000Z', ARRAY[9.0]),
+                    ('1970-01-01T00:00:02.000000Z', NULL),
+                    ('1970-01-02T00:00:00.000000Z', ARRAY[4.0, 5.0])
+                    """);
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            assertQuery("SELECT dim_length(arr, 1) d1, arr[1] first FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d1\tfirst
+                            3\t1.0
+                            1\t9.0
+                            null\tnull
+                            2\t4.0
+                            """);
+
+            // The empty array pins the +1 in the size-to-length conversion: its data entry is the
+            // bare shape-plus-padding, so it must read back as 0 rather than as 1.
+            execute("CREATE TABLE tango_native (arr DOUBLE[])");
+            execute("INSERT INTO tango_native VALUES (ARRAY[]), (ARRAY[7.0]), (NULL)");
+            assertQuery("SELECT dim_length(arr, 1) d1 FROM tango_native")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d1
+                            0
+                            1
+                            null
+                            """);
+            execute("DROP TABLE tango_native");
+            execute("DROP TABLE tango");
+        });
     }
 }
