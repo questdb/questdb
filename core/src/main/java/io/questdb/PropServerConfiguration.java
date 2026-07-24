@@ -231,7 +231,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     // Max rows applied to a table since its last durable epoch before an epoch is FORCED, independent
     // of the interval. Bounds WAL retention + recovery replay. Default 5_000_000; <= 0 disables the cap.
     private final long adaptiveEpochMaxRows;
-    // Adaptive group-commit window (us); default 0 = synchronous fsync-before-return (zero loss). >0 batches
+    // Adaptive group-commit window (us); default 50_000 (50ms). 0 = synchronous zero-loss; >0 batches
     // the WAL fdatasync across an adaptive table's commits within the window (RPO <= W). See
     // CairoConfiguration.getAdaptiveCommitGroupWindowUs / WalWriter group-commit / WalPurgeJob flusher.
     private final long adaptiveCommitGroupWindowUs;
@@ -2604,7 +2604,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         return bytes;
     }
 
-    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultMode) {
+    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultMode) throws ServerConfigurationException {
         final String commitMode = getString(properties, env, key, defaultMode);
 
         // must not be null because we provided non-null default value
@@ -2626,6 +2626,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             return CommitMode.ADAPTIVE;
         }
 
+        if (key == PropertyKey.CAIRO_COMMIT_MODE) {
+            // The database-wide default is a durability contract. A typo must not silently select NOSYNC,
+            // especially now that ADAPTIVE is the shipped default.
+            throw new ServerConfigurationException("invalid configuration value [key="
+                    + key.getPropertyPath() + ", value=" + commitMode
+                    + ", expected=nosync|async|sync|adaptive]");
+        }
+        // Preserve the historical line-UDP fallback for its separate commit-mode setting.
         return CommitMode.NOSYNC;
     }
 

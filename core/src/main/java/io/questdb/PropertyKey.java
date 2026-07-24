@@ -56,7 +56,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     // replay, so the interval can be long. Default 5_000_000; <= 0 disables the cap. See ApplyWal2TableJob.
     CAIRO_ADAPTIVE_EPOCH_MAX_ROWS("cairo.adaptive.epoch.max.rows"),
     // Plan 3 Task C: run the adaptive durable-epoch recovery roll-forward at startup. Default true;
-    // false makes it a no-op (operator kill-switch / negative-control test hook). See RecoveryCoordinator.
+    // false is a negative-control hook; startup fails closed if an adaptive table is present.
     CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED("cairo.adaptive.recovery.roll.forward.enabled"),
     // Whether a clean writer close flushes a final durable epoch over any un-epoched tail so a restart
     // has nothing to roll forward. Default true; false leaves the tail for the next boot's WAL replay

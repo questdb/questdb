@@ -95,11 +95,6 @@ public class RecoveryCoordinator {
      * after the table registry is loaded and before any WAL apply.
      */
     public void recover() {
-        // Operator kill-switch / negative-control hook: when disabled, skip the roll-forward entirely
-        // (under ADAPTIVE this leaves a post-crash table torn ahead of the last epoch — by design).
-        if (!configuration.isAdaptiveRecoveryRollForwardEnabled()) {
-            return;
-        }
         // Durable epochs are a per-table property. Do not short-circuit on the global mode: a table-level
         // ADAPTIVE override on a NOSYNC instance still has a creation baseline and must be recovered.
         // Every adaptive WAL table must have a trustworthy marker/generation; absence fails startup closed.
@@ -129,11 +124,13 @@ public class RecoveryCoordinator {
                         if (effectiveMode != CommitMode.ADAPTIVE) {
                             continue;
                         }
+                        failIfRecoveryDisabled(token);
                     } catch (CairoException | CairoError metadataFailure) {
                         // A crash during structural metadata swap can leave live _meta absent/torn while the
                         // previous durable epoch still has a bound, checksummed _meta payload. Recover from
                         // that generation before a retrying metadata reader can spin forever on a pinned clock.
                         if (metadataBoundEpoch) {
+                            failIfRecoveryDisabled(token);
                             recoverTable(token, src, dst, dir);
                             continue;
                         }
@@ -200,6 +197,16 @@ public class RecoveryCoordinator {
         }
     }
 
+    private void failIfRecoveryDisabled(TableToken token) {
+        if (!configuration.isAdaptiveRecoveryRollForwardEnabled()) {
+            // Skipping recovery can expose a lazily materialized, torn table. Keep the configuration seam for
+            // negative-control tests, but never let a production startup turn it into a fail-open read path.
+            throw CairoException.critical(0)
+                    .put("adaptive recovery is disabled; refusing unsafe startup [table=")
+                    .put(token.getTableName()).put(']');
+        }
+    }
+
     private boolean hasMetadataBoundEpoch(TableToken token, Path markerPath) {
         tablePath(markerPath, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
         if (!ff.exists(markerPath.$())) {
@@ -249,9 +256,15 @@ public class RecoveryCoordinator {
         }
 
         SnapshotMarker.Candidate selected = null;
+        boolean repairMarkerSelector = false;
         try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
             tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
             marker.of(dir.$());
+            final boolean selectorLoads = marker.tryLoad();
+            final boolean loadedFromSelector = marker.wasLoadedFromSelector();
+            final long selectorSeqTxn = selectorLoads ? marker.getEpochSeqTxn() : -1;
+            final long selectorTxn = selectorLoads ? marker.getEpochTxn() : -1;
+            final int selectorGeneration = selectorLoads ? marker.getGeneration() : SnapshotMarker.LEGACY_GENERATION;
             final SnapshotMarker.Candidate[] candidates = marker.loadCandidates();
             for (int i = 0; i < candidates.length; i++) {
                 final SnapshotMarker.Candidate candidate = candidates[i];
@@ -259,6 +272,10 @@ public class RecoveryCoordinator {
                 // internally checksummed payloads load and their complete available txn tuple matches.
                 if (epochCopiesValid(token, src, candidate)) {
                     selected = candidate;
+                    repairMarkerSelector = !loadedFromSelector
+                            || selectorSeqTxn != candidate.epochSeqTxn
+                            || selectorTxn != candidate.epochTxn
+                            || selectorGeneration != candidate.generation;
                     break;
                 }
             }
@@ -336,6 +353,20 @@ public class RecoveryCoordinator {
         fsyncFile(token, dst, TableUtils.TXN_FILE_NAME);
         fsyncFile(token, dst, TableUtils.COLUMN_VERSION_FILE_NAME);
         fsyncDir(token, dir);
+        if (repairMarkerSelector) {
+            // The selector word is unchecksummed and may have reverted, or its selected generation may have
+            // failed payload validation. Re-publish the generation we actually restored before any later
+            // epoch can overwrite that last trustworthy payload as the nominally "inactive" generation.
+            tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+            try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                marker.of(dir.$());
+                if (selected.generation == SnapshotMarker.LEGACY_GENERATION) {
+                    marker.write(selected.epochSeqTxn, selected.epochTxn, selected.epochTs);
+                } else {
+                    marker.write(selected.epochSeqTxn, selected.epochTxn, selected.epochTs, selected.generation);
+                }
+            }
+        }
         if (metadataBound) {
             // epochIsAheadOfLiveTxn and runtime users may have populated pooled/catalogue metadata from the
             // pre-recovery schema. A real startup has no such tenant; evict it before WAL replay.
@@ -356,19 +387,36 @@ public class RecoveryCoordinator {
 
     private void pinRecoveredEpoch(TableToken token, long epochTxn, long epochSeqTxn) {
         final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
-        if (tracker.getPinnedEpochTxn() == epochTxn) {
+        final long priorEpochTxn = tracker.getPinnedEpochTxn();
+        if (priorEpochTxn == epochTxn) {
             tracker.setDurableEpochSeqTxn(epochSeqTxn);
             return;
         }
-        boolean slotA = true;
+        final boolean priorSlotA = tracker.isPinnedEpochSlotA();
+        // Runtime checkpoint recovery can replace a live engine's existing epoch pin. Reserve the other
+        // ping-pong slot first, then release the old slot only after the new cut is protected.
+        boolean slotA = priorEpochTxn < 0 || !priorSlotA;
         try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
-            if (!scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_A, epochTxn)) {
-                slotA = false;
-                if (!scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_B, epochTxn)) {
+            int newSlotId = slotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B;
+            if (!scoreboard.incrementTxn(newSlotId, epochTxn)) {
+                if (priorEpochTxn >= 0) {
                     throw CairoException.critical(0)
                             .put("could not pin recovered adaptive epoch [table=").put(token.getTableName())
                             .put(", epochTxn=").put(epochTxn).put(']');
                 }
+                slotA = false;
+                newSlotId = TxnScoreboard.EPOCH_ID_B;
+                if (!scoreboard.incrementTxn(newSlotId, epochTxn)) {
+                    throw CairoException.critical(0)
+                            .put("could not pin recovered adaptive epoch [table=").put(token.getTableName())
+                            .put(", epochTxn=").put(epochTxn).put(']');
+                }
+            }
+            if (priorEpochTxn >= 0) {
+                scoreboard.releaseTxn(
+                        priorSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B,
+                        priorEpochTxn
+                );
             }
         }
         tracker.setPinnedEpoch(epochTxn, slotA);

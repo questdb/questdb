@@ -39,6 +39,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.FilesFacade;
@@ -69,6 +70,63 @@ import static org.junit.Assert.assertTrue;
  * {@code _cv.epoch} back over them, so the table opens at exactly {@code epoch.seqTxn}.
  */
 public class RecoveryCoordinatorTest extends AbstractCairoTest {
+
+    @Test
+    public void testRecoveryDisableSwitchFailsClosedForAdaptiveTable() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, "false");
+        try {
+            execute("create table disabled_recovery (ts timestamp, v long) timestamp(ts) partition by day wal");
+            engine.releaseAllWriters();
+            try {
+                new RecoveryCoordinator(engine).recover();
+                Assert.fail("disabled adaptive recovery must not expose possibly torn live state");
+            } catch (CairoException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "refusing unsafe startup");
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, "true");
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    @Test
+    public void testRuntimeCheckpointBaselineHandsOverEpochPin() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        try {
+            execute("create table checkpoint_pin (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into checkpoint_pin values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("checkpoint_pin");
+            final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            final long priorEpochTxn = tracker.getPinnedEpochTxn();
+            Assert.assertTrue(priorEpochTxn >= 0);
+
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            execute("insert into checkpoint_pin values ('2024-01-01T01:00:00.000000Z', 2)");
+            drainWalQueue();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (Path path = new Path()) {
+                final int rootLen = path.of(configuration.getDbRoot()).concat(token).size();
+                RecoveryCoordinator.removeAdaptiveEpochArtifacts(configuration.getFilesFacade(), path, rootLen);
+            }
+
+            new RecoveryCoordinator(engine, true).recover();
+            final long newEpochTxn = tracker.getPinnedEpochTxn();
+            Assert.assertTrue(newEpochTxn > priorEpochTxn);
+            try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
+                Assert.assertTrue("the superseded checkpoint pin must be released",
+                        scoreboard.isRangeAvailable(priorEpochTxn, priorEpochTxn + 1));
+                Assert.assertFalse("the checkpoint-restored baseline must remain pinned",
+                        scoreboard.isRangeAvailable(newEpochTxn, newEpochTxn + 1));
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
 
     @Test
     public void testRecoverRestoresTxnToEpochCut() throws Exception {
@@ -359,6 +417,15 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
             new RecoveryCoordinator(engine).recover();
             Assert.assertEquals("torn newest generation must fall back to creation baseline", 0, readTxnSeqTxn(token));
+            try (Path p = new Path(); SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
+                p.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                marker.of(p.$());
+                Assert.assertTrue(marker.tryLoad());
+                Assert.assertTrue("fallback recovery must repair the selector to the restored generation",
+                        marker.wasLoadedFromSelector());
+                Assert.assertEquals(0L, marker.getEpochSeqTxn());
+                Assert.assertEquals(0, marker.getGeneration());
+            }
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);

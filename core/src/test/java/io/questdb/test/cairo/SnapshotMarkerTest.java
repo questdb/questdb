@@ -75,6 +75,38 @@ public class SnapshotMarkerTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCandidatesPreferNewestCutWhenSelectorReverts() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path().of(root).concat(TableUtils.SNAPSHOT_FILE_NAME)) {
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    marker.write(3L, 2L, 3_000_000L, 0);
+                }
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    marker.write(7L, 5L, 7_000_000L, 1);
+                }
+
+                final long currentVersion = peekLong(ff, path.$(), SnapshotMarker.OFFSET_VERSION);
+                Assert.assertEquals(2L, currentVersion);
+                // Model an unchecksummed selector sector reverting while both checksummed slots survive.
+                pokeLong(ff, path.$(), SnapshotMarker.OFFSET_VERSION, currentVersion - 1);
+
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    Assert.assertTrue(marker.tryLoad());
+                    Assert.assertEquals("raw selector now names the older cut", 3L, marker.getEpochSeqTxn());
+                    final SnapshotMarker.Candidate[] candidates = marker.loadCandidates();
+                    Assert.assertEquals(2, candidates.length);
+                    Assert.assertEquals("recovery ordering must ignore the reverted selector", 7L, candidates[0].epochSeqTxn);
+                    Assert.assertEquals(1, candidates[0].generation);
+                }
+            }
+        });
+    }
+
     // ---- CRC fallback tests ----
 
     /**

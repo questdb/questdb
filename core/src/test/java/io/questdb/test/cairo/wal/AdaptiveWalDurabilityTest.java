@@ -561,6 +561,34 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEpochCadenceTreatsBackwardClockStepAsElapsed() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60_000);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(120_000_000L);
+            execute("create table epoch_clock (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into epoch_clock values ('2024-09-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            final io.questdb.cairo.TableToken tt = engine.verifyTableName("epoch_clock");
+            final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            final long firstEpoch = tracker.getDurableEpochSeqTxn();
+            Assert.assertEquals(1L, firstEpoch);
+
+            // Simulate an NTP/admin correction backwards. The next apply must epoch immediately rather than
+            // waiting for wall time to climb back past the previous timestamp.
+            setCurrentMicros(60_000_000L);
+            execute("insert into epoch_clock values ('2024-09-01T01:00:00.000000Z', 2)");
+            drainWalQueue();
+            Assert.assertEquals(2L, tracker.getDurableEpochSeqTxn());
+        });
+    }
+
+    @Test
     public void testAdaptiveEpochColumnSyncBatchedConfigRename() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, false);
         assertMemoryLeak(() -> Assert.assertFalse(engine.getConfiguration().isAdaptiveEpochColumnSyncBatched()));

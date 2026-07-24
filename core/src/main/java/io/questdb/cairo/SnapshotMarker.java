@@ -125,6 +125,7 @@ public class SnapshotMarker implements Closeable {
     private int formatVersion;
     private int generation = LEGACY_GENERATION;
     private long version; // version word from the file
+    private boolean loadedFromSelector;
 
     public static final class Candidate {
         public final long epochSeqTxn;
@@ -161,6 +162,7 @@ public class SnapshotMarker implements Closeable {
             mem.jumpTo(FILE_SIZE);
         }
         this.version = mem.getLong(OFFSET_VERSION);
+        this.loadedFromSelector = false;
         return this;
     }
 
@@ -242,6 +244,7 @@ public class SnapshotMarker implements Closeable {
      * @return {@code true} if a valid epoch was loaded, {@code false} if absent / both slots torn
      */
     public boolean tryLoad() {
+        loadedFromSelector = false;
         if (mem == null || mem.size() < FILE_SIZE) {
             epochSeqTxn = 0;
             epochTxn = 0;
@@ -258,6 +261,7 @@ public class SnapshotMarker implements Closeable {
         long otherSlotOffset = liveIsA ? OFFSET_SLOT_B : OFFSET_SLOT_A;
 
         if (tryLoadSlot(liveSlotOffset)) {
+            loadedFromSelector = true;
             return true;
         }
 
@@ -276,9 +280,11 @@ public class SnapshotMarker implements Closeable {
     }
 
     /**
-     * Returns valid marker slots in selector order: current first, previous second.
-     * Payload validation is deliberately left to recovery, which may reject the current generation
-     * and then adopt the previous fully-bound generation.
+     * Returns valid marker slots newest-cut first. The selector word normally identifies that slot, but
+     * it has no checksum and can tear or revert independently during a power loss. Both slot bodies are
+     * checksummed, so ordering by their monotone epoch identity prevents a reverted selector from choosing
+     * an older cut whose intervening WAL may already have been purged. Payload validation remains recovery's
+     * responsibility; it may reject the newest generation and adopt the previous fully-bound generation.
      */
     public Candidate[] loadCandidates() {
         if (mem == null || mem.size() < FILE_SIZE) {
@@ -297,6 +303,10 @@ public class SnapshotMarker implements Closeable {
             previous = new Candidate(epochSeqTxn, epochTxn, epochTs, formatVersion, generation);
         }
         if (current != null && previous != null) {
+            if (previous.epochSeqTxn > current.epochSeqTxn
+                    || (previous.epochSeqTxn == current.epochSeqTxn && previous.epochTxn > current.epochTxn)) {
+                return new Candidate[]{previous, current};
+            }
             return new Candidate[]{current, previous};
         }
         if (current != null) {
@@ -335,6 +345,10 @@ public class SnapshotMarker implements Closeable {
 
     public int getGeneration() {
         return generation;
+    }
+
+    public boolean wasLoadedFromSelector() {
+        return loadedFromSelector;
     }
 
     @Override

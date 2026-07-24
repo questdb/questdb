@@ -27,13 +27,14 @@ Adaptive commit is three independent ideas stacked on QuestDB's existing WAL:
 
 | Frontier | Advances when | Consumed by |
 |---|---|---|
-| **`localDurableSeqTxn`** | the WAL commit's `fdatasync` completes (W=0: every commit; W>0: after the ≤W batch flush) | **reader visibility** (INV‑3) + the QWP client durable‑ack frame |
+| **`localDurableSeqTxn`** | the WAL commit's `fdatasync` completes (W=0: every commit; W>0: after the ≤W batch flush) | the QWP client durable‑ack frame + observability |
 | **`durableEpochSeqTxn`** | a durable epoch publishes | **only** `WalPurgeJob` (the WAL‑purge floor) + `wal_tables()` observability |
 
-Reads and client acks gate on **`localDurableSeqTxn`** — never on the epoch. The epoch
+QWP durable-ack frames gate on **`localDurableSeqTxn`** — never on the epoch. Ordinary table
+visibility follows WAL apply and may therefore include the configured W>0 loss window. The epoch
 (`durableEpochSeqTxn`) is *only* the WAL‑purge floor and the recovery‑replay start point.
 Consequently the epoch cadence affects WAL disk retention, recovery‑replay lag, and
-`syncfs` frequency — but **not** read freshness, durable‑ack, or ingest throughput. Both
+`syncfs` frequency — but **not** ordinary read freshness, durable‑ack, or ingest throughput. Both
 frontiers live on `SeqTxnTracker` (per table).
 
 ### Effective vs global commit mode
@@ -61,9 +62,9 @@ flowchart TD
     SEQ --> FR{"W = 0 ?"}
     FR -->|"W=0: fdatasync now"| LD["setLocalDurableSeqTxn (commit thread)"]
     FR -->|"W&gt;0: recordPendingDurable"| BAT["batched flushPendingDurable ≤ W<br/>then setLocalDurableSeqTxn"]
-    LD --> VIS["localDurableSeqTxn ↑ → readers may see it; client durable-ack fires"]
+    LD --> VIS["localDurableSeqTxn ↑ → client durable-ack may fire"]
     BAT --> VIS
-    VIS --> AP["ApplyWal2TableJob (background) — LAZY apply"]
+    SEQ --> AP["ApplyWal2TableJob (background) — LAZY apply"]
     AP --> TBL["materialize: partition &lt;col&gt;.d/.i, index .k/.v, symbols .o/.c<br/>then _cv, then _txn (published last). NO per-commit device flush."]
     TBL --> EP{"epoch trigger: interval elapsed<br/>OR rows-since-epoch ≥ cap ?"}
     EP -->|no| AP
@@ -294,6 +295,8 @@ step's effect is durable before the next is published):
 advance():
   re-check local durability (demote-in-window guard)
   1. writer.fsyncMaterializedState()          # make columns/_cv/_txn durable + write .epoch copies
+     non-Linux: fdatasync sequencer through epochSeqTxn  # epoch cannot outrun durable WAL
+     publish localDurableSeqTxn >= epochSeqTxn
   2. scoreboard.incrementTxn(newSlot, epochTxn)         # reserve NEW pin before marker
   3. snapshotMarker.write(epochSeqTxn, epochTxn, now)   # _snapshot — the crash boundary
      scoreboard.releaseTxn(priorSlot, priorTxn)         # release prior only after marker
@@ -322,13 +325,14 @@ the first periodic epoch.
 
 ### Recovery
 
-`RecoveryCoordinator.recover()` (kill‑switch `isAdaptiveRecoveryRollForwardEnabled()`)
-iterates WAL tables, skipping non‑adaptive ones. Per table (`recoverTable`): require
-`_snapshot` → inspect the selector-current slot then the previous valid slot → validate the
+`RecoveryCoordinator.recover()` (fail-closed gate `isAdaptiveRecoveryRollForwardEnabled()`)
+iterates WAL tables, skipping non‑adaptive ones; disabling recovery refuses startup when an adaptive
+table is encountered. Per table (`recoverTable`): require
+`_snapshot` → inspect both checksummed slots newest-cut first (the unchecksummed selector may tear) → validate the
 selected generation's manifest, table/txn/column-version identities, payload sizes and
 checksums → use the newest trustworthy candidate (falling back to the previous generation if
-the newest payload or manifest is torn) → **restore `_txn` then `_cv`** (`ff.copy`
-epoch→live) → `fsync` `_txn`, `_cv`, dir → `bumpRecoveryIncarnation`. Boot then re‑applies
+the newest payload or manifest is torn) → restore matching **`_meta`**, then **`_txn`**, then **`_cv`** (`ff.copy`
+epoch→live) → `fsync` the restored files and directory → repair a reverted/invalid marker selector when needed → `bumpRecoveryIncarnation`. Boot then re‑applies
 the WAL `(epochSeqTxn, frontier]` on top.
 
 Recovery is fail-closed: an absent marker, no valid candidate, or a wrong-lineage anchor aborts

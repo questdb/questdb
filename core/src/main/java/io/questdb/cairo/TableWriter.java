@@ -14697,10 +14697,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 : 0;
 
         // Step 1: make the materialized state fully durable + write the inactive durable epoch copies.
+        // Capture the applied cut before flushing it; the writer is held, so this frontier cannot move.
+        final long epochSeqTxn = getSeqTxn();
         fsyncMaterializedState(epochGeneration);
 
+        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        if (epochSeqTxn > 0) {
+            // An epoch must never post-date the durable sequencer. This matters on macOS/Windows, where the
+            // materialized-state fallback fsyncs table files individually rather than issuing Linux syncfs:
+            // apply can reach a W>0 transaction while its shared sequencer barrier is still pending. Make the
+            // sequencer prefix through this applied cut durable before the marker/purge floor can publish it.
+            // On Linux, fsyncMaterializedState() already issued filesystem-wide syncfs; avoid a second device
+            // flush there. Private adaptive WAL files are durable before sequencing, so the shared barrier is
+            // sufficient. A mode-enrollment baseline also needs this for older NOSYNC sequencer records.
+            if (!ff.isSyncfsFileSystemWide()) {
+                engine.getTableSequencerAPI().fdatasyncTxnLog(tableToken);
+            }
+            tracker.setLocalDurableSeqTxn(epochSeqTxn);
+        }
+
         // Bind all three payloads to this exact table/cut before making their directory entries durable.
-        final long epochSeqTxn = getSeqTxn();
         final long epochTxn = getTxn();
         DurableEpochManifest.write(
                 configuration,
@@ -14714,7 +14730,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.getMetadataVersion()
         );
         fsyncEpochDirectory();
-        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
 
         // Step 2: reserve the NEW epoch pin BEFORE the durable marker selects it. A busy target slot must
         // leave the old marker authoritative; publishing the marker first could make recovery select an
@@ -14924,6 +14939,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             } finally {
                 ff.findClose(findPtr);
+            }
+            try {
+                if (!Os.isWindows()) {
+                    // Per-file fsync does not persist a newly created file's directory entry. The Linux path's
+                    // syncfs journals every partition directory, but this explicit non-wide fallback must do so
+                    // itself before publishing an epoch that references the files.
+                    path.trimTo(partitionDirLen).slash$();
+                    final long partitionDirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+                    if (partitionDirFd == -1) {
+                        throw CairoException.critical(ff.errno())
+                                .put("could not open partition directory for adaptive epoch fsync [path=").put(path).put(']');
+                    }
+                    ff.fsyncAndClose(partitionDirFd);
+                }
+            } finally {
                 path.trimTo(pathSize);
             }
         }

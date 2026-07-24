@@ -2418,7 +2418,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         // not, the writer is left registered so the background flusher can pick up the idle tail.
         sequencer.getWalGroupCommitFlushQueue().register(this);
         final long windowUs = configuration.getAdaptiveCommitGroupWindowUs();
-        if (configuration.getMicrosecondClock().getTicks() - pendingSinceMicros >= windowUs) {
+        final long nowMicros = configuration.getMicrosecondClock().getTicks();
+        final long elapsedMicros = nowMicros - pendingSinceMicros;
+        // MicrosecondClock is wall time. If NTP/admin adjustment moves it backwards, flush immediately:
+        // waiting for wall time to catch up would violate the configured RPO bound.
+        if (elapsedMicros < 0 || elapsedMicros >= windowUs) {
             flushPendingDurable();
         }
     }
@@ -2494,9 +2498,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         if (pendingDurableSeqTxn < 0) {
             return false;
         }
-        if (nowMicros - pendingSinceMicros < windowUs) {
+        final long elapsedMicros = nowMicros - pendingSinceMicros;
+        if (elapsedMicros >= 0 && elapsedMicros < windowUs) {
             return false; // still within the RPO budget — leave it for a later sweep / the next commit
         }
+        // A backwards wall-clock step is not evidence that the batch became younger. Flush immediately
+        // rather than extending the idle-tail RPO until the clock catches up.
         flushPendingDurable();
         return true;
     }

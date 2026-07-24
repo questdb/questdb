@@ -52,7 +52,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Deferred 2 — adaptive GROUP-COMMIT (the RPO knob {@code cairo.adaptive.commit.group.window}).
  *
- * <p>W=0 (default) is today's synchronous fsync-before-return (zero loss). When {@code W > 0}, the WAL
+ * <p>W=0 is synchronous fsync-before-return (zero loss); the shipped default is W=50ms. When {@code W > 0}, the WAL
  * fdatasync (the device flush) is BATCHED across an adaptive table's commits within window {@code W}:
  * {@code commit0} returns after the txn is sequenced (commit-ack = sequenced, msync'd to page cache,
  * NOT yet device-durable), and the fdatasync is performed by a batched flush. {@code localDurableSeqTxn}
@@ -61,7 +61,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>These tests pin the MECHANISM:
  * <ul>
- *   <li>(a) the config default is 0;</li>
+ *   <li>(a) the config default is 50ms;</li>
  *   <li>(b) W=0 issues a WAL fdatasync per commit and advances {@code localDurableSeqTxn} synchronously
  *       (byte-identical to today);</li>
  *   <li>(c) W&gt;0 BATCHES the WAL fdatasync across rapid commits (fdatasync count &lt;&lt; N) and
@@ -321,6 +321,68 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
                             tracker.getLocalDurableSeqTxn() >= pendingSeqTxn
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testBackgroundFlusherTreatsBackwardClockStepAsExpiredWindow() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(2_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            try (WalWriter w = engine.getWalWriter(tt); ExposedWalPurgeJob flusher = new ExposedWalPurgeJob(engine)) {
+                commitRow(w, 0L, 0L);
+                final long pendingSeqTxn = tracker.getSeqTxn();
+                Assert.assertTrue(tracker.getLocalDurableSeqTxn() < pendingSeqTxn);
+
+                // The production clock is wall time and can move backwards. Waiting for it to catch up would
+                // extend the promised idle-tail RPO by the size of the clock correction.
+                setCurrentMicros(1_000_000L);
+                flusher.flushNow();
+                Assert.assertTrue("a backwards clock step must force the pending durability barrier",
+                        tracker.getLocalDurableSeqTxn() >= pendingSeqTxn);
+            }
+        });
+    }
+
+    @Test
+    public void testEpochCannotPublishAheadOfDeferredSequencerOnNonWideSyncfsPlatform() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+
+        final NonWideSyncfsWalFdatasyncFacade ff = new NonWideSyncfsWalFdatasyncFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                commitRow(walWriter, 0L, 1L);
+                drainWalQueue();
+                final long appliedSeqTxn = tracker.getWriterTxn();
+                Assert.assertTrue("the W>0 sequencer barrier must still be pending",
+                        tracker.getLocalDurableSeqTxn() < appliedSeqTxn);
+
+                ff.reset();
+                try (TableWriter tableWriter = getWriter(tt)) {
+                    tableWriter.advanceDurableEpoch(1L);
+                }
+
+                Assert.assertTrue("a non-wide epoch must fdatasync the sequencer before publishing",
+                        ff.sequencerFdatasyncs() > 0);
+                Assert.assertTrue("the epoch cut must be inside the local durable WAL prefix",
+                        tracker.getLocalDurableSeqTxn() >= appliedSeqTxn);
+                Assert.assertEquals(appliedSeqTxn, tracker.getDurableEpochSeqTxn());
             }
         });
     }
@@ -672,6 +734,13 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         void failNext() {
             armed = true;
             failNext = true;
+        }
+    }
+
+    static class NonWideSyncfsWalFdatasyncFacade extends WalFdatasyncFacade {
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            return false;
         }
     }
 

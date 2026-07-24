@@ -702,7 +702,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         // applied-row backlog reaches the cap (maxRows > 0). The cap bounds WAL retention + recovery replay
         // so the interval can be long; maxRows <= 0 disables it (interval-only). A negative interval already
         // returned above, so an operator opt-out of epochs also opts out of the cap.
-        final boolean timeElapsed = lastEpochTs == 0 || (nowMs - lastEpochTs) >= intervalMs;
+        // MicrosecondClock is wall time. A backwards NTP/admin step must not suppress epochs until the
+        // clock catches up; treat it as an elapsed interval (safe early flush) so the replay bound holds.
+        final boolean timeElapsed = lastEpochTs == 0 || nowMs < lastEpochTs || (nowMs - lastEpochTs) >= intervalMs;
         final boolean backlogHit = maxRows > 0 && tracker.getRowsSinceEpoch() >= maxRows;
         if (!timeElapsed && !backlogHit) {
             return;

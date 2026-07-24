@@ -111,8 +111,8 @@ instance default is `nosync`.
 
 Confirmed in source: global key `cairo.commit.mode`
 (`PropertyKey.java:48`), default `adaptive`
-(`PropServerConfiguration.java:2605`; an unrecognized value falls back to `nosync`,
-`:2626`); `CREATE TABLE ... WITH
+(`PropServerConfiguration.java:2605`; an unrecognized database-wide value aborts startup
+rather than silently downgrading durability); `CREATE TABLE ... WITH
 commit_mode='...'` (`SqlParser.java:1780`); `ALTER TABLE ... SET PARAM
 commit_mode='...'` (`SqlCompilerImpl.java:1722`); token parsing incl. `unset`
 (`CommitMode.fromString`, `CommitMode.java:101`); per-table-wins resolution
@@ -148,7 +148,8 @@ cairo.adaptive.commit.group.window=50ms     # default 50ms (RPO <= 50ms); 0 = sy
 > following commit but by the background group-commit flusher in `WalPurgeJob`,
 > which runs on a shared worker. The effective RPO for that final batch is therefore
 > bounded by `W + shared-worker sleep cadence`
-> (`shared.worker.sleep.timeout`), not by `W` alone. Keep the sweep cadence
+> (`shared.worker.sleep.timeout`), not by `W` alone. A backwards wall-clock correction forces an
+immediate flush rather than extending the window until time catches up. Keep the sweep cadence
 > commensurate with `W`: a **large `shared.worker.sleep.timeout` combined with a tiny
 > `W`** widens the idle-tail RPO well past `W` (the flusher may sleep far longer than
 > the window before it fires). If you set a sub-millisecond `W`, keep
@@ -405,8 +406,8 @@ fires.
 cairo.adaptive.recovery.roll.forward.enabled=true    # default true
 ```
 
-Leave this `true`. Setting it `false` makes the boot-time epoch roll-forward a
-no-op — an operator kill-switch / negative-control hook, not a normal setting.
+Leave this `true`. Setting it `false` is a negative-control hook; startup now fails closed
+when it encounters an adaptive table rather than exposing potentially torn lazy materialization.
 
 Confirmed in source: `cairo.adaptive.epoch.interval` (`PropertyKey.java:53`;
 `0` = every batch, negative = disabled, per `:50-52`), default `60000`
@@ -505,7 +506,7 @@ Downgrade-skips-roll-forward gate confirmed at `RecoveryCoordinator.java:89`.
 | `cairo.adaptive.commit.group.window` | `50ms` (`50_000` us) | Group-commit / RPO window. `0` = `fdatasync`-before-ack (zero loss). `> 0` = batched flush, RPO ≤ `W`. Clamped to ≥ 0. |
 | `cairo.adaptive.epoch.interval` | `60000` | Min interval between durable epochs per table. `0` = every apply batch. Negative = epochs disabled (also disables the row cap below). |
 | `cairo.adaptive.epoch.max.rows` | `5_000_000` | Forces an epoch once this many rows are applied to a table since its last one, independent of the interval. Bounds WAL retention + recovery replay under active ingest. `<= 0` disables the cap (interval-only). |
-| `cairo.adaptive.recovery.roll.forward.enabled` | `true` | Run the durable-epoch recovery roll-forward at boot. `false` = no-op kill-switch. |
+| `cairo.adaptive.recovery.roll.forward.enabled` | `true` | Run durable-epoch recovery at boot. `false` refuses startup when an adaptive table is present. |
 
 Per-table override (wins over the global): `WITH commit_mode='…'` at `CREATE TABLE`,
 or `ALTER TABLE … SET PARAM commit_mode='…'`. Tokens: `nosync`, `sync`, `async`,
