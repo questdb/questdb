@@ -30,13 +30,27 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.date.VarcharToDateFunctionFactory;
+import io.questdb.griffin.engine.functions.date.VarcharToNanoTimestampVCFunctionFactory;
+import io.questdb.griffin.engine.functions.date.VarcharToTimestampVCFunctionFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRuleFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
+import io.questdb.std.datetime.millitime.DateFormatCompiler;
+import io.questdb.std.datetime.nanotime.NanosFormatCompiler;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.text.DateFormatSymbols;
+import java.util.Locale;
+
 public class VarcharDateFunctionUtilsTest extends AbstractFunctionFactoryTest {
+    private static final String NON_ASCII_TEXT = "ø";
 
     @Test
     public void testIsAsciiOnlyPattern() throws SqlException {
@@ -60,12 +74,45 @@ public class VarcharDateFunctionUtilsTest extends AbstractFunctionFactoryTest {
         assertAsciiOnly("MM-dd-MM", true);
     }
 
+    @Test
+    public void testLocaleBackedCompilerOpsUseUtf8Parser() throws SqlException {
+        final DateLocale locale = createNonAsciiLocale();
+        assertLocaleBackedOps(
+                new DateFormatCompiler()::compile,
+                DateFormatCompiler::getOpName,
+                DateFormatCompiler.getOpCount(),
+                new VarcharToDateFunctionFactory(),
+                locale,
+                "date"
+        );
+        assertLocaleBackedOps(
+                new MicrosFormatCompiler()::compile,
+                MicrosFormatCompiler::getOpName,
+                MicrosFormatCompiler.getOpCount(),
+                new VarcharToTimestampVCFunctionFactory(),
+                locale,
+                "microsecond timestamp"
+        );
+        assertLocaleBackedOps(
+                new NanosFormatCompiler()::compile,
+                NanosFormatCompiler::getOpName,
+                NanosFormatCompiler.getOpCount(),
+                new VarcharToNanoTimestampVCFunctionFactory(),
+                locale,
+                "nanosecond timestamp"
+        );
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new VarcharToDateFunctionFactory();
     }
 
     private void assertAsciiOnly(String pattern, boolean expected) throws SqlException {
+        assertAsciiOnly(getFunctionFactory(), pattern, expected);
+    }
+
+    private void assertAsciiOnly(FunctionFactory functionFactory, String pattern, boolean expected) throws SqlException {
         final ObjList<Function> args = new ObjList<>();
         args.add(new VarcharColumn(0));
         args.add(new StrConstant(pattern));
@@ -74,15 +121,72 @@ public class VarcharDateFunctionUtilsTest extends AbstractFunctionFactoryTest {
         argPositions.add(0);
         argPositions.add(0);
 
-        try (Function function = getFunctionFactory().newInstance(
+        try (Function function = functionFactory.newInstance(
                 0,
                 args,
                 argPositions,
                 configuration,
                 sqlExecutionContext
         )) {
-            final boolean isAsciiOnly = function.getClass().getName().endsWith("$ToAsciiDateFunction");
+            final String className = function.getClass().getName();
+            final boolean isAsciiOnly = className.endsWith("$ToAsciiDateFunction")
+                    || className.endsWith("$ToAsciiTimestampFunc");
             Assert.assertEquals(pattern, expected, isAsciiOnly);
         }
+    }
+
+    private void assertLocaleBackedOps(
+            FormatCompiler compiler,
+            OpNameProvider opNameProvider,
+            int opCount,
+            FunctionFactory functionFactory,
+            DateLocale locale,
+            String compilerName
+    ) throws SqlException {
+        int localeBackedOpCount = 0;
+        final StringSink sink = new StringSink();
+        assertAsciiOnly(functionFactory, "yyyy-MM-dd", true);
+        for (int i = 0; i < opCount; i++) {
+            final String pattern = opNameProvider.getOpName(i);
+            sink.clear();
+            compiler.compile(pattern).format(0, locale, NON_ASCII_TEXT, sink);
+            if (!Chars.isAscii(sink)) {
+                localeBackedOpCount++;
+                assertAsciiOnly(functionFactory, pattern, false);
+            }
+        }
+        Assert.assertTrue("no locale-backed operations found for " + compilerName, localeBackedOpCount > 0);
+    }
+
+    private static DateLocale createNonAsciiLocale() {
+        final DateFormatSymbols symbols = new DateFormatSymbols(Locale.ENGLISH);
+        symbols.setAmPmStrings(newNonAsciiStrings(2));
+        symbols.setEras(newNonAsciiStrings(2));
+        symbols.setMonths(newNonAsciiStrings(13));
+        symbols.setShortMonths(newNonAsciiStrings(13));
+        symbols.setShortWeekdays(newNonAsciiStrings(8));
+        symbols.setWeekdays(newNonAsciiStrings(8));
+        symbols.setZoneStrings(new String[][]{
+                {"UTC", NON_ASCII_TEXT, NON_ASCII_TEXT, NON_ASCII_TEXT, NON_ASCII_TEXT}
+        });
+        return new DateLocale("non-ascii", symbols, TimeZoneRuleFactory.INSTANCE);
+    }
+
+    private static String[] newNonAsciiStrings(int count) {
+        final String[] values = new String[count];
+        for (int i = 0; i < count; i++) {
+            values[i] = NON_ASCII_TEXT;
+        }
+        return values;
+    }
+
+    @FunctionalInterface
+    private interface FormatCompiler {
+        DateFormat compile(CharSequence pattern);
+    }
+
+    @FunctionalInterface
+    private interface OpNameProvider {
+        String getOpName(int index);
     }
 }
