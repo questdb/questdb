@@ -123,6 +123,7 @@ import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -232,6 +233,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
     private final DetachedPostingFileRemover detachedPostingFileRemover = new DetachedPostingFileRemover();
+    private final DirectUtf8String directUtf8String = new DirectUtf8String();
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final int fileOperationRetryCount;
@@ -4218,7 +4220,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ParquetColumnTypeConverter.convertVarColumnToFixed(
                             effectiveSrcType, columnType, srcDataPtr, srcAuxPtr,
                             (int) rowGroupRowCount, dstPtr,
-                            utf8Sink, utf16Sink,
+                            directUtf8String, utf16Sink,
                             coveringDecimal64, coveringDecimal128, coveringDecimal256);
                 } else {
                     dataMem.putBlockOfBytes(srcDataPtr, srcDataSize);
@@ -11569,7 +11571,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         effectiveSrcType, tableColumnType,
                                         srcDataPtr, srcAuxPtr,
                                         (int) rowGroupRowCount, fixBuf,
-                                        utf8Sink, utf16Sink,
+                                        directUtf8String, utf16Sink,
                                         d64, d128, d256
                                 );
                                 appendBuffer(dstFixFd, fixBuf, fixSize);
