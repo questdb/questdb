@@ -1954,6 +1954,45 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void applyLateralCountExprTemplates(
+            IQueryModel outputModel,
+            ObjList<CharSequence> exprAliases,
+            ObjList<ExpressionNode> exprTemplates,
+            IQueryModel translatingModel,
+            IQueryModel innerVirtualModel,
+            IQueryModel baseModel
+    ) throws SqlException {
+        ObjList<QueryColumn> cols = outputModel.getBottomUpColumns();
+        for (int j = 0, m = exprAliases.size(); j < m; j++) {
+            CharSequence exprAlias = exprAliases.getQuick(j);
+            CharSequence resolvedAlias = translatingModel.getColumnNameToAliasMap().get(exprAlias);
+            if (resolvedAlias == null) {
+                resolvedAlias = exprAlias;
+            }
+            for (int i = 0, n = cols.size(); i < n; i++) {
+                QueryColumn pc = cols.getQuick(i);
+                if (!Chars.equalsIgnoreCase(pc.getAlias(), resolvedAlias)) {
+                    continue;
+                }
+                ExpressionNode template = ExpressionNode.deepClone(
+                        expressionNodePool,
+                        exprTemplates.getQuick(j)
+                );
+                emitLiterals(
+                        template,
+                        translatingModel,
+                        innerVirtualModel,
+                        baseModel,
+                        false,
+                        false,
+                        false
+                );
+                pc.of(pc.getAlias(), template, pc.isIncludeIntoWildcard());
+                break;
+            }
+        }
+    }
+
     private void assignFilters(IQueryModel parent) throws SqlException {
         tablesSoFar.clear();
         postFilterRemoved.clear();
@@ -10525,6 +10564,20 @@ public class SqlOptimiser implements Mutable {
             applyLateralCountCoalesce(outerVirtualModel, lateralCountCols, translatingModel);
             rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
             lateralCountCols.clear();
+        }
+        ObjList<CharSequence> lateralCountExprAliases = model.getLateralCountExprAliases();
+        if (lateralCountExprAliases.size() > 0) {
+            applyLateralCountExprTemplates(
+                    outerVirtualModel,
+                    lateralCountExprAliases,
+                    model.getLateralCountExprTemplates(),
+                    translatingModel,
+                    innerVirtualModel,
+                    baseModel
+            );
+            rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+            lateralCountExprAliases.clear();
+            model.getLateralCountExprTemplates().clear();
         }
 
         IQueryModel root;

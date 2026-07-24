@@ -80,6 +80,8 @@ public class QueryModel implements IQueryModel {
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final ObjList<IQueryModel> joinModels = new ObjList<>();
     private final ObjList<CharSequence> lateralCountColumns = new ObjList<>();
+    private final ObjList<CharSequence> lateralCountExprAliases = new ObjList<>();
+    private final ObjList<ExpressionNode> lateralCountExprTemplates = new ObjList<>();
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     // Named window definitions from WINDOW clause (e.g., WINDOW w AS (PARTITION BY ...))
@@ -452,6 +454,8 @@ public class QueryModel implements IQueryModel {
         isCteModel = false;
         modelType = ExecutionModel.QUERY;
         lateralCountColumns.clear();
+        lateralCountExprAliases.clear();
+        lateralCountExprTemplates.clear();
         updateSetColumns.clear();
         updateTableColumnTypes.clear();
         standaloneUnnest = false;
@@ -826,6 +830,16 @@ public class QueryModel implements IQueryModel {
     @Override
     public ObjList<CharSequence> getLateralCountColumns() {
         return lateralCountColumns;
+    }
+
+    @Override
+    public ObjList<CharSequence> getLateralCountExprAliases() {
+        return lateralCountExprAliases;
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getLateralCountExprTemplates() {
+        return lateralCountExprTemplates;
     }
 
     @Override
