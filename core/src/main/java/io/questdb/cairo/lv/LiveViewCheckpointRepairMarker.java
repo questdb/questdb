@@ -54,10 +54,11 @@ import org.jetbrains.annotations.NotNull;
  * fully durable applied base table (see {@code LiveViewRefreshJob}'s restore
  * path), which is always correct.
  * <p>
- * A recorded {@link #getBaseGeneration() base generation} - the timeline
- * generation the repair started from - lets a restart distinguish a live repair
- * from a stale marker that a crash left behind after a successful seal: the
- * truncate publishes {@code baseGeneration + 1} and the seal publishes
+ * A recorded {@link #readBaseGeneration(CairoConfiguration, Path) base
+ * generation} - the timeline generation the repair started from - lets a
+ * restart distinguish a live repair from a stale marker that a crash left
+ * behind after a successful seal: the truncate publishes
+ * {@code baseGeneration + 1} and the seal publishes
  * {@code baseGeneration + 2}, so a superblock generation strictly greater than
  * {@code baseGeneration + 1} proves the repair completed and the marker is safe
  * to ignore. A torn or unreadable marker (only reachable if the marker write
