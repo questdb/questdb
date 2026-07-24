@@ -249,6 +249,15 @@ public class LiveViewInstance implements QuietCloseable {
     // In-memory only - they reset on restart, like the o3_* counters.
     private volatile long checkpointRepairFailures;
     private volatile long checkpointRepairNewBytes;
+    // What this view's last out-of-order repair actually did: the
+    // LiveViewCheckpointRepairPlan DISPOSITION_* code in the high 32 bits and the
+    // DENIAL_* code naming why it read more than a localized rebuild would in the low
+    // 32. Packed into one volatile long so the catalogue never pairs one repair's
+    // disposition with another's reason. Zero (no disposition, nothing denied) until
+    // the view runs its first repair. Bumped only on the refresh worker at planning
+    // time; volatile for the catalogue thread. In-memory only - it resets on restart,
+    // like the counters above.
+    private volatile long checkpointRepairOutcome;
     private volatile long checkpointRepairResumes;
     private volatile long checkpointRepairRootsVersioned;
     // Shape of the newest published timeline generation, mirrored off the
@@ -922,6 +931,26 @@ public class LiveViewInstance implements QuietCloseable {
         return checkpointRepairFailures;
     }
 
+    /**
+     * @return the {@code LiveViewCheckpointRepairPlan.DENIAL_*} code naming why the
+     * view's last out-of-order repair read more than a localized rebuild would, or
+     * {@code DENIAL_NONE} when it was denied nothing - which a view that has run no
+     * repair also reads. Pair with {@link #getCheckpointRepairLastDisposition()}, which
+     * separates the two. See {@link #checkpointRepairOutcome}
+     */
+    public int getCheckpointRepairLastDenialReason() {
+        return (int) checkpointRepairOutcome;
+    }
+
+    /**
+     * @return the {@code LiveViewCheckpointRepairPlan.DISPOSITION_*} code of the view's
+     * last out-of-order repair, or 0 before it has run one. See
+     * {@link #checkpointRepairOutcome}
+     */
+    public int getCheckpointRepairLastDisposition() {
+        return (int) (checkpointRepairOutcome >>> 32);
+    }
+
     public long getCheckpointRepairNewBytes() {
         return checkpointRepairNewBytes;
     }
@@ -1495,6 +1524,17 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void recordCheckpointRepairFailure() {
         checkpointRepairFailures++;
+    }
+
+    /**
+     * Publishes what one out-of-order repair decided: the executor it selected and the
+     * {@code LiveViewCheckpointRepairPlan.DENIAL_*} code naming why it reads more than a
+     * localized rebuild would. The refresh worker calls it once per planned repair, so a
+     * suspended repair that continues in a later turn keeps the outcome its planning
+     * turn published. See {@link #checkpointRepairOutcome}.
+     */
+    public void recordCheckpointRepairOutcome(int disposition, int denialReason) {
+        checkpointRepairOutcome = ((long) disposition << 32) | (denialReason & 0xffff_ffffL);
     }
 
     /**

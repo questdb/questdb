@@ -31,6 +31,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -113,7 +114,7 @@ import io.questdb.std.ObjList;
  *     repair is suspended across refresh turns. The counters
  *     {@code checkpoint_repair_roots_versioned}, {@code _new_bytes},
  *     {@code _resumes} and {@code _failures} are lifetime totals and reset on
- *     restart. {@code checkpoint_repair_plan} closes the group with the shape of
+ *     restart. {@code checkpoint_repair_plan} follows with the shape of
  *     the repair rather than one repair's progress: it names the dependency plans
  *     the view's window functions carry - {@code range}, {@code rows},
  *     {@code anchor} or a {@code +}-joined combination - and reads {@code none}
@@ -121,7 +122,17 @@ import io.questdb.std.ObjList;
  *     out-of-order row below the head. It is NULL until the view compiles its
  *     SELECT, and it describes what the SQL admits rather than what the next
  *     repair does: a named plan can still be denied per refresh, a ROWS one over
- *     a base that deduplicates most commonly.</li>
+ *     a base that deduplicates most commonly. {@code checkpoint_repair_last_disposition}
+ *     and {@code checkpoint_repair_last_denial} close the group with that runtime
+ *     outcome. The first names which executor the view's last repair ran -
+ *     {@code localized rebuild}, {@code boundary rebuild} or
+ *     {@code resume from anchor} - and the second why it read more than a localized
+ *     rebuild would, such as {@code dedup}, {@code incomplete dependency},
+ *     {@code scan budget} or {@code resume cheaper}. Both are NULL until the view runs
+ *     a repair; the denial stays NULL for a repair that read exactly its localized
+ *     interval. So a view reporting a {@code rows} plan beside a
+ *     {@code boundary rebuild} / {@code dedup} pair is one whose SQL admits a bound
+ *     that its base denies at every refresh.</li>
  * </ul>
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
@@ -196,6 +207,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_CHECKPOINT_REPAIR_FAILURES = 48;
         private static final int COLUMN_CHECKPOINT_REPAIR_HIGH_TIMESTAMP = 44;
         private static final int COLUMN_CHECKPOINT_REPAIR_IN_PROGRESS = 41;
+        private static final int COLUMN_CHECKPOINT_REPAIR_LAST_DENIAL = 51;
+        private static final int COLUMN_CHECKPOINT_REPAIR_LAST_DISPOSITION = 50;
         private static final int COLUMN_CHECKPOINT_REPAIR_LOW_TIMESTAMP = 43;
         private static final int COLUMN_CHECKPOINT_REPAIR_NEW_BYTES = 46;
         private static final int COLUMN_CHECKPOINT_REPAIR_PLAN = 49;
@@ -574,6 +587,19 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // the compiled SELECT. NULL until the view compiles one.
                         case COLUMN_CHECKPOINT_REPAIR_PLAN ->
                                 getRepairPlan(instance.getCheckpointRepairDependencyPlans());
+                        // What the last repair actually did, and why it read more than
+                        // its plan admits. Both NULL until the view runs one; the denial
+                        // stays NULL for a repair that read exactly its localized
+                        // interval.
+                        case COLUMN_CHECKPOINT_REPAIR_LAST_DISPOSITION ->
+                                LiveViewCheckpointRepairPlan.dispositionName(
+                                        instance.getCheckpointRepairLastDisposition(),
+                                        instance.getCheckpointRepairLastDenialReason()
+                                );
+                        case COLUMN_CHECKPOINT_REPAIR_LAST_DENIAL ->
+                                LiveViewCheckpointRepairPlan.denialReasonName(
+                                        instance.getCheckpointRepairLastDenialReason()
+                                );
                         default -> null;
                     };
                 }
@@ -661,6 +687,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_repair_resumes", ColumnType.LONG));            // 47
             metadata.add(new TableColumnMetadata("checkpoint_repair_failures", ColumnType.LONG));           // 48
             metadata.add(new TableColumnMetadata("checkpoint_repair_plan", ColumnType.STRING));             // 49
+            metadata.add(new TableColumnMetadata("checkpoint_repair_last_disposition", ColumnType.STRING)); // 50
+            metadata.add(new TableColumnMetadata("checkpoint_repair_last_denial", ColumnType.STRING));      // 51
             METADATA = metadata;
         }
     }

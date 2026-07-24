@@ -438,6 +438,127 @@ public class LiveViewCheckpointRepairPlanTest {
     }
 
     @Test
+    public void testDenialReasonNamesWhichBoundTheRepairLost() throws SqlException {
+        // Localization is denied by a chain of guards, each describing a different lost
+        // bound, and isLocalized() collapses all of them to false. The denial code is
+        // which one fired, which is what live_views().checkpoint_repair_last_denial
+        // reports and what an operator acts on. One case per guard, in the order the
+        // guards run.
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+
+        // No dependency of any shape, so nothing bounds the rebuild from below.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_DEPENDENCY);
+
+        // Apply raced past the trigger over a range nothing could classify, so no floor
+        // is trustworthy however finite the dependency is.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 10, Numbers.LONG_NULL, 100, NO_ROWS, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_UNCLASSIFIED_APPLY_AHEAD);
+
+        // The live-view table holds no row, so nothing bounds D from below.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 100, NO_ROWS, NO_ANCHOR, true, NO_DURABLE_OUTPUT, 6_000, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_DURABLE_OUTPUT);
+
+        // The correction sits at or below the view's own START FROM boundary, so R lands
+        // back on S and there is nothing left to localize.
+        plan.of(new TestAnchors(), 500, 1_000, 9, 9, Numbers.LONG_NULL, 100, NO_ROWS, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_VIEW_START_FLOOR);
+
+        // A ROWS discovery over a change set that may have removed a row.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, new TestRowsBounds(4_000, HighBoundTag.FINITE, 8_000), NO_ANCHOR, NOT_INSERT_ONLY, 9_000, 6_000, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NOT_INSERT_ONLY);
+
+        // The three inputs a finite high bound needs, each missing in turn. They are
+        // separate codes because they call for separate actions: bound the change set,
+        // give the view checkpoint-capable functions, flush the output.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, NO_CHANGE_MAX_TS, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_CHANGE_CEILING);
+
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, 6_000, NO_RUNTIME_FRONTIER, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_RUNTIME_FRONTIER);
+
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 8_000, 6_000, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_UNFLUSHED_OUTPUT);
+
+        // A nanosecond anchor period over a microsecond column names no segment end.
+        final LiveViewCheckpointAnchorPlan subResolution =
+                LiveViewCheckpointAnchorPlan.of('n', 1, 0, ColumnType.TIMESTAMP_MICRO);
+        Assert.assertNotNull(subResolution);
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, subResolution, true, 9_000, 6_000, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_CONVERGENCE_BOUND);
+
+        // A ROWS discovery that ran to completion and proved no bound, against one a
+        // budget cut short. Both leave the same EOF tag, and only the second is worth
+        // raising a budget over.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, new TestRowsBounds(1_000, HighBoundTag.EOF, Numbers.LONG_NULL), NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_CONVERGENCE_BOUND);
+
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, new TestRowsBounds(1_000, HighBoundTag.EOF, Numbers.LONG_NULL, true), NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_SCAN_BUDGET);
+
+        // The segment converges at 8_000 but the runtime has only reached 7_000, so the
+        // change is inside the frame the runtime currently holds.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 7_000, 6_000, 7_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_FRONTIER_BELOW_CONVERGENCE);
+
+        // A repair that read exactly [L, H) was denied nothing, and the column stays
+        // NULL rather than naming a reason.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, 6_000, 9_000, UNPRICED);
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_NONE, plan.getDenialReason());
+        Assert.assertNull(LiveViewCheckpointRepairPlan.denialReasonName(plan.getDenialReason()));
+        Assert.assertEquals("localized rebuild",
+                LiveViewCheckpointRepairPlan.dispositionName(plan.getDisposition(), plan.getDenialReason()));
+
+        // The two resume denials. A priced resume that beat a localized rebuild reports
+        // the cheaper repair rather than a lost bound; an unpriced one never compared.
+        final TestScanCost cost = new TestScanCost(1_000, 100_000);
+        plan.of(new TestAnchors().add(98_000, 11), 99_000, 1_000, 9, 9, Numbers.LONG_NULL, 10_000, NO_ROWS, NO_ANCHOR, true, 100_000, 99_500, 100_000, cost);
+        Assert.assertTrue(plan.isResumeFromAnchor());
+        // The rebuild did localize - a 11_001-row interval was priced - and the 2_000-row
+        // tail still won, so the reason is the cheaper repair rather than a lost bound.
+        Assert.assertEquals(11_001, plan.getRebuildScanRows());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_RESUME_CHEAPER, plan.getDenialReason());
+        Assert.assertEquals("resume from anchor",
+                LiveViewCheckpointRepairPlan.dispositionName(plan.getDisposition(), plan.getDenialReason()));
+
+        plan.of(new TestAnchors().add(4_000, 11), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 100, NO_ROWS, NO_ANCHOR, true, 100_000, 5_000, 100_000, UNPRICED);
+        Assert.assertTrue(plan.isResumeFromAnchor());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_RESUME_UNPRICED, plan.getDenialReason());
+
+        // A view that has run no repair at all has no disposition to report, and the
+        // three codes the caller supplies - the gates that withhold the dependency
+        // inputs before the plan sees them - still render.
+        Assert.assertNull(LiveViewCheckpointRepairPlan.dispositionName(0, LiveViewCheckpointRepairPlan.DENIAL_NONE));
+        Assert.assertEquals("dedup",
+                LiveViewCheckpointRepairPlan.denialReasonName(LiveViewCheckpointRepairPlan.DENIAL_DEDUP));
+        Assert.assertEquals("incomplete dependency",
+                LiveViewCheckpointRepairPlan.denialReasonName(LiveViewCheckpointRepairPlan.DENIAL_INCOMPLETE_DEPENDENCY));
+        Assert.assertEquals("non-data trigger",
+                LiveViewCheckpointRepairPlan.denialReasonName(LiveViewCheckpointRepairPlan.DENIAL_NON_DATA_TRIGGER));
+    }
+
+    @Test
+    public void testDenialReasonSurvivesAPlanHandover() throws SqlException {
+        // A repair that parks on its turn budget keeps its own copy of the plan, so the
+        // reason it could not localize travels with the bounds it derived - not just the
+        // disposition, which alone does not say why.
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+
+        final LiveViewCheckpointRepairPlan copy = new LiveViewCheckpointRepairPlan();
+        copy.copyFrom(plan);
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_NO_DEPENDENCY, copy.getDenialReason());
+        Assert.assertEquals(plan.getDisposition(), copy.getDisposition());
+
+        // And the field is overwritten rather than accumulated: the same instance
+        // replanned onto a localizable repair reports nothing denied.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 100, NO_ROWS, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_NONE, plan.getDenialReason());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_NO_DEPENDENCY, copy.getDenialReason());
+    }
+
+    @Test
     public void testFiniteHighBoundClampsAboveTheOutputFloor() throws SqlException {
         // Defensive. The refresh job cannot produce this pair - the change ceiling is
         // the maximum of a set that contains the trigger timestamp, and R never rises
@@ -1020,6 +1141,22 @@ public class LiveViewCheckpointRepairPlanTest {
         assertEofHighBound(plan);
     }
 
+    /**
+     * A rebuild that declined localization for exactly {@code expectedReason}, reported
+     * both as the code and as the name {@code live_views()} renders. The disposition is
+     * asserted alongside it because the two together are the observability contract: a
+     * whole-history rebuild is a boundary rebuild, and it always carries a reason.
+     */
+    private static void assertDenial(LiveViewCheckpointRepairPlan plan, int expectedReason) {
+        Assert.assertFalse(plan.isLocalized());
+        Assert.assertEquals(expectedReason, plan.getDenialReason());
+        Assert.assertNotNull(LiveViewCheckpointRepairPlan.denialReasonName(expectedReason));
+        Assert.assertEquals(
+                "boundary rebuild",
+                LiveViewCheckpointRepairPlan.dispositionName(plan.getDisposition(), plan.getDenialReason())
+        );
+    }
+
     private static void assertEofHighBound(LiveViewCheckpointRepairPlan plan) {
         Assert.assertTrue(plan.isHighBoundEof());
         Assert.assertEquals(HighBoundTag.EOF, plan.getHighBoundTag());
@@ -1093,6 +1230,7 @@ public class LiveViewCheckpointRepairPlanTest {
         private final long dependencyLowTs;
         private final HighBoundTag highBoundTag;
         private final long highTsExclusive;
+        private final boolean scanBudgetExceeded;
         private long changeLowTs = Numbers.LONG_NULL;
         private long changeMaxTs = Numbers.LONG_NULL;
         private int discoveries;
@@ -1100,9 +1238,14 @@ public class LiveViewCheckpointRepairPlanTest {
         private long viewLowerBoundTs = Numbers.LONG_NULL;
 
         TestRowsBounds(long dependencyLowTs, HighBoundTag highBoundTag, long highTsExclusive) {
+            this(dependencyLowTs, highBoundTag, highTsExclusive, false);
+        }
+
+        TestRowsBounds(long dependencyLowTs, HighBoundTag highBoundTag, long highTsExclusive, boolean scanBudgetExceeded) {
             this.dependencyLowTs = dependencyLowTs;
             this.highBoundTag = highBoundTag;
             this.highTsExclusive = highTsExclusive;
+            this.scanBudgetExceeded = scanBudgetExceeded;
         }
 
         @Override
@@ -1127,6 +1270,11 @@ public class LiveViewCheckpointRepairPlanTest {
         @Override
         public long getRowsHighTsExclusive() {
             return highTsExclusive;
+        }
+
+        @Override
+        public boolean isRowsScanBudgetExceeded() {
+            return scanBudgetExceeded;
         }
     }
 

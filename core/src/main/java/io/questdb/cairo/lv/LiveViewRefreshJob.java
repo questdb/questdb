@@ -3278,6 +3278,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", changeMaxTs=").$(repairPlan.getChangeMaxTs())
                     .$(", highTsExclusive=").$(repairPlan.getHighTsExclusive())
                     .$(", resumeFromAnchor=").$(repairPlan.isResumeFromAnchor())
+                    // Why this repair reads more than a localized rebuild would, as
+                    // live_views().checkpoint_repair_last_denial reports it. Absent for a
+                    // repair that read exactly its localized interval.
+                    .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(
+                            instance.getCheckpointRepairLastDenialReason()))
                     .$(", anchorCheckpointId=").$(repairPlan.getAnchorCheckpointId())
                     .$(", anchorMaxTs=").$(repairPlan.getAnchorMaxTs())
                     // The two estimates the disposition above was chosen on, so a repair
@@ -3500,9 +3505,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // either by rewriting the key column of a row that is not itself a dedup key, or by
         // replacing a row the view's WHERE accepted with one it rejects. Neither raw-WAL
         // walk sees that, and a table without dedup keys cannot do it at all.
-        if (lateRowTs != Numbers.LONG_NULL
-                && isDependencyComplete
-                && (rowsPlan == null || (effectiveInsertOnly && !hasDedupKeys(reader.getMetadata())))) {
+        //
+        // Each gate withholds every dependency input, so the plan below sees only their
+        // absence. The code names which one fired, because that is what an operator acts
+        // on. Dedup is tested ahead of the insert-only claim: a dedup base is routed to
+        // drainAppliedBase, which claims none, so the ordering reports the root cause
+        // rather than the routing's consequence.
+        final int dependencyDenialReason;
+        if (lateRowTs == Numbers.LONG_NULL) {
+            dependencyDenialReason = LiveViewCheckpointRepairPlan.DENIAL_NON_DATA_TRIGGER;
+        } else if (!isDependencyComplete) {
+            dependencyDenialReason = LiveViewCheckpointRepairPlan.DENIAL_INCOMPLETE_DEPENDENCY;
+        } else if (rowsPlan != null && hasDedupKeys(reader.getMetadata())) {
+            dependencyDenialReason = LiveViewCheckpointRepairPlan.DENIAL_DEDUP;
+        } else if (rowsPlan != null && !effectiveInsertOnly) {
+            dependencyDenialReason = LiveViewCheckpointRepairPlan.DENIAL_NOT_INSERT_ONLY;
+        } else {
+            dependencyDenialReason = LiveViewCheckpointRepairPlan.DENIAL_NONE;
+        }
+        if (dependencyDenialReason == LiveViewCheckpointRepairPlan.DENIAL_NONE) {
             if (rangePlan != null) {
                 rangeFrameWidth = rangePlan.getMaxFrameWidth();
             }
@@ -3539,6 +3560,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 effectiveChangeMaxTs,
                 runtimeFrontierTs,
                 scanCost
+        );
+        // The disposition this repair takes, and the reason it reads more than a
+        // localized rebuild would - the runtime counterpart to the static
+        // checkpoint_repair_plan, which names only what the SQL admits. A gate above
+        // withheld the dependency inputs on grounds the plan cannot see, so its generic
+        // no-dependency verdict gives way to the specific one.
+        instance.recordCheckpointRepairOutcome(
+                repairPlan.getDisposition(),
+                repairPlan.getDenialReason() == LiveViewCheckpointRepairPlan.DENIAL_NO_DEPENDENCY
+                        && dependencyDenialReason != LiveViewCheckpointRepairPlan.DENIAL_NONE
+                        ? dependencyDenialReason
+                        : repairPlan.getDenialReason()
         );
         if (rowsBoundSource != null && rowsBoundDiscovery.hasDiscovered()) {
             // The discovery's reads are this repair's reads, so they join the same
@@ -8335,6 +8368,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         @Override
         public long getRowsHighTsExclusive() {
             return rowsBounds.getHighTsExclusive();
+        }
+
+        @Override
+        public boolean isRowsScanBudgetExceeded() {
+            return rowsBounds.isScanBudgetExceeded();
         }
 
         /**

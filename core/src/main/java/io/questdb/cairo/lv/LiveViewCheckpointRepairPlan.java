@@ -181,6 +181,105 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class LiveViewCheckpointRepairPlan {
     /**
+     * The base table deduplicates on commit, so a ROWS discovery cannot trust the
+     * affected key domain it reads off the post-change snapshot. The caller withholds
+     * every dependency input on these grounds; see
+     * {@code LiveViewRefreshJob.hasDedupKeys}.
+     */
+    public static final int DENIAL_DEDUP = 1;
+    /**
+     * The runtime window state has not reached the convergence boundary the
+     * dependencies proved, so the change sits inside the frame the runtime currently
+     * holds and the pre-repair state cannot be put back over the replay's.
+     */
+    public static final int DENIAL_FRONTIER_BELOW_CONVERGENCE = 2;
+    /**
+     * At least one window function is covered by none of the RANGE, ROWS and anchor
+     * plans, so no union of them describes the view. The caller withholds every
+     * dependency input rather than bounding some functions and not others.
+     */
+    public static final int DENIAL_INCOMPLETE_DEPENDENCY = 3;
+    /**
+     * Nothing was denied: the repair reads {@code [L, ...)} rather than the whole view
+     * history.
+     */
+    public static final int DENIAL_NONE = 0;
+    /**
+     * The trigger carries no timestamp - a restart restore, a corrupt-checkpoint
+     * restore, a base-metadata drift or a mid-drain recovery - so there is no
+     * correction floor to localize around.
+     */
+    public static final int DENIAL_NON_DATA_TRIGGER = 4;
+    /**
+     * A ROWS dependency over a change set that is not provably insert-only: a deletion
+     * can empty a key out of the change interval, leaving it invisible to the discovery
+     * while its later rows still pull older history into their frames.
+     */
+    public static final int DENIAL_NOT_INSERT_ONLY = 5;
+    /**
+     * The incorporated range holds no upper bound on what it touched - a non-DATA or
+     * structural entry, an unclassified apply-ahead range, or a caller that tracks
+     * none - so no shape can name a convergence boundary.
+     */
+    public static final int DENIAL_NO_CHANGE_CEILING = 6;
+    /**
+     * A shape that needs a finite convergence boundary could not name one: the RANGE
+     * arithmetic overflowed the timestamp range, the anchor segment has no
+     * representable end, or the discovered bound does not clear {@code R}.
+     */
+    public static final int DENIAL_NO_CONVERGENCE_BOUND = 7;
+    /**
+     * The view carries no finite RANGE, ROWS or anchor dependency at all, so nothing
+     * bounds the rebuild from below.
+     */
+    public static final int DENIAL_NO_DEPENDENCY = 8;
+    /**
+     * The live-view table holds no durable row, so there is no output frontier to clamp
+     * the replacement floor {@code R} down to.
+     */
+    public static final int DENIAL_NO_DURABLE_OUTPUT = 9;
+    /**
+     * The view cannot say where its runtime window state stands, because that state
+     * travels through the checkpoint freeze/restore contract and this view's functions
+     * do not support it.
+     */
+    public static final int DENIAL_NO_RUNTIME_FRONTIER = 10;
+    /**
+     * The rebuild localized and was priced anyway: a resume from the sealed anchor below
+     * the change reads no more base rows than {@code [L, H)}, so it ran instead. The one
+     * denial that reports a cheaper repair rather than a lost bound.
+     */
+    public static final int DENIAL_RESUME_CHEAPER = 11;
+    /**
+     * An anchor qualified but no {@link ScanCostSource} was supplied, so the two
+     * dispositions were never compared and the resume was kept unpriced. Production
+     * always prices; this is what a caller that passes no cost source gets.
+     */
+    public static final int DENIAL_RESUME_UNPRICED = 12;
+    /**
+     * A budget stopped the ROWS discovery, leaving the bound it was proving at the
+     * conservative fallback an unlocalized repair uses. See
+     * {@link LiveViewCheckpointRowsBounds.ScanBudgetStatus}.
+     */
+    public static final int DENIAL_SCAN_BUDGET = 13;
+    /**
+     * {@code ApplyWal2TableJob} raced the pinned reader past the trigger over a range
+     * that cannot be classified, so nothing says how far down or up those un-examined
+     * transactions reach.
+     */
+    public static final int DENIAL_UNCLASSIFIED_APPLY_AHEAD = 14;
+    /**
+     * The runtime has produced output that is not yet on disk, so a replacement stopping
+     * at a finite {@code H} would neither re-emit it nor leave it stored.
+     */
+    public static final int DENIAL_UNFLUSHED_OUTPUT = 15;
+    /**
+     * The replacement floor {@code R} landed back on the view's {@code START FROM}
+     * boundary, so the rebuild reads and re-emits the whole view history either way and
+     * there is nothing left to localize.
+     */
+    public static final int DENIAL_VIEW_START_FLOOR = 16;
+    /**
      * The repair recomputes the whole view from the {@code START FROM} boundary.
      * The residual O(view age) fallback: no sealed anchor sits below the change,
      * the trigger carries no timestamp to search with, or the apply-ahead range
@@ -200,6 +299,11 @@ public final class LiveViewCheckpointRepairPlan {
     private long applyAheadMinTs;
     private long changeMaxTs;
     private long correctionTs;
+    // Why this repair reads the whole view history, or resumed instead of rebuilding:
+    // one DENIAL_* code, DENIAL_NONE when nothing was denied. Localization is decided
+    // by a chain of guards that each describe a different lost bound, and the code is
+    // the one that fired - which the disposition alone does not say.
+    private int denialReason;
     private int disposition;
     private HighBoundTag highBoundTag = HighBoundTag.EOF;
     private long highTsExclusive;
@@ -211,6 +315,53 @@ public final class LiveViewCheckpointRepairPlan {
     private long resumeScanRows;
     private long retireLowTs;
     private long triggerSeqTxn;
+
+    /**
+     * Renders a {@code DENIAL_*} code the way the log and {@code live_views()} spell it.
+     * {@link #DENIAL_NONE} renders as null rather than as a word: a repair that read
+     * exactly {@code [L, H)} was denied nothing, and naming that would read as a reason.
+     */
+    public static @Nullable String denialReasonName(int denialReason) {
+        return switch (denialReason) {
+            case DENIAL_NONE -> null;
+            case DENIAL_DEDUP -> "dedup";
+            case DENIAL_FRONTIER_BELOW_CONVERGENCE -> "frontier below convergence";
+            case DENIAL_INCOMPLETE_DEPENDENCY -> "incomplete dependency";
+            case DENIAL_NON_DATA_TRIGGER -> "non-data trigger";
+            case DENIAL_NOT_INSERT_ONLY -> "not insert only";
+            case DENIAL_NO_CHANGE_CEILING -> "no change ceiling";
+            case DENIAL_NO_CONVERGENCE_BOUND -> "no convergence bound";
+            case DENIAL_NO_DEPENDENCY -> "no dependency";
+            case DENIAL_NO_DURABLE_OUTPUT -> "no durable output";
+            case DENIAL_NO_RUNTIME_FRONTIER -> "no runtime frontier";
+            case DENIAL_RESUME_CHEAPER -> "resume cheaper";
+            case DENIAL_RESUME_UNPRICED -> "resume unpriced";
+            case DENIAL_SCAN_BUDGET -> "scan budget";
+            case DENIAL_UNCLASSIFIED_APPLY_AHEAD -> "unclassified apply ahead";
+            case DENIAL_UNFLUSHED_OUTPUT -> "unflushed output";
+            case DENIAL_VIEW_START_FLOOR -> "view start floor";
+            default -> null;
+        };
+    }
+
+    /**
+     * Renders what one repair actually did: which executor ran, and for the rebuild,
+     * whether a dependency bounded it. The two rebuilds share a {@code DISPOSITION_*}
+     * code because they run the same executor, and what separates them is exactly
+     * whether anything was denied - a rebuild that read {@code [L, H)} denied nothing,
+     * while a whole-history one carries the code that cost it the bound.
+     *
+     * @return {@code localized rebuild}, {@code boundary rebuild} or
+     * {@code resume from anchor}, and null for a view that has run no repair
+     */
+    public static @Nullable String dispositionName(int disposition, int denialReason) {
+        return switch (disposition) {
+            case DISPOSITION_BOUNDARY_REBUILD ->
+                    denialReason == DENIAL_NONE ? "localized rebuild" : "boundary rebuild";
+            case DISPOSITION_RESUME_FROM_ANCHOR -> "resume from anchor";
+            default -> null;
+        };
+    }
 
     /**
      * Whether the caller must classify the apply-ahead range
@@ -239,6 +390,7 @@ public final class LiveViewCheckpointRepairPlan {
         this.applyAheadMinTs = other.applyAheadMinTs;
         this.changeMaxTs = other.changeMaxTs;
         this.correctionTs = other.correctionTs;
+        this.denialReason = other.denialReason;
         this.disposition = other.disposition;
         this.highBoundTag = other.highBoundTag;
         this.highTsExclusive = other.highTsExclusive;
@@ -307,6 +459,17 @@ public final class LiveViewCheckpointRepairPlan {
      */
     public long getCorrectionTs() {
         return correctionTs;
+    }
+
+    /**
+     * @return the {@code DENIAL_*} code naming why this repair could not localize, or
+     * why a localized rebuild lost to a resume, and {@link #DENIAL_NONE} when the
+     * rebuild localized and ran. The caller may replace a {@link #DENIAL_NO_DEPENDENCY}
+     * verdict with the more specific reason it withheld the dependency inputs on -
+     * {@link #of} sees only their absence, not the gate that caused it.
+     */
+    public int getDenialReason() {
+        return denialReason;
     }
 
     public int getDisposition() {
@@ -571,6 +734,7 @@ public final class LiveViewCheckpointRepairPlan {
             @Nullable ScanCostSource scanCostSource
     ) throws SqlException {
         assert pinnedSeqTxn >= triggerSeqTxn : "pinned base snapshot is below the trigger";
+        denialReason = DENIAL_NONE;
         this.triggerSeqTxn = triggerSeqTxn;
         this.pinnedSeqTxn = pinnedSeqTxn;
         this.changeMaxTs = changeMaxTs;
@@ -655,6 +819,8 @@ public final class LiveViewCheckpointRepairPlan {
                     durableOutputMaxTs,
                     runtimeFrontierTs
             );
+        } else {
+            denialReason = DENIAL_RESUME_UNPRICED;
         }
         if (localized && resumeScanRows != Numbers.LONG_NULL) {
             // Only a localized rebuild is worth pricing. An unlocalized one reads the
@@ -664,6 +830,13 @@ public final class LiveViewCheckpointRepairPlan {
         }
         if (hasAnchor && (rebuildScanRows == Numbers.LONG_NULL || rebuildScanRows >= resumeScanRows)) {
             disposition = DISPOSITION_RESUME_FROM_ANCHOR;
+            if (localized) {
+                // The rebuild had a bounded interval and the resume still read no more
+                // rows. Read before the flag is cleared below: a rebuild that never
+                // localized keeps the reason its own guard recorded, which is the one
+                // worth reporting.
+                denialReason = DENIAL_RESUME_CHEAPER;
+            }
             replayLowTs = resumeLowTs;
             // The restored anchor state IS the warm-up, so the resume emits every
             // row it reads: L and R coincide.
@@ -815,16 +988,28 @@ public final class LiveViewCheckpointRepairPlan {
         final boolean hasRange = rangeFrameWidth != Numbers.LONG_NULL;
         final boolean hasRows = rowsBoundSource != null;
         final boolean hasAnchor = anchorPlan != null;
-        if ((!hasRange && !hasRows && !hasAnchor)
-                || retireLowTs == Numbers.LONG_NULL
-                || durableOutputMaxTs == Numbers.LONG_NULL) {
+        if (!hasRange && !hasRows && !hasAnchor) {
+            denialReason = DENIAL_NO_DEPENDENCY;
+            return;
+        }
+        if (retireLowTs == Numbers.LONG_NULL) {
+            denialReason = DENIAL_UNCLASSIFIED_APPLY_AHEAD;
+            return;
+        }
+        if (durableOutputMaxTs == Numbers.LONG_NULL) {
+            denialReason = DENIAL_NO_DURABLE_OUTPUT;
             return;
         }
         final long outputFloor = Math.max(viewLowerBoundTimestamp, Math.min(retireLowTs, durableOutputMaxTs));
         // Every guard below runs before the ROWS discovery, because each one describes a
         // repair that could not localize whatever the data proved - and the discovery is
         // the only part of planning that reads base rows.
-        if (outputFloor <= viewLowerBoundTimestamp || (hasRows && !insertOnlyChangeSet)) {
+        if (outputFloor <= viewLowerBoundTimestamp) {
+            denialReason = DENIAL_VIEW_START_FLOOR;
+            return;
+        }
+        if (hasRows && !insertOnlyChangeSet) {
+            denialReason = DENIAL_NOT_INSERT_ONLY;
             return;
         }
         final boolean isHighBoundDerivable = changeMaxTs != Numbers.LONG_NULL
@@ -832,6 +1017,15 @@ public final class LiveViewCheckpointRepairPlan {
                 && durableOutputMaxTs >= runtimeFrontierTs;
         final boolean isFiniteHighRequired = hasRows || hasAnchor;
         if (isFiniteHighRequired && !isHighBoundDerivable) {
+            // The three inputs fail for three different reasons, and an operator can act
+            // on each: a change set nothing bounds from above, a view whose functions
+            // carry no checkpoint state, and output the runtime holds but has not
+            // flushed.
+            denialReason = changeMaxTs == Numbers.LONG_NULL
+                    ? DENIAL_NO_CHANGE_CEILING
+                    : runtimeFrontierTs == Numbers.LONG_NULL
+                      ? DENIAL_NO_RUNTIME_FRONTIER
+                      : DENIAL_UNFLUSHED_OUTPUT;
             return;
         }
         long lowTs = Long.MAX_VALUE;
@@ -855,6 +1049,7 @@ public final class LiveViewCheckpointRepairPlan {
             // Neither can an end at or below R, which happens only when every changed row
             // sits below the view's own boundary and leaves the replacement range empty.
             if (armHighTs == Numbers.LONG_NULL || armHighTs <= outputFloor) {
+                denialReason = DENIAL_NO_CONVERGENCE_BOUND;
                 return;
             }
             highTs = Math.max(highTs, armHighTs);
@@ -875,6 +1070,12 @@ public final class LiveViewCheckpointRepairPlan {
                     changeMaxTs
             );
             if (rowsBoundSource.getRowsHighBoundTag() != HighBoundTag.FINITE) {
+                // A budget that stopped the search and a search that ran to completion
+                // without finding a bound leave the same EOF tag but call for different
+                // actions - raise the budget, or accept that the data proves nothing.
+                denialReason = rowsBoundSource.isRowsScanBudgetExceeded()
+                        ? DENIAL_SCAN_BUDGET
+                        : DENIAL_NO_CONVERGENCE_BOUND;
                 return;
             }
             final long armHighTs = rowsBoundSource.getRowsHighTsExclusive();
@@ -883,6 +1084,7 @@ public final class LiveViewCheckpointRepairPlan {
             // guard states it, because a replacement whose exclusive high bound does not
             // clear its low bound is not a range at all.
             if (armHighTs <= outputFloor) {
+                denialReason = DENIAL_NO_CONVERGENCE_BOUND;
                 return;
             }
             highTs = Math.max(highTs, armHighTs);
@@ -895,6 +1097,9 @@ public final class LiveViewCheckpointRepairPlan {
         }
         if (isHighEof || runtimeFrontierTs < highTs) {
             if (isFiniteHighRequired) {
+                denialReason = isHighEof
+                        ? DENIAL_NO_CONVERGENCE_BOUND
+                        : DENIAL_FRONTIER_BELOW_CONVERGENCE;
                 return;
             }
         } else {
@@ -1012,6 +1217,16 @@ public final class LiveViewCheckpointRepairPlan {
          * changed. Meaningful only under {@link HighBoundTag#FINITE}.
          */
         long getRowsHighTsExclusive();
+
+        /**
+         * @return whether a budget stopped the discovery, leaving the bound it was
+         * proving at the conservative fallback. Reported rather than acted on: the plan
+         * refuses an {@link HighBoundTag#EOF} bound whatever produced it, and this only
+         * separates "the budget ran out" from "the data proves no bound" in
+         * {@link #getDenialReason()}. Meaningful only after
+         * {@link #discoverRowsBounds}.
+         */
+        boolean isRowsScanBudgetExceeded();
     }
 
     /**

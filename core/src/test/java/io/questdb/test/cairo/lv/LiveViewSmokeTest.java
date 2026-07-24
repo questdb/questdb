@@ -13730,8 +13730,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // three o3_*_rows columns trail as replay observability, and the
         // checkpoint_* group closes the set in its four blocks: the
         // generation's shape, collection, cost, and localized repair. The last
-        // block ends on checkpoint_repair_plan, which describes the repair a
-        // view's SQL admits rather than one repair's progress.
+        // block ends on the three that describe a repair's shape rather than one
+        // repair's progress: checkpoint_repair_plan for what the view's SQL
+        // admits, then the last repair's effective disposition and denial.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -13756,7 +13757,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "checkpoint_repair_low_timestamp\tcheckpoint_repair_high_timestamp\t"
                         + "checkpoint_repair_roots_versioned\tcheckpoint_repair_new_bytes\t"
                         + "checkpoint_repair_resumes\tcheckpoint_repair_failures\t"
-                        + "checkpoint_repair_plan\n");
+                        + "checkpoint_repair_plan\tcheckpoint_repair_last_disposition\t"
+                        + "checkpoint_repair_last_denial\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
