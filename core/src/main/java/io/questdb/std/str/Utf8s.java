@@ -37,7 +37,6 @@ import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
@@ -835,15 +834,6 @@ public final class Utf8s {
      */
     public static boolean isAscii(Utf8Sequence utf8) {
         return utf8 == null || utf8.isAscii() || isAsciiBytes0(utf8);
-    }
-
-    /**
-     * Checks the actual bytes without trusting {@link Utf8Sequence#isAscii()}.
-     * This is used to validate producers that report an ASCII value.
-     */
-    @TestOnly
-    public static boolean isAsciiBytes(Utf8Sequence utf8) {
-        return utf8 == null || isAsciiBytes0(utf8);
     }
 
     private static boolean isAsciiBytes0(@NotNull Utf8Sequence utf8) {
