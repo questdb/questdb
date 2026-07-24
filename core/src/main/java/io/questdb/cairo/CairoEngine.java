@@ -216,7 +216,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final DataID dataID;
     private final FunctionFactoryCache ffCache;
-    private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
+    private final LiveViewRegistry liveViewRegistry;
     private final DependentViewGraph dependentViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
@@ -349,6 +349,9 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public CairoEngine(CairoConfiguration configuration, @NotNull WalLocker walLocker, boolean completeInit) {
         try {
+            // Assigned first because the catch below runs close(), which dereferences
+            // the registry without a null check.
+            this.liveViewRegistry = new LiveViewRegistry(configuration);
             this.walLocker = walLocker;
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
             this.tableFlagResolver = newTableFlagResolver(configuration);

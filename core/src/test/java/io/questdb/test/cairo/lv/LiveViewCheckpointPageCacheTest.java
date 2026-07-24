@@ -24,12 +24,16 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointPageCache;
 import io.questdb.cairo.lv.LiveViewCheckpointPageCacheBudget;
 import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
 import io.questdb.cairo.lv.LiveViewCheckpointStateCodec;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
+import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
@@ -305,6 +309,136 @@ public class LiveViewCheckpointPageCacheTest extends AbstractCairoTest {
             Assert.assertEquals(0, budget.getUsedBytes());
             Assert.assertEquals(0, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_CHECKPOINT_CACHE));
         });
+    }
+
+    @Test
+    public void testInstanceBuildsOneCacheLazilyAndFreesItOnClose() throws Exception {
+        assertMemoryLeak(() -> {
+            final int pageBytes = 512;
+            final long address = allocScratch(pageBytes, 5);
+            final LiveViewCheckpointPageCacheBudget budget =
+                    new LiveViewCheckpointPageCacheBudget(64L * LiveViewCheckpointPageCache.SLAB_BYTES);
+            final LiveViewInstance instance = new LiveViewInstance((LiveViewDefinition) null, (TableToken) null);
+            try {
+                Assert.assertNull(instance.getCheckpointPageCache());
+                // A view that has not restored yet has nothing to move to a new epoch.
+                instance.bumpCheckpointPageCacheEpoch();
+
+                final LiveViewCheckpointPageCache cache = instance.getOrCreateCheckpointPageCache(budget);
+                Assert.assertNotNull(cache);
+                Assert.assertSame(cache, instance.getOrCreateCheckpointPageCache(budget));
+                Assert.assertSame(cache, instance.getCheckpointPageCache());
+
+                Assert.assertTrue(cache.admit(ref(1, 0, TIMESTAMP_KIND, pageBytes), address));
+                Assert.assertEquals(LiveViewCheckpointPageCache.SLAB_BYTES, budget.getUsedBytes());
+
+                instance.bumpCheckpointPageCacheEpoch();
+                Assert.assertEquals(1, cache.getEpoch());
+                Assert.assertEquals(0, cache.getPageCount());
+                // An epoch bump drops the entries, not the slab they sat in.
+                Assert.assertEquals(LiveViewCheckpointPageCache.SLAB_BYTES, budget.getUsedBytes());
+
+                instance.close();
+                Assert.assertNull(instance.getCheckpointPageCache());
+                Assert.assertEquals(0, budget.getUsedBytes());
+            } finally {
+                Misc.free(instance);
+                Unsafe.free(address, pageBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+            Assert.assertEquals(0, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_CHECKPOINT_CACHE));
+        });
+    }
+
+    @Test
+    public void testInstanceFreesTheCacheWhenDropped() throws Exception {
+        assertMemoryLeak(() -> {
+            final int pageBytes = 256;
+            final long address = allocScratch(pageBytes, 9);
+            final LiveViewCheckpointPageCacheBudget budget =
+                    new LiveViewCheckpointPageCacheBudget(64L * LiveViewCheckpointPageCache.SLAB_BYTES);
+            final LiveViewInstance instance = new LiveViewInstance((LiveViewDefinition) null, (TableToken) null);
+            try {
+                Assert.assertTrue(instance.getOrCreateCheckpointPageCache(budget)
+                        .admit(ref(3, 0, TIMESTAMP_KIND, pageBytes), address));
+                Assert.assertEquals(LiveViewCheckpointPageCache.SLAB_BYTES, budget.getUsedBytes());
+
+                instance.markAsDropped();
+                // A refresh turn in flight owns the cache, so the drop leaves it alone
+                // and the worker's finally hook retries once the turn ends.
+                Assert.assertTrue(instance.tryLockForRefresh());
+                instance.tryCloseIfDropped();
+                Assert.assertNotNull(instance.getCheckpointPageCache());
+                Assert.assertEquals(LiveViewCheckpointPageCache.SLAB_BYTES, budget.getUsedBytes());
+
+                instance.unlockAfterRefresh();
+                instance.tryCloseIfDropped();
+                Assert.assertNull(instance.getCheckpointPageCache());
+                Assert.assertEquals(0, budget.getUsedBytes());
+            } finally {
+                Misc.free(instance);
+                Unsafe.free(address, pageBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+            Assert.assertEquals(0, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_CHECKPOINT_CACHE));
+        });
+    }
+
+    @Test
+    public void testInstanceFreesTheCacheWhenInvalidated() throws Exception {
+        assertMemoryLeak(() -> {
+            final int pageBytes = 256;
+            final long address = allocScratch(pageBytes, 11);
+            final LiveViewCheckpointPageCacheBudget budget =
+                    new LiveViewCheckpointPageCacheBudget(64L * LiveViewCheckpointPageCache.SLAB_BYTES);
+            final LiveViewInstance instance = new LiveViewInstance((LiveViewDefinition) null, (TableToken) null);
+            try {
+                Assert.assertTrue(instance.getOrCreateCheckpointPageCache(budget)
+                        .admit(ref(4, 0, TIMESTAMP_KIND, pageBytes), address));
+                Assert.assertEquals(LiveViewCheckpointPageCache.SLAB_BYTES, budget.getUsedBytes());
+
+                // A view still valid keeps its cache: the free hook is a no-op for it.
+                instance.tryFreeRuntimeStateIfInvalid();
+                Assert.assertNotNull(instance.getCheckpointPageCache());
+
+                instance.markInvalid("boom", 42);
+                instance.tryFreeRuntimeStateIfInvalid();
+                Assert.assertNull(instance.getCheckpointPageCache());
+                Assert.assertEquals(0, budget.getUsedBytes());
+
+                // An invalid view that resumes rebuilds its cache cold.
+                Assert.assertNotNull(instance.getOrCreateCheckpointPageCache(budget));
+            } finally {
+                Misc.free(instance);
+                Unsafe.free(address, pageBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+            Assert.assertEquals(0, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_CHECKPOINT_CACHE));
+        });
+    }
+
+    @Test
+    public void testInstanceHoldsNoCacheUnderADisabledBudget() throws Exception {
+        assertMemoryLeak(() -> {
+            final LiveViewCheckpointPageCacheBudget budget = new LiveViewCheckpointPageCacheBudget(0);
+            final LiveViewInstance instance = new LiveViewInstance((LiveViewDefinition) null, (TableToken) null);
+            try {
+                // Null rather than an always-missing cache, so the restore path skips
+                // the probe instead of counting misses that could never have hit.
+                Assert.assertNull(instance.getOrCreateCheckpointPageCache(budget));
+                Assert.assertNull(instance.getCheckpointPageCache());
+                instance.bumpCheckpointPageCacheEpoch();
+            } finally {
+                Misc.free(instance);
+            }
+            Assert.assertEquals(0, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_CHECKPOINT_CACHE));
+        });
+    }
+
+    @Test
+    public void testInstanceRegistryBudgetTracksTheConfiguredCap() throws Exception {
+        assertMemoryLeak(() -> Assert.assertEquals(
+                configuration.getLiveViewCheckpointPageCacheMaxBytes(),
+                engine.getLiveViewRegistry().getCheckpointPageCacheBudget().getCapacityBytes()
+        ));
     }
 
     @Test
