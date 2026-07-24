@@ -75,6 +75,36 @@ public class ParquetSubFrameTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPageFrameRowLimitNeverExceedsMax() throws Exception {
+        // The tiny-trailing-frame adjustment in calculatePageFrameRowLimit must never push a frame past
+        // page.frame.max.rows: a frame larger than Map.BATCH_ROW_INDEX_MASK + 1 rows overflows the 24-bit
+        // frame-relative row index packed into every batched GROUP BY entry (silent corruption). 1050 rows
+        // with max=1000/min=100 hits the adjustment (1050 % 1000 = 50 < 100), which without the clamp
+        // returns 1050 and emits a single 1050-row frame. Native path; calculatePageFrameRowLimit is shared.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01', 1) FROM long_sequence(1050)");
+            try (RecordCursorFactory factory = select("x")) {
+                sqlExecutionContext.changePageFrameSizes(100, 1000);
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                    long total = 0;
+                    int frameCount = 0;
+                    PageFrame frame;
+                    while ((frame = cursor.next()) != null) {
+                        final long size = frame.getPartitionHi() - frame.getPartitionLo();
+                        Assert.assertTrue("frame exceeds max rows: " + size, size <= 1000);
+                        total += size;
+                        frameCount++;
+                    }
+                    Assert.assertEquals(1050, total);
+                    // 1000 + 50, so two frames, not one oversized frame
+                    Assert.assertEquals(2, frameCount);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRowGroupSplitsIntoBoundedSubFramesBackward() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10_000);
         assertMemoryLeak(() -> {

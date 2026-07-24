@@ -82,10 +82,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final WorkStealingStrategy workStealingStrategy;
     public volatile boolean done;
     private T atom;
-    private SCSequence collectSubSeq;
     // Sub-frame within the held task currently being collected; the collector reads the run's sub-frames
     // one at a time (each looks like a standalone frame) while the task slot stays held.
     private int collectSubFrame;
+    private SCSequence collectSubSeq;
     // Protocol indices are in task (row-group run) units; the address cache / frameRowCounts stay
     // frame-indexed. When no row group is split, taskCount == frameCount and these track frames 1:1.
     private int collectedTaskIndex = -1;
@@ -284,19 +284,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return frameRowCounts.getQuick(frameIndex);
     }
 
-    public int getTaskCount() {
-        return taskCount;
-    }
-
-    public int getTaskFirstFrame(int taskIndex) {
-        return runFirstFrames.getQuick(taskIndex);
-    }
-
-    public int getTaskFrameCount(int taskIndex) {
-        final int next = taskIndex + 1 < taskCount ? runFirstFrames.getQuick(taskIndex + 1) : frameCount;
-        return next - runFirstFrames.getQuick(taskIndex);
-    }
-
     public long getId() {
         return id;
     }
@@ -349,6 +336,19 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         // Present the current sub-frame of the run as a standalone frame to the unchanged collector.
         task.positionAtSubFrame(collectSubFrame);
         return task;
+    }
+
+    public int getTaskCount() {
+        return taskCount;
+    }
+
+    public int getTaskFirstFrame(int taskIndex) {
+        return runFirstFrames.getQuick(taskIndex);
+    }
+
+    public int getTaskFrameCount(int taskIndex) {
+        final int next = taskIndex + 1 < taskCount ? runFirstFrames.getQuick(taskIndex + 1) : frameCount;
+        return next - runFirstFrames.getQuick(taskIndex);
     }
 
     public byte getTaskType() {
@@ -629,12 +629,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             final byte format = frame.getFormat();
             final int rowGroup = frame.getParquetRowGroup();
             final int partitionIndex = frame.getPartitionIndex();
-            final boolean sameRun = frameCount > 0
+            final boolean isSameRun = frameCount > 0
                     && format == PartitionFormat.PARQUET
                     && prevFormat == PartitionFormat.PARQUET
                     && rowGroup == prevRowGroup
                     && partitionIndex == prevPartitionIndex;
-            if (!sameRun) {
+            if (!isSameRun) {
                 runFirstFrames.add(frameCount);
                 taskCount++;
             }

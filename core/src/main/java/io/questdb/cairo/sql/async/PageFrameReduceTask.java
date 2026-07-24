@@ -350,11 +350,14 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
      */
     public void positionAtSubFrame(int subFrame) {
         frameIndex = firstFrameIndex + subFrame;
-        // A cancelled task (runReduce skipped on a tripped circuit breaker) has no per-sub-frame outputs;
-        // present an empty frame so the collector's `filteredRows.size() == filteredRowCount` invariant
-        // holds before it discards the frame on isActive()==false. This mirrors the pre-run-task state of a
-        // cancelled task (filteredRows cleared, count 0) and avoids a pointless re-decode.
-        if (subFrame >= subFrameRowCounts.size()) {
+        // A cancelled task (runReduce skipped on a tripped circuit breaker) or a run that threw mid-way
+        // (a reducer error on sub-frame > 0) has no complete output for this sub-frame: its per-sub-frame
+        // arrays are short. runReduce keeps subFrameRowOffsets one entry ahead of subFrameRowCounts even on
+        // a throw, so both checks below hold together; present an empty frame so the collector's
+        // `filteredRows.size() == filteredRowCount` invariant holds before it discards the frame on
+        // hasError()/isActive()==false, and never index subFrameRowOffsets past its end. This mirrors the
+        // pre-run-task state of a cancelled task (filteredRows cleared, count 0) and avoids a re-decode.
+        if (subFrame >= subFrameRowCounts.size() || subFrame + 1 >= subFrameRowOffsets.size()) {
             filteredRowCount = 0;
             filteredRows.clear();
             return;
@@ -365,7 +368,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             final long len = subFrameRowOffsets.getQuick(subFrame + 1) - offset;
             filteredRows.clear();
             if (len > 0) {
-                filteredRows.setCapacity(len);
+                // Grow-only: the sub-frames of a split run have varying match counts, so an unconditional
+                // setCapacity would shrink-then-grow (realloc) on every collect. Match populateJitData.
+                if (filteredRows.getCapacity() < len) {
+                    filteredRows.setCapacity(len);
+                }
                 Vect.memcpy(filteredRows.getAddress(), accumulatedRows.getAddress() + (offset << 3), len << 3);
                 filteredRows.setPos(len);
             }
@@ -397,12 +404,12 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         subFrameRowOffsets.clear();
         long accumulatedLen = 0;
         for (int j = 0; j < subFrameCount; j++) {
+            subFrameRowOffsets.add(accumulatedLen);
             frameIndex = firstFrameIndex + j;
             frameMemory = null;
             filteredRows.clear();
             filteredRowCount = 0;
             reducer.reduce(workerId, record, this, circuitBreaker, stealingFrameSequence);
-            subFrameRowOffsets.add(accumulatedLen);
             subFrameRowCounts.add(filteredRowCount);
             // The budget-0 pool overwrites this sub-frame's decode on the next navigateTo, so a split run
             // must retain each sub-frame's matching rows here; a single sub-frame keeps filteredRows as is.

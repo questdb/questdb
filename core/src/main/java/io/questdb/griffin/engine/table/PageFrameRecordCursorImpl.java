@@ -241,6 +241,13 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         long skipTarget = rowCount.get();
         PageFrame pageFrame;
         while ((pageFrame = frameCursor.next(skipTarget)) != null) {
+            // Same rowId frame-count ceiling as hasNext(): the frame index is packed into the high bits of
+            // every rowId, so a scan that skips past the ceiling would silently overflow it.
+            if (frameCount >= Rows.MAX_SAFE_PARTITION_INDEX) {
+                throw CairoException.nonCritical()
+                        .put("too many page frames for a single query [limit=").put(Rows.MAX_SAFE_PARTITION_INDEX)
+                        .put("]; reduce the scanned range or raise cairo.sql.page.frame.max.rows");
+            }
             frameAddressCache.add(frameCount++, pageFrame);
 
             long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
