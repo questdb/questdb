@@ -495,6 +495,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointPageCacheMaxBytes() {
+        return getDelegate().getLiveViewCheckpointPageCacheMaxBytes();
+    }
+
+    @Override
     public long getLiveViewCheckpointRepairReplayMaxRows() {
         return getDelegate().getLiveViewCheckpointRepairReplayMaxRows();
     }

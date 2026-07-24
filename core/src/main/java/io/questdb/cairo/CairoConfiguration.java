@@ -364,6 +364,24 @@ public interface CairoConfiguration {
     long getLiveViewCheckpointMaxDurationMicros();
 
     /**
+     * Engine-wide ceiling on the native memory every live view's decoded
+     * checkpoint state page cache may hold together. A restore of a bounded-RANGE
+     * window replays the anchor checkpoint's ring for every partition, and the
+     * pages it decodes are immutable, so caching the decoded images lets the next
+     * restore skip both the mapping and the codec. {@code 0} disables the cache
+     * outright.
+     * <p>
+     * One view's working set is roughly
+     * {@code frame_width_seconds * ingest_rows_per_second * 16 bytes * value_words}.
+     * The cache admits a stable, hash-selected subset of pages rather than
+     * evicting on a least-recently-used rule, because a restore is a repeated full
+     * sequential scan and LRU would evict every page just before its next use. The
+     * hit rate therefore degrades linearly with the shortfall: a budget covering
+     * half the working set still serves about half the probes.
+     */
+    long getLiveViewCheckpointPageCacheMaxBytes();
+
+    /**
      * Per-turn budget on the base rows one localized out-of-order repair may
      * replay. The repair's convergence boundary makes its work finite, but a
      * dense interval can still hold more rows than one refresh turn should

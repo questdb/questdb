@@ -517,6 +517,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointPageCacheMaxBytes() {
+        return 256L * 1024L * 1024L;
+    }
+
+    @Override
     public long getLiveViewCheckpointRepairReplayMaxRows() {
         return 1_000_000L;
     }
