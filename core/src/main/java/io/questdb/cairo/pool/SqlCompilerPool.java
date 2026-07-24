@@ -163,11 +163,6 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public boolean expiryPredicateReferencesColumn(RecordMetadata metadata, CharSequence predicate, int columnIndex) {
-            return delegate.expiryPredicateReferencesColumn(metadata, predicate, columnIndex);
-        }
-
-        @Override
         public boolean isExpiryCleanupMonotonic(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence source, CharSequence predicate, CharSequence timestampColumn) {
             return delegate.isExpiryCleanupMonotonic(executionContext, metadata, source, predicate, timestampColumn);
         }

@@ -1079,7 +1079,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableToken,
                 tableMetadata.getTableId()
         );
-        validateColumnNotInExpiryPredicate(tableToken, columnName, columnNamePosition, "change the type of");
         int existingColumnType = tableMetadata.getColumnType(columnIndex);
         int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition);
         CharSequence tok = SqlUtil.fetchNext(lexer);
@@ -1403,7 +1402,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             CharSequence columnName = tok;
-            validateColumnNotInExpiryPredicate(tableToken, columnName, lexer.lastTokenPosition(), "drop");
             dropColumnStatement.ofDropColumn(columnName);
             tok = SqlUtil.fetchNext(lexer);
 
@@ -1618,7 +1616,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
             }
             CharSequence existingName = GenericLexer.immutableOf(tok);
-            validateColumnNotInExpiryPredicate(tableToken, existingName, lexer.lastTokenPosition(), "rename");
 
             tok = expectToken(lexer, "'to' expected");
             if (!isToKeyword(tok)) {
@@ -6516,43 +6513,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    @Override
-    public boolean expiryPredicateReferencesColumn(RecordMetadata metadata, CharSequence predicate, int columnIndex) {
-        if (predicate == null || columnIndex < 0) {
-            return false;
-        }
-        try {
-            clear();
-            lexer.of(predicate);
-            return exprReferencesColumnIndex(parser.expr(lexer, (QueryModel) null, this), metadata, columnIndex);
-        } catch (Exception e) {
-            // A stored predicate that no longer parses cannot be reasoned about: block the column op so a
-            // corrupt predicate never silently allows a change that would brick reads. (Should not happen —
-            // the predicate is validated at CREATE / ALTER SET EXPIRE.)
-            return true;
-        }
-    }
-
-    // True if any LITERAL in the sub-tree resolves, via metadata (so case/quoting match the predicate's
-    // original bind), to columnIndex.
-    private static boolean exprReferencesColumnIndex(ExpressionNode node, RecordMetadata metadata, int columnIndex) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.LITERAL) {
-            return resolvePredicateColumnIndex(metadata, node.token) == columnIndex;
-        }
-        if (exprReferencesColumnIndex(node.lhs, metadata, columnIndex) || exprReferencesColumnIndex(node.rhs, metadata, columnIndex)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (exprReferencesColumnIndex(node.args.getQuick(i), metadata, columnIndex)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     // Resolves a predicate LITERAL token to a column index in metadata. Handles a plain (possibly quoted)
     // column name AND a table/alias-qualified reference such as t.v or "t"."v": EXPIRE predicates are
     // single-table, so a qualifier is the table name — the column is the segment after the last unquoted
@@ -6568,61 +6528,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return metadata.getColumnIndexQuiet(unquote(token.subSequence(dot + 1, token.length())));
         }
         return -1;
-    }
-
-    /**
-     * Rejects DROP / RENAME / ALTER COLUMN TYPE on a column referenced by the table's EXPIRE ROWS predicate.
-     * The predicate is stored as text and re-parsed on every read, so dropping, renaming or retyping a
-     * column it depends on would make every read of the table throw "Invalid column". The user must DROP
-     * EXPIRE first. No-op when the table has no policy. The predicate and the column index are read from
-     * {@link CairoEngine#getTableMetadata} — the same authoritative source the read filter falls back to —
-     * so it works uniformly for WAL tables (whose ALTER-time metadata is a SequencerMetadata that does NOT
-     * carry the policy) and non-WAL tables. A borrowed compiler parses the predicate so the in-flight
-     * ALTER's lexer/parser state is untouched.
-     * <p>
-     * Together with the symmetric check in ALTER SET EXPIRE ({@link #validateExpiryPredicate}, which rejects
-     * a predicate that no longer binds to the table's columns) this prevents a predicate from ever
-     * referencing a missing column for sequentially-issued DDL. The ONE residual is a WAL apply-lag race:
-     * two conflicting ALTERs on the same table — SET EXPIRE referencing column X and DROP/RENAME/retype X —
-     * issued so close that the second compiles while the first is sequenced-but-not-yet-applied, so neither
-     * compile-time check sees the other. Both then apply and reads brick. This requires concurrent
-     * conflicting DDL (an anti-pattern) within the apply-lag window and is fully recoverable: {@code ALTER
-     * TABLE t DROP EXPIRE} clears the orphaned predicate without reading table data (no data is lost). A
-     * complete close would require apply-time conflict detection on the WAL apply path (a deliberate,
-     * feature-level change rather than a compile-time guard).
-     */
-    private void validateColumnNotInExpiryPredicate(
-            TableToken tableToken,
-            CharSequence columnName,
-            int position,
-            CharSequence verb
-    ) throws SqlException {
-        // Lock-free fast path: skip the reader-metadata open entirely for tables that provably have no
-        // policy (the same per-table gate the read filter uses). Conservative during startup hydration.
-        if (!engine.getMetadataCache().mayTableHaveExpiryPolicy(tableToken)) {
-            return;
-        }
-        try (TableMetadata tableMetadata = engine.getTableMetadata(tableToken)) {
-            final CharSequence predicate = tableMetadata.getExpiryPredicate();
-            if (predicate == null) {
-                return;
-            }
-            final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
-            if (columnIndex < 0) {
-                return; // the caller's own check reports an unknown column
-            }
-            final boolean referenced;
-            try (SqlCompiler validationCompiler = engine.getSqlCompiler()) {
-                referenced = validationCompiler.expiryPredicateReferencesColumn(tableMetadata, predicate, columnIndex);
-            }
-            if (referenced) {
-                throw SqlException.$(position, "cannot ").put(verb).put(" column '").put(columnName)
-                        .put("': it is referenced by the EXPIRE ROWS predicate [").put(predicate)
-                        .put("]; run 'ALTER TABLE ").put(tableToken.getTableName()).put(" DROP EXPIRE' first");
-            }
-        } catch (CairoException e) {
-            // Table metadata briefly unavailable (e.g. concurrently dropped/renamed): don't block the op.
-        }
     }
 
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
