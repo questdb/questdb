@@ -10489,10 +10489,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     replaceRangeTsHi
             );
 
+            // The getRowCount() == 0 guards let an emptied table through: it holds nothing in the
+            // replaced range, so both bounds are vacuously satisfied, but they cannot say so
+            // themselves. An empty table reports minTimestamp = Long.MAX_VALUE and
+            // maxTimestamp = Long.MIN_VALUE, and the "outside the range" clauses degenerate once the
+            // range spans the whole timeline - which is what [Long.MIN_VALUE, +inf) is, the range a
+            // live view declared START FROM BEGINNING emits for a pure-delete full rebuild.
             // Min timestamp is either outside of replace range or equals to the min timestamp of the transaction
-            assert txWriter.getMinTimestamp() < replaceRangeTsLo || txWriter.getMinTimestamp() >= replaceRangeTsHi || txWriter.getMinTimestamp() == txnMinTs;
+            assert txWriter.getRowCount() == 0 || txWriter.getMinTimestamp() < replaceRangeTsLo || txWriter.getMinTimestamp() >= replaceRangeTsHi || txWriter.getMinTimestamp() == txnMinTs;
             // Max timestamp is either outside of replace range or equals to the max timestamp of the transaction
-            assert txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() >= replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs;
+            assert txWriter.getRowCount() == 0 || txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() >= replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs;
 
             return true;
         } else {

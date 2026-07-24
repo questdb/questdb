@@ -59,11 +59,19 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int METADATA_VERSION_MISMATCH = TXN_BLOCK_APPLY_FAILED - 1;
     public static final int FILE_TOO_SMALL = METADATA_VERSION_MISMATCH - 1;
     public static final int SEQUENCER_METADATA_OPEN_FAILED = FILE_TOO_SMALL - 1;
+    private static final int TABLE_SUSPENDED = SEQUENCER_METADATA_OPEN_FAILED - 1;
+    // PARTITION_SNAPSHOT_STALE (-113) and PARTITION_SNAPSHOT_ID_MISSING (-114) cross
+    // the JNI boundary: the enterprise cold-storage decoder throws them from Rust,
+    // which hardcodes the literals in qdb-ent/src/cold_storage/jni/decoder.rs and
+    // cannot see this chain. Append new codes below rather than inserting them
+    // above, so these two keep their values; ColdErrnoContractTest pins them.
+    public static final int PARTITION_SNAPSHOT_STALE = TABLE_SUSPENDED - 1;
+    public static final int PARTITION_SNAPSHOT_ID_MISSING = PARTITION_SNAPSHOT_STALE - 1;
     // The on-disk _lv / _lv.s carry a format version newer than this build
     // supports. The catalogue load path catches this and surfaces the view as
     // version_unsupported rather than hiding it; distinct from structural
     // corruption so the two map to different operator-visible outcomes.
-    public static final int LV_FILE_VERSION_UNSUPPORTED = SEQUENCER_METADATA_OPEN_FAILED - 1;
+    public static final int LV_FILE_VERSION_UNSUPPORTED = PARTITION_SNAPSHOT_ID_MISSING - 1;
     // A live-view versioned checkpoint timeline artifact failed structural
     // validation: a torn/foreign _timeline superblock slot, or a metadata page
     // whose framing, bounds, or per-page checksum did not hold. Timeline state is
@@ -73,9 +81,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // reconstruction. Distinct from LV_FILE_VERSION_UNSUPPORTED, which covers
     // required state and does surface to the operator.
     public static final int LV_CHECKPOINT_TIMELINE_INVALID = LV_FILE_VERSION_UNSUPPORTED - 1;
-    private static final int TABLE_SUSPENDED = LV_CHECKPOINT_TIMELINE_INVALID - 1;
-    public static final int PARTITION_SNAPSHOT_STALE = TABLE_SUSPENDED - 1;
-    public static final int PARTITION_SNAPSHOT_ID_MISSING = PARTITION_SNAPSHOT_STALE - 1;
     public static final int NON_CRITICAL = -1;
     // Single source of truth for the write-refusal message a read-only node emits. Both a static
     // read-only OSS instance and an enterprise node acting as a read-only replica reach this
