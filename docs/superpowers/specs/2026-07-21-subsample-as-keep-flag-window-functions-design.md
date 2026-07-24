@@ -1,17 +1,20 @@
 # SUBSAMPLE as keep-flag window functions
 
 **Date:** 2026-07-21
-**Status:** Implemented; final state recorded 2026-07-23
+**Status:** Implemented; final state reconciled 2026-07-24
 **Branch:** `subsample-fixes` (off `jv/lttb` / PR #7013)
 
 ## Authoritative final state
 
 - `SUBSAMPLE` is desugared through total migrate-or-throw routing and executes only through keep-flag window functions; the bespoke cursor and codegen dispatch are deleted.
+- The keep window always runs above the completed input projection. Visible timestamp/value aliases are authoritative; hidden or computed non-designated timestamps are rejected, and projected value expressions/types are preserved.
 - `uniform`, `cadence`, `m4`, `minmax`, `lttb`, and `sdt` use TWO_PASS window implementations. A designated timestamp is required.
-- `SubsampleRecordCursorFactory`, cursor-only `UniformAlgorithm`/`CadenceAlgorithm`, the kill-switch/max-row properties, and obsolete cursor-comparison benchmarks are deleted.
+- `SubsampleRecordCursorFactory`, cursor-only `UniformAlgorithm`/`CadenceAlgorithm`, and the `cairo.subsample.window.enabled` kill-switch remain deleted. The safety-only `cairo.sql.subsample.max.rows` property remains, defaults to 100,000,000, and applies to the five legacy count methods only when invoked through `SUBSAMPLE`; direct window calls and `sdt` rely on query-memory limits. Legacy `cadence(1)` remains an uncapped no-op.
 - `SubsampleAlgorithm`, `M4Algorithm`, `MinMaxAlgorithm`, and `LttbAlgorithm` remain because the value-inspecting window factories use them; `SwingingDoor` remains for `sdt`.
-- Selection is computed in timestamp order, while output preserves incoming cursor order. Ascending input stays ascending; descending input is not force-sorted.
-- Verification: the required 2,139-test suite passes with no failures/errors (4 skips), and the benchmark module packages without the deleted A/B harnesses.
+- Selection is computed in timestamp order, while output preserves incoming cursor order. Ordered pass-1 traversal ordinals are mapped through the retained `WindowSortBuffer` to incoming row IDs and sorted before emission; ascending input stays ascending and descending input is not force-sorted.
+- Function-owned native buffers, selection/null lists, SDT state, and LTTB scratch are attached to the active query `MemoryTracker`; algorithm row counts are checked before narrowing to `int`.
+- Literal and bind target/stride validation share one contract. Cadence validates integer seeds even for stride 1, deterministic seeds rebind per cursor open, and random mode consumes exactly one legacy `Rnd.nextInt` draw per execution when stride is greater than 1.
+- The deleted cursor A/B harnesses stay deleted. `SubsampleWindowBenchmark` is the continuing window-only JMH regression harness across all six methods, 100k/1M rows, and ascending/descending inputs; historical cursor ratios remain context only.
 - Deferred performance work is explicit: uniform/cadence measured about 1.2–1.3× the former cursor, while value-inspecting methods remain around the ~1.9× generic pass1-dispatch ceiling.
 
 The remainder of this document preserves the original proposal and intermediate assumptions for design history. Where it conflicts with the section above, the authoritative final state wins.
@@ -188,7 +191,8 @@ bespoke cursor/dispatch machinery is deleted.
 - **Performance:** the Phase 4 cursor/window benchmarks established the retirement
   baseline before deletion. Uniform/cadence ended around 1.2–1.3× the cursor;
   value-inspecting methods plateaued around 1.9× at generic pass1 dispatch. The
-  obsolete cursor-comparison benchmark sources were deleted with the cursor.
+  obsolete cursor-comparison sources were deleted; `SubsampleWindowBenchmark`
+  now tracks the sole path across method, size, and ascending/descending input.
 
 ## Phasing (each phase ships green)
 
