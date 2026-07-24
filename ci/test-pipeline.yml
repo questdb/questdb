@@ -7,6 +7,9 @@ pr:
   drafts: false
 
 variables:
+  # Temporary: reserve CI capacity for the parallel macOS crash reproducer in
+  # test-hosted-pipeline.yml.
+  CRASH_REPRO_ONLY: "true"
   QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
   ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
   DIFF_COVER_THRESHOLD_PCT: 50
@@ -43,7 +46,12 @@ stages:
 
   - stage: TriggerEnterpriseCI
     displayName: "Trigger Enterprise CI"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: |
+      and(
+        succeeded(),
+        ne(variables['CRASH_REPRO_ONLY'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
     dependsOn:
       - CheckChanges
     jobs:
@@ -125,7 +133,12 @@ stages:
 
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin tests"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: |
+      and(
+        succeeded(),
+        ne(variables['CRASH_REPRO_ONLY'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
     dependsOn:
       - CheckChanges
     jobs:
@@ -135,7 +148,12 @@ stages:
 
   - stage: SelfHostedRunCairoA
     displayName: "SelfHosted Cairo tests (A)"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: |
+      and(
+        succeeded(),
+        ne(variables['CRASH_REPRO_ONLY'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
     dependsOn:
       - CheckChanges
     jobs:
@@ -145,7 +163,12 @@ stages:
 
   - stage: SelfHostedRunCairoB
     displayName: "SelfHosted Cairo tests (B)"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: |
+      and(
+        succeeded(),
+        ne(variables['CRASH_REPRO_ONLY'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
     dependsOn:
       - CheckChanges
     jobs:
@@ -155,7 +178,12 @@ stages:
 
   - stage: SelfHostedRunOtherA
     displayName: "SelfHosted Other tests (A)"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: |
+      and(
+        succeeded(),
+        ne(variables['CRASH_REPRO_ONLY'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
     dependsOn:
       - CheckChanges
     jobs:
@@ -165,7 +193,12 @@ stages:
 
   - stage: SelfHostedRunOtherB
     displayName: "SelfHosted Other tests (B)"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: |
+      and(
+        succeeded(),
+        ne(variables['CRASH_REPRO_ONLY'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
     dependsOn:
       - CheckChanges
     jobs:
@@ -175,6 +208,7 @@ stages:
 
   - stage: SelfHostedRunTestsCoverageBranches
     displayName: "SelfHosted Running tests with cover"
+    condition: and(succeeded(), ne(variables['CRASH_REPRO_ONLY'], 'true'))
     dependsOn:
       - CheckChanges
     jobs:
@@ -182,6 +216,7 @@ stages:
 
   - stage: JavaAndRustLint
     displayName: "Rust Test and Lint"
+    condition: and(succeeded(), ne(variables['CRASH_REPRO_ONLY'], 'true'))
     dependsOn:
       - CheckChanges
     jobs:
@@ -189,6 +224,7 @@ stages:
 
   - stage: CoverageReports
     displayName: "Coverage Report"
+    condition: and(succeeded(), ne(variables['CRASH_REPRO_ONLY'], 'true'))
     dependsOn:
       - CheckChanges
       - SelfHostedRunTestsCoverageBranches

@@ -5,6 +5,9 @@ parameters:
   - name: isHetznerAptMirrorEnabled
     type: boolean
     default: true
+  - name: javaToolOptions
+    type: string
+    default: ""
 
 steps:
   - ${{ if eq(parameters.isCheckoutEnabled, true) }}:
@@ -203,6 +206,7 @@ steps:
         $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     env:
+      JAVA_TOOL_OPTIONS: ${{ parameters.javaToolOptions }}
       QDB_TEST_WINDOWS_SYMLINKS: "1"
     timeoutInMinutes: 55
     condition: |

@@ -1,239 +1,76 @@
 jobs:
-  - job: RunOn
-    displayName: "on"
+  # Temporary crash reproducer. Keep most runs identical to the failing shard:
+  # diagnostic VM options can perturb allocation order and mask a rare crash.
+  - job: MacGriffinSubBaseline
+    displayName: "mac-griffin-sub baseline"
     strategy:
-      matrix:
-        mac-griffin-base:
-          # griffin base package only; subpackages run in mac-griffin-sub,
-          # fuzz tests in mac-griffin-fuzz. Splitting the single griffin shard
-          # (the pipeline's long pole) keeps each leg well under the 60 min cap.
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "macos-14"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/griffin/*"
-          # Exclude fuzz tests: run in mac-griffin-fuzz
-          excludeTests: "**/griffin/**/*Fuzz*"
-          javadoc_step: ""
-          javadoc_profile: ""
-        mac-griffin-sub:
-          # griffin subpackages; base package runs in mac-griffin-base,
-          # fuzz tests in mac-griffin-fuzz.
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "macos-14"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/griffin/**/*"
-          # Exclude base package: run in mac-griffin-base
-          # Exclude fuzz tests: run in mac-griffin-fuzz
-          excludeTests: "**/griffin/*,**/griffin/fuzz/**,**/griffin/**/*Fuzz*"
-          javadoc_step: ""
-          javadoc_profile: ""
-        mac-griffin-fuzz:
-          # All griffin fuzz tests: the griffin/fuzz package plus every *Fuzz*
-          # class under griffin (at any depth). These dominate the griffin shard's
-          # wall-clock time, so they run on their own leg (mirrors the windows-fuzz
-          # split). Note: **/griffin/**/*Fuzz* is depth-agnostic; **/griffin/**Fuzz**
-          # would only match immediate children of griffin/ and leave subpackage
-          # fuzzers (join, unnest, window, order-by, ...) on mac-griffin-sub.
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "macos-14"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/griffin/fuzz/**,**/griffin/**/*Fuzz*"
-          javadoc_step: ""
-          javadoc_profile: ""
-        mac-cairo:
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "macos-14"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/cairo/**"
-          # Exclude cairo fuzz tests: run in mac-cairo-fuzz
-          excludeTests: "**/cairo/fuzz/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        mac-cairo-fuzz:
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "macos-14"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/cairo/fuzz/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        mac-pgwire:
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "macos-14"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/pgwire/**/*.java"
-          javadoc_step: ""
-          javadoc_profile: ""
-        mac-other:
-          # No WEB_CONSOLE_PROFILE override: this group runs ServerMainTest, whose
-          # testServerUpgradeDoesNotOverrideWebConsoleConfig needs the bundled web
-          # console, so it inherits the default build-web-console profile.
-          imageName: "macos-14"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.25"
-          testset: "all"
-          # Exclude griffin: run in mac-griffin
-          # Exclude cairo: run in mac-cairo and mac-cairo-fuzz
-          # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
-          # Exclude pgwire: run in mac-pgwire
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-griffin-base:
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/griffin/*"
-          # Exclude O3 tests: run in windows-other-2
-          # Exclude Fuzz tests: run in windows-fuzz1 (cairo) and windows-fuzz2 (non-cairo)
-          excludeTests: "**/O3*Test**,**/**Fuzz**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-griffin-sub:
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/griffin/**/*"
-          # Exclude O3 tests: run in windows-other-2
-          # Exclude Fuzz tests: run in windows-fuzz1 (cairo) and windows-fuzz2 (non-cairo)
-          # Exclude base package: run in windows-griffin-base
-          excludeTests: "**/griffin/*,**/O3*Test**,**/**Fuzz**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-fuzz1:
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/cairo/fuzz/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-fuzz2:
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/**Fuzz**"
-          # Exclude cairo fuzz tests: run in windows-fuzz1
-          excludeTests: "**/cairo/fuzz/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-cairo-1:
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/cairo/**"
-          # Exclude O3 tests: run in windows-other-2
-          # Exclude Fuzz tests: run in windows-fuzz1 (cairo/fuzz) and windows-fuzz2 (other fuzz)
-          # Exclude mv/o3 subdirs: run in windows-cairo-2
-          excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/mv/**,**/cairo/o3/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-cairo-2:
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/cairo/mv/**,**/cairo/o3/**"
-          # Exclude Fuzz tests: run in windows-fuzz2
-          excludeTests: "**/**Fuzz**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-pgwire:
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.25"
-          testset: "all"
-          includeTests: "**/pgwire/**/*.java"
-          # Exclude O3 tests: run in windows-other-2
-          # Exclude Fuzz tests: run in windows-fuzz2
-          excludeTests: "**/O3*Test**,**/**Fuzz**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-other-1:
-          # No WEB_CONSOLE_PROFILE override: this group runs ServerMainTest, whose
-          # testServerUpgradeDoesNotOverrideWebConsoleConfig needs the bundled web
-          # console, so it inherits the default build-web-console profile.
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.25"
-          testset: "all"
-          # Exclude griffin: run in windows-griffin-base and windows-griffin-sub
-          # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-fuzz1
-          # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
-          # Exclude pgwire: run in windows-pgwire
-          # Exclude cutlass/http, cutlass/qwp, cutlass/text: run in windows-other-2
-          # Exclude Fuzz tests: run in windows-fuzz1 and windows-fuzz2
-          # Exclude O3 tests: run in windows-other-2
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/http/**,**/cutlass/qwp/**,**/cutlass/text/**,**/**Fuzz**,**/O3*Test**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-other-2:
-          # No test here needs the bundled web console (ServerMainTest runs in
-          # windows-other-1), so skip the build-web-console download.
-          WEB_CONSOLE_PROFILE: ""
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.25"
-          testset: "all"
-          # Heavier cutlass groups (http, qwp, text) plus O3 tests; balances wall-clock with windows-other-1
-          includeTests: "**/cutlass/http/**,**/cutlass/qwp/**,**/cutlass/text/**,**/O3*Test**"
-          # Exclude Fuzz tests: run in windows-fuzz2
-          # Exclude cairo/o3 and cairo/mv: run in windows-cairo-2
-          excludeTests: "**/**Fuzz**,**/cairo/o3/**,**/cairo/mv/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-
+      parallel: 8
     pool:
-      vmImage: $(imageName)
-      name: $(poolName)
+      vmImage: "macos-14"
+      name: "Azure Pipelines"
     timeoutInMinutes: 60
     variables:
+      WEB_CONSOLE_PROFILE: ""
+      poolName: "Azure Pipelines"
+      os: macOS
+      jdk: "1.25"
+      testset: "all"
+      includeTests: "**/griffin/**/*"
+      excludeTests: "**/griffin/*,**/griffin/fuzz/**,**/griffin/**/*Fuzz*"
+      javadoc_step: ""
+      javadoc_profile: ""
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
       COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
       CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
       DIFF_COVER_THRESHOLD_PCT: 50
-      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-baseline-$(System.JobPositionInPhase)-$(Build.SourceVersion).log"
       MAVEN_OPTS: "-Xmx2g -XX:+UseParallelGC"
-      # Hosted groups only run core-module tests; compile just core and its deps.
       TEST_REACTOR_ARGS: "-pl core -am"
     steps:
       - template: steps.yml
+
+  - job: MacGriffinSubVerified
+    displayName: "mac-griffin-sub verified"
+    strategy:
+      parallel: 4
+    pool:
+      vmImage: "macos-14"
+      name: "Azure Pipelines"
+    timeoutInMinutes: 60
+    variables:
+      WEB_CONSOLE_PROFILE: ""
+      poolName: "Azure Pipelines"
+      os: macOS
+      jdk: "1.25"
+      testset: "all"
+      includeTests: "**/griffin/**/*"
+      excludeTests: "**/griffin/*,**/griffin/fuzz/**,**/griffin/**/*Fuzz*"
+      javadoc_step: ""
+      javadoc_profile: ""
+      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
+      RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
+      COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      DIFF_COVER_THRESHOLD_PCT: 50
+      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-verified-$(System.JobPositionInPhase)-$(Build.SourceVersion).log"
+      CRASH_REPRO_JAVA_TOOL_OPTIONS: >-
+        -XX:+UnlockDiagnosticVMOptions
+        -XX:+VerifyBeforeGC
+        -XX:+VerifyDuringGC
+        -XX:+VerifyAfterGC
+        -XX:+CheckJNICalls
+        -Xlog:gc+verify=debug,safepoint=info:file=$(Build.ArtifactStagingDirectory)/gc-verified-$(System.JobPositionInPhase)-pid%p.log:time,uptime,level,tags
+      MAVEN_OPTS: "-Xmx2g -XX:+UseParallelGC"
+      TEST_REACTOR_ARGS: "-pl core -am"
+    steps:
+      - template: steps.yml
+        parameters:
+          javaToolOptions: "$(CRASH_REPRO_JAVA_TOOL_OPTIONS)"
+      - task: PublishBuildArtifacts@1
+        displayName: "Upload GC verification logs"
+        condition: always()
+        continueOnError: true
+        inputs:
+          pathToPublish: "$(Build.ArtifactStagingDirectory)"
+          artifactName: "mac-griffin-sub-verified-$(System.JobPositionInPhase)"
