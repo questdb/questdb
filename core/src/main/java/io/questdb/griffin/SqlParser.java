@@ -1560,6 +1560,13 @@ public class SqlParser {
         // we walk the named-window map here.
         validateLiveViewAnchors(queryModel);
 
+        // Enforce the bare-unbounded-window rule, which validateLiveViewAnchors
+        // used to carry: a PARTITION-BY-keyed window over the default frame needs
+        // an ANCHOR to bound its per-partition state. Resolved per window-function
+        // call rather than per window definition, because the state the rule is
+        // about belongs to the calls.
+        rejectBareUnboundedWindows(queryModel);
+
         // Defense-in-depth lead() reject. The factory-side check inside
         // CairoEngine only fires when the planner picks a window factory
         // that exposes lead - a future planner path that bypasses both
@@ -1821,15 +1828,9 @@ public class SqlParser {
                 continue;
             }
             if (w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE) {
-                // A bare unbounded window (default RANGE UNBOUNDED PRECEDING
-                // ... CURRENT ROW frame with PARTITION BY) without ANCHOR
-                // grows the partition count without bound. Bounded frames
-                // remain allowed without ANCHOR; so does a single-partition
-                // window (OVER ()).
-                if (!w.isNonDefaultFrame() && w.getPartitionBy().size() > 0) {
-                    throw SqlException.$(positionOfWindow(w, null),
-                            "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported. Add an ANCHOR to bound per-partition state, e.g. ANCHOR EXPRESSION timestamp_floor('1d', ts)");
-                }
+                // An unanchored window is this validator's business only through the
+                // bare-unbounded rule, which reads the calls over the window rather
+                // than the definition and so runs in rejectBareUnboundedWindows.
                 continue;
             }
             anchoredCount++;
@@ -1866,9 +1867,8 @@ public class SqlParser {
         // A column may either be an inline WindowExpression itself (e.g. SELECT
         // sum(price) OVER (...) FROM t) or carry a nested inline OVER inside an
         // arithmetic / function tree (e.g. sum(price) OVER (...) + 1). Walk both.
-        // Two checks fire here: bare-unbounded reject (PARTITION-BY-keyed window
-        // without ANCHOR), and inline-ANCHOR reject. The runtime AnchorSpec is
-        // captured only from named WINDOW clauses, so an inline anchor parses
+        // One check fires here, the inline-ANCHOR reject: the runtime AnchorSpec
+        // is captured only from named WINDOW clauses, so an inline anchor parses
         // but never wires through to the reset path - reject up front and
         // point the user at the named-window form.
         ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
@@ -1879,6 +1879,127 @@ public class SqlParser {
             }
             walkInlineWindows(qc.getAst());
         }
+    }
+
+    /**
+     * Enforces the bare-unbounded-window rule: a window carrying the default frame
+     * ({@code RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW}, spelled or left
+     * implicit) together with a {@code PARTITION BY} keeps per-partition state for a
+     * partition count that grows without bound, so it must carry an ANCHOR to reset.
+     * Bounded frames stay allowed without one; so does a single-partition window
+     * ({@code OVER ()}), whose state is O(1).
+     * <p>
+     * The rule reads the calls over a window rather than the window itself, because
+     * the state it is about is the calls'.
+     * {@link #hasStatelessCurrentRowShape} names the one family that keeps none:
+     * {@code last_value} respecting nulls over a frame ending at the current row,
+     * whose {@code computeNext} reads the row it was handed and whose partitioned
+     * implementation is constructed with no map at all. A window every call of which
+     * is that family is admitted; one call that is not takes the reject for the whole
+     * window, since a single growing map is enough.
+     * <p>
+     * The carve-out additionally requires the window to ORDER BY. An unordered
+     * default RANGE frame makes every row a peer of every other and compiles to the
+     * whole-partition {@code last_value} - a per-partition map after all - so it keeps
+     * this reject rather than being handed on to a downstream one.
+     * <p>
+     * A named window no call references keeps the reject too. Vacuously, every one of
+     * its zero calls is stateless, but admitting a definition on the strength of
+     * having no user would relax more than the shape this carve-out proves.
+     */
+    private static void rejectBareUnboundedWindows(IQueryModel queryModel) throws SqlException {
+        final LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        // Named definitions a stateless call has vouched for. Collected during the
+        // walk and read after it, because a definition is only cleared by its calls.
+        final ObjList<WindowExpression> vouchedFor = new ObjList<>();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                rejectBareUnboundedWindowCall(qc.getAst(), (WindowExpression) qc, named, vouchedFor);
+            }
+            // Window calls nested in an arithmetic / function tree carry their OVER
+            // clause on the function node itself; walk for those too.
+            walkForBareUnboundedWindow(qc.getAst(), named, vouchedFor);
+        }
+        ObjList<CharSequence> keys = named.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WindowExpression w = named.get(keys.getQuick(i));
+            if (w != null
+                    && w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE
+                    && isBareUnboundedWindow(w)
+                    && vouchedFor.indexOf(w) < 0) {
+                throw bareUnboundedWindowReject(positionOfWindow(w, null));
+            }
+        }
+    }
+
+    /**
+     * Recursive AST walk for the nested case of {@link #rejectBareUnboundedWindows}:
+     * a window function with an inline {@code OVER (...)} embedded inside a larger
+     * expression carries its window on {@code node.windowExpression}.
+     */
+    private static void walkForBareUnboundedWindow(
+            ExpressionNode node,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named,
+            ObjList<WindowExpression> vouchedFor
+    ) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null) {
+            rejectBareUnboundedWindowCall(node, node.windowExpression, named, vouchedFor);
+        }
+        if (node.paramCount < 3) {
+            walkForBareUnboundedWindow(node.lhs, named, vouchedFor);
+            walkForBareUnboundedWindow(node.rhs, named, vouchedFor);
+        } else if (node.args != null) {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                walkForBareUnboundedWindow(node.args.getQuick(i), named, vouchedFor);
+            }
+        }
+    }
+
+    /**
+     * Applies the bare-unbounded-window rule to one window call, recording the
+     * definition in {@code vouchedFor} when the call clears it. See
+     * {@link #rejectBareUnboundedWindows}.
+     */
+    private static void rejectBareUnboundedWindowCall(
+            ExpressionNode fn,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named,
+            ObjList<WindowExpression> vouchedFor
+    ) throws SqlException {
+        if (fn == null || fn.type != ExpressionNode.FUNCTION || fn.token == null
+                || isAnchoredWindow(window, named)) {
+            return;
+        }
+        // A named reference carries neither frame nor PARTITION BY of its own, so
+        // both halves of the shape are read off the definition it resolves to.
+        final WindowExpression frame = resolveFrameWindow(window, named);
+        if (frame == null || !isBareUnboundedWindow(frame)) {
+            return;
+        }
+        if (frame.getOrderBy().size() > 0 && hasStatelessCurrentRowShape(fn, window, named)) {
+            vouchedFor.add(frame);
+            return;
+        }
+        throw bareUnboundedWindowReject(positionOfWindow(frame, fn));
+    }
+
+    /**
+     * Reports whether {@code window} is a PARTITION-BY-keyed window over the default
+     * frame - the shape {@link #rejectBareUnboundedWindows} governs. Takes the
+     * definition a named reference resolves to, not the reference.
+     */
+    private static boolean isBareUnboundedWindow(WindowExpression window) {
+        return !window.isNonDefaultFrame() && window.getPartitionBy().size() > 0;
+    }
+
+    private static SqlException bareUnboundedWindowReject(int position) {
+        return SqlException.$(position,
+                "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported. Add an ANCHOR to bound per-partition state, e.g. ANCHOR EXPRESSION timestamp_floor('1d', ts)");
     }
 
     /**
@@ -1919,10 +2040,10 @@ public class SqlParser {
      * <p>
      * Partitioned-but-unanchored ranking (e.g. {@code row_number() OVER
      * (PARTITION BY sym ORDER BY ts)}) is already turned away by
-     * {@link #validateLiveViewAnchors}' bare-unbounded reject; this closes the
-     * remaining single-partition {@code OVER ()} / {@code OVER (ORDER BY ts)}
-     * hole, which {@code validateLiveViewAnchors} deliberately leaves open for
-     * O(1)-state single-partition windows. The frame reject closes that same
+     * {@link #rejectBareUnboundedWindows}; this closes the remaining
+     * single-partition {@code OVER ()} / {@code OVER (ORDER BY ts)} hole, which
+     * that rule deliberately leaves open for O(1)-state single-partition
+     * windows. The frame reject closes that same
      * hole plus the one an explicit frame opens: a window declaring
      * {@code ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} is a non-default
      * frame, so the bare-unbounded rule skips it however it is partitioned.
@@ -2110,16 +2231,15 @@ public class SqlParser {
      * per-function checkpoint gate or the factory-shape one names it. This
      * decides which reject such a query gets, not whether it is one.
      * <p>
-     * What it does not reach is a PARTITION-BY-keyed window carrying the default
-     * frame - {@code OVER (PARTITION BY <key> ORDER BY <ts>)} and its explicit
-     * {@code RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} spelling, which
-     * {@code WindowExpression.isNonDefaultFrame()} reads as the same thing. Those
-     * are refused by the bare-unbounded-window rule, which is evaluated per
-     * window rather than per call and so cannot read which function uses it. The
-     * {@code ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} spelling is a
-     * non-default frame, escapes that rule, and is admitted here; so is either
-     * spelling over a window with no {@code PARTITION BY}, which the rule leaves
-     * alone for holding one partition's worth of state.
+     * A PARTITION-BY-keyed window carrying the default frame - {@code OVER
+     * (PARTITION BY <key> ORDER BY <ts>)} and its explicit {@code RANGE BETWEEN
+     * UNBOUNDED PRECEDING AND CURRENT ROW} spelling, which
+     * {@code WindowExpression.isNonDefaultFrame()} reads as the same thing - answers
+     * to the bare-unbounded-window rule as well, and this predicate is what clears
+     * it there too: {@link #rejectBareUnboundedWindows} admits such a window when
+     * every call over it has this shape, on the strength of the same no-map
+     * implementation. It adds one narrowing of its own, an ORDER BY, because an
+     * unordered default RANGE frame compiles to the whole-partition family instead.
      */
     private static boolean hasStatelessCurrentRowShape(
             ExpressionNode fn,
@@ -2232,17 +2352,8 @@ public class SqlParser {
             throw SqlException.$(positionOfWindow(w, fallback),
                     "ANCHOR is only supported on named WINDOW clauses; declare the window with WINDOW <name> AS (...) and reference it from the SELECT");
         }
-        if (w.isNonDefaultFrame()) {
-            return;
-        }
-        // OVER () with no PARTITION BY has a single partition with O(1) state.
-        // Only PARTITION-BY-keyed bare unbounded windows have unbounded partition
-        // count growth and require an ANCHOR clause.
-        if (w.getPartitionBy().size() == 0) {
-            return;
-        }
-        throw SqlException.$(positionOfWindow(w, fallback),
-                "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported. Add an ANCHOR to bound per-partition state, e.g. ANCHOR EXPRESSION timestamp_floor('1d', ts)");
+        // The bare-unbounded reject an inline window also answers to lives in
+        // rejectBareUnboundedWindows, which reads the call the window belongs to.
     }
 
     /**

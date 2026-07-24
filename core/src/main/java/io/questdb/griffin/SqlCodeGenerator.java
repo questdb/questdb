@@ -9986,10 +9986,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (isFastPath) {
                 // For live-view compiles, collect the window functions whose frame is
-                // UNBOUNDED PRECEDING ... CURRENT ROW. These are exactly the functions an
-                // anchored named WINDOW owns (a bare unbounded window is rejected at CREATE),
-                // so the live-view ANCHOR runtime resets only these and leaves any bounded
-                // ROWS/RANGE window declared in the same view untouched at anchor crossings.
+                // UNBOUNDED PRECEDING ... CURRENT ROW: the functions an anchored named
+                // WINDOW owns, plus the checkpoint-stateless calls the bare-unbounded reject
+                // admits over that frame, which keep no per-partition state and whose
+                // resetPartition is a no-op. So the live-view ANCHOR runtime resets only
+                // these and leaves any bounded ROWS/RANGE window declared in the same view
+                // untouched at anchor crossings.
                 final boolean lvCompile = executionContext.isLiveViewCompile();
                 ObjList<WindowFunction> anchorableWindowFunctions = null;
                 for (int i = 0, size = functions.size(); i < size; i++) {

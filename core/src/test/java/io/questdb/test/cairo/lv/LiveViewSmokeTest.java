@@ -3163,6 +3163,15 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "SELECT ts, symbol, sum(price) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00')");
             execute("DROP LIVE VIEW lv");
+
+            // (f) the rule reads the calls over a window, not the definition: the same
+            // window carrying only last_value calls keeps no per-partition state at all
+            // and is accepted without an ANCHOR. LiveViewKeyedStatelessLastValueTest
+            // owns the shape's full coverage.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, symbol, last_value(price) OVER w AS l FROM base " +
+                    "WINDOW w AS (PARTITION BY symbol ORDER BY ts)");
+            execute("DROP LIVE VIEW lv");
         });
     }
 

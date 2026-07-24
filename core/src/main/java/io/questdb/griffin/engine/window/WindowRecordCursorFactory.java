@@ -50,11 +50,12 @@ import org.jetbrains.annotations.Nullable;
  */
 public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     // Subset of windowFunctions whose frame is UNBOUNDED PRECEDING ... CURRENT ROW.
-    // For a live view these are exactly the functions that belong to an anchored
-    // named WINDOW (a bare unbounded window is rejected at CREATE, and at most one
-    // anchored window is allowed), so the live-view ANCHOR runtime resets only
-    // these and never touches a bounded ROWS/RANGE window's state. Null for
-    // non-live-view compiles, which never consult it.
+    // For a live view these are the functions of an anchored named WINDOW (at most
+    // one anchored window is allowed) plus the checkpoint-stateless calls the
+    // bare-unbounded reject admits over that frame, whose resetPartition is a no-op
+    // because they keep no per-partition state. So the live-view ANCHOR runtime
+    // resets only these and never touches a bounded ROWS/RANGE window's state. Null
+    // for non-live-view compiles, which never consult it.
     private final ObjList<WindowFunction> anchorableWindowFunctions;
     // Union of the finite RANGE dependencies every window function in this factory carries,
     // or null when the factory mixes shapes, is not a live-view compile, or has no window
