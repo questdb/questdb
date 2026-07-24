@@ -25,9 +25,13 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
@@ -120,9 +124,15 @@ public class CadenceWindowFunctionTest extends AbstractCairoTest {
                 select("select ts, cadence(0) over (order by ts) from t");
                 Assert.fail("expected compilation to fail for an out-of-range constant stride");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "stride must be a positive constant");
+                TestUtils.assertContains(e.getFlyweightMessage(), "stride must be at least 1");
                 Assert.assertEquals(19, e.getPosition());
             }
+            assertQuery("select ts, cadence(2147483648) over (order by ts) from t")
+                    .noLeakCheck()
+                    .fails(19, "stride exceeds maximum of 2147483647");
+            assertQuery("select ts, cadence(null::long) over (order by ts) from t")
+                    .noLeakCheck()
+                    .fails(23, "stride must be set");
         });
     }
 
@@ -143,6 +153,95 @@ public class CadenceWindowFunctionTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "integer expected for stride");
                 Assert.assertEquals(19, e.getPosition());
+            }
+        });
+    }
+
+    @Test
+    public void testRandomSeedDrawLifecycle() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table empty_t (ts timestamp, v double) timestamp(ts)");
+            execute("create table short_t as (select x::timestamp ts, x::double v from long_sequence(2)) timestamp(ts)");
+            execute("create table normal_t as (select x::timestamp ts, x::double v from long_sequence(10)) timestamp(ts)");
+
+            final CountingRnd rnd = new CountingRnd();
+            sqlExecutionContext.setRandom(rnd);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String table : new String[]{"empty_t", "short_t", "normal_t"}) {
+                    try (RecordCursorFactory factory = compiler.compile(
+                            "select cadence(3, null) over (order by ts) from " + table,
+                            sqlExecutionContext).getRecordCursorFactory()) {
+                        for (int i = 0; i < 2; i++) {
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                while (cursor.hasNext()) {
+                                    // drain
+                                }
+                            }
+                        }
+                    }
+                }
+                Assert.assertEquals("one nextInt draw per open, including empty/short inputs", 6, rnd.nextIntCalls);
+                Assert.assertEquals(0, rnd.nextLongBoundCalls);
+
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select cadence(1, null) over (order by ts) from normal_t",
+                        sqlExecutionContext).getRecordCursorFactory()) {
+                    for (int i = 0; i < 2; i++) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            while (cursor.hasNext()) {
+                                // drain
+                            }
+                        }
+                    }
+                }
+                Assert.assertEquals("stride 1 must not consume RNG", 6, rnd.nextIntCalls);
+                Assert.assertEquals(0, rnd.nextLongBoundCalls);
+            }
+        });
+    }
+
+    @Test
+    public void testSeedBindTypeValidationAndStrideOneUnset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::timestamp ts, x::double v from long_sequence(3)) timestamp(ts)");
+            final BindVariableService bindVariables = sqlExecutionContext.getBindVariableService();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (int stride : new int[]{1, 3}) {
+                    bindVariables.clear();
+                    bindVariables.setStr(0, "abc");
+                    final String query = "select cadence(" + stride + ", $1) over (order by ts) from t";
+                    try {
+                        compiler.compile(query, sqlExecutionContext);
+                        Assert.fail("expected STRING seed rejection for stride " + stride);
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "integer or NULL expected for seed");
+                        Assert.assertEquals(query.indexOf("$1"), e.getPosition());
+                    }
+                }
+
+                bindVariables.clear();
+                bindVariables.setLong(0, Numbers.LONG_NULL);
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select cadence(1, $1) over (order by ts) from t",
+                        sqlExecutionContext).getRecordCursorFactory();
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    long rows = 0;
+                    while (cursor.hasNext()) {
+                        rows++;
+                    }
+                    Assert.assertEquals(3, rows);
+                }
+
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select cadence(3, $1) over (order by ts) from t",
+                        sqlExecutionContext).getRecordCursorFactory()) {
+                    try {
+                        factory.getCursor(sqlExecutionContext);
+                        Assert.fail("expected unset seed rejection for stride 3");
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "seed must be set");
+                    }
+                }
             }
         });
     }
@@ -264,5 +363,22 @@ public class CadenceWindowFunctionTest extends AbstractCairoTest {
                                             Frame forward scan on: t
                                     """);
         });
+    }
+
+    private static class CountingRnd extends Rnd {
+        private int nextIntCalls;
+        private int nextLongBoundCalls;
+
+        @Override
+        public int nextInt(int boundary) {
+            nextIntCalls++;
+            return boundary > 1 ? 1 : 0;
+        }
+
+        @Override
+        public long nextLong(long boundary) {
+            nextLongBoundCalls++;
+            throw new AssertionError("cadence random offset must use nextInt(boundary)");
+        }
     }
 }

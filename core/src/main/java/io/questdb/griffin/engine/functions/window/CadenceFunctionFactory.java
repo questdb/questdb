@@ -138,15 +138,11 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             throw SqlException.$(stridePosition, "integer expected for stride");
         }
 
-        // A constant stride's range is validated HERE, at compile time - byte-identical (message and
-        // position) to the pre-bind-var-support factory. A bind-variable stride is range-validated
-        // per-execution in CadenceFunction.init(); see there.
+        // Constants and runtime constants share one range contract; runtime constants are re-read
+        // in init() so rebinding between cursor opens remains supported.
         long resolvedStride = 0;
         if (strideArg.isConstant()) {
-            resolvedStride = strideArg.getLong(null);
-            if (resolvedStride == Numbers.LONG_NULL || resolvedStride < 1) {
-                throw SqlException.$(stridePosition, "stride must be a positive constant");
-            }
+            resolvedStride = validateStride(strideArg.getLong(null), stridePosition);
         }
 
         Function seedFunc = null;
@@ -161,6 +157,18 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             } else {
                 if (!seedArg.isConstant() && !seedArg.isRuntimeConstant()) {
                     throw SqlException.$(seedPosition, "seed must be a constant, bind variable, or NULL");
+                }
+                coerceRuntimeConstantType(
+                        seedArg,
+                        ColumnType.LONG,
+                        sqlExecutionContext,
+                        "integer or NULL expected for seed",
+                        seedPosition
+                );
+                final short seedTypeTag = ColumnType.tagOf(seedArg.getType());
+                if (seedTypeTag != ColumnType.INT && seedTypeTag != ColumnType.LONG
+                        && seedTypeTag != ColumnType.SHORT && seedTypeTag != ColumnType.BYTE) {
+                    throw SqlException.$(seedPosition, "integer or NULL expected for seed");
                 }
                 seedFunc = seedArg;
                 seedMode = SEED_MODE_DETERMINISTIC;
@@ -196,10 +204,9 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         private final int stridePosition;
         private long count;          // running row counter during pass1; becomes totalRows
         private long stride;         // resolved in init() from strideFunc for the current execution
-        // Captured in init() (called once per execution by the cached window cursor); used only in
-        // SEED_MODE_RANDOM so the offset re-randomizes on every execution rather than being fixed at
-        // parse/newInstance time.
-        private Rnd contextRnd;
+        // Resolved once per execution in init(), before the base cursor is scanned. Random mode uses
+        // the legacy nextInt primitive exactly once whenever stride > 1, even for empty/short inputs.
+        private long offset;
         private boolean keepAll;
         private boolean lastKeep;    // last keep-flag computed in pass2; see getBool() below
         private ObjList<ExpressionNode> orderBy;
@@ -294,33 +301,24 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             if (!strideFunc.isConstant()) {
                 // Resolve stride for THIS execution: a bind-variable stride is re-read (and range-checked)
                 // every run, so re-binding between executions takes effect.
-                long s = strideFunc.getLong(null);
-                if (s == Numbers.LONG_NULL) {
-                    throw SqlException.$(stridePosition, "stride must be set");
-                }
-                if (s < 1) {
-                    throw SqlException.$(stridePosition, "stride must be at least 1");
-                }
-                if (s > Integer.MAX_VALUE) {
-                    throw SqlException.$(stridePosition, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
-                }
-                stride = s;
+                stride = validateStride(strideFunc.getLong(null), stridePosition);
             }
             // A constant stride was already resolved and range-validated at newInstance (compile
             // time); it reads the same value every execution, so there is nothing to redo here.
+            offset = 0;
             if (seedFunc != null) {
                 seedFunc.init(symbolTableSource, executionContext);
-                // The legacy cursor returns its base cursor immediately for cadence(1), without reading
-                // the seed. For stride > 1, validate the seed eagerly, independent of row count:
-                // preparePass2 short-circuits computeOffset() when stride > totalRows, which would
-                // otherwise let an unset bind-variable seed slip through silently.
-                if (stride > 1 && seedFunc.getLong(null) == Numbers.LONG_NULL) {
-                    throw SqlException.$(seedPosition, "seed must be set");
+                // Preserve cadence(1)'s no-op behavior: a correctly typed but unset seed is not read.
+                if (stride > 1) {
+                    final long seed = seedFunc.getLong(null);
+                    if (seed == Numbers.LONG_NULL) {
+                        throw SqlException.$(seedPosition, "seed must be set");
+                    }
+                    offset = deterministicOffset(seed, stride);
                 }
+            } else if (seedMode == SEED_MODE_RANDOM && stride > 1) {
+                offset = executionContext.getRandom().nextInt((int) stride);
             }
-            // Captured every execution (not just once) so a fresh Rnd draw is used on each run when
-            // seedMode == SEED_MODE_RANDOM; see computeOffset().
-            contextRnd = executionContext.getRandom();
         }
 
         @Override
@@ -383,7 +381,6 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
                 // Only the first row, no last-row pin.
                 return;
             }
-            long offset = computeOffset();
             // long running index: stride + offset can exceed Integer.MAX_VALUE, which is why this
             // and totalRows/pos are long rather than int.
             for (long pos = stride + offset; pos < totalRows; pos += stride) {
@@ -402,6 +399,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             pass2Ordinal = 0;
             selIdx = 0;
             selected.reopen();
+            offset = 0;
             selected.clear();
         }
 
@@ -417,6 +415,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             keepAll = false;
             pass2Ordinal = 0;
             selIdx = 0;
+            offset = 0;
             selected.close();
         }
 
@@ -457,28 +456,10 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             selected.clear();
         }
 
-        // Splitmix64 mix + Math.floorMod preserve SUBSAMPLE's deterministic offset, computed fresh
-        // every execution (called from preparePass2, after init()
-        // has refreshed seedFunc/contextRnd for this run) rather than once at newInstance/parse
-        // time - required so SEED_MODE_RANDOM re-randomizes per run and a bind-variable seed under
-        // SEED_MODE_DETERMINISTIC picks up its current value.
-        // Deviation from the original int-typed computeCadenceOffset: stride/offset are long here
-        // (ordinals, not native buffer positions), so the modulo target widens from int to long
-        // (Math.floorMod(h, stride) and Rnd.nextLong(stride) instead of nextInt).
-        private long computeOffset() {
-            if (seedMode == SEED_MODE_NONE) {
-                return 0;
-            }
-            if (seedMode == SEED_MODE_RANDOM) {
-                return contextRnd.nextLong(stride);
-            }
-            // SEED_MODE_DETERMINISTIC: compute offset from seed without mutating shared RNG state.
-            // Uses a mixing hash (splitmix64 finalizer) bounded to [0, stride).
-            long seedVal = seedFunc.getLong(null);
-            if (seedVal == Numbers.LONG_NULL) {
-                throw CairoException.nonCritical().position(seedPosition).put("seed must be set");
-            }
-            long h = seedVal;
+        // Splitmix64 finalizer preserves deterministic seed compatibility without mutating the
+        // execution context's shared random generator.
+        private static long deterministicOffset(long seed, long stride) {
+            long h = seed;
             h = (h ^ (h >>> 30)) * 0xbf58476d1ce4e5b9L;
             h = (h ^ (h >>> 27)) * 0x94d049bb133111ebL;
             h = h ^ (h >>> 31);

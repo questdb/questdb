@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -4206,25 +4207,36 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testCadenceWithBindSeed() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("""
-                    INSERT INTO t VALUES
-                    (10.0, '2024-01-01T00:00:00.000000Z'),
-                    (20.0, '2024-01-01T01:00:00.000000Z'),
-                    (30.0, '2024-01-01T02:00:00.000000Z'),
-                    (40.0, '2024-01-01T03:00:00.000000Z'),
-                    (50.0, '2024-01-01T04:00:00.000000Z')
-                    """);
-            drainWalQueue();
+            execute("CREATE TABLE t AS (" +
+                    "SELECT x * 10.0 price, timestamp_sequence(0, 1) ts FROM long_sequence(10)) TIMESTAMP(ts)");
             bindVariableService.clear();
             bindVariableService.setLong(0, 3);
             bindVariableService.setLong(1, 42);
-            // cadence($1, $2) with stride=3, seed=42
-            sink.clear();
-            printSql("SELECT price, ts FROM t SUBSAMPLE cadence($1, $2)", sink);
-            String result = sink.toString();
-            Assert.assertTrue(result.contains("10.0\t2024-01-01T00:00:00.000000Z"));
-            Assert.assertTrue(result.contains("50.0\t2024-01-01T04:00:00.000000Z"));
+            final double[][] expected = {
+                    {10.0, 50.0, 80.0, 100.0}, // seed 42 -> offset 1
+                    {10.0, 60.0, 90.0, 100.0}  // seed 3 -> offset 2
+            };
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT price, ts FROM t SUBSAMPLE cadence($1, $2)",
+                         sqlExecutionContext).getRecordCursorFactory()) {
+                for (int execution = 0; execution < expected.length; execution++) {
+                    if (execution == 1) {
+                        // Rebind on the same compiled factory. Different middle rows prove the seed
+                        // is read per execution rather than ignored or cached from the first open.
+                        bindVariableService.setLong(1, 3);
+                    }
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final Record record = cursor.getRecord();
+                        int row = 0;
+                        while (cursor.hasNext()) {
+                            Assert.assertTrue("too many rows on execution " + execution, row < expected[execution].length);
+                            Assert.assertEquals(expected[execution][row++], record.getDouble(0), 0.0);
+                        }
+                        Assert.assertEquals("execution " + execution, expected[execution].length, row);
+                    }
+                }
+            }
         });
     }
 

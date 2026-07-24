@@ -156,24 +156,12 @@ public class UniformWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTargetOneKeepsSingleRow() throws Exception {
+    public void testTargetOneRejectedLikeRuntimeBind() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
-            execute("insert into t select x::timestamp, x from long_sequence(5)");
-            // target=1 over 5 rows: divisor (target-1) would be 0, must not divide by zero;
-            // keeps a single, roughly-middle row (index (5-1)/2 = 2 -> row 3).
-            assertQuery("select ts, v, uniform(1) over (order by ts) keep from t")
+            assertQuery("select ts, uniform(1) over (order by ts) from t")
                     .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("""
-                            ts\tv\tkeep
-                            1970-01-01T00:00:00.000001Z\t1.0\tfalse
-                            1970-01-01T00:00:00.000002Z\t2.0\tfalse
-                            1970-01-01T00:00:00.000003Z\t3.0\ttrue
-                            1970-01-01T00:00:00.000004Z\t4.0\tfalse
-                            1970-01-01T00:00:00.000005Z\t5.0\tfalse
-                            """);
+                    .fails(19, "target points must be at least 2");
         });
     }
 
@@ -206,9 +194,15 @@ public class UniformWindowFunctionTest extends AbstractCairoTest {
                 select("select ts, uniform(0) over (order by ts) from t");
                 Assert.fail("expected compilation to fail for an out-of-range constant target");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "target must be a positive constant");
+                TestUtils.assertContains(e.getFlyweightMessage(), "target points must be at least 2");
                 Assert.assertEquals(19, e.getPosition());
             }
+            assertQuery("select ts, uniform(2147483648) over (order by ts) from t")
+                    .noLeakCheck()
+                    .fails(19, "target points exceeds maximum of 2147483647");
+            assertQuery("select ts, uniform(null::long) over (order by ts) from t")
+                    .noLeakCheck()
+                    .fails(23, "target point count must be set");
         });
     }
 

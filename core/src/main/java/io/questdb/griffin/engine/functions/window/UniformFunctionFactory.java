@@ -46,7 +46,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
@@ -113,15 +112,11 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
             throw SqlException.$(targetPosition, "integer expected for target point count");
         }
 
-        // A constant target's range is validated HERE, at compile time - byte-identical (message and
-        // position) to the pre-bind-var-support factory. A bind-variable target is range-validated
-        // per-execution in UniformFunction.init(); see there.
+        // Constants and runtime constants share one range contract; runtime constants are re-read
+        // in init() so rebinding between cursor opens remains supported.
         long resolvedTarget = 0;
         if (targetArg.isConstant()) {
-            resolvedTarget = targetArg.getLong(null);
-            if (resolvedTarget == Numbers.LONG_NULL || resolvedTarget < 1) {
-                throw SqlException.$(targetPosition, "target must be a positive constant");
-            }
+            resolvedTarget = validateTarget(targetArg.getLong(null), targetPosition);
         }
 
         return new UniformFunction(
@@ -182,17 +177,7 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
             if (!targetArg.isConstant()) {
                 // Resolve target for THIS execution: a bind-variable target is re-read (and
                 // range-checked) every run, so re-binding between executions takes effect.
-                long t = targetArg.getLong(null);
-                if (t == Numbers.LONG_NULL) {
-                    throw SqlException.$(targetPosition, "target point count must be set");
-                }
-                if (t < 2) {
-                    throw SqlException.$(targetPosition, "target points must be at least 2");
-                }
-                if (t > Integer.MAX_VALUE) {
-                    throw SqlException.$(targetPosition, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
-                }
-                target = t;
+                target = validateTarget(targetArg.getLong(null), targetPosition);
             }
             // A constant target was already resolved and range-validated at newInstance (compile
             // time); it reads the same value every execution, so there is nothing to redo here.
@@ -293,12 +278,6 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
                 return;
             }
             keepAll = false;
-            if (target == 1) {
-                // divisor (target - 1) would be 0 below; target=1 over >1 rows keeps a single,
-                // roughly-middle row instead.
-                selected.add((totalRows - 1) / 2);
-                return;
-            }
             long divisor = target - 1;
             long range = totalRows - 1;
             long half = divisor / 2;
