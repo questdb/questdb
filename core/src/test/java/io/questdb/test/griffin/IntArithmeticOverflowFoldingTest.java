@@ -418,6 +418,142 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertIntoWiderColumnWidensThroughAliasedProjection() throws Exception {
+        // An alias is a column reference, and a column reference over a width-unstable base column
+        // used to throw the wide half away: the projection emitted a plain IntColumn, whose
+        // getLong() is intToLong(getInt()) and which reports isIntWidthStable() == true. So
+        // `a::LONG` over `SELECT i+j AS a` re-wrapped while `(i+j)::LONG` widened, and - worse -
+        // the STORED value depended on whether an unrelated sibling column was projected: with no
+        // sibling the outer projection is elided and the copier sees the arithmetic function
+        // (widens), with a sibling it sees the IntColumn (wraps).
+        //
+        // The projection now emits a wide-reading column function whenever the base factory reports
+        // the referenced column width-unstable, so the alias is transparent: the same expression
+        // reads and stores the same value whatever plan shape carries it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE apt (i INT, j INT)");
+            execute("INSERT INTO apt VALUES (2_000_000_000, 2_000_000_000)"); // i+j = 4000000000, wraps to -294967296
+
+            // read path: the direct cast and the cast through an alias must agree
+            assertQuery("SELECT (i+j)::LONG AS v FROM apt").noLeakCheck().expectSize().returns("v\n4000000000\n");
+            assertQuery("SELECT a::LONG AS v FROM (SELECT i+j AS a, i AS s FROM apt)")
+                    .noLeakCheck().expectSize().returns("v\n4000000000\n");
+            assertQuery("SELECT a::TIMESTAMP AS v FROM (SELECT i+j AS a, i AS s FROM apt)")
+                    .noLeakCheck().expectSize().returns("v\n1970-01-01T01:06:40.000000Z\n");
+
+            // the plain INT read of the alias still wraps, exactly as the arithmetic does
+            assertQuery("SELECT a FROM (SELECT i+j AS a, i AS s FROM apt)")
+                    .noLeakCheck().expectSize().returns("a\n-294967296\n");
+
+            // store path: with no sibling column the outer projection is elided, so this pins the
+            // reference value the sibling shapes below must match
+            execute("CREATE TABLE apd1 (l LONG)");
+            execute("INSERT INTO apd1 SELECT a FROM (SELECT i+j AS a FROM apt)");
+            assertQuery("SELECT l FROM apd1").noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+            // a second computed projection level over the alias keeps the outer projection alive:
+            // the stored value must not change because of it
+            execute("CREATE TABLE apd2 (l1 LONG, l2 LONG)");
+            execute("INSERT INTO apd2 SELECT a, a+1 FROM (SELECT i+j AS a FROM apt)");
+            assertQuery("SELECT l1, l2 FROM apd2").noLeakCheck().expectSize().returns("l1\tl2\n4000000000\t4000000001\n");
+
+            // a plain sibling column has the same effect on the plan shape
+            execute("CREATE TABLE apd3 (l LONG, s INT)");
+            execute("INSERT INTO apd3 SELECT a, s FROM (SELECT i+j AS a, i AS s FROM apt)");
+            assertQuery("SELECT l, s FROM apd3").noLeakCheck().expectSize().returns("l\ts\n4000000000\t2000000000\n");
+
+            // a self-referencing projection resolves the alias against the projection's own
+            // functions rather than the base factory, and must widen there too. The plan pins the
+            // reference: were b compiled as a duplicate of the whole expression it would widen for
+            // the wrong reason and this arm would assert nothing.
+            assertQuery("SELECT i+j AS a, a::LONG AS b FROM apt")
+                    .noLeakCheck().expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [i+j,a::long]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: apt
+                            """)
+                    .returns("a\tb\n-294967296\t4000000000\n");
+
+            // nullif reads BOTH widths of its first argument on the same row, and picks between one
+            // long-width read and two INT-width reads on isRowStable(). A column reference is a
+            // proxy, so it has to report the REFERENCED expression's answer: a row-stable alias
+            // compares at INT width, exactly as the un-aliased spelling does...
+            assertQuery("SELECT nullif(i+j, -294967296)::LONG AS v FROM apt")
+                    .noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT nullif(a, -294967296)::LONG AS v FROM (SELECT i+j AS a, i AS s FROM apt)")
+                    .noLeakCheck().expectSize().returns("v\nnull\n");
+
+            // ... while a row-unstable one cannot be read twice at all, so both spellings move the
+            // whole comparison to long width. Claiming row stability for the alias would read the
+            // expression twice - two draws of a real rnd_* argument - and null out a row the
+            // un-aliased spelling keeps. rnd_int(0,1,0) * 0 is row unstable with a fixed value, so
+            // the arm is observable without a non-deterministic result.
+            assertQuery("SELECT nullif(rnd_int(0,1,0) * 0 + i + j, -294967296)::LONG AS v FROM apt")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("v\n4000000000\n");
+            assertQuery("SELECT nullif(a, -294967296)::LONG AS v FROM (SELECT rnd_int(0,1,0) * 0 + i + j AS a, i AS s FROM apt)")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("v\n4000000000\n");
+
+            // Both answers have to travel together through EVERY delegating wrapper. The ORDER BY
+            // below cannot be hoisted (s is not projected outward), so the plan gains a light sort
+            // between the two projections; a wrapper that forwarded only the width answer would
+            // report the alias row-unstable and move the comparison to long width, making the value
+            // depend on an unrelated ORDER BY.
+            assertQuery("SELECT nullif(a, -294967296)::LONG AS v FROM (SELECT i+j AS a, i AS s FROM apt ORDER BY s)")
+                    .noLeakCheck().expectSize().returns("v\nnull\n");
+
+            // UNION ALL emits either leg, so it answers the row question with AND where it answers
+            // the width question with OR. Both legs here are width-unstable and row-stable.
+            assertQuery("SELECT nullif(a, -294967296)::LONG AS v FROM (SELECT i+j AS a FROM apt UNION ALL SELECT i+j AS a FROM apt)")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("v\nnull\nnull\n");
+
+            // a real stored INT column is width-stable: it must keep its 4-byte read through an
+            // alias, or getLong() would splice the next row into the value
+            execute("CREATE TABLE api (i INT, k INT)");
+            execute("INSERT INTO api VALUES (-2_147_483_648, 1), (7, 2)");
+            assertQuery("SELECT a::LONG AS v FROM (SELECT i AS a, k FROM api)")
+                    .noLeakCheck().expectSize().returns("v\nnull\n7\n");
+            execute("CREATE TABLE apil (l LONG)");
+            execute("INSERT INTO apil SELECT a FROM (SELECT i AS a, k FROM api)");
+            assertQuery("SELECT l FROM apil").noLeakCheck().expectSize().returns("l\nnull\n7\n");
+        });
+    }
+
+    @Test
+    public void testInsertIntoWiderColumnWidensThroughAliasedProjectionWithMemoization() throws Exception {
+        // Production compiles projections with function memoization ON while the tests default it
+        // off, and a multiply-referenced alias is exactly what gets wrapped. The wrapper has to
+        // preserve the wrapped function's width and row-stability answers, because the column
+        // reference the projection emitted was resolved against the unwrapped function.
+        allowFunctionMemoization();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE apm (i INT, j INT)");
+            execute("INSERT INTO apm VALUES (2_000_000_000, 2_000_000_000)");
+
+            assertQuery("SELECT a::LONG AS v, a+1 AS w FROM (SELECT i+j AS a, i AS s FROM apm)")
+                    .noLeakCheck().expectSize()
+                    // the pin proves a memoizer really wraps the referenced expression, so the
+                    // arm cannot pass by quietly compiling without one
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [a::long,a+1]
+                                VirtualRecord
+                                  functions: [memoize(i+j)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: apm
+                            """)
+                    .returns("v\tw\n4000000000\t-294967295\n");
+
+            execute("CREATE TABLE apmd (l1 LONG, l2 LONG)");
+            execute("INSERT INTO apmd SELECT a, a+1 FROM (SELECT i+j AS a FROM apm)");
+            assertQuery("SELECT l1, l2 FROM apmd").noLeakCheck().expectSize().returns("l1\tl2\n4000000000\t4000000001\n");
+        });
+    }
+
+    @Test
     public void testInsertIntoWiderColumnWidensThroughJoinMaster() throws Exception {
         // A join hands the master cursor's live record straight through JoinRecord: getInt(col < split)
         // -> master.getInt(col) wraps, getLong(col < split) -> master.getLong(col) widens. The master is
@@ -630,6 +766,69 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             execute("CREATE TABLE umd (l LONG)");
             execute("INSERT INTO umd SELECT a + b FROM ua UNION ALL SELECT i FROM ur");
             assertQuery("SELECT l FROM umd ORDER BY l").noLeakCheck().expectSize().returns("l\n-294967296\n5\n7\n");
+        });
+    }
+
+    @Test
+    public void testInsertIntoWiderColumnWidensThroughUnnest() throws Exception {
+        // UNNEST cross-joins its master with the unnested array columns, and UnnestRecord hands the
+        // master's live record straight through for every column below the split - getInt/getLong
+        // delegate to baseRecord, and the cursor binds the master cursor's own record - so an
+        // overflowing INT master projection keeps its wide value at long width and must widen on
+        // store, exactly like the join master. The factory kept the default true and truncated it,
+        // which the store-rule enumeration missed.
+        //
+        // The override has to key on the factory's OWN columnSplit rather than the base metadata's
+        // column count: a standalone UNNEST has columnSplit == 0 while its synthetic long_sequence(1)
+        // base has one column, so a base-count guard would delegate for a column that is not there.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE unt (a INT, b INT, arr DOUBLE[])");
+            execute("INSERT INTO unt VALUES (2_000_000_000, 2_000_000_000, ARRAY[1.0, 2.0])");
+
+            // one output row per array element, each carrying the same widened master value
+            execute("CREATE TABLE und (l LONG)");
+            execute("INSERT INTO und SELECT tt.v FROM (SELECT a+b AS v, arr FROM unt) tt, UNNEST(tt.arr) u(val)");
+            assertQuery("SELECT l FROM und").noLeakCheck().expectSize().returns("l\n4000000000\n4000000000\n");
+
+            // the identical store without UNNEST is the reference value
+            execute("CREATE TABLE unb (l LONG)");
+            execute("INSERT INTO unb SELECT tt.v FROM (SELECT a+b AS v FROM unt) tt");
+            assertQuery("SELECT l FROM unb").noLeakCheck().expectSize().returns("l\n4000000000\n");
+
+            // the read path agrees with the store, as it does without UNNEST
+            assertQuery("SELECT tt.v::LONG AS v FROM (SELECT a+b AS v, arr FROM unt) tt, UNNEST(tt.arr) u(val)")
+                    .noLeakCheck().noRandomAccess().returns("v\n4000000000\n4000000000\n");
+
+            // a real stored INT master column has only 4 bytes and must keep its INT-width read
+            execute("CREATE TABLE uni (i INT, arr DOUBLE[])");
+            execute("INSERT INTO uni VALUES (-2_147_483_648, ARRAY[1.0])");
+            execute("CREATE TABLE unil (l LONG)");
+            execute("INSERT INTO unil SELECT tt.i FROM uni tt, UNNEST(tt.arr) u(val)");
+            assertQuery("SELECT l FROM unil").noLeakCheck().expectSize().returns("l\nnull\n");
+
+            // the row-stability half of the pair: nullif reads both widths of the master column on
+            // one row and picks the comparison width from isColumnRowStable. Answering only the
+            // width question moves it to long width and returns 4000000000 where the un-UNNESTed
+            // spelling returns null.
+            assertQuery("SELECT nullif(tt.v, -294967296)::LONG AS v FROM (SELECT a+b AS v, arr FROM unt) tt, UNNEST(tt.arr) u(val)")
+                    .noLeakCheck().noRandomAccess().returns("v\nnull\nnull\n");
+            assertQuery("SELECT nullif(v, -294967296)::LONG AS v FROM (SELECT a+b AS v FROM unt)")
+                    .noLeakCheck().expectSize().returns("v\nnull\n");
+
+            // the JSON unnest source is a separate implementation over the same factory, so it
+            // carries the master column the same way
+            execute("CREATE TABLE unj (a INT, b INT, payload VARCHAR)");
+            execute("INSERT INTO unj VALUES (2_000_000_000, 2_000_000_000, '[1.0, 2.0]')");
+            execute("CREATE TABLE unjd (l LONG)");
+            execute("INSERT INTO unjd SELECT tt.v FROM (SELECT a+b AS v, payload FROM unj) tt, UNNEST(tt.payload COLUMNS(val DOUBLE)) u");
+            assertQuery("SELECT l FROM unjd").noLeakCheck().expectSize().returns("l\n4000000000\n4000000000\n");
+
+            // standalone UNNEST: columnSplit is 0, so every column is an unnest column and none of
+            // them reaches the base. A shape guard rather than a discriminator - the synthetic
+            // long_sequence(1) base answers width-stable anyway, so no standalone query can tell a
+            // columnSplit guard from a base-column-count one.
+            assertQuery("SELECT value FROM UNNEST(ARRAY[1.0, 2.0])")
+                    .noLeakCheck().noRandomAccess().returns("value\n1.0\n2.0\n");
         });
     }
 

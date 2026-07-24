@@ -5194,6 +5194,60 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatColumnStrictOpCertifiesAgainstCompiledF32Filter() throws Exception {
+        // The engine has THREE row-level filters, not two, and isRowKept modelled only the first
+        // two: Numbers.equals (inclusive, f64), the compiled filter's double_cmp_epsilon (strict,
+        // f64) and its float_cmp_epsilon (strict, f32). A FLOAT column compared against a bound
+        // that IS exactly a float never widens, so the whole comparison - the subtraction, its
+        // absolute value and the tolerance test - happens at f32, and two things move: FLOAT_EPSILON
+        // is (float) DOUBLE_TOLERANCE, i.e. slightly LARGER than 1e-10, and rounding the difference
+        // to f32 can carry it across the tolerance.
+        //
+        // Here 2^-33 is the bound and the row is 1.6415322226515094e-11, both exactly floats. Their
+        // f64 difference is 9.999999960041972e-11, which both f64 filters call EQUAL, so "c6 < bound"
+        // drops the row on either of them. The same subtraction at f32 rounds UP to exactly
+        // FLOAT_EPSILON, and the test is strict, so the compiled f32 filter calls them UNEQUAL and
+        // KEEPS the row. Certifying against the f64 pair alone let the pushed bound land exactly on
+        // the row, and "<" prunes on min >= bound, so the row group went away before any filter ran.
+        //
+        // Two oracles, because they fail for different reasons. The ROW assertions are the
+        // user-visible half: the row survives on the all-native table and must survive on the
+        // partially-parquet one. They deliberately carry no ORDER BY - projecting or ordering by a
+        // column the filter does not read turns on parquet late materialization, which leaves the
+        // unread column's address at 0, makes the frame report column tops, and drops the query onto
+        // the Java f64 filter, which discards the row for its own (separate, pre-existing) reason.
+        // getRowGroupsSkipped() is the portable half: it reports the pruning decision itself, so it
+        // reddens on a host that runs no compiled filter at all, where the rows cannot.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.6415322226515094e-11", "100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquetUnordered("c6 < 1.1641532182693481e-10", "c6\n1.6415322E-11\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // The mirror image on ">": the bound is below the row, the two DOUBLE-width filters call
+            // them equal and drop it, the f32 one keeps it, so this group must survive too.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.1641532182693481e-10", "-100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquetUnordered("c6 > 1.6415322226515094e-11", "c6\n1.1641532E-10\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // A bound clear of the band still prunes: the extra filter only widens the certification
+            // band by about one f32 ulp, it does not disable pushdown.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.0", "100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 > 100.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testFloatConstantFractionalPushdownNotFalsePruned() throws Exception {
         // A fractional FLOAT bound truncates in the narrow (SHORT) stats slot via
         // (int) getDouble(), the FLOAT twin of the DOUBLE arm. "c6 < 1.5" -> "c6 < 1"
@@ -5456,6 +5510,20 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         bindVariableService.clear();
         bindVariableService.setDouble("b", bound);
         assertQuery("SELECT c6 FROM tp WHERE c6 " + op + " :b ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
+    }
+
+    // Same differential as assertNativeMatchesPartialParquet, minus the ORDER BY ts. Ordering by a
+    // column the filter does not read enables parquet late materialization, and the frame then
+    // reports column tops and falls back to the Java filter - which changes which rows survive at a
+    // tolerance boundary, independently of pruning. Use this when the assertion is about a boundary
+    // row; use the ordered variant when it is about ordering or about more than one row.
+    private void assertNativeMatchesPartialParquetUnordered(String whereClause, String expected) throws Exception {
+        assertQuery("SELECT c6 FROM tn WHERE " + whereClause)
+                .noLeakCheck()
+                .returns(expected);
+        assertQuery("SELECT c6 FROM tp WHERE " + whereClause)
                 .noLeakCheck()
                 .returns(expected);
     }

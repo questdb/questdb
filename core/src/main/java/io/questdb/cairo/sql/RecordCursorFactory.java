@@ -336,6 +336,34 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true when two reads of this cursor's column {@code columnIndex} within the same row
+     * are guaranteed to yield the same value - the {@link Function#isRowStable()} question, asked of
+     * a cursor rather than of a function.
+     * <p>
+     * A caller only needs it for a column that {@link #isColumnIntWidthStable(int)} reports false,
+     * because that is the only column a consumer reads at two widths (see
+     * {@code NullIfIntFunctionFactory}, {@code CoalesceFunctionFactory} and
+     * {@code InLongFunctionFactory}). Everywhere else the answer is unused, and a materialised
+     * column is row stable anyway - reading a stored value twice gives the same bytes.
+     * <p>
+     * The default is false, the opposite direction from {@link #isColumnIntWidthStable(int)},
+     * because the unsafe answer here is true: a consumer that believes a row-unstable expression can
+     * be read twice reads two different draws of it.
+     * <p>
+     * The two methods are a PAIR and must be overridden together. Answering the width question
+     * while leaving this one at the default does not merely lose precision: the consumers above
+     * select a different comparison width on it, so the same expression would yield different values
+     * depending on whether a delegating factory sits between the projection and its base - the
+     * plan-shape dependence the width rule exists to remove.
+     *
+     * @param columnIndex column index
+     * @return true if reading the column twice within one row is guaranteed to give the same value
+     */
+    default boolean isColumnRowStable(int columnIndex) {
+        return false;
+    }
+
+    /**
      * Returns true if the factory stands for nothing more but a projection, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the projection.
      * <p>

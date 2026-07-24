@@ -411,6 +411,50 @@ back the very value it excludes for `nullif(<row-unstable>, a + b)`. Widening th
 costs nothing when it is width stable, since `IntFunction.getLong()` is
 `Numbers.intToLong(getInt())`.
 
+### An alias is a column reference, and it must be transparent
+
+A projection that references a column by name does not pass the referenced function through — it
+creates a column function. `IntColumn` overrides only `getInt(rec)` and inherits
+`getLong() = Numbers.intToLong(getInt())` while reporting `isIntWidthStable() == true`, so it
+throws the wide half away. `a::LONG` over `SELECT i + j AS a` re-wrapped while `(i + j)::LONG`
+widened, and the *stored* value depended on plan shape: with no sibling column the outer projection
+is elided and the copier sees the arithmetic function (widens), with one it sees the column
+reference (wraps).
+
+`IntWideColumn` is the transparent variant — it reads the record at whichever width the caller
+asks for. `FunctionParser.createColumn` emits it in place of `IntColumn` when the metadata reports
+the referenced column width-unstable, which is exactly the condition under which `getLong()` on an
+INT column is legal. `PriorityMetadata` is the metadata that can answer: it snapshots the base
+factory's answers per column at construction, and reads the projection's own function list for a
+reference to an earlier column of the same projection.
+
+### `isColumnRowStable` — the other half of the answer
+
+A column function is a **proxy**, so it must report the referenced expression's row stability, not
+its own. The consumers above choose between one long-width read and two INT-width reads on that
+answer, and two reads of a non-deterministic expression are two different draws.
+
+`RecordCursorFactory#isColumnRowStable(int)` and `ColumnTypes#isColumnRowStable(int)` carry it.
+**The two methods are a pair: a factory that overrides `isColumnIntWidthStable` must override this
+one too.** Their defaults point in opposite directions — `true` for width (don't widen, never
+over-read) and `false` for row (don't read twice) — so answering only the first reports a column
+width-unstable *and* row-unstable, which changes what `nullif` / `coalesce` / `IN` return for it.
+That would make the value depend on whether a delegating wrapper sits between the projection and
+its base, i.e. re-create the plan-shape dependence the width rule exists to remove.
+
+Each override mirrors its width sibling through the identical index mapping. Two differences:
+
+- where the width sibling returns the constant `true` for a **materialised** column (join slave,
+  window aggregates, extra-null padding, the cached-window narrow chain), so does this one — reading
+  stored bytes twice gives the same value;
+- **UNION / UNION ALL combine with AND where width combines with OR.** Width needs *either* leg safe
+  to read at long width; row stability needs *both*, because either leg can be the active one.
+  EXCEPT / INTERSECT emit only leg A, so both methods read leg A.
+
+`IntWidthAnswerPairingTest` is the forcing function: it walks every compiled class and fails when a
+`RecordCursorFactory` declares one of the two without the other. A per-shape test can only cover the
+factories someone thought of, which is how the width enumeration was missed in the first place.
+
 ### The JIT
 
 `CompiledFilterIRSerializer` faces the same split, because the Java filter evaluates at the
@@ -538,5 +582,8 @@ must stay in sync.
 | `RecordToRowCopierUtils.java` | `widensIntSource()` and the two bytecode generators' INT source arm |
 | `LoopingRecordToRowCopier.java` | `intWidthUnstableColumns` snapshot for the wide-table copier |
 | `FactoryColumnTypes.java` | Pairs cursor metadata with a factory's `isColumnIntWidthStable` for INSERT ... SELECT / CTAS |
+| `IntWideColumn.java` | The transparent INT column reference — reads the record at the caller's width |
+| `PriorityMetadata.java` | Answers both width questions for a projection: base factory snapshot + the projection's own functions |
+| `IntWidthAnswerPairingTest.java` (test) | Forcing function: every factory answering one width question must answer the other |
 | `CompiledFilterIRSerializer.java` | `isFloatLeaf`, `maybeWidenCmpConstOperand`, `markNarrowConstCmpWidenPair` — the JIT's width compensations |
 | `ExpressionNode.java` (griffin/model) | `cacheConstantFold()` / `isReassociationSafe()` — the constant-reassociation guard |

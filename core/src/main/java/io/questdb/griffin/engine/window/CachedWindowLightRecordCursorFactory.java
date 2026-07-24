@@ -236,6 +236,15 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     @Override
+    public boolean isColumnRowStable(int columnIndex) {
+        // Paired with isColumnIntWidthStable above, through the same sourceMap. A window column
+        // (negative code) has been copied into the narrow chain, and reading a stored value twice
+        // gives the same bytes, so it is row stable.
+        final int encoded = sourceMap.getQuick(columnIndex);
+        return encoded < 0 || base.isColumnRowStable(encoded);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

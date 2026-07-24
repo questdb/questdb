@@ -105,6 +105,13 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public boolean isColumnRowStable(int columnIndex) {
+        // Paired with isColumnIntWidthStable above: only leg A's record is emitted, so the answer is
+        // leg A's for this question too.
+        return factoryA.isColumnRowStable(columnIndex);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return factoryA.recordCursorSupportsRandomAccess();
     }

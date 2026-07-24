@@ -158,6 +158,16 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
+    public boolean isColumnRowStable(int columnIndex) {
+        // Paired with isColumnIntWidthStable above, over the same split. The synthetic padding
+        // columns are a constant NULL, which is row stable.
+        if (columnIndex < columnSplit) {
+            return base.isColumnRowStable(columnIndex);
+        }
+        return true;
+    }
+
+    @Override
     public boolean isProjection() {
         return true;
     }

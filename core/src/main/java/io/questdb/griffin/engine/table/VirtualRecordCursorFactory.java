@@ -169,6 +169,16 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isColumnRowStable(int columnIndex) {
+        // Guarded like isColumnIntWidthStable above; outside the range the answer is the
+        // conservative false rather than the function's.
+        if (columnIndex < 0 || columnIndex >= functions.size()) {
+            return false;
+        }
+        return functions.getQuick(columnIndex).isRowStable();
+    }
+
+    @Override
     public boolean recordCursorSupportsLongTopK(int columnIndex) {
         final int baseColumnIndex = cursor.getLongTopKColumnIndex(columnIndex);
         if (baseColumnIndex != -1) {

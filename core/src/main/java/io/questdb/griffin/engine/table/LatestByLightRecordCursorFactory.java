@@ -125,6 +125,13 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public boolean isColumnRowStable(int columnIndex) {
+        // Paired with isColumnIntWidthStable above: the same record is handed through, so the same
+        // base column answers both questions.
+        return base.isColumnRowStable(columnIndex);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }

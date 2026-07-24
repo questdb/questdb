@@ -57,6 +57,10 @@ public final class ParquetRowGroupFilter {
     public static final int FILTER_BUFFER_MAX_PAGES = 1_048_576; // 128MB with 128-byte pages
     public static final long FILTER_BUFFER_PAGE_SIZE = 128;
     public static final int LONGS_PER_FILTER = 3;
+    // The compiled filter's f32 tolerance (jit/impl/consts.h FLOAT_EPSILON). It is
+    // (float) DOUBLE_TOLERANCE, i.e. 1.0000000133514320e-10 - slightly LARGER than the double one,
+    // and the f32 arm applies it to a difference computed at f32 as well.
+    private static final float FLOAT_TOLERANCE = (float) Numbers.DOUBLE_TOLERANCE;
     private static final Log LOG = LogFactory.getLog(ParquetRowGroupFilter.class);
     // How far tryPutFloatFromDouble / tryPutDoubleFromDouble / putDoubleEq may walk a widened bound
     // outward before they give up and decline the pushdown. A couple of steps cover every bound whose
@@ -700,6 +704,13 @@ public final class ParquetRowGroupFilter {
                 || (!Numbers.equals(Math.nextUp(d), d) && !Numbers.equals(Math.nextDown(d), d));
     }
 
+    // The compiled f32 arm's equality: the difference, its absolute value and the comparison all at
+    // single precision, and STRICT - float_cmp_epsilon is "epsilon > |lhs - rhs|" on every backend
+    // (x86 ucomiss/seta, aarch64 fcmp/cset GT, avx2 vcmpps kLT).
+    private static boolean isFloatEqAtSinglePrecision(float l, float bound) {
+        return FLOAT_TOLERANCE > Math.abs(l - bound);
+    }
+
     /**
      * Whether row group pruning may push a FLOAT/DOUBLE bound at all.
      * <p>
@@ -730,16 +741,24 @@ public final class ParquetRowGroupFilter {
     // (LtDoubleVVFunctionFactory is "!equals(l, r) && l < r", its negation "equals(l, r) || l > r",
     // and so on for the rest).
     // <p>
-    // The engine has TWO of these filters and their tolerance test differs at the boundary:
-    // Numbers.equals() is inclusive (|l - d| <= tolerance) while the compiled filter's
-    // double_cmp_epsilon (jit/impl/x86.h) is strict (|l - d| < tolerance), so at |l - d| ==
-    // tolerance exactly they disagree - "<" drops the row on the Java filter and keeps it on the
-    // compiled one. A parquet frame runs the compiled filter unless it has column tops or type
-    // casts, in which case it falls back to the Java filter, and pruning is an unconditional drop
-    // that no later filter can undo, so certify against BOTH rather than depend on which one runs:
-    // count the row as kept when EITHER keeps it. The strict test decides the ops
-    // that exclude equality, the inclusive one the ops that include it. It costs nothing - the bound
-    // this yields is identical for every constant clear of the tolerance band of the bound.
+    // The engine has THREE of these filters, and this method models the two that compare at DOUBLE
+    // width. Their tolerance test differs at the boundary: Numbers.equals() is inclusive
+    // (|l - d| <= tolerance) while the compiled filter's double_cmp_epsilon (jit/impl/x86.h) is
+    // strict (|l - d| < tolerance), so at |l - d| == tolerance exactly they disagree - "<" drops the
+    // row on the Java filter and keeps it on the compiled one. The strict test therefore decides the
+    // ops that exclude equality, the inclusive one the ops that include it.
+    // <p>
+    // The third is the compiled filter's f32 arm, which a FLOAT column runs whenever it does not
+    // widen; isRowKeptByCompiledFloatFilter models it and the FLOAT bound arm ORs it in. A DOUBLE
+    // column never reaches it.
+    // <p>
+    // Which one runs is not a property of the query alone: a frame falls back to the Java filter
+    // when it has column tops or type casts, and ALSO when parquet late materialization leaves an
+    // unread column's address at 0 - which projecting or ordering by a column the filter does not
+    // read is enough to trigger. Pruning is an unconditional drop that no later filter can undo, so
+    // certify against ALL of them rather than depend on which one runs: count the row as kept when
+    // ANY keeps it. It costs at most a few f32 ulps of bound (see isRowKeptByCompiledFloatFilter),
+    // never a row.
     private static boolean isRowKept(double l, double d, int opType) {
         final boolean isEq = Numbers.equals(l, d);
         final boolean isEqStrict = isEq && Math.abs(l - d) < Numbers.DOUBLE_TOLERANCE;
@@ -752,6 +771,42 @@ public final class ParquetRowGroupFilter {
                 return !isEqStrict && l > d;
             default: // OP_GE
                 return isEq || l > d;
+        }
+    }
+
+    /**
+     * Whether the compiled filter's f32 arm keeps a row holding float {@code l}, for a FLOAT column
+     * compared against bound {@code d}.
+     * <p>
+     * A FLOAT column that does not widen compares at f32 throughout: the JIT emits
+     * {@code float_ne_epsilon AND float_lt} for "&lt;" (jit/x86.h, mirrored in aarch64.h and avx2.h),
+     * where equality is {@code FLOAT_EPSILON > |f32(l) - f32(d)|} - STRICT, and with both the
+     * subtraction and the tolerance at single precision. Neither matches the two DOUBLE-width
+     * filters {@link #isRowKept} models, in two ways that both keep rows they drop:
+     * {@code FLOAT_EPSILON} is larger than {@code DOUBLE_TOLERANCE}, and rounding the difference to
+     * f32 can carry it from inside the tolerance to outside it. So a row can be kept here and
+     * dropped there, and a bound certified against the f64 pair alone prunes the group holding it.
+     * <p>
+     * {@code float_cmp_epsilon} also answers "equal" when BOTH operands are non-finite. That arm is
+     * not modelled because it cannot be reached: {@code tryPutFloatFromDouble} declines before the
+     * loop when {@code (float) d} is not finite, so {@code bound} is always finite here, and the
+     * one-sided infinity case agrees with the backends as written.
+     */
+    private static boolean isRowKeptByCompiledFloatFilter(float l, double d, int opType) {
+        final float bound = (float) d;
+        assert Float.isFinite(bound);
+        final boolean isEq = isFloatEqAtSinglePrecision(l, bound);
+        switch (opType) {
+            case PushdownFilterExtractor.OP_LT:
+                return !isEq && l < bound;
+            case PushdownFilterExtractor.OP_LE:
+                return isEq || l < bound;
+            case PushdownFilterExtractor.OP_GT:
+                return !isEq && l > bound;
+            case PushdownFilterExtractor.OP_EQ:
+                return isEq;
+            default: // OP_GE
+                return isEq || l > bound;
         }
     }
 
@@ -941,6 +996,13 @@ public final class ParquetRowGroupFilter {
     // the identical (float) d. The DOUBLE arm carries the same tolerance blindness - it needs no
     // narrowing, only the tolerance corrections; toleranceBound and putDoubleEq apply them there.)
     //
+    // Every op certifies against the compiled filter's f32 arm as well as the two DOUBLE-width ones
+    // - see isRowKeptByCompiledFloatFilter. Its tolerance is the widest of the three and it computes
+    // the difference at single precision, so it can call a value equal to the bound where the others
+    // do not; a bound certified without it lands on such a value and prunes the group holding it.
+    // It costs at most an ulp or two of bound: the certification loop stops one step later, and
+    // EQ declines in a slightly wider band around the neighbouring floats.
+    //
     // BETWEEN carries two bounds with no single direction and never reaches a FLOAT column today
     // (QuestDB accepts it over TIMESTAMP only); decline it. A NULL (NaN) bound compares false
     // against everything, so nothing is kept and the bound certifies at once; the native side
@@ -978,10 +1040,17 @@ public final class ParquetRowGroupFilter {
                 break;
             case PushdownFilterExtractor.OP_EQ: {
                 final float nearest = (float) d;
-                if (Numbers.equals((double) Math.nextUp(nearest), d)
-                        || Numbers.equals((double) Math.nextDown(nearest), d)) {
-                    // More than one float is tolerance-equal to the bound, so the group may hold a
-                    // matching row this one does not reach. Decline; a superset scan is always safe.
+                final float up = Math.nextUp(nearest);
+                final float down = Math.nextDown(nearest);
+                if (Numbers.equals((double) up, d)
+                        || Numbers.equals((double) down, d)
+                        || isRowKeptByCompiledFloatFilter(up, d, opType)
+                        || isRowKeptByCompiledFloatFilter(down, d, opType)) {
+                    // More than one float is equal to the bound under some filter, so the group may
+                    // hold a matching row this one does not reach. The f32 arm has to be asked as
+                    // well as the double one: its tolerance is the wider of the two, so it can call
+                    // a neighbour equal where Numbers.equals does not. Decline; a superset scan is
+                    // always safe.
                     return false;
                 }
                 filterValues.putFloat(nearest);
@@ -1000,7 +1069,11 @@ public final class ParquetRowGroupFilter {
             bound = Math.nextDown(bound);
         }
         for (int i = 0; i <= MAX_BOUND_STEPS; i++) {
-            if (!isRowKept(firstPrunedFloat(bound, opType), d, opType)) {
+            // Certify against every filter that can run over a FLOAT column, the compiled f32 arm
+            // included: it keeps rows the two DOUBLE-width ones drop, and a bound certified without
+            // it lands on such a row and prunes the group holding it.
+            final float pruned = firstPrunedFloat(bound, opType);
+            if (!isRowKept(pruned, d, opType) && !isRowKeptByCompiledFloatFilter(pruned, d, opType)) {
                 filterValues.putFloat(bound);
                 return true;
             }

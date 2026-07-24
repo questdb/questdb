@@ -312,6 +312,18 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean isColumnRowStable(int columnIndex) {
+        // Paired with isColumnIntWidthStable above, through the same cross index and master split.
+        // The window-aggregate columns live in a materialised SimpleMapValue, and reading a stored
+        // value twice gives the same bytes, so they are row stable.
+        final int joinColumnIndex = this.columnIndex != null ? this.columnIndex.getQuick(columnIndex) : columnIndex;
+        if (joinColumnIndex < masterFactory.getMetadata().getColumnCount()) {
+            return masterFactory.isColumnRowStable(joinColumnIndex);
+        }
+        return true;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

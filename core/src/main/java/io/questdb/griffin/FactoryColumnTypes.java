@@ -63,4 +63,12 @@ public class FactoryColumnTypes implements ColumnTypes {
     public boolean isColumnIntWidthStable(int columnIndex) {
         return factory.isColumnIntWidthStable(columnIndex);
     }
+
+    // Nothing reads this today - the row copiers only need the width flag - but the two answers are
+    // a pair, and a ColumnTypes that forwards one while inheriting the other's default would report
+    // a width-unstable column as row-unstable. See RecordCursorFactory#isColumnRowStable.
+    @Override
+    public boolean isColumnRowStable(int columnIndex) {
+        return factory.isColumnRowStable(columnIndex);
+    }
 }

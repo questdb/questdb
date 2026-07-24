@@ -62,6 +62,20 @@ public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCurs
         return true;
     }
 
+    @Override
+    public boolean isColumnRowStable(int columnIndex) {
+        // Paired with isColumnIntWidthStable above, over the same master split. The slave arm
+        // answers true because the width sibling answers true there too, so nothing consults this
+        // for a slave column: a value-materialised slave lives in a chain/map slot, and reading
+        // stored bytes twice gives the same value. The width comment above calls delegating a LIVE
+        // slave a deliberate future extension - the day it does, this arm has to delegate with it,
+        // because a live slave can be function-backed and then row-unstable.
+        if (columnIndex < masterFactory.getMetadata().getColumnCount()) {
+            return masterFactory.isColumnRowStable(columnIndex);
+        }
+        return true;
+    }
+
     protected final Throwable closeJoinOwnersBestEffort() {
         final RecordMetadata metadata = detachMetadata();
         final RecordCursorFactory masterFactory = this.masterFactory;

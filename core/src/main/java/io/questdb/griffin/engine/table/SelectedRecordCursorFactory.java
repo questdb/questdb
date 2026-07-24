@@ -211,6 +211,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean isColumnRowStable(int columnIndex) {
+        // Paired with isColumnIntWidthStable above, through the same cross index. An index the map
+        // does not cover takes this method's own conservative answer, which is false.
+        if (columnIndex < 0 || columnIndex >= columnCrossIndex.size()) {
+            return false;
+        }
+        return base.isColumnRowStable(columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
     public boolean isProjection() {
         return true;
     }

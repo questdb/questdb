@@ -76,6 +76,13 @@ public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory 
     }
 
     @Override
+    public boolean isColumnRowStable(int columnIndex) {
+        // Paired with isColumnIntWidthStable above, but combined with AND rather than OR: either leg
+        // can be the active one, so the column is row stable only when both legs are.
+        return factoryA.isColumnRowStable(columnIndex) && factoryB.isColumnRowStable(columnIndex);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

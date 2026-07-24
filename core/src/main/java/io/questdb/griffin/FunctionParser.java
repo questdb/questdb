@@ -74,6 +74,7 @@ import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
 import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
 import io.questdb.griffin.engine.functions.columns.IPv4Column;
 import io.questdb.griffin.engine.functions.columns.IntColumn;
+import io.questdb.griffin.engine.functions.columns.IntWideColumn;
 import io.questdb.griffin.engine.functions.columns.IntervalColumn;
 import io.questdb.griffin.engine.functions.columns.Long128Column;
 import io.questdb.griffin.engine.functions.columns.Long256Column;
@@ -186,7 +187,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.BYTE -> ByteColumn.newInstance(index);
             case ColumnType.SHORT -> ShortColumn.newInstance(index);
             case ColumnType.CHAR -> new CharColumn(index);
-            case ColumnType.INT -> IntColumn.newInstance(index);
+            // A column reference over a function-backed column must keep the wide half of an INT
+            // expression, or an alias would re-wrap what the un-aliased spelling widens. Only a
+            // metadata that can see the producing functions answers false here, and that answer is
+            // exactly the guarantee that getLong() on the column is legal.
+            case ColumnType.INT -> metadata.isColumnIntWidthStable(index)
+                    ? IntColumn.newInstance(index)
+                    : IntWideColumn.newInstance(index, metadata.isColumnRowStable(index));
             case ColumnType.LONG -> LongColumn.newInstance(index);
             case ColumnType.FLOAT -> FloatColumn.newInstance(index);
             case ColumnType.DOUBLE -> DoubleColumn.newInstance(index);

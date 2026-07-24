@@ -9738,8 +9738,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<Function> functions = new ObjList<>(virtualColumnReservedSlots);
         final RecordMetadata baseMetadata = factory.getMetadata();
         // Lookup metadata will resolve column references, prioritising references to the projection
-        // over the references to the base table.
-        final PriorityMetadata priorityMetadata = new PriorityMetadata(virtualColumnReservedSlots, baseMetadata);
+        // over the references to the base table. It also carries the base factory and the growing
+        // function list, so that a column reference can be resolved at the width the referenced
+        // column actually carries - see PriorityMetadata#isColumnIntWidthStable.
+        final PriorityMetadata priorityMetadata = new PriorityMetadata(
+                virtualColumnReservedSlots,
+                baseMetadata,
+                factory,
+                functions
+        );
         final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
         try {
             // attempt to preserve timestamp on new data set

@@ -74,4 +74,21 @@ public interface ColumnTypes {
     default boolean isColumnIntWidthStable(int columnIndex) {
         return true;
     }
+
+    /**
+     * Returns true when two reads of column {@code columnIndex} within the same row are guaranteed
+     * to yield the same value - the {@link Function#isRowStable()} question, asked of a column.
+     * <p>
+     * Only consulted for a column that {@link #isColumnIntWidthStable(int)} reports false, since
+     * that is the only column anything reads at two widths. The default is false because the unsafe
+     * answer is true: a consumer that believes a row-unstable expression can be read twice reads two
+     * different draws of it. A type list that answers the width question must answer this one too -
+     * see {@link io.questdb.cairo.sql.RecordCursorFactory#isColumnRowStable(int)}.
+     *
+     * @param columnIndex column index
+     * @return true if reading the column twice within one row is guaranteed to give the same value
+     */
+    default boolean isColumnRowStable(int columnIndex) {
+        return false;
+    }
 }

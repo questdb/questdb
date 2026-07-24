@@ -137,6 +137,13 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     }
 
     @Override
+    public boolean isColumnRowStable(int columnIndex) {
+        // Paired with isColumnIntWidthStable above: the same record is handed through, so the same
+        // base column answers both questions.
+        return base.isColumnRowStable(columnIndex);
+    }
+
+    @Override
     public boolean producesMaterializedPageFrames() {
         // Must delegate to the immediate base like supportsPageFrameCursor() /
         // getPageFrameCursor() do: getBaseFactory() here returns base.getBaseFactory()
