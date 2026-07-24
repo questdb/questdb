@@ -532,16 +532,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         path.of(engine.getConfiguration().getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-        if (engine.isReadOnlyMode()) {
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
-        }
         final LiveViewCheckpointTimelineStoreWriter.Result timelineResult;
+        // The role-switch read lock stays, the read-only refusal does not. Under symmetric local
+        // refresh every node seals its own node-local timeline over its own durable output, so a
+        // demote landing mid-append no longer makes the append illegal - it changes nothing this
+        // root describes. The lock keeps the append serialised against the switch itself, matching
+        // fencedLiveViewCommit.
         final Lock roleLock = engine.getRoleSwitchReadLock();
         roleLock.lock();
         try {
-            if (engine.isReadOnlyMode()) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
-            }
             timelineResult = checkpointTimelineStoreWriter.append(
                     path,
                     functions,
@@ -588,19 +587,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (interval <= 0 || lvSeqTxn <= 0 || lvSeqTxn % interval != 0) {
             return;
         }
-        if (checkpointTimelineStoreWriter == null || engine.isReadOnlyMode()) {
+        if (checkpointTimelineStoreWriter == null) {
             return;
         }
         try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            // Compaction repacks a timeline this node published, so it runs on whichever role
+            // that node currently holds - see appendCheckpointTimelineRoot for why the role
+            // read lock outlives the read-only refusal it used to carry.
             final Lock roleLock = engine.getRoleSwitchReadLock();
             roleLock.lock();
             try {
-                if (engine.isReadOnlyMode()) {
-                    return;
-                }
                 LiveViewCheckpointCompaction.compact(
                         engine.getConfiguration(),
                         checkpointsDir,
@@ -652,9 +651,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final ObjList<LiveViewCheckpointTimelineEntry> repairBoundaries = session.getBoundaries();
         final LiveViewCheckpointRepairState repairState = session.getDescriptor();
         repairBoundaries.clear();
-        if (engine.isReadOnlyMode()) {
-            return null;
-        }
         if (checkpointTimelineStoreWriter == null) {
             checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(engine.getConfiguration());
             checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
@@ -1081,9 +1077,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * generation past the recorded base generation makes stale anyway.
      */
     private void clearCheckpointRepairMarker(LiveViewInstance instance) {
-        if (engine.isReadOnlyMode()) {
-            return;
-        }
         path.of(engine.getConfiguration().getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
@@ -2819,9 +2812,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * next seal or restart rather than blocking the refresh.
      */
     private void retireCheckpointTimeline(LiveViewInstance instance) {
-        if (engine.isReadOnlyMode()) {
-            return;
-        }
         try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
@@ -2862,10 +2852,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     private boolean truncateOrRetireTimelineOnO3(LiveViewInstance instance, long floorTs) {
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
-        if (engine.isReadOnlyMode()) {
-            retireCheckpointTimeline(instance);
-            return false;
-        }
         try {
             path.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
@@ -5446,19 +5432,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long suffixRowDelta
     ) {
         try {
-            if (engine.isReadOnlyMode()) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
-            }
             final long coveredLvSeqTxn = engine.getTableSequencerAPI()
                     .getTxnTracker(instance.getLiveViewToken())
                     .getWriterTxn();
             final LiveViewCheckpointTimelineStoreWriter.RepairResult result;
+            // Node-local splice over node-local output, on either role - see
+            // appendCheckpointTimelineRoot for why only the role read lock survives here.
             final Lock roleLock = engine.getRoleSwitchReadLock();
             roleLock.lock();
             try {
-                if (engine.isReadOnlyMode()) {
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
-                }
                 result = checkpointTimelineStoreWriter.publishRepair(
                         capture,
                         instance.getLiveViewToken().getTableId(),
@@ -5705,9 +5687,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long durableBaseSeqTxn
     ) {
         final String viewName = instance.getDefinition().getViewName();
-        if (engine.isReadOnlyMode()) {
-            return false;
-        }
         final long predecessorMaxTs = restored.maxTimestamp;
         final long predecessorCheckpointId = restored.checkpointId;
         final long corruptCeilingMaxTs = restored.corruptCeilingMaxTs;
@@ -5843,12 +5822,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final long coveredLvSeqTxn = engine.getTableSequencerAPI()
                     .getTxnTracker(instance.getLiveViewToken())
                     .getWriterTxn();
+            // Same seam as appendCheckpointTimelineRoot: the role read lock stays, the
+            // read-only refusal does not.
             final Lock roleLock = engine.getRoleSwitchReadLock();
             roleLock.lock();
             try {
-                if (engine.isReadOnlyMode()) {
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
-                }
                 // suffixRowDelta is 0: the base did not change, so the repaired roots
                 // hold the same rows at the same positions - only their damaged state
                 // pages are replaced.
@@ -7777,10 +7755,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // maps. The finally clears it, so the worker's next view cannot charge this one.
         executionContext.ofRefreshingInstance(instance);
         try {
-            if (engine.isReadOnlyMode()) {
-                instance.clearCheckpointTimelineOwnership();
-            }
-
             // A definition-less stub (torn / too-new _lv or _lv.s) must never refresh -
             // it has no definition to drive from. Both refresh entry paths already
             // filter it (the fallback scan via isStub(), the by-base-table map

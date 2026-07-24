@@ -421,7 +421,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * @param coveredLvSeqTxn      live-view writer {@code seqTxn} the replacement
      *                             reached
      * @param historyEpoch         current history epoch
-     * @param primaryOwner         false for a read-only replica, which must not publish
+     * @param primaryOwner         false refuses the publication; every live-view caller
+     *                             passes true on either role, since each node owns the
+     *                             timeline it sealed (see
+     *                             {@link LiveViewCheckpointLifecycle#reconcile})
      * @param highTsExclusive      {@code H}, the exclusive convergence boundary the
      *                             suffix starts at
      * @param suffixRowDelta       output rows the replacement added (negative when it

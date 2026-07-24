@@ -971,74 +971,79 @@ public class CairoEngine implements Closeable, WriterSource {
                             // floor before any purge job can race startup recovery.
                             // The refresh worker re-opens the same bounded-selected
                             // generation and pins it while choosing/restoring a root.
-                            // Replicas do not own local checkpoint timelines and
-                            // must not retain WAL for a stale ex-primary artefact.
-                            if (!isReadOnlyMode()) {
-                                liveViewDirPath.of(configuration.getDbRoot())
-                                        .concat(tableToken)
-                                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-                                try {
-                                    final LiveViewCheckpointLifecycle.ReconcileResult reconciliation =
-                                            LiveViewCheckpointLifecycle.reconcile(
-                                                    configuration,
-                                                    liveViewDirPath,
-                                                    tableToken.getTableId(),
-                                                    0,
-                                                    true
-                                            );
-                                    if (reconciliation.isFormatReset()) {
-                                        // A development build with a different
-                                        // on-disk layout owned this directory.
-                                        // Reconciliation removed it; the refresh
-                                        // worker rebuilds derived state from the
-                                        // applied base, as it would for a view
-                                        // that never checkpointed.
-                                        LOG.info().$("live view checkpoint directory was written by another format, rebuilding [view=")
-                                                .$(tableToken)
-                                                .I$();
-                                    }
-                                    if (reconciliation.getWalPurgeFloor() >= 0) {
-                                        instance.recordCheckpointTimelineWalPurgeFloor(
-                                                reconciliation.getWalPurgeFloor()
+                            // Role-agnostic: under symmetric local refresh
+                            // (LIVE_VIEW_REPLICATION_LOCAL_REFRESH_DESIGN) a replica
+                            // seals its own node-local timeline over its own durable
+                            // output, so this boot pass reconciles what THIS node
+                            // sealed before it stopped - the artefact a replica used
+                            // to skip as a stale ex-primary one no longer exists.
+                            // Skipping it here would leave the node with a timeline
+                            // it cannot recover from and no WAL floor holding the
+                            // base commits that recovery replays.
+                            liveViewDirPath.of(configuration.getDbRoot())
+                                    .concat(tableToken)
+                                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                            try {
+                                final LiveViewCheckpointLifecycle.ReconcileResult reconciliation =
+                                        LiveViewCheckpointLifecycle.reconcile(
+                                                configuration,
+                                                liveViewDirPath,
+                                                tableToken.getTableId(),
+                                                0,
+                                                true
                                         );
-                                    }
-                                    // The adopted generation's shape, and what the
-                                    // purge sweep found while walking its segment
-                                    // catalogue. Both stay NULL/empty when no valid
-                                    // slot was adopted, which is the disposition of a
-                                    // view that has never sealed a root.
-                                    if (reconciliation.getStats() != null) {
-                                        instance.recordCheckpointTimelineStats(reconciliation.getStats());
-                                        instance.recordCheckpointGcSweep(
-                                                reconciliation.getLiveSegmentCount(),
-                                                reconciliation.getObsoleteSegmentBytes()
-                                        );
-                                    }
-                                    // Publish the durable checkpoint head from the
-                                    // generation's base coordinate so live_views()
-                                    // reports a real head between restart and the
-                                    // first refresh tick. maxTs and stateBytes stay
-                                    // placeholders: they belong to the selected root,
-                                    // which only the refresh worker reads, under a
-                                    // generation pin. tryRestoreFromTimeline replaces
-                                    // the whole trio with the root's own values.
-                                    final long normalizedBaseSeqTxn =
-                                            reconciliation.getNormalizedBaseSeqTxn();
-                                    if (normalizedBaseSeqTxn != Numbers.LONG_NULL) {
-                                        instance.setHeadCheckpoint(
-                                                normalizedBaseSeqTxn,
-                                                normalizedBaseSeqTxn,
-                                                Numbers.LONG_NULL,
-                                                0L,
-                                                Numbers.LONG_NULL
-                                        );
-                                    }
-                                } catch (Exception e) {
-                                    LOG.error().$("could not validate live view checkpoint timeline [view=")
+                                if (reconciliation.isFormatReset()) {
+                                    // A development build with a different
+                                    // on-disk layout owned this directory.
+                                    // Reconciliation removed it; the refresh
+                                    // worker rebuilds derived state from the
+                                    // applied base, as it would for a view
+                                    // that never checkpointed.
+                                    LOG.info().$("live view checkpoint directory was written by another format, rebuilding [view=")
                                             .$(tableToken)
-                                            .$(", msg=").$safe(e.getMessage())
                                             .I$();
                                 }
+                                if (reconciliation.getWalPurgeFloor() >= 0) {
+                                    instance.recordCheckpointTimelineWalPurgeFloor(
+                                            reconciliation.getWalPurgeFloor()
+                                    );
+                                }
+                                // The adopted generation's shape, and what the
+                                // purge sweep found while walking its segment
+                                // catalogue. Both stay NULL/empty when no valid
+                                // slot was adopted, which is the disposition of a
+                                // view that has never sealed a root.
+                                if (reconciliation.getStats() != null) {
+                                    instance.recordCheckpointTimelineStats(reconciliation.getStats());
+                                    instance.recordCheckpointGcSweep(
+                                            reconciliation.getLiveSegmentCount(),
+                                            reconciliation.getObsoleteSegmentBytes()
+                                    );
+                                }
+                                // Publish the durable checkpoint head from the
+                                // generation's base coordinate so live_views()
+                                // reports a real head between restart and the
+                                // first refresh tick. maxTs and stateBytes stay
+                                // placeholders: they belong to the selected root,
+                                // which only the refresh worker reads, under a
+                                // generation pin. tryRestoreFromTimeline replaces
+                                // the whole trio with the root's own values.
+                                final long normalizedBaseSeqTxn =
+                                        reconciliation.getNormalizedBaseSeqTxn();
+                                if (normalizedBaseSeqTxn != Numbers.LONG_NULL) {
+                                    instance.setHeadCheckpoint(
+                                            normalizedBaseSeqTxn,
+                                            normalizedBaseSeqTxn,
+                                            Numbers.LONG_NULL,
+                                            0L,
+                                            Numbers.LONG_NULL
+                                    );
+                                }
+                            } catch (Exception e) {
+                                LOG.error().$("could not validate live view checkpoint timeline [view=")
+                                        .$(tableToken)
+                                        .$(", msg=").$safe(e.getMessage())
+                                        .I$();
                             }
                         }
                     } catch (CairoException ce) {
@@ -1830,7 +1835,10 @@ public class CairoEngine implements Closeable, WriterSource {
         if (instance != null) {
             instance.clearCheckpointTimelineOwnership();
         }
-        if (token != null && !isReadOnlyMode()) {
+        // Role-agnostic, like every other write to _checkpoints/: the timeline this drop
+        // retires is one THIS node sealed over its own durable output, so whichever role
+        // the node holds when the drop lands is the role that owns the files.
+        if (token != null) {
             try (Path checkpointsDir = new Path()) {
                 checkpointsDir.of(configuration.getDbRoot())
                         .concat(token)

@@ -73,9 +73,13 @@ public final class LiveViewCheckpointLifecycle {
     }
 
     /**
-     * Reconciles one primary-owned timeline before recovery or a retrying
-     * publication. A replica must pass {@code false}; that path is a strict
-     * no-op and does not even create/open {@code _timeline}.
+     * Reconciles one node-owned timeline before recovery or a retrying
+     * publication. {@code primaryOwner} false is a strict no-op that does not
+     * even create/open {@code _timeline}; under symmetric local refresh
+     * (LIVE_VIEW_REPLICATION_LOCAL_REFRESH_DESIGN) every node owns the timeline
+     * it sealed, so every live-view caller passes {@code true} regardless of
+     * role and the flag survives only as the ownership assertion this class
+     * refuses to write without.
      * <p>
      * A directory written under a foreign layout short-circuits every other
      * rule: it is removed whole and the result reports
