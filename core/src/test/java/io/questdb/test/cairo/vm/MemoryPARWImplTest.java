@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.MemoryPARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
@@ -891,6 +892,12 @@ public class MemoryPARWImplTest {
     }
 
     @Test
+    public void testMalformedUtf8WritesNullAtomically() {
+        assertMalformedUtf8WritesNull(64, 0);
+        assertMalformedUtf8WritesNull(8, 1);
+    }
+
+    @Test
     public void testMaxPages() {
         int pageSize = 256;
         int maxPages = 3;
@@ -1042,6 +1049,31 @@ public class MemoryPARWImplTest {
         Assert.assertEquals(10, Vm.getStorageLength("xyz"));
         assertEquals(4, Vm.getStorageLength(""));
         assertEquals(4, Vm.getStorageLength(null));
+    }
+
+    private static void assertMalformedUtf8WritesNull(int pageSize, int prefixSize) {
+        final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(ptr, (byte) '1');
+            Unsafe.putByte(ptr + 1, (byte) 0xC3);
+
+            try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                for (int i = 0; i < prefixSize; i++) {
+                    mem.putByte((byte) 0);
+                }
+
+                final long nullOffset = mem.getAppendOffset();
+                Assert.assertEquals(nullOffset + Integer.BYTES, mem.putStrUtf8(new DirectUtf8String().of(ptr, ptr + 2)));
+                Assert.assertEquals(nullOffset + Integer.BYTES, mem.getAppendOffset());
+                Assert.assertNull(mem.getStrA(nullOffset));
+
+                final long nextOffset = mem.getAppendOffset();
+                mem.putStr("next");
+                TestUtils.assertEquals("next", mem.getStrA(nextOffset));
+            }
+        } finally {
+            Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private void testStrRnd(long offset, long pageSize) {

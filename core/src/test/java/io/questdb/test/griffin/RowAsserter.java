@@ -201,6 +201,11 @@ public class RowAsserter implements TableWriter.Row {
     }
 
     @Override
+    public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+        Assert.fail("Unexpected call to putStrUtf8");
+    }
+
+    @Override
     public void putStrUtf8(int columnIndex, Utf8Sequence value) {
         Assert.fail("Unexpected call to putStrUtf8");
     }

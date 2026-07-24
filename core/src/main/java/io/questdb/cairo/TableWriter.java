@@ -15197,6 +15197,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         void putStr(int columnIndex, CharSequence value, int pos, int len);
 
         /**
+         * Writes a direct UTF8-encoded string to a UTF16 STRING column.
+         * Malformed UTF8 is stored as null.
+         *
+         * @param columnIndex index of the column we are writing to
+         * @param value       direct UTF8 sequence to write
+         */
+        void putStrUtf8(int columnIndex, DirectUtf8Sequence value);
+
+        /**
          * Writes a UTF8-encoded string to a UTF16 STRING column.
          * Malformed UTF8 is stored as null.
          *
@@ -15434,6 +15443,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putStr(int columnIndex, CharSequence value, int pos, int len) {
+            // no-op
+        }
+
+        @Override
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
             // no-op
         }
 
@@ -15700,7 +15714,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
         public void putStrUtf8(int columnIndex, Utf8Sequence value) {
+            if (value instanceof DirectUtf8Sequence directValue) {
+                putStrUtf8(columnIndex, directValue);
+                return;
+            }
             putStr(columnIndex, value != null ? Utf8s.utf8ToUtf16OrView(value, utf16Sink) : null);
         }
 

@@ -1853,6 +1853,47 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDirectUtf8UsesPointerDecoder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+            final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.putByte(ptr, (byte) 0xC3);
+                Unsafe.putByte(ptr + 1, (byte) 0xA9);
+
+                final AtomicInteger indexedReadCount = new AtomicInteger();
+                final DirectUtf8String value = new DirectUtf8String() {
+                    @Override
+                    public byte byteAt(int index) {
+                        indexedReadCount.incrementAndGet();
+                        return Unsafe.getByte(ptr() + index);
+                    }
+                };
+                value.of(ptr, ptr + 2);
+
+                try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                    final TableWriter.Row row = writer.newRow(1);
+                    row.putStrUtf8(0, value);
+                    row.append();
+                    writer.commit();
+                }
+                Assert.assertEquals(0, indexedReadCount.get());
+            } finally {
+                Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT s FROM x")
+                    .expectSize()
+                    .returns("""
+                            s
+                            é
+                            """);
+        });
+    }
+
+    @Test
     public void testDesignatedTimestampIncludesSegmentRowNumber_NotOOO() throws Exception {
         testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1000, 1200}, false);
     }
@@ -2750,7 +2791,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("symbol", ColumnType.SYMBOL) // putSym(int columnIndex, CharSequence value)
                     .col("symbolb", ColumnType.SYMBOL) // putSym(int columnIndex, char value)
                     .col("symbol8", ColumnType.SYMBOL) // putSymUtf8(int columnIndex, DirectUtf8Sequence value)
-                    .col("string8", ColumnType.STRING) // putStrUtf8(int columnIndex, Utf8Sequence value)
+                    .col("string8", ColumnType.STRING) // putStrUtf8(int columnIndex, DirectUtf8Sequence value)
                     .col("uuida", ColumnType.UUID) // putUUID(int columnIndex, long lo, long hi)
                     .col("uuidb", ColumnType.UUID) // putUUID(int columnIndex, CharSequence value)
                     .col("IPv4", ColumnType.IPv4)
