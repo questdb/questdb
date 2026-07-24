@@ -26,6 +26,7 @@ package org.questdb;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -64,7 +65,8 @@ import java.util.concurrent.TimeUnit;
  * Key and residual selectivity use coprime deterministic cycles, preventing the
  * residual distribution from correlating with any indexed key. The default
  * 100-million-row trial sweeps 0.1% to 20% key selectivity and 1% to 100%
- * residual selectivity; use the JMH {@code rowCount} parameter to rescale it.
+ * residual selectivity. Its residual sweep also separates Java-eager, JIT-eager,
+ * and adaptive JIT covering paths; use the JMH {@code rowCount} parameter to rescale it.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
@@ -96,13 +98,20 @@ public class CoveringIndexPostFilterBenchmark {
     public long rowCount;
 
     @Param({
-            "covering-k10-r1", "no_covering-k10-r1", "no_index-k10-r1",
-            "covering-k10-r2", "no_covering-k10-r2", "no_index-k10-r2",
-            "covering-k10-r5", "no_covering-k10-r5", "no_index-k10-r5",
-            "covering-k10-r10", "no_covering-k10-r10", "no_index-k10-r10",
-            "covering-k10-r20", "no_covering-k10-r20", "no_index-k10-r20",
-            "covering-k10-r50", "no_covering-k10-r50", "no_index-k10-r50",
-            "covering-k10-r100", "no_covering-k10-r100", "no_index-k10-r100",
+            "covering-k10-r1", "covering_eager-k10-r1", "covering_java_eager-k10-r1",
+            "no_covering-k10-r1", "no_index-k10-r1",
+            "covering-k10-r2", "covering_eager-k10-r2", "covering_java_eager-k10-r2",
+            "no_covering-k10-r2", "no_index-k10-r2",
+            "covering-k10-r5", "covering_eager-k10-r5", "covering_java_eager-k10-r5",
+            "no_covering-k10-r5", "no_index-k10-r5",
+            "covering-k10-r10", "covering_eager-k10-r10", "covering_java_eager-k10-r10",
+            "no_covering-k10-r10", "no_index-k10-r10",
+            "covering-k10-r20", "covering_eager-k10-r20", "covering_java_eager-k10-r20",
+            "no_covering-k10-r20", "no_index-k10-r20",
+            "covering-k10-r50", "covering_eager-k10-r50", "covering_java_eager-k10-r50",
+            "no_covering-k10-r50", "no_index-k10-r50",
+            "covering-k10-r100", "covering_eager-k10-r100", "covering_java_eager-k10-r100",
+            "no_covering-k10-r100", "no_index-k10-r100",
             "covering-k01-r10", "no_covering-k01-r10", "no_index-k01-r10",
             "covering-k02-r10", "no_covering-k02-r10", "no_index-k02-r10",
             "covering-k05-r10", "no_covering-k05-r10", "no_index-k05-r10",
@@ -144,6 +153,9 @@ public class CoveringIndexPostFilterBenchmark {
     public void setUp() throws Exception {
         ensureEnvironment(rowCount);
         final String route = scenario.substring(0, scenario.indexOf('-'));
+        context.setJitMode(
+                "covering_java_eager".equals(route) ? SqlJitMode.JIT_MODE_DISABLED : SqlJitMode.JIT_MODE_ENABLED
+        );
         final String query = query(scenario, route);
         verifyRoute(query, route);
         factory = compiler.compile(query, context).getRecordCursorFactory();
@@ -259,7 +271,7 @@ public class CoveringIndexPostFilterBenchmark {
     private static String query(String scenario, String route) {
         final String[] parts = scenario.split("-");
         final String hint = switch (route) {
-            case "covering" -> "";
+            case "covering", "covering_eager", "covering_java_eager" -> "";
             case "no_covering" -> "/*+ no_covering */ ";
             case "no_index" -> "/*+ no_index */ ";
             default -> throw new IllegalArgumentException("unknown route: " + route);
@@ -274,8 +286,11 @@ public class CoveringIndexPostFilterBenchmark {
             case "r100" -> 1009;
             default -> throw new IllegalArgumentException("unknown residual selectivity: " + parts[2]);
         };
+        final String eagerDependency = route.endsWith("_eager")
+                ? " AND value >= 0 AND ts >= '1970-01-01'"
+                : "";
         return "SELECT " + hint + "ts, value FROM post_filter WHERE sym = '" + parts[1] +
-                "' AND residual < " + residualLimit;
+                "' AND residual < " + residualLimit + eagerDependency;
     }
 
     private static void verifyRoute(String query, String route) throws Exception {
@@ -293,6 +308,10 @@ public class CoveringIndexPostFilterBenchmark {
                     && (EXPECT_JIT
                         ? text.contains("Async JIT Filter")
                         : text.contains("Async Filter") && !text.contains("Async JIT Filter"));
+            case "covering_eager" -> text.contains("Async JIT Filter") && text.contains("CoveringIndex");
+            case "covering_java_eager" -> text.contains("Async Filter")
+                    && !text.contains("Async JIT Filter")
+                    && text.contains("CoveringIndex");
             case "no_covering" -> !text.contains("CoveringIndex") && text.contains("Index");
             case "no_index" -> !text.contains("CoveringIndex") && !text.contains("Index forward scan");
             default -> false;
