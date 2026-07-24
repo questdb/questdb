@@ -81,9 +81,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     @TestOnly
     public static final int TEST_FAIL_AFTER_METADATA_PUBLISH = 2;
 
-    // What a seal that ran no lifecycle reconciliation reports, which is every
-    // seal but the first one a writer makes against a directory.
-    private static final LongList NO_PURGED_SEGMENT_IDS = new LongList();
     private final HashSet<String> lifecycleReconciledDirs = new HashSet<>();
     private final CairoConfiguration configuration;
     // Read-only argument of a cadence seal's reference transaction, which only
@@ -139,10 +136,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
         final String lifecycleKey = checkpointsDir.toString();
         boolean epochRetry = false;
-        // Both survive the epoch retry: what the first pass unlinked is still
-        // unlinked, and a timeline this loop retired stays retired.
-        LongList purgedSegmentIds = NO_PURGED_SEGMENT_IDS;
-        boolean isSegmentIdSpaceReset = false;
         while (true) {
             long orphanUpperBound = 0;
             // A view created in this process reconciles here rather than at
@@ -161,10 +154,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                                 true
                         );
                 orphanUpperBound = reconciliation.getFinalOrphanUpperBound();
-                purgedSegmentIds = reconciliation.getPurgedSegmentIds();
-                // A foreign definition and a foreign layout both retire the timeline
-                // whole, after which append0 mints segment ids from zero again.
-                isSegmentIdSpaceReset |= reconciliation.isEpochReplaced() || reconciliation.isFormatReset();
                 if (reconciliation.getStats() != null) {
                     liveSegmentCount = reconciliation.getLiveSegmentCount();
                     obsoleteSegmentBytes = reconciliation.getObsoleteSegmentBytes();
@@ -191,9 +180,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         seedCursorOffset,
                         orphanUpperBound,
                         liveSegmentCount,
-                        obsoleteSegmentBytes,
-                        purgedSegmentIds,
-                        isSegmentIdSpaceReset
+                        obsoleteSegmentBytes
                 );
             } catch (HistoryEpochChangedException e) {
                 lifecycleReconciledDirs.remove(lifecycleKey);
@@ -831,9 +818,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             long seedCursorOffset,
             long orphanUpperBound,
             long liveSegmentCount,
-            long obsoleteSegmentBytes,
-            LongList purgedSegmentIds,
-            boolean isSegmentIdSpaceReset
+            long obsoleteSegmentBytes
     ) {
         if (definitionTxn < 0
                 || createdLvSeqTxn < 0
@@ -1040,9 +1025,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     new LiveViewCheckpointTimelineStats()
                             .of(superblock, checkedAdd(dataSegmentBytes, metadataBytesAdded)),
                     liveSegmentCount,
-                    obsoleteSegmentBytes,
-                    purgedSegmentIds,
-                    isSegmentIdSpaceReset
+                    obsoleteSegmentBytes
             );
         }
     }
@@ -1704,12 +1687,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final long checkpointId;
         private final long dataBytesAdded;
         private final long generation;
-        private final boolean isSegmentIdSpaceReset;
         private final long liveSegmentCount;
         private final long logicalStateBytes;
         private final long metadataBytesAdded;
         private final long obsoleteSegmentBytes;
-        private final LongList purgedSegmentIds;
         private final LiveViewCheckpointTimelineStats stats;
         private final long walPurgeFloor;
 
@@ -1722,9 +1703,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 long walPurgeFloor,
                 LiveViewCheckpointTimelineStats stats,
                 long liveSegmentCount,
-                long obsoleteSegmentBytes,
-                LongList purgedSegmentIds,
-                boolean isSegmentIdSpaceReset
+                long obsoleteSegmentBytes
         ) {
             this.generation = generation;
             this.checkpointId = checkpointId;
@@ -1735,8 +1714,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.stats = stats;
             this.liveSegmentCount = liveSegmentCount;
             this.obsoleteSegmentBytes = obsoleteSegmentBytes;
-            this.purgedSegmentIds = purgedSegmentIds;
-            this.isSegmentIdSpaceReset = isSegmentIdSpaceReset;
         }
 
         public long getCheckpointId() {
@@ -1779,15 +1756,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         /**
-         * @return the data segments this seal's lifecycle reconciliation unlinked,
-         * empty when it ran no sweep. A caller holding decoded state from them
-         * drops it - the files are gone
-         */
-        public LongList getPurgedSegmentIds() {
-            return purgedSegmentIds;
-        }
-
-        /**
          * @return the shape of the generation this seal committed
          */
         public LiveViewCheckpointTimelineStats getStats() {
@@ -1796,17 +1764,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         public long getWalPurgeFloor() {
             return walPurgeFloor;
-        }
-
-        /**
-         * @return true when this seal's lifecycle reconciliation retired the
-         * timeline it found whole - it belonged to another definition or history
-         * epoch, or to a layout this build cannot read. The fresh timeline this
-         * seal then opened mints segment ids from zero again, so a caller keyed on
-         * segment id must drop everything it holds rather than evict per segment
-         */
-        public boolean isSegmentIdSpaceReset() {
-            return isSegmentIdSpaceReset;
         }
     }
 

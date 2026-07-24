@@ -134,28 +134,6 @@ public class LiveViewCheckpointCompactionTest extends AbstractLiveViewTest {
                 }
                 Assert.assertTrue("the fragmented history must offer a sparse segment to compact", result.isPublished());
                 Assert.assertTrue("a compaction must rewrite at least one root", result.getRootsRewritten() > 0);
-                // The drained sources by id, not merely by count: a caller keyed on
-                // segment id - the decoded page cache - drops exactly these, so a
-                // set that named the wrong segment would evict live pages and keep
-                // dead ones.
-                final LongList sources = result.getSourceSegmentIds();
-                Assert.assertEquals(result.getSourceSegments(), sources.size());
-                Assert.assertTrue("a compaction must drain at least one segment", sources.size() > 0);
-                for (int i = 0, n = sources.size(); i < n; i++) {
-                    final long sourceId = sources.getQuick(i);
-                    Assert.assertTrue(
-                            "drained segment " + sourceId + " was not on disk before the pass",
-                            dataSegmentsBefore.indexOf(sourceId) >= 0
-                    );
-                    Assert.assertNotEquals(
-                            "the compaction target must not be one of its own sources",
-                            result.getTargetSegmentId(),
-                            sourceId
-                    );
-                    if (i > 0) {
-                        Assert.assertTrue("the drained sources must ascend", sourceId > sources.getQuick(i - 1));
-                    }
-                }
                 Assert.assertTrue("the compaction target must be a fresh segment", result.getTargetSegmentId() >= dataSegmentsBefore.getLast());
                 Assert.assertEquals("a compaction advances the generation by one", generationBefore + 1, result.getGeneration());
                 Assert.assertTrue("the compacted target segment is on disk", dataSegmentFileExists(instance, result.getTargetSegmentId()));
@@ -193,11 +171,10 @@ public class LiveViewCheckpointCompactionTest extends AbstractLiveViewTest {
                 // sources lose their last reference at the compaction generation, so once
                 // the slot that still named the pre-compaction generation is overwritten and
                 // no reader pins it, the purge unlinks them while the target survives.
-                final LongList purgedIds = new LongList();
                 for (int i = 0; i < 4; i++) {
                     appendAndRefresh(job, (SEALS + 6 + i) * 10, 700 + i, 800 + i);
                     driveRefreshToQuiescence(job);
-                    purgeCycle(instance, purgedIds);
+                    purgeCycle(instance);
                 }
                 assertViewMatchesRecompute();
 
@@ -212,17 +189,6 @@ public class LiveViewCheckpointCompactionTest extends AbstractLiveViewTest {
                 Assert.assertTrue(
                         "the purge must reclaim at least one drained source segment",
                         purgedSources > 0
-                );
-                // Reported by id, not merely counted: the decoded page cache drops
-                // what a sweep names, so an id it reported without unlinking would
-                // throw away pages of a file that is still being read. purgeCycle
-                // asserts each reported file is gone; these sweeps are not the only
-                // ones running - a seal's own reconciliation and the orphan pass
-                // unlink too - so the reverse containment does not hold.
-                Assert.assertTrue("no sweep reported a segment it unlinked", purgedIds.size() > 0);
-                Assert.assertTrue(
-                        "the sweeps reported more segments than the run ever reclaimed",
-                        purgedIds.size() <= purgedSources
                 );
             }
         });
@@ -443,7 +409,7 @@ public class LiveViewCheckpointCompactionTest extends AbstractLiveViewTest {
         return reader;
     }
 
-    private void purgeCycle(LiveViewInstance instance, LongList purgedIds) {
+    private void purgeCycle(LiveViewInstance instance) {
         try (Path dir = checkpointsDir(instance)) {
             final LiveViewCheckpointLifecycle.ReconcileResult result = LiveViewCheckpointLifecycle.reconcile(
                     configuration,
@@ -456,15 +422,6 @@ public class LiveViewCheckpointCompactionTest extends AbstractLiveViewTest {
             Assert.assertFalse("this build wrote the directory it is reconciling", result.isFormatReset());
             Assert.assertEquals("no obsolete segment may fail to unlink", 0, result.getFailedPurgeCount());
             Assert.assertEquals("no orphan may fail removal", 0, result.getFailedOrphanCount());
-            Assert.assertEquals(result.getPurgedSegmentCount(), result.getPurgedSegmentIds().size());
-            for (int i = 0, n = result.getPurgedSegmentIds().size(); i < n; i++) {
-                final long segmentId = result.getPurgedSegmentIds().getQuick(i);
-                Assert.assertFalse(
-                        "the sweep reported segment " + segmentId + " purged while its file is still there",
-                        dataSegmentFileExists(instance, segmentId)
-                );
-                purgedIds.add(segmentId);
-            }
         }
     }
 

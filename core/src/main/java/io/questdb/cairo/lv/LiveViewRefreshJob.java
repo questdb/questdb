@@ -82,7 +82,6 @@ import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
@@ -193,10 +192,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // feed the compiled copier when materialising the un-flushed lead into the LV
     // WAL. Reused across rows; rebound via of() before each copy.
     private final LiveViewBufferRecord bufferRecord = new LiveViewBufferRecord();
-    // The engine-wide ceiling every view's decoded checkpoint page cache allocates
-    // against. Read once: the registry owns it for the engine's life, and it is
-    // shared, so the caps of the views this worker refreshes do not add up.
-    private final LiveViewCheckpointPageCacheBudget checkpointPageCacheBudget;
     // Restores of versioned-timeline roots: the out-of-order resume anchor, the
     // seed resume, restart recovery and the repair plan's anchor search. Lazily
     // allocated on this worker's first restore and rebound per call, so a worker
@@ -362,7 +357,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         this.memoryPool = new PageFrameMemoryPool(engine.getConfiguration(), 0L);
         this.walRecordCursor = new WalSegmentRecordCursor(addressCache, memoryPool);
         this.rowsBounds = new LiveViewCheckpointRowsBounds(engine.getConfiguration());
-        this.checkpointPageCacheBudget = engine.getLiveViewRegistry().getCheckpointPageCacheBudget();
     }
 
     @Override
@@ -584,17 +578,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     timelineResult.getObsoleteSegmentBytes()
             );
         }
-        // The seal's own lifecycle reconciliation is the live view's segment GC: it
-        // unlinks what no current root names any more. The page cache holds decoded
-        // images keyed on segment id, so what the sweep deleted comes out of it - as
-        // an eviction normally, and as an epoch bump when the reconciliation retired
-        // the timeline it found whole, because the fresh timeline this seal then
-        // opened mints ids from zero again.
-        if (timelineResult.isSegmentIdSpaceReset()) {
-            instance.bumpCheckpointPageCacheEpoch();
-        } else {
-            instance.evictCheckpointPageCacheSegments(timelineResult.getPurgedSegmentIds());
-        }
         return timelineResult.getLogicalStateBytes();
     }
 
@@ -605,11 +588,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * of sparse data segments into a fresh segment and redirects the roots, so the
      * drained segments retire for the purge job. Best-effort: a fault abandons the
      * candidate and leaves the published generation byte-identical.
-     * <p>
-     * A published pass takes its source segments out of the view's decoded page
-     * cache. Every page they held now lives in the target under a new identity, so
-     * no later restore can reach the old one; keeping the entries would hold slots
-     * against the engine-wide budget for pages nothing will probe again.
      */
     private void maybeCompactCheckpointTimeline(LiveViewInstance instance, long lvSeqTxn) {
         final long interval = engine.getConfiguration().getLiveViewCheckpointCompactionInterval();
@@ -626,11 +604,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Compaction repacks a timeline this node published, so it runs on whichever role
             // that node currently holds - see appendCheckpointTimelineRoot for why the role
             // read lock outlives the read-only refusal it used to carry.
-            final LiveViewCheckpointCompaction.Result result;
             final Lock roleLock = engine.getRoleSwitchReadLock();
             roleLock.lock();
             try {
-                result = LiveViewCheckpointCompaction.compact(
+                LiveViewCheckpointCompaction.compact(
                         engine.getConfiguration(),
                         checkpointsDir,
                         checkpointTimelineStoreWriter,
@@ -643,9 +620,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 );
             } finally {
                 roleLock.unlock();
-            }
-            if (result.isPublished()) {
-                instance.evictCheckpointPageCacheSegments(result.getSourceSegmentIds());
             }
         } catch (Throwable t) {
             LOG.error().$("could not compact live view checkpoint timeline [view=")
@@ -2856,14 +2830,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Failure is logged and swallowed: the replay owns correctness of the durable
      * output, and a timeline left behind is re-reconciled (and re-retired) on the
      * next seal or restart rather than blocking the refresh.
-     * <p>
-     * The view's decoded page cache moves to a new epoch here, dropping everything
-     * it holds. Retiring deletes the data segments and the superblock that counted
-     * them, so the timeline the view seals next mints segment ids from the bottom
-     * again - and a page identity is a segment id and an offset. Without the bump,
-     * a re-minted id could serve the bytes of the file it replaced. The bump runs
-     * even when the retire failed above: what makes an entry stale is that the
-     * caller stopped trusting the timeline, not that every file went.
      */
     private void retireCheckpointTimeline(LiveViewInstance instance) {
         try (Path checkpointsDir = new Path()) {
@@ -2881,7 +2847,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
         }
-        instance.bumpCheckpointPageCacheEpoch();
         instance.clearCheckpointTimelineOwnership();
     }
 
@@ -3937,26 +3902,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
         // (0 on the common path); the anchor fields record which logical boundary the
         // resume rolled back to, so a wide gap or a distant anchor is diagnosable.
-        final LogRecord replayLog = LOG.info().$("live view O3 resume replay completed [view=")
+        LOG.info().$("live view O3 resume replay completed [view=")
                 .$(viewName)
                 .$(", advanceTo=").$(committedSeqTxn)
                 .$(", anchorCheckpointId=").$(anchorCheckpointId)
                 .$(", anchorMaxTs=").$(anchorMaxTs)
                 .$(", applyAheadGap=").$(plan.getPinnedSeqTxn() - plan.getTriggerSeqTxn())
-                .$(", rowsEmitted=").$(appendedRows);
-        // What the restore above took from the decoded page cache, and what it had
-        // to map and decode instead - the two numbers that say whether this path is
-        // paying the anchor reload the cache exists to remove. They are this
-        // replay's, not the cache's life, so they read alongside rowsEmitted rather
-        // than against the lifetime totals live_views() carries. A view with no
-        // cache - the engine-wide budget is off - omits the pair rather than
-        // reporting zeroes a cold cache would also report.
-        final LiveViewCheckpointPageCache pageCache = instance.getCheckpointPageCache();
-        if (pageCache != null) {
-            replayLog.$(", pageCacheHits=").$(pageCache.getRestoreHits())
-                    .$(", pageCacheMisses=").$(pageCache.getRestoreMisses());
-        }
-        replayLog.I$();
+                .$(", rowsEmitted=").$(appendedRows).I$();
     }
 
     /**
@@ -5489,15 +5441,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * between leaves the previous generation authoritative and the repair repeatable;
      * a failure returns false and the caller retires the timeline instead, because
      * the durable output has already moved under every root it holds.
-     * <p>
-     * A committed splice moves the view's decoded page cache to a new epoch. The
-     * splice mints its capture segment from the persisted {@code nextSegmentId}
-     * ceiling, so no entry it leaves behind can alias a re-minted id; what it does
-     * do is supersede the state pages of every root in {@code [C, H)} at once, and
-     * nothing else reclaims those - a purge only sweeps at a reconciliation, which
-     * a steady cadence runs once per writer. Dropping the cache here is what keeps
-     * a repair-heavy view from filling the engine-wide budget with pages no
-     * surviving root names.
      *
      * @return true when the superblock committed the new generation
      */
@@ -5537,7 +5480,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     result.getRootsVersioned(),
                     result.getDataBytesAdded() + result.getMetadataBytesAdded()
             );
-            instance.bumpCheckpointPageCacheEpoch();
             LOG.info().$("live view checkpoint timeline repair published [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", generation=").$(result.getGeneration())
@@ -5922,10 +5864,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 roleLock.unlock();
             }
             capture = Misc.free(capture);
-            // Same rule as a repair splice: the heal replaced the state pages of
-            // every root it re-versioned, so what the cache decoded from them is
-            // dead weight the next restore would never probe.
-            instance.bumpCheckpointPageCacheEpoch();
             LOG.info().$("reconstructed corrupt live view checkpoint roots [view=")
                     .$(viewName)
                     .$(", predecessorMaxTs=").$ts(predecessorMaxTs)
@@ -6043,22 +5981,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Binds this worker's checkpoint timeline store reader to {@code instance}'s
-     * checkpoint directory and hands it to the caller for exactly one restore.
+     * Binds this worker's checkpoint timeline store reader to {@code checkpointsDir}
+     * and hands it to the caller for exactly one restore.
      * <p>
      * The reader is built on first use and rebound per call rather than rebuilt,
      * which is what keeps a per-commit resume off the allocation path: the tree
      * behind it - meta store, delta reader, partition map reader, ring state
      * reader, per-segment readers - is the same one every restore of every view
      * this worker drives goes through.
-     * <p>
-     * The decoded page cache goes the other way. It belongs to the view, not to
-     * the worker, because a view is refreshed by at most one worker at a time but
-     * not always by the same one: a per-worker cache would hold one view's pages N
-     * times over and lose them whenever the view moved. So the bind carries the
-     * view's cache into the reader for the duration of the restore, and the reader
-     * lets go of it at detach. A view whose engine-wide budget is disabled has
-     * none, and the restore then decodes every page.
      * <p>
      * The caller must {@link LiveViewCheckpointTimelineStoreReader#detach()} on
      * every exit path. Detaching drops every mapping and forgets the generation,
@@ -6068,16 +5998,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * that raises rather than silently restoring against the wrong view.
      */
     private LiveViewCheckpointTimelineStoreReader borrowCheckpointTimelineStoreReader(
-            @Transient Path checkpointsDir,
-            LiveViewInstance instance
+            @Transient Path checkpointsDir
     ) {
         if (checkpointTimelineStoreReader == null) {
             checkpointTimelineStoreReader = new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration());
         }
-        checkpointTimelineStoreReader.of(
-                checkpointsDir,
-                instance.getOrCreateCheckpointPageCache(checkpointPageCacheBudget)
-        );
+        checkpointTimelineStoreReader.of(checkpointsDir);
         return checkpointTimelineStoreReader;
     }
 
@@ -6107,7 +6033,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             final LiveViewCheckpointTimelineStoreReader reader =
-                    borrowCheckpointTimelineStoreReader(checkpointsDir, instance);
+                    borrowCheckpointTimelineStoreReader(checkpointsDir);
             try {
                 return reader.restore(
                         anchorMaxTs,
@@ -6176,7 +6102,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
             final LiveViewCheckpointTimelineStoreReader reader =
-                    borrowCheckpointTimelineStoreReader(checkpointsDir, instance);
+                    borrowCheckpointTimelineStoreReader(checkpointsDir);
             try {
                 // Open the (lazy) window cursor before writing restored state into it:
                 // allocates the per-partition maps and marks the cursor open so the
@@ -6326,7 +6252,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             LiveViewCheckpointTimelineStoreReader.Result restored;
             final LiveViewCheckpointTimelineStoreReader timelineReader =
-                    borrowCheckpointTimelineStoreReader(checkpointsDir, instance);
+                    borrowCheckpointTimelineStoreReader(checkpointsDir);
             try {
                 // Allocate/open the caller-owned maps before the page reader
                 // validates and restores into them, matching legacy restore.
@@ -6360,7 +6286,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             .put("live view checkpoint corrupt-root reconstruction failed");
                 }
                 final LiveViewCheckpointTimelineStoreReader healedReader =
-                        borrowCheckpointTimelineStoreReader(checkpointsDir, instance);
+                        borrowCheckpointTimelineStoreReader(checkpointsDir);
                 try {
                     restored = healedReader.restoreLatestCompatible(
                             durableFrontierTimestamp,
@@ -8627,7 +8553,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .concat(instance.getLiveViewToken())
                         .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
                 final LiveViewCheckpointTimelineStoreReader reader =
-                        borrowCheckpointTimelineStoreReader(checkpointsDir, instance);
+                        borrowCheckpointTimelineStoreReader(checkpointsDir);
                 try {
                     return reader.predecessor(ceilTs, out);
                 } finally {

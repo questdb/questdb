@@ -37,7 +37,6 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
-import io.questdb.cairo.lv.LiveViewCheckpointPageCache;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewWindow;
@@ -80,7 +79,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
-import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -128,12 +126,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             "2026-08-01T03:00:00.000000Z",
             "2026-08-01T04:00:00.000000Z",
     };
-    private static final String PAGE_CACHE_HEADER = "checkpoint_page_cache_bytes\t"
-            + "checkpoint_page_cache_working_set_bytes\tcheckpoint_page_cache_hits\t"
-            + "checkpoint_page_cache_misses\tcheckpoint_page_cache_admission_ratio\n";
-    private static final String PAGE_CACHE_QUERY = "SELECT checkpoint_page_cache_bytes, "
-            + "checkpoint_page_cache_working_set_bytes, checkpoint_page_cache_hits, "
-            + "checkpoint_page_cache_misses, checkpoint_page_cache_admission_ratio FROM live_views()";
     // The two framings assertMaxMinBoundedRestoresDequeAcrossRestart drives. Over the hourly rows it
     // ingests they select exactly the same rows, so both share one expected result - but they compile
     // to different production functions with their own snapshot/restore paths.
@@ -1604,52 +1596,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
         printSql("SHOW CREATE LIVE VIEW " + viewName + ";");
         TestUtils.assertEquals(originalDdl, sink.toString().replace("ddl\n", ""));
-    }
-
-    /**
-     * Commits one row per key at {@code second} into the page cache case's base and
-     * gives the refresh job a turn on it. The clock steps past the view's flush
-     * window first, so the commit reaches disk and seals a boundary rather than
-     * lingering as an unflushed lead the next commit would absorb.
-     */
-    private void commitPageCacheRow(LiveViewRefreshJob job, int second, double value) throws Exception {
-        setCurrentMicros(currentMicros + 200_000L);
-        final String rowTs = "2026-11-01T00:00:" + (second < 10 ? "0" + second : second) + ".000000Z";
-        execute("INSERT INTO base (ts, sym, x) VALUES "
-                + "('" + rowTs + "', 'a', " + value + "), "
-                + "('" + rowTs + "', 'b', " + (value + 1) + ")");
-        drainWalQueue();
-        drainJob(job);
-        drainWalQueue();
-    }
-
-    /**
-     * Drives the page cache fixture's view: four in-order commits lay down the
-     * boundaries a resume can anchor on, then three corrections just below the head
-     * resume from the same one. The restores after the first are the point - each
-     * meets the pages its predecessor decoded, which is the repeat the cache exists
-     * for and the only way a hit is counted at all. Three corrections rather than
-     * two so the hit count outruns the miss count, which is what lets a caller tell
-     * the two apart.
-     *
-     * @return the view's instance, having resumed from an anchor at least once
-     */
-    private LiveViewInstance drivePageCacheResumeReplays(LiveViewRefreshJob job) throws Exception {
-        for (int second = 10; second <= 40; second += 10) {
-            commitPageCacheRow(job, second, second);
-        }
-        commitPageCacheRow(job, 35, 350);
-        commitPageCacheRow(job, 37, 370);
-        commitPageCacheRow(job, 39, 390);
-
-        final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-        Assert.assertNotNull(lv);
-        Assert.assertTrue(
-                "the view never resumed from an anchor, so it restored no checkpoint and the"
-                        + " assertions that follow would pass over a cache nothing ever probed",
-                lv.getO3ResumeReplayRows() > 0
-        );
-        return lv;
     }
 
     @Test
@@ -13782,14 +13728,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Columns appear in the documented order so clients binding by
         // ordinal see a stable shape. The documented columns come first, the
         // three o3_*_rows columns trail as replay observability, and the
-        // checkpoint_* group closes the set in its five blocks: the
-        // generation's shape, collection, cost, localized repair, and the
-        // decoded state page cache. The repair block ends on the three that
-        // describe a repair's shape rather than one repair's progress:
-        // checkpoint_repair_plan for what the view's SQL admits, then the last
-        // repair's effective disposition and denial. The page cache block is
-        // appended after them rather than slotted beside the other cost columns,
-        // because every ordinal a client already binds has to keep its meaning.
+        // checkpoint_* group closes the set in its four blocks: the
+        // generation's shape, collection, cost, and localized repair. The last
+        // block ends on the three that describe a repair's shape rather than one
+        // repair's progress: checkpoint_repair_plan for what the view's SQL
+        // admits, then the last repair's effective disposition and denial.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -13815,106 +13758,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "checkpoint_repair_roots_versioned\tcheckpoint_repair_new_bytes\t"
                         + "checkpoint_repair_resumes\tcheckpoint_repair_failures\t"
                         + "checkpoint_repair_plan\tcheckpoint_repair_last_disposition\t"
-                        + "checkpoint_repair_last_denial\tcheckpoint_page_cache_bytes\t"
-                        + "checkpoint_page_cache_working_set_bytes\tcheckpoint_page_cache_hits\t"
-                        + "checkpoint_page_cache_misses\tcheckpoint_page_cache_admission_ratio\n");
+                        + "checkpoint_repair_last_denial\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
-        });
-    }
-
-    @Test
-    public void testLiveViewsCatalogueExposesCheckpointPageCacheColumns() throws Exception {
-        // A view that has never restored holds no decoded page cache, and the
-        // group reads NULL rather than zero: "no cache at all" - the engine-wide
-        // budget is off, or this view has not resumed from an anchor since it
-        // last released its refresh state - says something other than "a cache
-        // that has probed and served nothing". The out-of-order corrections
-        // below build one, and the catalogue must then report what it actually
-        // holds rather than a figure of its own.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW)");
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                assertQuery(PAGE_CACHE_QUERY).noLeakCheck().noRandomAccess()
-                        .returns(PAGE_CACHE_HEADER + "null\tnull\tnull\tnull\tnull\n");
-
-                final LiveViewInstance lv = drivePageCacheResumeReplays(job);
-                final LiveViewCheckpointPageCache cache = lv.getCheckpointPageCache();
-                Assert.assertNotNull("a view that restored under an enabled budget must hold a cache", cache);
-                Assert.assertTrue("the restores probed no ring page", cache.getMisses() > 0);
-                Assert.assertTrue("the second restore met none of the first one's pages", cache.getHits() > 0);
-                Assert.assertTrue("a cache that served hits holds no bytes", cache.getUsedBytes() > 0);
-                Assert.assertTrue("no restore measured a working set", cache.getWorkingSetBytes() > 0);
-                // The default cap is far above what a view this size reads, so the
-                // self-tuner leaves the fraction where it started.
-                Assert.assertEquals(1.0, cache.getAdmissionFraction(), 0.0);
-                // The control the tuple below rests on: two counters that happened
-                // to coincide would read the same whichever column each was wired
-                // to, and the assertion would stop discriminating.
-                Assert.assertNotEquals(cache.getHits(), cache.getMisses());
-                Assert.assertNotEquals(cache.getUsedBytes(), cache.getWorkingSetBytes());
-
-                // Every column against the cache itself, so a column wired to the
-                // wrong getter shows up here rather than as a plausible number.
-                final StringSink expected = new StringSink();
-                expected.put(PAGE_CACHE_HEADER)
-                        .put(cache.getUsedBytes()).put('\t')
-                        .put(cache.getWorkingSetBytes()).put('\t')
-                        .put(cache.getHits()).put('\t')
-                        .put(cache.getMisses()).put('\t')
-                        .put(cache.getAdmissionFraction()).put('\n');
-                assertQuery(PAGE_CACHE_QUERY).noLeakCheck().noRandomAccess().returns(expected.toString());
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testResumeReplayLogLineCarriesThisReplaysPageCacheCounters() throws Exception {
-        // The resume replay line is the per-commit record of the path the page
-        // cache exists to make cheap, so what it has to carry is what THIS replay
-        // took from the cache. The lifetime totals live_views() reports would say
-        // nothing about the replay being logged - by the tenth of a second they are
-        // a sum over hundreds of restores.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        final LogCapture capture = new LogCapture();
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW)");
-
-            capture.start();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                final LiveViewInstance lv = drivePageCacheResumeReplays(job);
-                final LiveViewCheckpointPageCache cache = lv.getCheckpointPageCache();
-                Assert.assertNotNull("a view that restored under an enabled budget must hold a cache", cache);
-                Assert.assertTrue("the last restore served nothing, so no line can show a hit", cache.getRestoreHits() > 0);
-                // The controls the match below rests on: with either pair equal to
-                // its lifetime counterpart, a line built from the wrong one would
-                // read the same and the assertion would stop discriminating.
-                Assert.assertNotEquals(cache.getHits(), cache.getRestoreHits());
-                Assert.assertNotEquals(cache.getMisses(), cache.getRestoreMisses());
-
-                // The log is written asynchronously, so plant a sentinel behind the
-                // last replay line and wait for it: one FIFO path means every
-                // earlier line is in the sink by the time this one is.
-                LOG.info().$("live view page cache log flush barrier").$();
-                capture.waitForRegex("live view page cache log flush barrier");
-                capture.assertLoggedRE("live view O3 resume replay completed \\[view=lv, .*"
-                        + ", pageCacheHits=" + cache.getRestoreHits()
-                        + ", pageCacheMisses=" + cache.getRestoreMisses() + "]");
-            } finally {
-                capture.stop();
-            }
-            execute("DROP LIVE VIEW lv");
         });
     }
 

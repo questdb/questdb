@@ -31,7 +31,6 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.lv.LiveViewCheckpointPageCache;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -82,7 +81,7 @@ import io.questdb.std.ObjList;
  * three are in-memory counters that reset on restart.
  * <p>
  * The {@code checkpoint_*} group describes the versioned checkpoint timeline, and
- * splits five ways.
+ * splits four ways.
  * <ul>
  *     <li>The generation's shape - {@code checkpoint_timeline_generation},
  *     {@code _entries}, {@code _normalized_base_seqtxn}, {@code _logical_bytes},
@@ -134,21 +133,6 @@ import io.questdb.std.ObjList;
  *     interval. So a view reporting a {@code rows} plan beside a
  *     {@code boundary rebuild} / {@code dedup} pair is one whose SQL admits a bound
  *     that its base denies at every refresh.</li>
- *     <li>The decoded state page cache - {@code checkpoint_page_cache_bytes},
- *     {@code _working_set_bytes}, {@code _hits}, {@code _misses} and
- *     {@code _admission_ratio}. A view restores its window state from the anchor
- *     checkpoint on every base commit, and the cache is what lets that restore skip
- *     mapping a data segment and running the codec over it again. The first two put
- *     what the view holds beside what holding every page one restore reads would
- *     cost, so a working set above the bytes names a view the engine-wide cap does
- *     not cover. The admission ratio is the share of pages, by identity hash, the
- *     cache takes in: it sits at 1 while the cap is comfortable and walks down as
- *     the working set outgrows the share of the cap this view can reach, which is
- *     what tells an operator whether a hit ratio below 1 is the cap binding or
- *     merely a cache still warming. All five are NULL for a view holding no cache
- *     at all - the engine-wide budget is off, or the view has not restored since it
- *     last released its refresh state - which is a different statement from the
- *     zeroes a cold cache reports.</li>
  * </ul>
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
@@ -219,11 +203,6 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_CHECKPOINT_LAST_WRITE_NEW_BYTES = 39;
         private static final int COLUMN_CHECKPOINT_OBSOLETE_SEGMENT_BYTES = 34;
         private static final int COLUMN_CHECKPOINT_OLDEST_PINNED_GENERATION = 35;
-        private static final int COLUMN_CHECKPOINT_PAGE_CACHE_ADMISSION_RATIO = 56;
-        private static final int COLUMN_CHECKPOINT_PAGE_CACHE_BYTES = 52;
-        private static final int COLUMN_CHECKPOINT_PAGE_CACHE_HITS = 54;
-        private static final int COLUMN_CHECKPOINT_PAGE_CACHE_MISSES = 55;
-        private static final int COLUMN_CHECKPOINT_PAGE_CACHE_WORKING_SET_BYTES = 53;
         private static final int COLUMN_CHECKPOINT_REPAIR_CORRECTION_TIMESTAMP = 42;
         private static final int COLUMN_CHECKPOINT_REPAIR_FAILURES = 48;
         private static final int COLUMN_CHECKPOINT_REPAIR_HIGH_TIMESTAMP = 44;
@@ -343,14 +322,6 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                 private LiveViewDefinition definition;
                 private CairoEngine engine;
                 private LiveViewInstance instance;
-                // Resolved once per row so the five checkpoint_page_cache_* columns
-                // agree on whether there is a cache at all. The refresh worker can
-                // free it between two column reads, and a row that reported bytes
-                // and then NULL for its hit count would describe no state the view
-                // was ever in. The counters behind it still move under the reader,
-                // which is what an in-memory counter surfaced from another thread
-                // always costs.
-                private LiveViewCheckpointPageCache pageCache;
 
                 @Override
                 public boolean getBool(int col) {
@@ -365,32 +336,21 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
                 @Override
                 public double getDouble(int col) {
-                    if (instance.isStub()) {
+                    if (instance.isStub() || col != COLUMN_CHECKPOINT_TIMELINE_SHARING_RATIO) {
                         return Double.NaN;
                     }
-                    return switch (col) {
-                        case COLUMN_CHECKPOINT_TIMELINE_SHARING_RATIO -> {
-                            // Share of the logical state the timeline did not have to
-                            // write, so 0 means every root paid for its own complete
-                            // image. NULL rather than 0 while no generation exists, which
-                            // is a different statement from "shares nothing".
-                            final long[] timeline = instance.getCheckpointTimeline();
-                            final long logical = timeline[LiveViewInstance.CHECKPOINT_TIMELINE_LOGICAL_BYTES];
-                            if (timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
-                                    || logical <= 0) {
-                                yield Double.NaN;
-                            }
-                            final long physical = timeline[LiveViewInstance.CHECKPOINT_TIMELINE_PHYSICAL_BYTES];
-                            yield (double) Math.max(0, logical - physical) / logical;
-                        }
-                        // The share of pages the cache admits, by identity hash. One
-                        // says the cap covers everything this view reads; below one
-                        // is the cap binding, and the hit ratio beside it then reads
-                        // as the shortfall rather than as a cache still warming.
-                        case COLUMN_CHECKPOINT_PAGE_CACHE_ADMISSION_RATIO ->
-                                pageCache == null ? Double.NaN : pageCache.getAdmissionFraction();
-                        default -> Double.NaN;
-                    };
+                    // Share of the logical state the timeline did not have to
+                    // write, so 0 means every root paid for its own complete
+                    // image. NULL rather than 0 while no generation exists, which
+                    // is a different statement from "shares nothing".
+                    final long[] timeline = instance.getCheckpointTimeline();
+                    final long logical = timeline[LiveViewInstance.CHECKPOINT_TIMELINE_LOGICAL_BYTES];
+                    if (timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                            || logical <= 0) {
+                        return Double.NaN;
+                    }
+                    final long physical = timeline[LiveViewInstance.CHECKPOINT_TIMELINE_PHYSICAL_BYTES];
+                    return (double) Math.max(0, logical - physical) / logical;
                 }
 
                 @Override
@@ -537,30 +497,6 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                     : timeline[LiveViewInstance.CHECKPOINT_TIMELINE_LAST_WRITE_NEW_BYTES];
                         }
                         case COLUMN_CHECKPOINT_LAST_LOOKUP_DEPTH -> instance.getCheckpointLastLookupDepth();
-                        // What the decoded state page cache holds and how it is
-                        // serving, read as one tuple. All NULL for a view holding no
-                        // cache - the engine-wide budget is off, or the view has not
-                        // restored since it last released its refresh state - which
-                        // says something other than the zeroes a cold cache reports.
-                        case COLUMN_CHECKPOINT_PAGE_CACHE_BYTES ->
-                                pageCache == null ? Numbers.LONG_NULL : pageCache.getUsedBytes();
-                        // What holding every page one restore reads would cost this
-                        // view, smoothed over the restores it has seen. Once it
-                        // exceeds the bytes beside it the cap has stopped covering
-                        // the view, so this is the figure to size
-                        // cairo.live.view.checkpoint.page.cache.max.bytes from. Zero
-                        // until a restore completes.
-                        case COLUMN_CHECKPOINT_PAGE_CACHE_WORKING_SET_BYTES ->
-                                pageCache == null ? Numbers.LONG_NULL : pageCache.getWorkingSetBytes();
-                        // Page probes the cache served, and page probes that went on
-                        // to map the segment and decode. In-memory counters that
-                        // reset when the view rebuilds its cache, not only on
-                        // restart, because a drop, an invalidation or a released
-                        // refresh state takes the cache with it.
-                        case COLUMN_CHECKPOINT_PAGE_CACHE_HITS ->
-                                pageCache == null ? Numbers.LONG_NULL : pageCache.getHits();
-                        case COLUMN_CHECKPOINT_PAGE_CACHE_MISSES ->
-                                pageCache == null ? Numbers.LONG_NULL : pageCache.getMisses();
                         // Bounds of a localized repair suspended across refresh
                         // turns, read as one tuple. All NULL when none is in
                         // flight; the high bound is also NULL for a repair that
@@ -680,7 +616,6 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     this.engine = engine;
                     this.instance = instance;
                     this.definition = instance.getDefinition();
-                    this.pageCache = instance.getCheckpointPageCache();
                 }
 
                 /**
@@ -752,11 +687,6 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_repair_plan", ColumnType.STRING));             // 49
             metadata.add(new TableColumnMetadata("checkpoint_repair_last_disposition", ColumnType.STRING)); // 50
             metadata.add(new TableColumnMetadata("checkpoint_repair_last_denial", ColumnType.STRING));      // 51
-            metadata.add(new TableColumnMetadata("checkpoint_page_cache_bytes", ColumnType.LONG));          // 52
-            metadata.add(new TableColumnMetadata("checkpoint_page_cache_working_set_bytes", ColumnType.LONG)); // 53
-            metadata.add(new TableColumnMetadata("checkpoint_page_cache_hits", ColumnType.LONG));           // 54
-            metadata.add(new TableColumnMetadata("checkpoint_page_cache_misses", ColumnType.LONG));         // 55
-            metadata.add(new TableColumnMetadata("checkpoint_page_cache_admission_ratio", ColumnType.DOUBLE)); // 56
             METADATA = metadata;
         }
     }

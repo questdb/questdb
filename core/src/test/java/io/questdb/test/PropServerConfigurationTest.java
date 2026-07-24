@@ -916,9 +916,7 @@ public class PropServerConfigurationTest {
         // ignored key or a getter wired to the wrong field would go unnoticed there.
         CairoConfiguration cairo = newPropServerConfiguration(new Properties()).getCairoConfiguration();
 
-        Assert.assertEquals(0L, cairo.getLiveViewCheckpointCompactionInterval());
         Assert.assertEquals(5 * Micros.MINUTE_MICROS, cairo.getLiveViewCheckpointMaxDurationMicros());
-        Assert.assertEquals(256L * 1024 * 1024, cairo.getLiveViewCheckpointPageCacheMaxBytes());
         Assert.assertEquals(1_000_000L, cairo.getLiveViewCheckpointRows());
         Assert.assertTrue(cairo.isLiveViewEnabled());
         Assert.assertEquals(5, cairo.getLiveViewFlushRetryMax());
@@ -1010,9 +1008,7 @@ public class PropServerConfigurationTest {
         // its neighbour cannot satisfy these assertions. The duration and size keys carry
         // unit suffixes, exercising the getMicros()/getLongSize() conversions.
         Properties properties = new Properties();
-        properties.setProperty("cairo.live.view.checkpoint.compaction.interval", "17");
         properties.setProperty("cairo.live.view.checkpoint.max.duration.micros", "90s");
-        properties.setProperty("cairo.live.view.checkpoint.page.cache.max.bytes", "48M");
         properties.setProperty("cairo.live.view.checkpoint.rows", "640000");
         properties.setProperty("cairo.live.view.enabled", "false");
         properties.setProperty("cairo.live.view.flush.retry.max", "9");
@@ -1026,9 +1022,7 @@ public class PropServerConfigurationTest {
 
         CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
 
-        Assert.assertEquals(17L, cairo.getLiveViewCheckpointCompactionInterval());
         Assert.assertEquals(90 * Micros.SECOND_MICROS, cairo.getLiveViewCheckpointMaxDurationMicros());
-        Assert.assertEquals(48L * 1024 * 1024, cairo.getLiveViewCheckpointPageCacheMaxBytes());
         Assert.assertEquals(640_000L, cairo.getLiveViewCheckpointRows());
         Assert.assertFalse(cairo.isLiveViewEnabled());
         Assert.assertEquals(9, cairo.getLiveViewFlushRetryMax());

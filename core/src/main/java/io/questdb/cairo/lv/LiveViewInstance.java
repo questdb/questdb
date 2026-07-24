@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -223,15 +222,6 @@ public class LiveViewInstance implements QuietCloseable {
     // via live_views().checkpoint_last_lookup_depth, where the property worth
     // watching is that it tracks log(checkpoint count), not the count itself.
     private volatile long checkpointLastLookupDepth = Numbers.LONG_NULL;
-    // Decoded checkpoint state pages this view restores from, kept across refresh
-    // cycles so a restore that meets the same anchor - or, since adjacent roots
-    // share almost all their pages, a later one over the same pages - skips both
-    // the mapping and the codec. Lazily built by getOrCreateCheckpointPageCache()
-    // on the first restore, and null for the lifetime of a view whose engine-wide
-    // budget is disabled. Mutated only under the refresh latch; volatile so the
-    // catalogue thread reads the current instance rather than a torn publication
-    // of a half-built one.
-    private volatile LiveViewCheckpointPageCache checkpointPageCache;
     // Bounds of the localized repair currently suspended across refresh turns:
     // {inProgress, C, L, H}. Packed into one immutable long[] published by
     // volatile store so the catalogue never pairs one repair's floor with
@@ -624,22 +614,6 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Moves this view's checkpoint page cache to a new epoch, dropping every page
-     * the old one held. Callers fire it at the transitions that can restart the
-     * segment id space - a retired timeline, a published repair, a reconstructed
-     * corrupt root - because a re-minted id would otherwise let a stale entry
-     * serve the bytes of the file it replaced. No-op when the view holds no cache.
-     * <p>
-     * Must run under the refresh latch, or after the refresh workers have stopped.
-     */
-    public void bumpCheckpointPageCacheEpoch() {
-        final LiveViewCheckpointPageCache cache = checkpointPageCache;
-        if (cache != null) {
-            cache.bumpEpoch();
-        }
-    }
-
-    /**
      * Increments the count of coupled dedup-base refresh cycles that proved the base
      * range clean (raw WAL == applied base) and took the cheap raw-WAL append path
      * instead of the applied-reader path. Bumped
@@ -758,27 +732,6 @@ public class LiveViewInstance implements QuietCloseable {
             freezeInProgress = false;
             freezeFrozenAppliedWatermark = Numbers.LONG_NULL;
             notifyAll();
-        }
-    }
-
-    /**
-     * Drops every checkpoint page this view has cached from {@code segmentIds}.
-     * Callers hand it the data segments a compaction pass drained or a purge
-     * sweep unlinked: those files are gone, so nothing can probe their pages
-     * again and the slots they hold belong to the pages that remain. No-op when
-     * the view holds no cache.
-     * <p>
-     * Reclamation only - a segment id is minted once from a monotonic ceiling
-     * and never re-minted while the timeline lives, so a page of a deleted
-     * segment is unreachable rather than dangerous. The transitions that restart
-     * the id space go through {@link #bumpCheckpointPageCacheEpoch()} instead.
-     * <p>
-     * Must run under the refresh latch, or after the refresh workers have stopped.
-     */
-    public void evictCheckpointPageCacheSegments(@Nullable LongList segmentIds) {
-        final LiveViewCheckpointPageCache cache = checkpointPageCache;
-        if (cache != null) {
-            cache.evictSegments(segmentIds);
         }
     }
 
@@ -952,18 +905,6 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getCheckpointObsoleteSegmentBytes() {
         return checkpointObsoleteSegmentBytes;
-    }
-
-    /**
-     * @return the decoded checkpoint state pages this view holds, or null when it
-     * has never restored or the engine-wide budget is disabled. A thread other
-     * than the refresh worker may read it for observability only: the counters the
-     * cache exposes are plain fields, so a stale read costs nothing, and a cache
-     * freed underneath the reader reports zeroes rather than touching released
-     * memory
-     */
-    public @Nullable LiveViewCheckpointPageCache getCheckpointPageCache() {
-        return checkpointPageCache;
     }
 
     /**
@@ -1197,30 +1138,6 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getO3ResumeReplayRows() {
         return o3ResumeReplayRows;
-    }
-
-    /**
-     * Returns this view's checkpoint page cache, building it on the first call.
-     * The cache is worth having only for a view that actually restores, so it is
-     * built where the restore path asks for it rather than at CREATE: a view that
-     * never seals a checkpoint never allocates one, and a cache freed by
-     * invalidation is rebuilt cold if the view resumes.
-     * <p>
-     * Must run under the refresh latch, which is also what serialises the cache's
-     * own hot path.
-     *
-     * @param budget the engine-wide ceiling the cache allocates against
-     * @return the cache, or null when {@code budget} is disabled. A null keeps the
-     * restore path off the probe entirely rather than making it count misses that
-     * could never have hit
-     */
-    public @Nullable LiveViewCheckpointPageCache getOrCreateCheckpointPageCache(
-            @NotNull LiveViewCheckpointPageCacheBudget budget
-    ) {
-        if (checkpointPageCache == null && budget.isEnabled()) {
-            checkpointPageCache = new LiveViewCheckpointPageCache(budget);
-        }
-        return checkpointPageCache;
     }
 
     /**
@@ -2217,17 +2134,11 @@ public class LiveViewInstance implements QuietCloseable {
      * its recycle assert in whichever unrelated query next acquires it. Every FULL teardown path
      * (drop, invalidate, runtime-state free) routes through here, so the order is stated once; a
      * base-schema recompile frees only the artifacts (see {@link #freeCompiledArtifacts}).
-     * <p>
-     * The checkpoint page cache goes with them. It charges the engine-wide page cache
-     * budget rather than the tracker, so its order among these is free, but a view that
-     * has stopped refreshing must not keep holding a slice of a cap the views that are
-     * still refreshing want.
      */
     private void freeCachedRefreshState() {
         inMemoryTier = Misc.free(inMemoryTier);
         freeCompiledArtifacts();
         memoryTracker = Misc.free(memoryTracker);
-        checkpointPageCache = Misc.free(checkpointPageCache);
     }
 
     /**

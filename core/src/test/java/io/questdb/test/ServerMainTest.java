@@ -657,9 +657,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.latestby.queue.capacity\tQDB_CAIRO_LATESTBY_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.legacy.string.column.type.default\tQDB_CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.lexer.pool.capacity\tQDB_CAIRO_LEXER_POOL_CAPACITY\t2048\tdefault\tfalse\tfalse\n" +
-                                    "cairo.live.view.checkpoint.compaction.interval\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_COMPACTION_INTERVAL\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.max.duration.micros\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS\t300000000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.live.view.checkpoint.page.cache.max.bytes\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_PAGE_CACHE_MAX_BYTES\t268435456\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.replay.max.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.scan.max.keys\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.scan.max.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +

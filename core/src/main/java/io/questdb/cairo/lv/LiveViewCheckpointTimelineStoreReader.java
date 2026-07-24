@@ -81,9 +81,6 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     private final LiveViewCheckpointTimelineReader timelineReader;
     private int dataReaderClock;
     private boolean isOpen;
-    // The bound view's decoded ring pages, or null when it has none. Held for the
-    // binding only, and handed to the ring reader for every partition it walks.
-    private LiveViewCheckpointPageCache pageCache;
 
     public LiveViewCheckpointTimelineStoreReader(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -152,32 +149,13 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         segmentDirectory.detach();
         timelineReader.detach();
         isOpen = false;
-        pageCache = null;
     }
 
-    /**
-     * Binds to a view whose decoded ring pages are not cached, so every page this
-     * reader restores is mapped and decoded.
-     */
     public void of(@Transient @NotNull Path checkpointsDir) {
-        of(checkpointsDir, null);
-    }
-
-    /**
-     * Binds to {@code checkpointsDir} and restores through {@code pageCache}, which
-     * must be the cache of the view that directory belongs to - a page identity is
-     * a segment id, and segment ids mean nothing outside the directory that minted
-     * them. Null restores every page by decoding it.
-     * <p>
-     * The cache outlives the binding: {@link #detach()} lets go of it rather than
-     * emptying it, which is the whole point of hanging it off the view.
-     */
-    public void of(@Transient @NotNull Path checkpointsDir, @Nullable LiveViewCheckpointPageCache pageCache) {
         if (isOpen) {
             throw CairoException.critical(0).put("live view checkpoint timeline restore reader already open");
         }
         this.checkpointsDir.of(checkpointsDir);
-        this.pageCache = pageCache;
         try {
             metaStore.of(checkpointsDir);
             if (!metaStore.isValid()) {
@@ -493,20 +471,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
 
         validateAnchor(anchorWindow);
         validateFunctions(functions);
-        // The pages restoreFunctions walks are this restore's working set, and what
-        // the cache sizes its admission fraction from. Bracketing the walk rather
-        // than the binding is what keeps a root the fallback loop skips out of the
-        // measurement: it stops part way through the pages it would have read, so
-        // it is not a sample of anything, and the next attempt's beginRestore
-        // discards what it counted.
-        if (pageCache != null) {
-            pageCache.beginRestore();
-        }
         restoreFunctions(functions);
         restoreAnchor(anchorWindow);
-        if (pageCache != null) {
-            pageCache.endRestore();
-        }
 
         final long effectiveLvRowPosition = deltaReader.effectivePosition(
                 pin.getRowPositionDeltaRootRef(),
@@ -577,7 +543,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 throw invalid("function root contains a duplicate partition key");
             }
             if (isRingShaped) {
-                ringStateReader.of(checkpointsDir, segmentDirectory, entry, pageCache);
+                ringStateReader.of(checkpointsDir, segmentDirectory, entry);
                 function.restoreCheckpointRingState(ringStateReader, value);
                 return;
             }

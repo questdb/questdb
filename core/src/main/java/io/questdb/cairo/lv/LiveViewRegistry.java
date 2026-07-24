@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.lv;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -43,24 +42,13 @@ import java.util.function.Function;
  * notification path and DDL invalidation paths. Both updates happen under the
  * per-base-table write lock so that refresh/invalidate readers never observe a
  * torn state.
- * <p>
- * The registry also owns the engine-wide checkpoint page cache budget the
- * per-view caches allocate against. Its lifetime is exactly the registry's: the
- * instances holding those caches are the ones {@link #clear()} frees, so the
- * budget cannot outlive the memory charged to it.
  */
 public class LiveViewRegistry implements QuietCloseable {
-    private final LiveViewCheckpointPageCacheBudget checkpointPageCacheBudget;
     private final Function<CharSequence, DepList> createDepList = name -> new DepList();
     private final ConcurrentHashMap<LiveViewInstance> viewsByName = new ConcurrentHashMap<>();
     // Key is the base table name. Entries are never removed (grow-only, bounded by
     // distinct base tables that ever had a live view registered).
     private final ConcurrentHashMap<DepList> viewsByBaseTable = new ConcurrentHashMap<>(false);
-
-    public LiveViewRegistry(CairoConfiguration configuration) {
-        this.checkpointPageCacheBudget =
-                new LiveViewCheckpointPageCacheBudget(configuration.getLiveViewCheckpointPageCacheMaxBytes());
-    }
 
     @Override
     public void close() {
@@ -107,14 +95,6 @@ public class LiveViewRegistry implements QuietCloseable {
         for (LiveViewInstance instance : viewsByName.values()) {
             instance.freeSeedBaseReader();
         }
-    }
-
-    /**
-     * @return the engine-wide ceiling every view's checkpoint page cache
-     * allocates against. Shared, so N views cannot each take the configured cap
-     */
-    public LiveViewCheckpointPageCacheBudget getCheckpointPageCacheBudget() {
-        return checkpointPageCacheBudget;
     }
 
     /**

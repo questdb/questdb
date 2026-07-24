@@ -30,7 +30,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
@@ -68,7 +67,6 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class LiveViewCheckpointLifecycle {
 
-    private static final LongList EMPTY_SEGMENT_IDS = new LongList();
     private static final Log LOG = LogFactory.getLog(LiveViewCheckpointLifecycle.class);
 
     private LiveViewCheckpointLifecycle() {
@@ -559,7 +557,7 @@ public final class LiveViewCheckpointLifecycle {
         private final int liveSegmentCount;
         private final long normalizedBaseSeqTxn;
         private final long obsoleteSegmentBytes;
-        private final LongList purgedSegmentIds;
+        private final int purgedSegmentCount;
         private final int removedOrphanCount;
         private final LiveViewCheckpointTimelineStats stats;
         private final long walPurgeFloor;
@@ -584,7 +582,7 @@ public final class LiveViewCheckpointLifecycle {
             this.removedOrphanCount = removedOrphanCount;
             this.failedOrphanCount = failedOrphanCount;
             this.finalOrphanUpperBound = finalOrphanUpperBound;
-            this.purgedSegmentIds = purge == null ? EMPTY_SEGMENT_IDS : purge.getPurgedSegmentIds();
+            this.purgedSegmentCount = purge == null ? 0 : purge.getPurgedSegmentCount();
             this.failedPurgeCount = purge == null ? 0 : purge.getFailedSegmentCount();
             this.liveSegmentCount = purge == null ? 0 : purge.getLiveSegmentCount();
             this.obsoleteSegmentBytes = purge == null ? 0 : purge.getObsoleteBytes();
@@ -649,16 +647,7 @@ public final class LiveViewCheckpointLifecycle {
         }
 
         public int getPurgedSegmentCount() {
-            return purgedSegmentIds.size();
-        }
-
-        /**
-         * @return the data segments the purge sweep unlinked, empty when this
-         * reconciliation adopted no generation and so never swept. The live view
-         * page cache drops what it decoded from them
-         */
-        public LongList getPurgedSegmentIds() {
-            return purgedSegmentIds;
+            return purgedSegmentCount;
         }
 
         public int getRemovedOrphanCount() {
