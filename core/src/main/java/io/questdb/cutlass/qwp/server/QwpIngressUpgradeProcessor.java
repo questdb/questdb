@@ -131,14 +131,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     public static final int GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET = 256 * 1024;
     // Cumulative ACK batch size
     private static final int ACK_BATCH_SIZE = 8;
+    // Per-dispatch BYTE budget for the post-CLOSE drain in resumeRecv. The recv-
+    // count guard also bounds syscalls, but its byte cost scales with the configured
+    // HTTP recv buffer. Capping each recv to the remainder limits a worker turn to
+    // 256 KiB regardless of configuration.
+    private static final int CLOSE_DRAIN_BYTE_BUDGET = 256 * 1024;
     // Upper bound on socket.recv() calls per resumeRecv dispatch while draining a
-    // post-CLOSE connection. The drain loop discards inbound bytes until the
-    // socket would-block or the peer closes; without a per-dispatch cap a peer
-    // that keeps the socket continuously readable spins that loop unbounded,
-    // monopolizing the HTTP worker and starving the drain deadline -- which is
-    // only re-evaluated on dispatch entry, never mid-loop. On hitting the cap we
-    // yield via PeerIsSlowToWriteException so the worker can service other
-    // connections and the next dispatch re-checks isCloseDrainExpired().
+    // post-CLOSE connection. The count guard complements CLOSE_DRAIN_BYTE_BUDGET
+    // by bounding syscall work when a peer supplies tiny fragments. On hitting
+    // either cap we yield via PeerIsSlowToWriteException so the worker can service
+    // other connections before the dispatcher resumes the drain.
     private static final int CLOSE_DRAIN_MAX_RECV_PER_DISPATCH = 32;
     // HTTP response templates
     private static final byte[] BAD_REQUEST_PREFIX =
@@ -551,21 +553,30 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 throw ServerDisconnectException.INSTANCE;
             }
             try {
+                int bytesDrained = 0;
                 int drained;
                 int recvCount = 0;
-                while ((drained = socket.recv(recvBuffer, recvBufferSize)) > 0) {
-                    // discard
-                    if (++recvCount == CLOSE_DRAIN_MAX_RECV_PER_DISPATCH) {
-                        // Per-dispatch drain quantum exhausted while the socket is
-                        // still readable. Yield rather than keep looping: PISW
-                        // re-arms the fd for read and re-fires on the bytes still
-                        // buffered (edge-triggered epoll), matching the
-                        // forceRecvFragmentationChunkSize reschedule in the main
-                        // recv path below. Returning to the dispatcher lets this
-                        // worker run other connections and makes the next dispatch
-                        // re-check isCloseDrainExpired() above, so a continuously
-                        // readable peer can no longer monopolize the worker or
-                        // outlive the drain deadline.
+                while (true) {
+                    int cap = Math.min(recvBufferSize, CLOSE_DRAIN_BYTE_BUDGET - bytesDrained);
+                    if (cap <= 0) {
+                        throw PeerIsSlowToWriteException.INSTANCE;
+                    }
+                    drained = socket.recv(recvBuffer, cap);
+                    if (drained <= 0) {
+                        break;
+                    }
+                    bytesDrained += drained;
+                    // A continuously readable peer never leaves this loop, so
+                    // poll expiry after every positive recv rather than waiting
+                    // for the next dispatcher entry.
+                    if (state.isCloseDrainExpired()) {
+                        LOG.info().$("close drain deadline expired, disconnecting [fd=").$(context.getFd()).I$();
+                        throw ServerDisconnectException.INSTANCE;
+                    }
+                    if (++recvCount >= CLOSE_DRAIN_MAX_RECV_PER_DISPATCH) {
+                        // Per-dispatch syscall quantum exhausted while the socket
+                        // remains readable. PISW re-arms the fd for read and lets
+                        // the worker service other connections first.
                         throw PeerIsSlowToWriteException.INSTANCE;
                     }
                 }

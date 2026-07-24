@@ -32,6 +32,7 @@ import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
@@ -45,6 +46,7 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
@@ -194,14 +196,88 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testCloseDrainCapsBytesAndRecvRequests() throws Exception {
+        assertMemoryLeak(() -> {
+            int byteBudget = 256 * 1024;
+            int recvBufferSize = 200_000;
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                @Override
+                public int getRecvBufferSize() {
+                    return recvBufferSize;
+                }
+            };
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            AlwaysReadableNetworkFacade mockNf = new AlwaysReadableNetworkFacade();
+            long recvBuf = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (TestableContext context = new TestableContext(
+                    httpConfig, mockNf,
+                    new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
+                    recvBuf, recvBufferSize
+            )) {
+                QwpIngressProcessorState state = setupState(httpConfig, context);
+                state.beginCloseDrain();
+
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("Expected PeerIsSlowToWriteException (drain byte-budget yield)");
+                } catch (PeerIsSlowToWriteException e) {
+                    // expected: fixed byte budget yielded to the dispatcher
+                }
+
+                Assert.assertEquals(recvBufferSize, mockNf.firstRequestSize);
+                Assert.assertEquals(byteBudget - recvBufferSize, mockNf.secondRequestSize);
+                Assert.assertEquals(byteBudget, mockNf.totalBytesReceived);
+                Assert.assertEquals(2, mockNf.recvCount);
+            } finally {
+                Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCloseDrainPollsExpiryAfterPositiveRecv() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] nowMicros = {0};
+            HttpFullFatServerConfiguration httpConfig = createHttpConfiguration(nowMicros);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            AlwaysReadableNetworkFacade mockNf = new AlwaysReadableNetworkFacade(nowMicros);
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (TestableContext context = new TestableContext(
+                    httpConfig, mockNf,
+                    new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
+                    recvBuf, RECV_BUFFER_SIZE
+            )) {
+                QwpIngressProcessorState state = setupState(httpConfig, context);
+                state.beginCloseDrain();
+                Assert.assertFalse(state.isCloseDrainExpired());
+
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("Expected ServerDisconnectException after in-loop expiry");
+                } catch (ServerDisconnectException e) {
+                    // expected: first positive recv advanced the clock to the deadline
+                } catch (PeerIsSlowToWriteException e) {
+                    Assert.fail("close drain must poll expiry after each positive recv");
+                }
+                Assert.assertEquals("expiry must stop later receives", 1, mockNf.recvCount);
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testCloseDrainYieldsWithinQuantumWhenPeerStaysReadable() throws Exception {
         // Regression: the post-CLOSE read-drain must not spin unbounded while
-        // the peer keeps the socket readable. A continuously-readable peer would
-        // otherwise pin the HTTP worker inside resumeRecv and outlive the drain
-        // deadline, which is only re-checked on dispatch entry (never mid-loop).
-        // The drain now reads at most CLOSE_DRAIN_MAX_RECV_PER_DISPATCH times per
-        // dispatch, then yields via PeerIsSlowToWriteException so the worker can
-        // service other connections and the next dispatch re-evaluates expiry.
+        // the peer keeps the socket readable. The syscall quantum complements
+        // the fixed byte budget and yields via PeerIsSlowToWriteException so the
+        // worker can service other connections before the drain resumes.
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
@@ -1279,6 +1355,22 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         });
     }
 
+    private static HttpFullFatServerConfiguration createHttpConfiguration(long[] nowMicros) {
+        LineHttpProcessorConfiguration lineConfig =
+                new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return () -> nowMicros[0];
+                    }
+                };
+        return new DefaultHttpServerConfiguration(configuration) {
+            @Override
+            public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                return lineConfig;
+            }
+        };
+    }
+
     private static byte[] createMaskedFrame(int opcode, byte[] payload) {
         int payloadLen = payload.length;
         int headerLen;
@@ -1494,16 +1586,30 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
      */
     private static class AlwaysReadableNetworkFacade extends MockNetworkFacade {
         boolean closed;
+        int firstRequestSize = -1;
+        final long[] nowMicros;
         int recvCount;
+        int secondRequestSize = -1;
+        long totalBytesReceived;
         boolean wouldBlock;
 
         AlwaysReadableNetworkFacade() {
+            this(null);
+        }
+
+        AlwaysReadableNetworkFacade(long[] nowMicros) {
             super(new byte[0]);
+            this.nowMicros = nowMicros;
         }
 
         @Override
         public int recvRaw(long fd, long buffer, int bufferLen) {
             recvCount++;
+            if (recvCount == 1) {
+                firstRequestSize = bufferLen;
+            } else if (recvCount == 2) {
+                secondRequestSize = bufferLen;
+            }
             if (closed) {
                 return -1;
             }
@@ -1511,6 +1617,10 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
                 return 0;
             }
             // The drain discards these bytes unread, so we need not write them.
+            totalBytesReceived += bufferLen;
+            if (nowMicros != null && recvCount == 1) {
+                nowMicros[0] = QwpIngressProcessorState.CLOSE_DRAIN_TIMEOUT_MICROS;
+            }
             return bufferLen;
         }
     }
