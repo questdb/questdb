@@ -110,8 +110,16 @@ public class CoveringIndexPostFilterBenchmark {
             "no_covering-k10-r20", "no_index-k10-r20",
             "covering-k10-r50", "covering_eager-k10-r50", "covering_java_eager-k10-r50",
             "no_covering-k10-r50", "no_index-k10-r50",
+            "covering-k10-r90", "covering_eager-k10-r90", "covering_java_eager-k10-r90",
+            "covering_count-k10-r90", "no_covering-k10-r90", "no_index-k10-r90",
+            "covering-k10-r95", "covering_eager-k10-r95", "covering_java_eager-k10-r95",
+            "covering_count-k10-r95", "no_covering-k10-r95", "no_index-k10-r95",
+            "covering-k10-r99", "covering_eager-k10-r99", "covering_java_eager-k10-r99",
+            "covering_count-k10-r99", "no_covering-k10-r99", "no_index-k10-r99",
+            "covering-k10-r999", "covering_eager-k10-r999", "covering_java_eager-k10-r999",
+            "covering_count-k10-r999", "no_covering-k10-r999", "no_index-k10-r999",
             "covering-k10-r100", "covering_eager-k10-r100", "covering_java_eager-k10-r100",
-            "no_covering-k10-r100", "no_index-k10-r100",
+            "covering_count-k10-r100", "no_covering-k10-r100", "no_index-k10-r100",
             "covering-k01-r10", "no_covering-k01-r10", "no_index-k01-r10",
             "covering-k02-r10", "no_covering-k02-r10", "no_index-k02-r10",
             "covering-k05-r10", "no_covering-k05-r10", "no_index-k05-r10",
@@ -194,8 +202,12 @@ public class CoveringIndexPostFilterBenchmark {
         long checksum = 0;
         long rows = 0;
         while (cursor.hasNext()) {
-            checksum = checksum * 31 + record.getTimestamp(0);
-            checksum = checksum * 31 + Double.doubleToLongBits(record.getDouble(1));
+            if (scenario.startsWith("covering_count")) {
+                checksum = checksum * 31 + record.getLong(0);
+            } else {
+                checksum = checksum * 31 + record.getTimestamp(0);
+                checksum = checksum * 31 + Double.doubleToLongBits(record.getDouble(1));
+            }
             rows++;
         }
         lastRowCount = rows;
@@ -271,7 +283,7 @@ public class CoveringIndexPostFilterBenchmark {
     private static String query(String scenario, String route) {
         final String[] parts = scenario.split("-");
         final String hint = switch (route) {
-            case "covering", "covering_eager", "covering_java_eager" -> "";
+            case "covering", "covering_count", "covering_eager", "covering_java_eager" -> "";
             case "no_covering" -> "/*+ no_covering */ ";
             case "no_index" -> "/*+ no_index */ ";
             default -> throw new IllegalArgumentException("unknown route: " + route);
@@ -283,13 +295,18 @@ public class CoveringIndexPostFilterBenchmark {
             case "r10" -> 101;
             case "r20" -> 202;
             case "r50" -> 505;
+            case "r90" -> 908;
+            case "r95" -> 959;
+            case "r99" -> 999;
+            case "r999" -> 1008;
             case "r100" -> 1009;
             default -> throw new IllegalArgumentException("unknown residual selectivity: " + parts[2]);
         };
         final String eagerDependency = route.endsWith("_eager")
                 ? " AND value >= 0 AND ts >= '1970-01-01'"
                 : "";
-        return "SELECT " + hint + "ts, value FROM post_filter WHERE sym = '" + parts[1] +
+        final String projection = scenario.startsWith("covering_count") ? "count()" : "ts, value";
+        return "SELECT " + hint + projection + " FROM post_filter WHERE sym = '" + parts[1] +
                 "' AND residual < " + residualLimit + eagerDependency;
     }
 
@@ -308,7 +325,7 @@ public class CoveringIndexPostFilterBenchmark {
                     && (EXPECT_JIT
                         ? text.contains("Async JIT Filter")
                         : text.contains("Async Filter") && !text.contains("Async JIT Filter"));
-            case "covering_eager" -> text.contains("Async JIT Filter") && text.contains("CoveringIndex");
+            case "covering_count", "covering_eager" -> text.contains("Async JIT Filter") && text.contains("CoveringIndex");
             case "covering_java_eager" -> text.contains("Async Filter")
                     && !text.contains("Async JIT Filter")
                     && text.contains("CoveringIndex");
