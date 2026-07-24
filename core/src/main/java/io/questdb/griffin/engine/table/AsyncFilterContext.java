@@ -25,12 +25,14 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
@@ -288,17 +290,32 @@ public class AsyncFilterContext implements Closeable {
         }
     }
 
-    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, MemoryTracker memoryTracker) {
-        initMemoryPools(pageFrameAddressCache, memoryTracker, ParquetDecodeHint.MONOTONIC);
+    public void initMemoryPools(
+            PageFrameAddressCache pageFrameAddressCache,
+            MemoryTracker memoryTracker,
+            CairoEngine engine,
+            SqlExecutionCircuitBreaker queryCircuitBreaker
+    ) {
+        initMemoryPools(pageFrameAddressCache, memoryTracker, ParquetDecodeHint.MONOTONIC, engine, queryCircuitBreaker);
     }
 
-    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, MemoryTracker memoryTracker, ParquetDecodeHint ownerHint) {
+    public void initMemoryPools(
+            PageFrameAddressCache pageFrameAddressCache,
+            MemoryTracker memoryTracker,
+            ParquetDecodeHint ownerHint,
+            CairoEngine engine,
+            SqlExecutionCircuitBreaker queryCircuitBreaker
+    ) {
         ownerMemoryPool.setMemoryTracker(memoryTracker);
         ownerMemoryPool.of(pageFrameAddressCache, ownerHint);
+        // Wrap the query breaker in each pool's own thread-safe view so a cold decode on any
+        // per-worker pool can probe it without racing the other workers' decoders.
+        ownerMemoryPool.setCancelHandle(engine, queryCircuitBreaker);
         for (int i = 0, n = perWorkerMemoryPools.size(); i < n; i++) {
             final PageFrameMemoryPool pool = perWorkerMemoryPools.getQuick(i);
             pool.setMemoryTracker(memoryTracker);
             pool.of(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
+            pool.setCancelHandle(engine, queryCircuitBreaker);
         }
     }
 

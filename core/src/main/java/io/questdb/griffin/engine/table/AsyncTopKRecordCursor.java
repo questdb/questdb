@@ -183,7 +183,7 @@ class AsyncTopKRecordCursor implements RecordCursor, RecordCursor.RowIdSource {
 
     private void buildChain() {
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker(), ParquetDecodeHint.SCATTERED);
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker(), ParquetDecodeHint.SCATTERED, frameSequence.getEngine(), frameSequence.getCircuitBreaker());
         frameSequence.dispatchAndAwait();
 
         // merge the per-worker results into the owner buffer (encoded) or chain (tree)

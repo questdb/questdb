@@ -77,6 +77,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    private final CairoEngine engine;
     private final StringSink errorMsg = new StringSink();
     private final LongList frameRowCounts = new LongList();
     private final MessageBus messageBus;
@@ -120,6 +121,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     ) {
         try {
             this.atom = atom;
+            this.engine = engine;
             this.frameAddressCache = new PageFrameAddressCache();
             this.messageBus = messageBus;
             this.reducer = reducer;
@@ -388,6 +390,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
 
     public SOUnboundedCountDownLatch getDoneLatch() {
         return doneLatch;
+    }
+
+    public CairoEngine getEngine() {
+        return engine;
     }
 
     public int getFrameCount() {
