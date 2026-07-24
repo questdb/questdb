@@ -117,7 +117,9 @@ public class InStrVarcharArrayFunctionFactory implements FunctionFactory {
                     continue;
                 }
                 CharSequence value = Utf8s.utf8ToUtf16OrView(element, Misc.getThreadLocalSink());
-                if (value != null) {
+                if (value == null) {
+                    set.addNull();
+                } else {
                     set.add(value);
                 }
             }

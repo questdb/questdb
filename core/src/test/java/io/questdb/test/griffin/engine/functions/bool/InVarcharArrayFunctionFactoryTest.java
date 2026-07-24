@@ -36,7 +36,7 @@ import org.junit.Test;
 public class InVarcharArrayFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testMalformedVarcharArrayDoesNotMatchDecodedPrefix() throws Exception {
+    public void testMalformedVarcharArrayMatchesNullNotDecodedPrefix() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (str STRING, sym SYMBOL)");
             execute("""
@@ -55,7 +55,7 @@ public class InVarcharArrayFunctionFactoryTest extends AbstractCairoTest {
                     .returns("""
                             matched
                             false
-                            false
+                            true
                             """);
             assertQuery("SELECT cast(str AS symbol) IN ($1) matched FROM x")
                     .noLeakCheck()
@@ -63,7 +63,7 @@ public class InVarcharArrayFunctionFactoryTest extends AbstractCairoTest {
                     .returns("""
                             matched
                             false
-                            false
+                            true
                             """);
             assertQuery("SELECT sym IN ($1) matched FROM x")
                     .noLeakCheck()
@@ -71,7 +71,7 @@ public class InVarcharArrayFunctionFactoryTest extends AbstractCairoTest {
                     .returns("""
                             matched
                             false
-                            false
+                            true
                             """);
         });
     }

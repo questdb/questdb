@@ -32,9 +32,15 @@ import org.junit.Test;
 public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testMalformedVarcharInSymbolCursorDoesNotMatchPrefix() throws Exception {
+    public void testMalformedVarcharInSymbolCursorMatchesNullNotPrefix() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (v VARCHAR)");
+            execute("CREATE TABLE y (str STRING, sym SYMBOL)");
+            execute("""
+                    INSERT INTO y VALUES
+                        ('abc', 'abc'),
+                        (NULL, NULL)
+                    """);
             try (TableWriter writer = getWriter("x")) {
                 TableWriter.Row row = writer.newRow();
                 row.putVarchar(0, new Utf8String(new byte[]{'a', 'b', 'c', (byte) 0xC3}, false));
@@ -42,12 +48,21 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            assertQuery("SELECT 'abc'::symbol IN (SELECT v FROM x)")
+            assertQuery("SELECT cast(str AS symbol) IN (SELECT v FROM x) matched FROM y")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            column
+                            matched
                             false
+                            true
+                            """);
+            assertQuery("SELECT sym IN (SELECT v FROM x) matched FROM y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            matched
+                            false
+                            true
                             """);
         });
     }

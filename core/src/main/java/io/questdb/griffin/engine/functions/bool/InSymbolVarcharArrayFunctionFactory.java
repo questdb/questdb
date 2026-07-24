@@ -127,7 +127,9 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
                     continue;
                 }
                 CharSequence symbol = Utf8s.utf8ToUtf16OrView(value, Misc.getThreadLocalSink());
-                if (symbol != null) {
+                if (symbol == null) {
+                    intSet.add(SymbolTable.VALUE_IS_NULL);
+                } else {
                     int key = symbolTable.keyOf(symbol);
                     if (key != SymbolTable.VALUE_NOT_FOUND) {
                         intSet.add(key);
@@ -198,7 +200,9 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
                     continue;
                 }
                 CharSequence symbol = Utf8s.utf8ToUtf16OrView(value, Misc.getThreadLocalSink());
-                if (symbol != null) {
+                if (symbol == null) {
+                    strSet.addNull();
+                } else {
                     strSet.add(symbol);
                 }
             }
