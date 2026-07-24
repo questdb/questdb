@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table.parquet;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Os;
@@ -324,6 +325,14 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
 
     public long rowGroupMinTimestamp(int rowGroupIndex, int timestampColumnIndex) {
         return parquetMetaReader.getRowGroupMinTimestamp(rowGroupIndex, timestampColumnIndex);
+    }
+
+    /**
+     * Pushes a cancel handle down to the decoder so a decode that blocks waiting for
+     * data (rather than reading resident memory) can probe for query cancellation.
+     * A no-op by default; a subclass that performs blocking I/O overrides it.
+     */
+    public void setCancelHandle(SqlExecutionCircuitBreaker cancelHandle) {
     }
 
     protected static int decodeRowGroupFromBuffersShim(
