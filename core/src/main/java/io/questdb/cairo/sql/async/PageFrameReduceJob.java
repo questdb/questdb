@@ -327,8 +327,10 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
             frameSequence.getReduceStartedCounter().incrementAndGet();
             // Push the query's breaker down to the frame pool's decoder so a decode
             // that blocks waiting for data probes it; a cancel/timeout then ends the
-            // wait instead of stalling teardown on the slowest in-flight read.
-            task.setCancelHandle(frameSequence.getCircuitBreaker());
+            // wait instead of stalling teardown on the slowest in-flight read. The pool
+            // wraps it in a per-pool thread-safe view, so concurrent parallel-reduce
+            // decoders never share one thread-unsafe breaker.
+            task.setCancelHandle(frameSequence.getEngine(), frameSequence.getCircuitBreaker());
             frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);
         } else {
             frameSequence.cancel(cbState);

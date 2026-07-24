@@ -213,7 +213,7 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
         // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker(), frameSequence.getEngine(), frameSequence.getCircuitBreaker());
         frameSequence.dispatchAndAwait();
 
         final AsyncMultiHorizonJoinNotKeyedAtom atom = frameSequence.getAtom();
