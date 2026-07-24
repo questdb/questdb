@@ -41,7 +41,7 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 public abstract class AbstractIntervalPartitionFrameCursor implements PartitionFrameCursor {
     protected final IntervalPartitionFrame frame = new IntervalPartitionFrame();
     protected final RuntimeIntrinsicIntervalModel intervalModel;
-    protected final ParquetPartitionDecoder parquetDecoder = new ParquetPartitionDecoder();
+    protected final ParquetPartitionDecoder parquetDecoder;
     protected final int timestampIndex;
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final ParquetTimestampFinder parquetTimestampFinder;
@@ -61,19 +61,20 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     private int initialPartitionHi;
     private int initialPartitionLo;
 
-    public AbstractIntervalPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
+    public AbstractIntervalPartitionFrameCursor(CairoConfiguration configuration, RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
         assert timestampIndex > -1;
         this.intervalModel = intervalModel;
         this.timestampIndex = timestampIndex;
+        this.parquetDecoder = configuration.newParquetPartitionDecoder();
         this.parquetTimestampFinder = new ParquetTimestampFinder(parquetDecoder);
     }
 
     @Override
     public void close() {
-        reader = Misc.free(reader);
         Misc.free(parquetTimestampFinder);
         Misc.free(parquetDecoder);
         nativeTimestampFinder.clear();
+        reader = Misc.free(reader);
     }
 
     @Override
@@ -101,6 +102,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     public AbstractIntervalPartitionFrameCursor of(TableReader reader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        parquetTimestampFinder.setMemoryTracker(sqlExecutionContext != null ? sqlExecutionContext.getMemoryTracker() : null);
         this.intervals = intervalModel.calculateIntervals(sqlExecutionContext);
         calculateRanges(reader, intervals);
         this.reader = reader;

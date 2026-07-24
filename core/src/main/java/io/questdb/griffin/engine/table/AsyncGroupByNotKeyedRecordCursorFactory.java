@@ -482,7 +482,6 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
-
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
 
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);

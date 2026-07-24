@@ -2696,6 +2696,53 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseDrainLifecycle() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] nowMicros = {0L};
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+                        @Override
+                        public MicrosecondClock getMicrosecondClock() {
+                            return () -> nowMicros[0];
+                        }
+                    };
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                Assert.assertFalse(state.isCloseDraining());
+                Assert.assertFalse(state.isCloseDrainExpired());
+
+                state.beginCloseDrain();
+                Assert.assertTrue(state.isCloseDraining());
+                Assert.assertFalse(state.isCloseDrainExpired());
+
+                // A late re-entry must not extend the deadline.
+                nowMicros[0] = QwpIngressProcessorState.CLOSE_DRAIN_TIMEOUT_MICROS - 1;
+                state.beginCloseDrain();
+                Assert.assertFalse(state.isCloseDrainExpired());
+
+                // The drain spans inbound events: per-message resets must not drop it.
+                state.clear();
+                state.clearMessageState();
+                Assert.assertTrue(state.isCloseDraining());
+
+                // Budget exhausts exactly at the deadline.
+                nowMicros[0] = QwpIngressProcessorState.CLOSE_DRAIN_TIMEOUT_MICROS;
+                Assert.assertTrue(state.isCloseDrainExpired());
+
+                // Connection recycle resets the drain.
+                state.onDisconnected();
+                Assert.assertFalse(state.isCloseDraining());
+                Assert.assertFalse(state.isCloseDrainExpired());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testOnFatalCloseBlockedFromResumeCloseClearsDeferredClose() throws Exception {
         // The already-RESUME_CLOSE branch of onFatalCloseBlocked: a previous fatal close was partially
         // flushed (onFatalCloseSendBlocked parked the CLOSE frame bytes and moved sendState to
