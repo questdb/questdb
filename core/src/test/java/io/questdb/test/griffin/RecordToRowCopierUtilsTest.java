@@ -712,6 +712,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCopierType(RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD);
             execute("CREATE TABLE src (v VARCHAR)");
+            execute("CREATE TABLE dst_direct_str (s STRING)");
             execute("CREATE TABLE dst_str (s STRING)");
             execute("CREATE TABLE dst_sym (sym SYMBOL)");
 
@@ -722,19 +723,24 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                 writer.commit();
             }
 
+            execute("INSERT INTO dst_direct_str SELECT v FROM src");
             execute("INSERT INTO dst_str SELECT replace(v, 'z', 'z') FROM src");
             execute("INSERT INTO dst_sym SELECT v FROM src");
 
             assertQuery("""
-                    SELECT s IS NULL AS str_null, sym IS NULL AS sym_null
-                    FROM dst_str CROSS JOIN dst_sym
+                    SELECT direct.s IS NULL AS direct_str_null,
+                           decoded.s IS NULL AS decoded_str_null,
+                           sym IS NULL AS sym_null
+                    FROM dst_direct_str direct
+                    CROSS JOIN dst_str decoded
+                    CROSS JOIN dst_sym
                     """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
-                            str_null\tsym_null
-                            true\ttrue
+                            direct_str_null\tdecoded_str_null\tsym_null
+                            true\ttrue\ttrue
                             """);
         });
     }

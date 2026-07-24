@@ -81,6 +81,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -2263,6 +2264,58 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(0, reader.size());
             }
         }
+    }
+
+    @Test
+    public void testMalformedDirectUtf8WritesNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING)");
+
+            final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.putByte(ptr, (byte) '1');
+                Unsafe.putByte(ptr + 1, (byte) 0xC3);
+
+                try (TableWriter writer = getWriter("x")) {
+                    TableWriter.Row row = writer.newRow();
+                    row.putStrUtf8(0, new DirectUtf8String().of(ptr, ptr + 2));
+                    row.append();
+                    writer.commit();
+                }
+            } finally {
+                Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            assertQuery("SELECT s IS NULL AS is_null FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            is_null
+                            true
+                            """);
+        });
+    }
+
+    @Test
+    public void testMalformedUtf8WritesNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING)");
+
+            try (TableWriter writer = getWriter("x")) {
+                TableWriter.Row row = writer.newRow();
+                row.putStrUtf8(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+                writer.commit();
+            }
+
+            assertQuery("SELECT s IS NULL AS is_null FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            is_null
+                            true
+                            """);
+        });
     }
 
     @Test

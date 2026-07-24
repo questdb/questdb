@@ -2884,28 +2884,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
         public void putStrUtf8(int columnIndex, Utf8Sequence value) {
-            if (value == null) {
-                putStr(columnIndex, null);
-                return;
-            }
-            if (value instanceof DirectUtf8Sequence ds) {
-                putStrUtf8(columnIndex, ds);
-                return;
-            }
-            if (value.isAscii()) {
-                putStr(columnIndex, value.asAsciiCharSequence());
-            } else {
-                tempSink.clear();
-                Utf8s.utf8ToUtf16(value, tempSink);
-                putStr(columnIndex, tempSink);
-            }
+            putStr(columnIndex, value != null ? Utf8s.utf8ToUtf16OrView(value, tempSink) : null);
         }
 
         @Override

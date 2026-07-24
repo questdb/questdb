@@ -14843,19 +14843,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         void putStr(int columnIndex, CharSequence value, int pos, int len);
 
         /**
-         * Writes UTF8-encoded string to WAL. As the name of the function suggests the storage format is
-         * expected to be UTF16. The function must re-encode string from UTF8 to UTF16 before storing.
-         *
-         * @param columnIndex index of the column we are writing to
-         * @param value       UTF8 bytes represented as CharSequence interface.
-         *                    On this interface, getChar() returns a byte, not complete character.
-         */
-        void putStrUtf8(int columnIndex, DirectUtf8Sequence value);
-
-        /**
-         * Writes UTF8-encoded string. Accepts any Utf8Sequence implementation.
-         * For DirectUtf8Sequence, delegates to the more efficient putStrUtf8(int, DirectUtf8Sequence).
-         * For other implementations (e.g., Utf8StringSink), converts to UTF-16 and writes.
+         * Writes a UTF8-encoded string to a UTF16 STRING column.
+         * Malformed UTF8 is stored as null.
          *
          * @param columnIndex index of the column we are writing to
          * @param value       UTF8 sequence to write
@@ -15091,11 +15080,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putStr(int columnIndex, CharSequence value, int pos, int len) {
-            // no-op
-        }
-
-        @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
             // no-op
         }
 
@@ -15362,28 +15346,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
         public void putStrUtf8(int columnIndex, Utf8Sequence value) {
-            if (value == null) {
-                putStr(columnIndex, null);
-                return;
-            }
-            if (value instanceof DirectUtf8Sequence ds) {
-                putStrUtf8(columnIndex, ds);
-                return;
-            }
-            if (value.isAscii()) {
-                putStr(columnIndex, value.asAsciiCharSequence());
-            } else {
-                utf16Sink.clear();
-                Utf8s.utf8ToUtf16(value, utf16Sink);
-                putStr(columnIndex, utf16Sink);
-            }
+            putStr(columnIndex, value != null ? Utf8s.utf8ToUtf16OrView(value, utf16Sink) : null);
         }
 
         @Override

@@ -2324,6 +2324,61 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMalformedDirectUtf8WritesNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+            final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.putByte(ptr, (byte) '1');
+                Unsafe.putByte(ptr + 1, (byte) 0xC3);
+
+                try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                    TableWriter.Row row = writer.newRow(1);
+                    row.putStrUtf8(0, new DirectUtf8String().of(ptr, ptr + 2));
+                    row.append();
+                    writer.commit();
+                }
+            } finally {
+                Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT s IS NULL AS is_null FROM x ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            is_null
+                            true
+                            """);
+        });
+    }
+
+    @Test
+    public void testMalformedUtf8WritesNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+
+            try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = writer.newRow(1);
+                row.putStrUtf8(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+                writer.commit();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT s IS NULL AS is_null FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            is_null
+                            true
+                            """);
+        });
+    }
+
+    @Test
     public void testMaxLagTxnCount() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
         configOverrideWalMaxLagTxnCount();
@@ -2695,7 +2750,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("symbol", ColumnType.SYMBOL) // putSym(int columnIndex, CharSequence value)
                     .col("symbolb", ColumnType.SYMBOL) // putSym(int columnIndex, char value)
                     .col("symbol8", ColumnType.SYMBOL) // putSymUtf8(int columnIndex, DirectUtf8Sequence value)
-                    .col("string8", ColumnType.STRING) // putStrUtf8(int columnIndex, DirectUtf8Sequence value)
+                    .col("string8", ColumnType.STRING) // putStrUtf8(int columnIndex, Utf8Sequence value)
                     .col("uuida", ColumnType.UUID) // putUUID(int columnIndex, long lo, long hi)
                     .col("uuidb", ColumnType.UUID) // putUUID(int columnIndex, CharSequence value)
                     .col("IPv4", ColumnType.IPv4)

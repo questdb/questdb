@@ -131,6 +131,11 @@ public final class Utf8s {
         return indexOfLowerCaseAscii(sequence, 0, sequence.size(), asciiTerm) != -1;
     }
 
+    /**
+     * Converts a direct UTF8 sequence to UTF16, returning an ASCII view when possible.
+     *
+     * @throws CairoException if the sequence contains malformed UTF8
+     */
     public static CharSequence directUtf8ToUtf16(
             @NotNull DirectUtf8Sequence utf8CharSeq,
             @NotNull MutableUtf16Sink tempSink
@@ -1492,16 +1497,15 @@ public final class Utf8s {
      * @return a CharSequence exposing {@code seq} as UTF-16 code points, or null
      * if {@code seq} contains malformed UTF-8
      */
-    public static @Nullable CharSequence utf8ToUtf16OrView(@NotNull Utf8Sequence seq, @NotNull StringSink decodeSink) {
-        return utf8ToUtf16OrView(seq, (MutableUtf16Sink) decodeSink);
-    }
-
     public static @Nullable CharSequence utf8ToUtf16OrView(@NotNull Utf8Sequence seq, @NotNull MutableUtf16Sink decodeSink) {
         if (isAscii(seq)) {
             return seq.asAsciiCharSequence();
         }
         decodeSink.clear();
-        return utf8ToUtf16(seq, decodeSink) ? decodeSink : null;
+        final boolean valid = seq instanceof DirectUtf8Sequence direct
+                ? utf8ToUtf16(direct.lo(), direct.hi(), decodeSink)
+                : utf8ToUtf16(seq, decodeSink);
+        return valid ? decodeSink : null;
     }
 
     /**
@@ -1585,6 +1589,12 @@ public final class Utf8s {
         return true;
     }
 
+    /**
+     * Converts a direct UTF8 sequence to UTF16 or throws. The historical "unchecked"
+     * name means that failure is not returned as a boolean; the UTF8 bytes are validated.
+     *
+     * @throws CairoException if the sequence contains malformed UTF8
+     */
     public static void utf8ToUtf16Unchecked(@NotNull DirectUtf8Sequence utf8CharSeq, @NotNull MutableUtf16Sink tempSink) {
         tempSink.clear();
         if (!utf8ToUtf16(utf8CharSeq.lo(), utf8CharSeq.hi(), tempSink)) {

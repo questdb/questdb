@@ -42,6 +42,27 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
         testBrokenUTF8Encoding(true);
     }
 
+    @Test
+    public void testMalformedUtf8StringBecomesNull() throws Exception {
+        final String table = "malformedUtf8String";
+        runInContext(() -> {
+            execute("CREATE TABLE " + table + " (value STRING, timestamp TIMESTAMP) " +
+                    "TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            recvBuffer = table + " value=\"1" + (char) 0xC3 + "\" 1465839830100400200\n";
+            handleContextIO0();
+            closeContext();
+            drainWalQueue();
+
+            assertQuery("SELECT value IS NULL AS is_null FROM " + table)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            is_null
+                            true
+                            """);
+        });
+    }
+
     private void testBrokenUTF8Encoding(boolean disconnectOnError) throws Exception {
         this.disconnectOnError = disconnectOnError;
 
