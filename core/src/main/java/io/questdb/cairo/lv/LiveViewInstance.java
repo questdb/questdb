@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -757,6 +758,27 @@ public class LiveViewInstance implements QuietCloseable {
             freezeInProgress = false;
             freezeFrozenAppliedWatermark = Numbers.LONG_NULL;
             notifyAll();
+        }
+    }
+
+    /**
+     * Drops every checkpoint page this view has cached from {@code segmentIds}.
+     * Callers hand it the data segments a compaction pass drained or a purge
+     * sweep unlinked: those files are gone, so nothing can probe their pages
+     * again and the slots they hold belong to the pages that remain. No-op when
+     * the view holds no cache.
+     * <p>
+     * Reclamation only - a segment id is minted once from a monotonic ceiling
+     * and never re-minted while the timeline lives, so a page of a deleted
+     * segment is unreachable rather than dangerous. The transitions that restart
+     * the id space go through {@link #bumpCheckpointPageCacheEpoch()} instead.
+     * <p>
+     * Must run under the refresh latch, or after the refresh workers have stopped.
+     */
+    public void evictCheckpointPageCacheSegments(@Nullable LongList segmentIds) {
+        final LiveViewCheckpointPageCache cache = checkpointPageCache;
+        if (cache != null) {
+            cache.evictSegments(segmentIds);
         }
     }
 

@@ -32,6 +32,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointStateCodec;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
@@ -303,6 +304,71 @@ public class LiveViewCheckpointPageCacheTest extends AbstractCairoTest {
                 // Evicting a segment nothing was cached from changes nothing.
                 cache.evictSegment(42);
                 Assert.assertEquals(2 * pagesPerSegment, cache.getPageCount());
+            } finally {
+                Unsafe.free(address, pageBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+            Assert.assertEquals(0, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_CHECKPOINT_CACHE));
+        });
+    }
+
+    @Test
+    public void testEvictSegmentsDropsEveryListedSegmentInOneSweep() throws Exception {
+        assertMemoryLeak(() -> {
+            final int pageBytes = 512;
+            final int pagesPerSegment = 30;
+            final int segments = 6;
+            final long address = allocScratch(pageBytes, 33);
+            final LiveViewCheckpointPageCacheBudget budget =
+                    new LiveViewCheckpointPageCacheBudget(64L * LiveViewCheckpointPageCache.SLAB_BYTES);
+            try (LiveViewCheckpointPageCache cache = new LiveViewCheckpointPageCache(budget)) {
+                for (long segmentId = 0; segmentId < segments; segmentId++) {
+                    for (int i = 0; i < pagesPerSegment; i++) {
+                        Assert.assertTrue(cache.admit(
+                                ref(segmentId, (long) i * pageBytes, TIMESTAMP_KIND, pageBytes),
+                                address
+                        ));
+                    }
+                    Assert.assertEquals(pagesPerSegment, cache.getSegmentPageCount(segmentId));
+                }
+                Assert.assertEquals(segments * pagesPerSegment, cache.getPageCount());
+
+                // Neither null nor an empty list is a request to drop anything: a
+                // compaction that published nothing and a sweep that unlinked
+                // nothing both arrive here.
+                cache.evictSegments(null);
+                cache.evictSegments(new LongList());
+                Assert.assertEquals(segments * pagesPerSegment, cache.getPageCount());
+
+                // Two segments the cache holds, and one it never saw.
+                final LongList dropped = new LongList();
+                dropped.add(1);
+                dropped.add(4);
+                dropped.add(99);
+                cache.evictSegments(dropped);
+
+                Assert.assertEquals((segments - 2) * pagesPerSegment, cache.getPageCount());
+                for (long segmentId = 0; segmentId < segments; segmentId++) {
+                    final boolean evicted = segmentId == 1 || segmentId == 4;
+                    Assert.assertEquals(
+                            "segment " + segmentId,
+                            evicted ? 0 : pagesPerSegment,
+                            cache.getSegmentPageCount(segmentId)
+                    );
+                    for (int i = 0; i < pagesPerSegment; i++) {
+                        final long cached = cache.probe(ref(segmentId, (long) i * pageBytes, TIMESTAMP_KIND, pageBytes));
+                        Assert.assertEquals("segment " + segmentId + " page " + i, evicted, cached == 0);
+                    }
+                }
+                Assert.assertEquals(0, cache.getSegmentPageCount(99));
+
+                // The freed slots go back to their class, so refilling the evicted
+                // segments costs the budget nothing.
+                final long warmBytes = cache.getUsedBytes();
+                for (int i = 0; i < pagesPerSegment; i++) {
+                    Assert.assertTrue(cache.admit(ref(1, (long) i * pageBytes, TIMESTAMP_KIND, pageBytes), address));
+                }
+                Assert.assertEquals(warmBytes, cache.getUsedBytes());
             } finally {
                 Unsafe.free(address, pageBytes, MemoryTag.NATIVE_DEFAULT);
             }

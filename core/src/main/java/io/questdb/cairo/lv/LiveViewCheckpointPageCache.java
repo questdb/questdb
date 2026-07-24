@@ -35,6 +35,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Caches the decoded image of a checkpoint state page so a later restore reads
@@ -229,6 +230,23 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
     }
 
     /**
+     * Drops every page held in any of {@code segmentIds}, in one sweep of the
+     * table rather than one per id. Callers hand it what a compaction pass
+     * drained or what a purge unlinked, both of which name a handful of segments,
+     * so the membership test stays a scan of the list.
+     */
+    public void evictSegments(@Nullable LongList segmentIds) {
+        if (size == 0 || segmentIds == null || segmentIds.size() == 0) {
+            return;
+        }
+        for (int i = 0, n = mask + 1; i < n; i++) {
+            if (isOccupied(i) && segmentIds.indexOf(keys[i * KEYS_STRIDE + KEY_SEGMENT_ID]) > -1) {
+                removeAt(i);
+            }
+        }
+    }
+
+    /**
      * @return the fraction of pages, by identity hash, the cache admits. One
      * means every page; zero means the cache is closed to new pages but still
      * serves what it holds
@@ -251,6 +269,23 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
 
     public int getPageCount() {
         return size;
+    }
+
+    /**
+     * @return pages the cache currently holds from {@code segmentId}, which is
+     * what an eviction of that segment would drop
+     */
+    public int getSegmentPageCount(long segmentId) {
+        if (size == 0) {
+            return 0;
+        }
+        int count = 0;
+        for (int i = 0, n = mask + 1; i < n; i++) {
+            if (isOccupied(i) && keys[i * KEYS_STRIDE + KEY_SEGMENT_ID] == segmentId) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**

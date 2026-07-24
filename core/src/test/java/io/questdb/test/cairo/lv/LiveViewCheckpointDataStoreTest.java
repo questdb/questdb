@@ -163,7 +163,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 }
 
                 final LiveViewCheckpointDataStore.PurgeResult purged = dataStore.purge();
-                Assert.assertEquals(1, purged.getPurgedSegmentCount());
+                assertPurgedSegmentIds(purged, 1);
                 Assert.assertFalse(dataFileExists(1));
                 Assert.assertTrue(dataFileExists(2));
             }
@@ -195,12 +195,12 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 directory.publish(metaStore, 3, 103); // overwrites generation 1 fallback
 
                 final LiveViewCheckpointDataStore.PurgeResult failed = dataStore.purge();
-                Assert.assertEquals(0, failed.getPurgedSegmentCount());
+                assertPurgedSegmentIds(failed);
                 Assert.assertEquals(1, failed.getFailedSegmentCount());
                 Assert.assertTrue(dataFileExists(1));
 
                 final LiveViewCheckpointDataStore.PurgeResult retried = dataStore.purge();
-                Assert.assertEquals(1, retried.getPurgedSegmentCount());
+                assertPurgedSegmentIds(retried, 1);
                 Assert.assertEquals(0, retried.getFailedSegmentCount());
                 Assert.assertEquals(source.fileLength, retried.getPurgedBytes());
                 Assert.assertFalse(dataFileExists(1));
@@ -266,7 +266,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 }
 
                 final LiveViewCheckpointDataStore.PurgeResult purged = dataStore.purge();
-                Assert.assertEquals(2, purged.getPurgedSegmentCount());
+                assertPurgedSegmentIds(purged, 1, 2);
                 Assert.assertEquals(first.fileLength + second.fileLength, purged.getPurgedBytes());
                 Assert.assertFalse(dataFileExists(1));
                 Assert.assertFalse(dataFileExists(2));
@@ -301,7 +301,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 // protections lapse together and the segment goes.
                 directory.publish(metaStore, 3, 103);
                 final LiveViewCheckpointDataStore.PurgeResult purged = dataStore.purge();
-                Assert.assertEquals(1, purged.getPurgedSegmentCount());
+                assertPurgedSegmentIds(purged, 1);
                 Assert.assertEquals(source.fileLength, purged.getPurgedBytes());
                 Assert.assertFalse(dataFileExists(1));
             }
@@ -310,8 +310,22 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
 
     private static void assertNoPurge(LiveViewCheckpointDataStore.PurgeResult result) {
         Assert.assertEquals(0, result.getPurgedSegmentCount());
+        Assert.assertEquals(0, result.getPurgedSegmentIds().size());
         Assert.assertEquals(0, result.getFailedSegmentCount());
         Assert.assertEquals(0, result.getPurgedBytes());
+    }
+
+    // The sweep reports what it unlinked by id, in catalogue order, because the
+    // live view page cache drops the decoded pages of exactly those segments.
+    private static void assertPurgedSegmentIds(
+            LiveViewCheckpointDataStore.PurgeResult result,
+            long... expected
+    ) {
+        Assert.assertEquals(expected.length, result.getPurgedSegmentCount());
+        Assert.assertEquals(expected.length, result.getPurgedSegmentIds().size());
+        for (int i = 0; i < expected.length; i++) {
+            Assert.assertEquals("purged segment " + i, expected[i], result.getPurgedSegmentIds().getQuick(i));
+        }
     }
 
     private static void assertSamePhysicalPage(

@@ -583,6 +583,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     timelineResult.getObsoleteSegmentBytes()
             );
         }
+        // The seal's own lifecycle reconciliation is the live view's segment GC: it
+        // unlinks what no current root names any more. The page cache holds decoded
+        // images keyed on segment id, so what the sweep deleted comes out of it - as
+        // an eviction normally, and as an epoch bump when the reconciliation retired
+        // the timeline it found whole, because the fresh timeline this seal then
+        // opened mints ids from zero again.
+        if (timelineResult.isSegmentIdSpaceReset()) {
+            instance.bumpCheckpointPageCacheEpoch();
+        } else {
+            instance.evictCheckpointPageCacheSegments(timelineResult.getPurgedSegmentIds());
+        }
         return timelineResult.getLogicalStateBytes();
     }
 
@@ -593,6 +604,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * of sparse data segments into a fresh segment and redirects the roots, so the
      * drained segments retire for the purge job. Best-effort: a fault abandons the
      * candidate and leaves the published generation byte-identical.
+     * <p>
+     * A published pass takes its source segments out of the view's decoded page
+     * cache. Every page they held now lives in the target under a new identity, so
+     * no later restore can reach the old one; keeping the entries would hold slots
+     * against the engine-wide budget for pages nothing will probe again.
      */
     private void maybeCompactCheckpointTimeline(LiveViewInstance instance, long lvSeqTxn) {
         final long interval = engine.getConfiguration().getLiveViewCheckpointCompactionInterval();
@@ -609,10 +625,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Compaction repacks a timeline this node published, so it runs on whichever role
             // that node currently holds - see appendCheckpointTimelineRoot for why the role
             // read lock outlives the read-only refusal it used to carry.
+            final LiveViewCheckpointCompaction.Result result;
             final Lock roleLock = engine.getRoleSwitchReadLock();
             roleLock.lock();
             try {
-                LiveViewCheckpointCompaction.compact(
+                result = LiveViewCheckpointCompaction.compact(
                         engine.getConfiguration(),
                         checkpointsDir,
                         checkpointTimelineStoreWriter,
@@ -625,6 +642,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 );
             } finally {
                 roleLock.unlock();
+            }
+            if (result.isPublished()) {
+                instance.evictCheckpointPageCacheSegments(result.getSourceSegmentIds());
             }
         } catch (Throwable t) {
             LOG.error().$("could not compact live view checkpoint timeline [view=")
@@ -5455,6 +5475,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * between leaves the previous generation authoritative and the repair repeatable;
      * a failure returns false and the caller retires the timeline instead, because
      * the durable output has already moved under every root it holds.
+     * <p>
+     * A committed splice moves the view's decoded page cache to a new epoch. The
+     * splice mints its capture segment from the persisted {@code nextSegmentId}
+     * ceiling, so no entry it leaves behind can alias a re-minted id; what it does
+     * do is supersede the state pages of every root in {@code [C, H)} at once, and
+     * nothing else reclaims those - a purge only sweeps at a reconciliation, which
+     * a steady cadence runs once per writer. Dropping the cache here is what keeps
+     * a repair-heavy view from filling the engine-wide budget with pages no
+     * surviving root names.
      *
      * @return true when the superblock committed the new generation
      */
@@ -5494,6 +5523,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     result.getRootsVersioned(),
                     result.getDataBytesAdded() + result.getMetadataBytesAdded()
             );
+            instance.bumpCheckpointPageCacheEpoch();
             LOG.info().$("live view checkpoint timeline repair published [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", generation=").$(result.getGeneration())
@@ -5878,6 +5908,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 roleLock.unlock();
             }
             capture = Misc.free(capture);
+            // Same rule as a repair splice: the heal replaced the state pages of
+            // every root it re-versioned, so what the cache decoded from them is
+            // dead weight the next restore would never probe.
+            instance.bumpCheckpointPageCacheEpoch();
             LOG.info().$("reconstructed corrupt live view checkpoint roots [view=")
                     .$(viewName)
                     .$(", predecessorMaxTs=").$ts(predecessorMaxTs)

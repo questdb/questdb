@@ -32,6 +32,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.LongIntHashMap;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -115,7 +116,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
             // checkpoints reference it.
             segmentDirectory.iterateAll(sweep);
             return new PurgeResult(
-                    sweep.purgedSegments,
+                    sweep.purgedSegmentIds,
                     sweep.failedSegments,
                     sweep.purgedBytes,
                     sweep.liveSegments,
@@ -401,16 +402,18 @@ public class LiveViewCheckpointDataStore implements Closeable {
         private final int liveSegmentCount;
         private final long obsoleteBytes;
         private final long purgedBytes;
-        private final int purgedSegmentCount;
+        private final LongList purgedSegmentIds;
 
         private PurgeResult(
-                int purgedSegmentCount,
+                LongList purgedSegmentIds,
                 int failedSegmentCount,
                 long purgedBytes,
                 int liveSegmentCount,
                 long obsoleteBytes
         ) {
-            this.purgedSegmentCount = purgedSegmentCount;
+            // The sweep reuses its list, so the result takes a copy: a caller reads
+            // this after the store that ran the sweep is closed.
+            this.purgedSegmentIds = new LongList(purgedSegmentIds);
             this.failedSegmentCount = failedSegmentCount;
             this.purgedBytes = purgedBytes;
             this.liveSegmentCount = liveSegmentCount;
@@ -443,7 +446,16 @@ public class LiveViewCheckpointDataStore implements Closeable {
         }
 
         public int getPurgedSegmentCount() {
-            return purgedSegmentCount;
+            return purgedSegmentIds.size();
+        }
+
+        /**
+         * @return the data segments this sweep unlinked, in catalogue order. A
+         * caller holding decoded state from them - the live view page cache -
+         * drops it here, because the files those pages came from are gone
+         */
+        public LongList getPurgedSegmentIds() {
+            return purgedSegmentIds;
         }
     }
 
@@ -500,13 +512,13 @@ public class LiveViewCheckpointDataStore implements Closeable {
      */
     private final class PurgeSweep implements LiveViewCheckpointSegmentDirectoryReader.Visitor {
 
+        private final LongList purgedSegmentIds = new LongList();
         private int failedSegments;
         private int liveSegments;
         private long minPinnedGeneration;
         private long obsoleteBytes;
         private long oldestValidSlotGeneration;
         private long purgedBytes;
-        private int purgedSegments;
 
         @Override
         public void onEntry(LiveViewCheckpointSegmentDirectoryEntry entry) {
@@ -529,7 +541,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
                     return;
                 }
                 if (ff.removeQuiet(path.$())) {
-                    purgedSegments++;
+                    purgedSegmentIds.add(segmentId);
                     purgedBytes = checkedAdd(purgedBytes, entry.fileLength);
                 } else {
                     failedSegments++;
@@ -546,7 +558,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
             this.oldestValidSlotGeneration = oldestValidSlotGeneration;
             this.minPinnedGeneration = minPinnedGeneration;
             purgedBytes = 0;
-            purgedSegments = 0;
+            purgedSegmentIds.clear();
             failedSegments = 0;
             liveSegments = 0;
             obsoleteBytes = 0;

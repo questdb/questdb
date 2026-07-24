@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -205,7 +206,7 @@ public final class LiveViewCheckpointCompaction {
                     return new Result(
                             true,
                             result.getRootsRewritten(),
-                            selectedSegments.size(),
+                            toSortedList(selectedSegments),
                             sourceRefs.size(),
                             targetSegmentId,
                             targetBytes,
@@ -249,24 +250,33 @@ public final class LiveViewCheckpointCompaction {
         throw CairoException.critical(0).put("live view checkpoint segment id exhausted");
     }
 
+    private static LongList toSortedList(LongHashSet set) {
+        final LongList list = new LongList(Math.max(1, set.size()));
+        for (int i = 0, n = set.size(); i < n; i++) {
+            list.add(set.get(i));
+        }
+        list.sort();
+        return list;
+    }
+
     /**
      * Result of one compaction pass. When {@link #isPublished()} is false nothing
      * qualified and every other field is unset.
      */
     public static final class Result {
-        static final Result NOTHING = new Result(false, 0, 0, 0, -1, 0, -1);
+        static final Result NOTHING = new Result(false, 0, new LongList(), 0, -1, 0, -1);
         private final long generation;
         private final long pagesRelocated;
         private final boolean published;
         private final int rootsRewritten;
-        private final int sourceSegments;
+        private final LongList sourceSegmentIds;
         private final long targetSegmentBytes;
         private final long targetSegmentId;
 
         Result(
                 boolean published,
                 int rootsRewritten,
-                int sourceSegments,
+                LongList sourceSegmentIds,
                 long pagesRelocated,
                 long targetSegmentId,
                 long targetSegmentBytes,
@@ -274,7 +284,7 @@ public final class LiveViewCheckpointCompaction {
         ) {
             this.published = published;
             this.rootsRewritten = rootsRewritten;
-            this.sourceSegments = sourceSegments;
+            this.sourceSegmentIds = sourceSegmentIds;
             this.pagesRelocated = pagesRelocated;
             this.targetSegmentId = targetSegmentId;
             this.targetSegmentBytes = targetSegmentBytes;
@@ -293,8 +303,18 @@ public final class LiveViewCheckpointCompaction {
             return rootsRewritten;
         }
 
+        /**
+         * @return the data segments this pass drained, ascending. Every page they
+         * held has been relocated into the target, so no surviving root names them
+         * and the purge job unlinks them once the fallback slot and every reader
+         * pin have moved past the generation this published
+         */
+        public LongList getSourceSegmentIds() {
+            return sourceSegmentIds;
+        }
+
         public int getSourceSegments() {
-            return sourceSegments;
+            return sourceSegmentIds.size();
         }
 
         public long getTargetSegmentBytes() {
