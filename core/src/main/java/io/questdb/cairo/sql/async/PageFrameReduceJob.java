@@ -325,6 +325,10 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
             record.of(frameSequence.getSymbolTableSource());
             assert !frameSequence.done;
             frameSequence.getReduceStartedCounter().incrementAndGet();
+            // Push the query's breaker down to the frame pool's decoder so a decode
+            // that blocks waiting for data probes it; a cancel/timeout then ends the
+            // wait instead of stalling teardown on the slowest in-flight read.
+            task.setCancelHandle(frameSequence.getCircuitBreaker());
             frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);
         } else {
             frameSequence.cancel(cbState);

@@ -300,6 +300,14 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         frameMemory = null;
     }
 
+    /**
+     * Pushes the query's cancel handle down to the frame memory pool's parquet
+     * decoder, so a decode that blocks waiting for data can be cancelled.
+     */
+    public void setCancelHandle(SqlExecutionCircuitBreaker cancelHandle) {
+        frameMemoryPool.setCancelHandle(cancelHandle);
+    }
+
     public void setErrorMsg(Throwable th) {
         if (th instanceof FlyweightMessageContainer fmc) {
             errorMsg.put(fmc.getFlyweightMessage());

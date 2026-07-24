@@ -147,6 +147,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private ParquetBuffers boundForRecordA;
     private ParquetBuffers boundForRecordB;
     private long cachedBytes;
+    // Pushed down to the parquet decoder so a decode that blocks waiting for data
+    // probes for query cancellation. Null on the owner-thread cursor paths
+    // (cancellation parity); set from the parallel reduce path.
+    private SqlExecutionCircuitBreaker cancelHandle;
     // Live native bytes held by retained CoveringBuffers (covered decode buffers).
     // Unlike parquet's cachedBytes this is NOT an eviction budget: covered buffers are
     // query-lifetime and cannot be LRU-evicted mid-query (zero-copy first()/last()
@@ -893,6 +897,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         this.memoryTracker = memoryTracker;
     }
 
+    /**
+     * Forwards a cancel handle to the active (and lazily-created) parquet decoder so
+     * a decode that blocks waiting for data can probe for query cancellation. Set
+     * from the parallel reduce path; left null (cancellation parity) elsewhere.
+     */
+    public void setCancelHandle(SqlExecutionCircuitBreaker cancelHandle) {
+        this.cancelHandle = cancelHandle;
+        if (parquetMetaDecoder != null) {
+            parquetMetaDecoder.setCancelHandle(cancelHandle);
+        }
+    }
+
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
         this.decodeHint = hint;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
@@ -1034,6 +1050,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (parquetMetaDecoder == null) {
                 // Created lazily so the configuration's decoder factory is fully wired before first use.
                 parquetMetaDecoder = configuration.newParquetPartitionDecoder();
+                parquetMetaDecoder.setCancelHandle(cancelHandle);
             }
             if (parquetMetaDecoder.getParquetMetaAddr() != parquetMetaFrame.getParquetMetaAddr() || parquetMetaDecoder.getParquetMetaSize() != parquetMetaFrame.getParquetMetaSize()) {
                 parquetMetaDecoder.of(parquetMetaFrame);
