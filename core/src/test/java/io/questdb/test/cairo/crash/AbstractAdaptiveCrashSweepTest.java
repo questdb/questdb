@@ -26,6 +26,7 @@ package io.questdb.test.cairo.crash;
 
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.Files;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -216,6 +217,10 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
             throw new IllegalStateException("call runWithCrashFacade(...) first");
         }
 
+        // Baseline NON-cached engine fds before the count pass. The count workload must not normalize
+        // leaked one-shot directory fds into the baseline used by every crash iteration.
+        final java.util.Set<Long> nonCacheFdBaseline = new java.util.HashSet<>(crashFf.noCacheOpenFdsSnapshot());
+
         // ---- 1. COUNT PASS: no fault armed; N = durability ops performed by the commit phase. ----
         workload.setup(0);
         final int opsBeforeCommit = crashFf.durabilityOpCount();
@@ -223,6 +228,7 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
         final int n = crashFf.durabilityOpCount() - opsBeforeCommit;
         workload.teardown();
         releaseEngineHandles();
+        reclaimLingeringNonCacheFds(nonCacheFdBaseline);
         Assert.assertTrue("workload commit phase must perform >= 1 durability op (N=" + n + ")", n > 0);
 
         final int atomicCommitOps = workload.atomicCommitDurabilityOpCount(n);
@@ -248,11 +254,6 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
         }
 
         final int[] recoveredByK = new int[sweptPoints + 1];
-        // Baseline of NON-cached engine fds (name registry etc.) after a clean release: any non-cached fd
-        // open beyond this at a cycle's end was left dangling by an fsync-interrupted operation and is
-        // reclaimed (a real power loss's process death would close it; the live JVM cannot).
-        final java.util.Set<Long> nonCacheFdBaseline = new java.util.HashSet<>(crashFf.noCacheOpenFdsSnapshot());
-
         // ---- 2. SWEEP: crash at each DECLARED atomic-commit durability op k, recover, run the oracle. ----
         for (int k = 1; k <= sweptPoints; k++) {
             final TableToken[] tokens = workload.setup(k);
@@ -300,6 +301,9 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
             reclaimLingeringNonCacheFds(nonCacheFdBaseline);
         }
 
+        // Direct epoch-metadata probes use read-only mmaps. In the test harness there is no continuously
+        // scheduled AsyncMunmapJob, so drain its final queued mappings before the enclosing exact FD check.
+        Files.getMmapCache().asyncMunmap();
         return new SweepResult(n, atomicCommitOps, cap, sweptPoints, truncated, recoveredByK);
     }
 

@@ -1979,6 +1979,18 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.registerName(tableToken);
     }
 
+    void resetTableMetadataForRecovery(TableToken tableToken) {
+        if (!tableMetadataPool.lock(tableToken)) {
+            throw CairoException.critical(0)
+                    .put("could not evict stale metadata during adaptive recovery [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+        tableMetadataPool.unlock(tableToken);
+        try (MetadataCacheWriter writer = metadataCache.writeLock()) {
+            writer.clearCache();
+        }
+    }
+
     @TestOnly
     public boolean releaseAllReaders() {
         boolean b1 = sequencerMetadataPool.releaseAll();

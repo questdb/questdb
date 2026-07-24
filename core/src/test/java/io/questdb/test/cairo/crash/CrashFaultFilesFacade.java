@@ -493,6 +493,27 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     @Override
+    public int hardLink(LPSZ src, LPSZ hardLink) {
+        final String sourcePath = toAbsPath(src);
+        final String targetPath = toAbsPath(hardLink);
+        final int result = super.hardLink(src, hardLink);
+        if (result == io.questdb.std.Files.FILES_RENAME_OK) {
+            // Both names refer to the same inode. Seed the target's path-keyed durability state from the
+            // source so crash() never treats the new alias as an untracked zero-length file and truncates
+            // the shared inode (which would corrupt the still-live source name too).
+            duplicateMapValue(durableContent, sourcePath, targetPath);
+            duplicateMapValue(deviceCacheContent, sourcePath, targetPath);
+            duplicateMapValue(durableSize, sourcePath, targetPath);
+            duplicateMapValue(writtenDataEnd, sourcePath, targetPath);
+            duplicateMapValue(syncedDataEnd, sourcePath, targetPath);
+            duplicateMapValue(journaledDataEnd, sourcePath, targetPath);
+            duplicateMapValue(pteFlushed, sourcePath, targetPath);
+            trackedFiles.add(targetPath);
+        }
+        return result;
+    }
+
+    @Override
     public int rename(LPSZ from, LPSZ to) {
         final String fromPath = toAbsPath(from);
         final String toPath = toAbsPath(to);
@@ -532,6 +553,13 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             if (path.equals(root) || path.startsWith(prefix)) {
                 namespaceFileImages.putIfAbsent(path, durableImage(path));
             }
+        }
+    }
+
+    private static <T> void duplicateMapValue(Map<String, T> map, String sourcePath, String targetPath) {
+        final T value = map.get(sourcePath);
+        if (value != null) {
+            map.put(targetPath, value);
         }
     }
 
@@ -836,7 +864,12 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      * where a real power loss would have the OS reclaim it. The driver closes the per-cycle delta.
      */
     public java.util.List<Long> noCacheOpenFdsSnapshot() {
-        return new ArrayList<>(noCacheOpenFds);
+        // Files.openRW/openRO wrappers are currently non-cached at the Files layer even when they arrive
+        // through the ordinary facade methods. Include every still-tracked facade FD, not only calls made
+        // through the explicitly named *NoCache methods, so process-death simulation can reclaim both kinds.
+        final LinkedHashSet<Long> snapshot = new LinkedHashSet<>(noCacheOpenFds);
+        snapshot.addAll(fdToPath.keySet());
+        return new ArrayList<>(snapshot);
     }
 
     /**

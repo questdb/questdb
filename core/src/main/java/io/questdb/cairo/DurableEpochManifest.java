@@ -22,13 +22,16 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 
-/** Binds the two epoch payload files to one table and one marker generation. */
+/** Binds the metadata, transaction, and column-version epoch payloads to one table and marker generation. */
 public final class DurableEpochManifest {
     public static final String FILE_NAME = "_epoch.manifest";
-    public static final int FILE_SIZE = 104;
-    private static final int FORMAT_VERSION = 1;
+    public static final int FILE_SIZE = 120;
+    private static final int FORMAT_VERSION = 2;
+    private static final int LEGACY_BODY_SIZE = 88;
+    private static final int LEGACY_FILE_SIZE = 104;
+    private static final int LEGACY_FORMAT_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(DurableEpochManifest.class);
-    private static final int BODY_SIZE = 88;
+    private static final int BODY_SIZE = 104;
 
     private DurableEpochManifest() {
     }
@@ -65,14 +68,17 @@ public final class DurableEpochManifest {
         try (Path tablePath = new Path(); Path src = new Path(); Path dst = new Path()) {
             tablePath.of(configuration.getDbRoot()).concat(tableToken);
             final int rootLen = tablePath.size();
+            fsyncFile(configuration, tablePath, rootLen, TableUtils.META_FILE_NAME);
             fsyncFile(configuration, tablePath, rootLen, TableUtils.COLUMN_VERSION_FILE_NAME);
             fsyncFile(configuration, tablePath, rootLen, TableUtils.TXN_FILE_NAME);
+            copyPayload(configuration, tablePath, src, dst, rootLen, TableUtils.META_FILE_NAME, 0);
             copyPayload(configuration, tablePath, src, dst, rootLen, TableUtils.COLUMN_VERSION_FILE_NAME, 0);
             copyPayload(configuration, tablePath, src, dst, rootLen, TableUtils.TXN_FILE_NAME, 0);
 
             long seqTxn;
             long txn;
             long columnVersion;
+            long metadataVersion;
             try (TxReader txReader = new TxReader(ff); ColumnVersionReader cvReader = new ColumnVersionReader()) {
                 src.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(0);
                 txReader.ofRO(src.$(), timestampType, partitionBy);
@@ -87,12 +93,13 @@ public final class DurableEpochManifest {
                 seqTxn = txReader.getSeqTxn();
                 txn = txReader.getTxn();
                 columnVersion = txReader.getColumnVersion();
+                metadataVersion = txReader.getMetadataVersion();
             }
             if (requireInitialSeqTxn && seqTxn != 0) {
                 throw CairoException.critical(0).put("initial adaptive baseline is not at sequencer transaction zero [table=")
                         .put(tableToken.getTableName()).put(", seqTxn=").put(seqTxn).put(']');
             }
-            write(configuration, tableToken, tablePath, rootLen, 0, seqTxn, txn, columnVersion);
+            write(configuration, tableToken, tablePath, rootLen, 0, seqTxn, txn, columnVersion, metadataVersion);
             fsyncDirectory(configuration, tablePath, rootLen);
             try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
                 tablePath.trimTo(rootLen).concat(TableUtils.SNAPSHOT_FILE_NAME);
@@ -104,6 +111,24 @@ public final class DurableEpochManifest {
         }
     }
 
+    public static boolean isMetadataBound(CairoConfiguration configuration, TableToken tableToken, int generation) {
+        if (generation < 0) {
+            return false;
+        }
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path manifest = new Path()) {
+            manifest.of(configuration.getDbRoot()).concat(tableToken).concat(FILE_NAME).put('.').put(generation);
+            if (!ff.exists(manifest.$()) || ff.length(manifest.$()) < 16) {
+                return false;
+            }
+            try (MemoryCMR mem = Vm.getCMRInstance(ff, manifest.$(), 16, MemoryTag.MMAP_TABLE_READER)) {
+                return mem.getLong(0) == TableUtils.SNAPSHOT_CHECKSUM_MAGIC && mem.getInt(8) >= FORMAT_VERSION;
+            }
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
     public static boolean validate(
             CairoConfiguration configuration,
             TableToken tableToken,
@@ -112,27 +137,37 @@ public final class DurableEpochManifest {
             int generation,
             long seqTxn,
             long txn,
-            long columnVersion
+            long columnVersion,
+            long metadataVersion
     ) {
         if (generation < 0) {
             return false;
         }
         final FilesFacade ff = configuration.getFilesFacade();
         tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
-        if (!ff.exists(tablePath.$()) || ff.length(tablePath.$()) < FILE_SIZE) {
+        final long manifestSize = ff.length(tablePath.$());
+        if (!ff.exists(tablePath.$()) || manifestSize < LEGACY_FILE_SIZE) {
             return false;
         }
-        try (MemoryCMR mem = Vm.getCMRInstance(ff, tablePath.$(), FILE_SIZE, MemoryTag.MMAP_TABLE_READER);
+        try (MemoryCMR mem = Vm.getCMRInstance(ff, tablePath.$(), Math.min(manifestSize, FILE_SIZE), MemoryTag.MMAP_TABLE_READER);
              Path payload = new Path()) {
+            final int formatVersion = mem.getInt(8);
+            final int bodySize;
+            if (formatVersion == LEGACY_FORMAT_VERSION) {
+                bodySize = LEGACY_BODY_SIZE;
+            } else if (formatVersion == FORMAT_VERSION && manifestSize >= FILE_SIZE) {
+                bodySize = BODY_SIZE;
+            } else {
+                return false;
+            }
             if (mem.getLong(0) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
-                    || mem.getInt(8) != FORMAT_VERSION
                     || mem.getInt(12) != generation
                     || mem.getInt(16) != tableToken.getTableId()
                     || mem.getLong(24) != seqTxn
                     || mem.getLong(32) != txn
                     || mem.getLong(40) != columnVersion
-                    || mem.getLong(BODY_SIZE) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
-                    || mem.getLong(BODY_SIZE + 8) != TableUtils.calculateCvAreaChecksum(mem.addressOf(0), BODY_SIZE)) {
+                    || mem.getLong(bodySize) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
+                    || mem.getLong(bodySize + 8) != TableUtils.calculateCvAreaChecksum(mem.addressOf(0), bodySize)) {
                 return false;
             }
             final long txnSize = mem.getLong(48);
@@ -146,7 +181,20 @@ public final class DurableEpochManifest {
             }
             payload.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.COLUMN_VERSION_FILE_NAME)
                     .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
-            return payloadMatches(ff, payload, cvSize, cvChecksum);
+            if (!payloadMatches(ff, payload, cvSize, cvChecksum)) {
+                return false;
+            }
+            if (formatVersion == LEGACY_FORMAT_VERSION) {
+                return true;
+            }
+            if (mem.getLong(96) != metadataVersion) {
+                return false;
+            }
+            final long metaSize = mem.getLong(80);
+            final long metaChecksum = mem.getLong(88);
+            payload.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME)
+                    .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
+            return payloadMatches(ff, payload, metaSize, metaChecksum);
         } catch (Throwable e) {
             return false;
         }
@@ -160,7 +208,8 @@ public final class DurableEpochManifest {
             int generation,
             long seqTxn,
             long txn,
-            long columnVersion
+            long columnVersion,
+            long metadataVersion
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path payload = new Path()) {
@@ -172,6 +221,10 @@ public final class DurableEpochManifest {
                     .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
             final long cvSize = ff.length(payload.$());
             final long cvChecksum = checksum(ff, payload, cvSize);
+            payload.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME)
+                    .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
+            final long metaSize = ff.length(payload.$());
+            final long metaChecksum = checksum(ff, payload, metaSize);
 
             tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
             try (MemoryCMARW mem = Vm.getSmallCMARWInstance(ff, tablePath.$(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
@@ -188,7 +241,9 @@ public final class DurableEpochManifest {
                 mem.putLong(56, txnChecksum);
                 mem.putLong(64, cvSize);
                 mem.putLong(72, cvChecksum);
-                mem.putLong(80, 0);
+                mem.putLong(80, metaSize);
+                mem.putLong(88, metaChecksum);
+                mem.putLong(96, metadataVersion);
                 mem.putLong(BODY_SIZE, TableUtils.SNAPSHOT_CHECKSUM_MAGIC);
                 mem.putLong(BODY_SIZE + 8, TableUtils.calculateCvAreaChecksum(mem.addressOf(0), BODY_SIZE));
                 mem.sync(false);

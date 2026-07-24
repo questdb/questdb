@@ -62,7 +62,7 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>resource leaks — fd / mmap not returned to the pool across cycles;</li>
  *   <li>unbounded growth of WAL-segment dirs (a WAL-purge floor that never advances);</li>
- *   <li>unbounded growth of durable-epoch copies (the {@code _txn.epoch}/{@code _cv.epoch} ping-pong);</li>
+ *   <li>unbounded growth of generation-bound durable-epoch metadata/pointer copies;</li>
  *   <li>stale partition-version dirs the recovery rewind never purges;</li>
  *   <li>durable-frontier drift / a committed count that silently truncates instead of accumulating.</li>
  * </ul>
@@ -137,9 +137,8 @@ import java.util.concurrent.TimeUnit;
  *       REAL fresh-process restart exhibits it IDENTICALLY, and the very next purge reclaims the orphan once
  *       ingest resumes — so production does NOT accumulate orphans across reboots. The soak sees one/cycle only
  *       because it forces the purge in that pre-epoch window every cycle (before the next cycle's write).</li>
- *   <li><b>Epoch copies</b>: EXACTLY the two ping-pong files {@code _txn.epoch} + {@code _cv.epoch} are
- *       present — the durable cut OVERWRITES them in place ({@code TableWriter.fsyncMaterializedState}), so a
- *       count that ever exceeds 2 would be a real artifact leak.</li>
+ *   <li><b>Epoch copies</b>: EXACTLY six bounded payloads ({@code _meta/_txn/_cv} across generations
+ *       0 and 1) are present — a growing count is a real artifact leak.</li>
  *   <li><b>Partition versions</b>: pure tail-append never supersedes a partition, so the count of
  *       stale VERSIONED partition dirs ({@code <day>.<n>}) stays 0 — a recovery rewind that leaked an
  *       orphan partition copy would trip this.</li>
@@ -230,8 +229,8 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
 
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(windowUs));
-        // Epoch on every apply batch: keeps _txn.epoch/_cv.epoch always present + refreshed (the ping-pong
-        // growth invariant is meaningful) and makes recovery's roll-forward anchor deterministic.
+        // Epoch on every apply batch keeps both generations of _meta/_txn/_cv payloads refreshed, makes the
+        // growth invariant meaningful, and makes recovery's roll-forward anchor deterministic.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         if (windowUs > 0) {
             // Pin the microsecond clock (see AdaptiveGroupCommitCrashTest / testConvertPartitionCrashSafeWN):
@@ -358,9 +357,9 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
                             wal[2] <= SEG_PER_WAL_CAP
                     );
                     Assert.assertEquals(
-                            "cycle " + cycle + ": durable-epoch copies must be EXACTLY the {_txn.epoch,_cv.epoch} "
-                                    + "ping-pong pair (overwritten in place); a different count is an artifact leak",
-                            2, epochCopies
+                            "cycle " + cycle + ": durable-epoch payloads must be EXACTLY _meta/_txn/_cv "
+                                    + "for generations 0 and 1; a different count is an artifact leak",
+                            6, epochCopies
                     );
                     // Partition-version leak: exactly ONE live directory per committed day. A recovery rewind or
                     // O3/append that leaks a STALE superseded partition-version copy would leave >1 dir for some
@@ -585,17 +584,19 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
         return new int[]{walDirs, totalSegs, maxSegsPerWal};
     }
 
-    /**
-     * Count the durable-epoch copies present (the {@code _txn.epoch}/{@code _cv.epoch} ping-pong pair).
-     */
+    /** Count bounded generation payloads ({@code _meta/_txn/_cv.epoch.{0,1}}). */
     private int countEpochCopies(TableToken tt) {
-        final File td = tableDir(tt);
+        final File[] files = tableDir(tt).listFiles();
         int n = 0;
-        if (new File(td, "_txn.epoch").exists()) {
-            n++;
-        }
-        if (new File(td, "_cv.epoch").exists()) {
-            n++;
+        if (files != null) {
+            for (File file : files) {
+                final String name = file.getName();
+                if (name.startsWith("_meta.epoch.")
+                        || name.startsWith("_txn.epoch.")
+                        || name.startsWith("_cv.epoch.")) {
+                    n++;
+                }
+            }
         }
         return n;
     }

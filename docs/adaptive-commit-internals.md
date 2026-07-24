@@ -182,7 +182,7 @@ flowchart TD
 
     ROOT --> TBLF["_meta · _txn · _cv"]
     ROOT --> SYMF["&lt;col&gt;.o · &lt;col&gt;.c · &lt;col&gt;.k · &lt;col&gt;.v  (symbol maps, table root)"]
-    ROOT --> EPO["_snapshot · _txn.epoch.{0,1} · _cv.epoch.{0,1} · _epoch.manifest.{0,1}  (adaptive recovery)"]
+    ROOT --> EPO["_snapshot · _meta/_txn/_cv.epoch.{0,1} · _epoch.manifest.{0,1}  (adaptive recovery)"]
     ROOT --> PART["YYYY-MM-DD[.&lt;ver&gt;]/  (partition dirs)"]
     PART --> PCOL["&lt;col&gt;.d (+ .i var-size) · &lt;col&gt;.k / .v (indexed cols)"]
 
@@ -306,7 +306,7 @@ the one place ADAPTIVE forces the table to disk): publish indexers → columns d
 batched, else per‑file + symbols) → **`syncfs`** (a whole‑filesystem flush, to catch
 closed‑partition files the writer no longer tracks) → `columnVersionWriter.fsync()` →
 `txWriter.fsync()` (**`_cv` before `_txn`**) → write the inactive generation's copies
-**`_cv.epoch.N` then `_txn.epoch.N`** (`writeEpochCopy` = `ff.copy` + real `ff.fsync`) →
+**`_meta.epoch.N`, `_cv.epoch.N`, then `_txn.epoch.N`** (`writeEpochCopy` = `ff.copy` + real `ff.fsync`) →
 write `_epoch.manifest.N` binding table ID, seqTxn, table txn, column-version identity, payload
 sizes and checksums → mandatory table-directory fsync → publish `_snapshot` last. Both
 `TxWriter.fsync` and `ColumnVersionWriter.fsync` are `msync(MS_SYNC)` **+ real
@@ -339,7 +339,7 @@ or synchronous `msync` failure is logged as a fatal durability-barrier failure w
 and errno; the first failure poisons the engine, fences writers/acknowledgements/purge, and the
 server exits via `Runtime.halt(55)` without graceful writer cleanup.
 
-> **Deliberate order asymmetry:** the epoch *writes* `_cv.epoch` then `_txn.epoch`; recovery
+> **Deliberate order asymmetry:** the epoch writes `_meta.epoch`, then `_cv.epoch`, then `_txn.epoch`; recovery
 > *restores* `_txn` then `_cv`. Both orders are chosen so a crash mid‑operation leaves the
 > safe skew "`_txn` behind `_cv`" — a `_txn` that references column versions guaranteed
 > present.

@@ -1559,7 +1559,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
                 try {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-                } catch (Throwable ex) {
+                } catch (CairoException | CairoError ex) {
                     handleBestEffortDurableEpochFailure(ex, "batched parquet->native conversion");
                 }
             }
@@ -1800,7 +1800,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
                 try {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-                } catch (Throwable e) {
+                } catch (CairoException | CairoError e) {
                     handleBestEffortDurableEpochFailure(e, "partition convert");
                 }
             }
@@ -1946,7 +1946,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
                 try {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-                } catch (Throwable e) {
+                } catch (CairoException | CairoError e) {
                     handleBestEffortDurableEpochFailure(e, "partition convert");
                 }
             }
@@ -2148,7 +2148,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
             try {
                 advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-            } catch (Throwable e) {
+            } catch (CairoException | CairoError e) {
                 handleBestEffortDurableEpochFailure(e, "detach partition");
             }
         }
@@ -3524,7 +3524,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     candidate.generation,
                                     candidate.epochSeqTxn,
                                     candidate.epochTxn,
-                                    txWriter.getColumnVersion()
+                                    txWriter.getColumnVersion(),
+                                    txWriter.getMetadataVersion()
                             )) {
                         valid = true;
                         break;
@@ -3770,7 +3771,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
                 try {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-                } catch (Throwable ex) {
+                } catch (CairoException | CairoError ex) {
                     handleBestEffortDurableEpochFailure(ex, "native<->parquet switch");
                 }
             }
@@ -5391,9 +5392,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (reseal && tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
             try {
                 advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-            } catch (Throwable e) {
-                LOG.error().$("adaptive: durable-epoch advance after posting reseal failed [table=")
-                        .$(tableToken).$(", err=").$(e).I$();
+            } catch (CairoException | CairoError e) {
+                handleBestEffortDurableEpochFailure(e, "posting reseal");
             }
         }
     }
@@ -6789,7 +6789,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (getSeqTxn() > engine.getTableSequencerAPI().getTxnTracker(tableToken).getDurableEpochSeqTxn()) {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 }
-            } catch (Throwable e) {
+            } catch (CairoException | CairoError e) {
                 handleBestEffortDurableEpochFailure(e, "writer close");
             }
         }
@@ -14606,7 +14606,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Persist a DURABLE EPOCH COPY of a commit-pointer file ({@code _txn} or {@code _cv}) into the
+     * Persist a DURABLE EPOCH COPY of metadata or a commit-pointer file ({@code _meta}, {@code _txn},
+     * or {@code _cv}) into the
      * table dir as {@code <name>.epoch}, then fsync it. These immutable copies are the recovery anchor
      * (Plan 3): {@link RecoveryCoordinator} restores them over the live files to rewind the table to
      * the epoch cut after a power cut.
@@ -14698,7 +14699,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Step 1: make the materialized state fully durable + write the inactive durable epoch copies.
         fsyncMaterializedState(epochGeneration);
 
-        // Bind both payloads to this exact table/cut before making their directory entries durable.
+        // Bind all three payloads to this exact table/cut before making their directory entries durable.
         final long epochSeqTxn = getSeqTxn();
         final long epochTxn = getTxn();
         DurableEpochManifest.write(
@@ -14709,7 +14710,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 epochGeneration,
                 epochSeqTxn,
                 epochTxn,
-                txWriter.getColumnVersion()
+                txWriter.getColumnVersion(),
+                txWriter.getMetadataVersion()
         );
         fsyncEpochDirectory();
         final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
@@ -14776,7 +14778,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *   <li>{@code _cv} durable: {@code columnVersionWriter.fsync()} (msync + fsync);</li>
      *   <li>{@code _txn} durable LAST: {@code txWriter.fsync()} (msync + fsync) — the visibility
      *       pointer becomes durable only after everything it exposes;</li>
-     *   <li>durable epoch copies {@code _txn.epoch} / {@code _cv.epoch} written + fsync'd (the
+     *   <li>durable epoch copies {@code _meta.epoch} / {@code _txn.epoch} / {@code _cv.epoch} written + fsync'd (the
      *       immutable recovery anchor).</li>
      * </ol>
      * The cut's identity is the writer's current {@link #getSeqTxn()} / {@link #getTxn()} right after
@@ -14837,13 +14839,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.fsync();
         txWriter.fsync();
 
-        // Step 5: durable epoch copies (immutable recovery anchor) — copy the just-fsync'd live _cv and
-        // _txn into _cv.epoch / _txn.epoch. CV BEFORE TXN (data-before-pointer), mirroring steps 3+4:
+        // Step 5: durable epoch copies (immutable recovery anchor). Copy _meta first so recovery can
+        // interpret the matching _txn even when later structural WAL transactions advanced live metadata.
+        // Then copy the just-fsync'd live _cv and _txn. CV BEFORE TXN (data-before-pointer), mirroring steps 3+4:
         // RecoveryCoordinator restores BOTH copies, so a crash BETWEEN these two copies must leave a SAFE
         // skew. With _cv.epoch first, a crash after it but before _txn.epoch leaves _cv.epoch NEWER than
         // _txn.epoch; restoring that pair makes _cv ahead of _txn — harmless (column versions only grow;
         // the older _txn never references the extra ones, and _txn is the authoritative row-count/seqTxn
         // pointer). The reverse order could leave _txn ahead of _cv (a dangling column-version reference).
+        writeEpochCopy(TableUtils.META_FILE_NAME, epochGeneration);
         writeEpochCopy(TableUtils.COLUMN_VERSION_FILE_NAME, epochGeneration);
         writeEpochCopy(TableUtils.TXN_FILE_NAME, epochGeneration);
 

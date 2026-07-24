@@ -43,9 +43,10 @@ import io.questdb.std.str.Path;
  * Runs ONCE at engine startup, AFTER the table-name registry is loaded but BEFORE normal WAL apply
  * ({@code CheckWalTransactionsJob} -> {@code ApplyWal2TableJob}) runs for any table. For each
  * ADAPTIVE WAL table that recorded a durable epoch ({@code _snapshot} marker + immutable
- * {@code _txn.epoch}/{@code _cv.epoch} copies written by {@link TableWriter#fsyncMaterializedState()}),
- * it RESTORES the durable cut: copies {@code _txn.epoch}->{@code _txn} and
- * {@code _cv.epoch}->{@code _cv}, fsyncs them (and the table dir) BEFORE proceeding, so the table
+ * {@code _meta.epoch}/{@code _txn.epoch}/{@code _cv.epoch} copies written by
+ * {@link TableWriter#fsyncMaterializedState()}), it RESTORES the durable cut: publishes the
+ * matching metadata and copies {@code _txn.epoch}->{@code _txn} / {@code _cv.epoch}->{@code _cv},
+ * fsyncing them (and the table dir) BEFORE proceeding, so the table
  * opens at exactly {@code epoch.{seqTxn,txn}}. The existing boot path then idempotently re-applies
  * {@code (epoch.seqTxn, frontier]} from the durable WAL.
  * <p>
@@ -120,8 +121,23 @@ public class RecoveryCoordinator {
                 try {
                     // On cold boot this may read _meta. Any inability to determine or restore an adaptive
                     // table's replay floor aborts initialization; sequencer suspension does not fence readers.
-                    if (engine.getTableSequencerAPI().resolveEffectiveCommitMode(token) != CommitMode.ADAPTIVE) {
-                        continue;
+                    final boolean metadataBoundEpoch = hasMetadataBoundEpoch(token, dir);
+                    try {
+                        final int effectiveMode = metadataBoundEpoch
+                                ? resolveEffectiveCommitModeNoRetry(token, dir)
+                                : engine.getTableSequencerAPI().resolveEffectiveCommitMode(token);
+                        if (effectiveMode != CommitMode.ADAPTIVE) {
+                            continue;
+                        }
+                    } catch (CairoException | CairoError metadataFailure) {
+                        // A crash during structural metadata swap can leave live _meta absent/torn while the
+                        // previous durable epoch still has a bound, checksummed _meta payload. Recover from
+                        // that generation before a retrying metadata reader can spin forever on a pinned clock.
+                        if (metadataBoundEpoch) {
+                            recoverTable(token, src, dst, dir);
+                            continue;
+                        }
+                        throw metadataFailure;
                     }
                     tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
                     if (!ff.exists(dir.$()) && checkpointRestored) {
@@ -184,6 +200,35 @@ public class RecoveryCoordinator {
         }
     }
 
+    private boolean hasMetadataBoundEpoch(TableToken token, Path markerPath) {
+        tablePath(markerPath, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+        if (!ff.exists(markerPath.$())) {
+            return false;
+        }
+        try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+            marker.of(markerPath.$());
+            final SnapshotMarker.Candidate[] candidates = marker.loadCandidates();
+            for (int i = 0; i < candidates.length; i++) {
+                final SnapshotMarker.Candidate candidate = candidates[i];
+                if (candidate.formatVersion != SnapshotMarker.LEGACY_FORMAT_VERSION
+                        && DurableEpochManifest.isMetadataBound(configuration, token, candidate.generation)) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {
+            return false;
+        }
+        return false;
+    }
+
+    private int resolveEffectiveCommitModeNoRetry(TableToken token, Path metaPath) {
+        tablePath(metaPath, token).concat(TableUtils.META_FILE_NAME);
+        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
+            metadata.loadMetadata(metaPath.$());
+            return CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode());
+        }
+    }
+
     private boolean isLegacyAdaptiveEnrollmentCandidate(TableToken token, Path metaPath) {
         tablePath(metaPath, token).concat(TableUtils.META_FILE_NAME);
         final long size = ff.length(metaPath.$());
@@ -234,7 +279,7 @@ public class RecoveryCoordinator {
         // resurrect the discarded lineage and leave _txn ahead of the restored sequencer. SKIP; the restored
         // live state + normal WAL replay is correct. A TORN/unreadable live _txn (the genuine post-crash
         // state this mechanism exists to repair) does NOT trip the guard — see epochIsAheadOfLiveTxn.
-        if (epochIsAheadOfLiveTxn(token, src, epochSeqTxn)) {
+        if (epochIsAheadOfLiveTxn(token, src, selected)) {
             throw CairoException.critical(0)
                     .put("adaptive epoch post-dates live state; refusing wrong-lineage recovery [table=")
                     .put(token.getTableName()).put(", epochSeqTxn=").put(epochSeqTxn).put(']');
@@ -253,12 +298,22 @@ public class RecoveryCoordinator {
         // is a documented invariant. Defensive, assertion-only re-check (read-only, zero prod cost): a refactor
         // that ever let an AHEAD epoch reach adoption — the wrong-lineage resurrection this guard prevents —
         // trips here loudly instead of silently corrupting the restored table.
-        assert !epochIsAheadOfLiveTxn(token, src, epochSeqTxn)
+        assert !epochIsAheadOfLiveTxn(token, src, selected)
                 : "adaptive recovery would ADOPT an epoch that post-dates the live _txn (wrong-lineage "
                 + "resurrection); the freshness guard must SKIP it [table=" + token.getTableName()
                 + ", epochSeqTxn=" + epochSeqTxn + ']';
 
-        // Restore the durable cut: _txn.epoch -> _txn, _cv.epoch -> _cv. ff.copy() (creat O_TRUNC)
+        // Restore the durable cut. V2 manifests first restore _meta from the same generation,
+        // so the epoch _txn can always be interpreted even if structural WAL transactions advanced live
+        // metadata after the epoch. The metadata swap is fsync'd and renamed before pointer restoration.
+        final boolean metadataBound = selected.formatVersion != SnapshotMarker.LEGACY_FORMAT_VERSION
+                && DurableEpochManifest.isMetadataBound(configuration, token, epochGeneration);
+        if (metadataBound) {
+            restoreMetadataFile(token, src, dst, epochGeneration);
+            fsyncDir(token, dir);
+        }
+
+        // Restore _txn.epoch -> _txn, _cv.epoch -> _cv. ff.copy() (creat O_TRUNC)
         // fully replaces the live, lazily-advanced files with the epoch's canonical A/B record. The
         // .epoch copies are immutable until the next epoch, so re-running this (a crash mid-recovery)
         // re-copies identical bytes and lands on the same cut -> idempotent.
@@ -281,6 +336,11 @@ public class RecoveryCoordinator {
         fsyncFile(token, dst, TableUtils.TXN_FILE_NAME);
         fsyncFile(token, dst, TableUtils.COLUMN_VERSION_FILE_NAME);
         fsyncDir(token, dir);
+        if (metadataBound) {
+            // epochIsAheadOfLiveTxn and runtime users may have populated pooled/catalogue metadata from the
+            // pre-recovery schema. A real startup has no such tenant; evict it before WAL replay.
+            engine.resetTableMetadataForRecovery(token);
+        }
 
         LOG.info().$("adaptive epoch roll-forward restored durable cut [table=").$(token)
                 .$(", epochSeqTxn=").$(epochSeqTxn).I$();
@@ -337,16 +397,36 @@ public class RecoveryCoordinator {
     private boolean epochCopiesValid(TableToken token, Path scratch, SnapshotMarker.Candidate candidate) {
         final long markerEpochSeqTxn = candidate.epochSeqTxn;
         final int epochGeneration = candidate.generation;
-        final int partitionBy;
-        final int timestampType;
-        try (TableMetadata meta = engine.getTableMetadata(token)) {
-            partitionBy = meta.getPartitionBy();
-            timestampType = meta.getTimestampType();
+        final boolean metadataBound = candidate.formatVersion != SnapshotMarker.LEGACY_FORMAT_VERSION
+                && DurableEpochManifest.isMetadataBound(configuration, token, epochGeneration);
+        int partitionBy;
+        int timestampType;
+        long metadataVersion;
+        TableReaderMetadata epochMetadata = null;
+        try {
+            if (metadataBound) {
+                epochCopyPath(scratch, token, TableUtils.META_FILE_NAME, epochGeneration);
+                epochMetadata = new TableReaderMetadata(configuration);
+                epochMetadata.loadMetadata(scratch.$());
+                if (epochMetadata.getTableId() != token.getTableId()) {
+                    return false;
+                }
+                partitionBy = epochMetadata.getPartitionBy();
+                timestampType = epochMetadata.getTimestampType();
+                metadataVersion = epochMetadata.getMetadataVersion();
+            } else {
+                try (TableMetadata meta = engine.getTableMetadata(token)) {
+                    partitionBy = meta.getPartitionBy();
+                    timestampType = meta.getTimestampType();
+                    metadataVersion = meta.getMetadataVersion();
+                }
+            }
         } catch (CairoException | CairoError e) {
-            // Cannot interpret the candidate without table metadata; mark it invalid. If no other candidate
-            // validates, recoverTable() aborts startup.
-            LOG.error().$("adaptive epoch validation could not read table metadata [table=")
+            // Cannot interpret the candidate without its matching metadata; mark it invalid. If no other
+            // candidate validates, recoverTable() aborts startup instead of spinning on a permanent mismatch.
+            LOG.error().$("adaptive epoch validation could not read epoch metadata [table=")
                     .$(token).$(", error=").$safe(e.getFlyweightMessage()).I$();
+            Misc.free(epochMetadata);
             return false;
         }
 
@@ -361,7 +441,9 @@ public class RecoveryCoordinator {
                 return false; // torn _txn.epoch (one slot bad; the other absent/old)
             }
             final long copySeqTxn = txReader.getSeqTxn();
-            if (copySeqTxn != markerEpochSeqTxn || txReader.getTxn() != candidate.epochTxn) {
+            if (copySeqTxn != markerEpochSeqTxn
+                    || txReader.getTxn() != candidate.epochTxn
+                    || txReader.getMetadataVersion() != metadataVersion) {
                 LOG.error().$("adaptive epoch _txn identity does not match _snapshot marker [table=").$(token)
                         .$(", copySeqTxn=").$(copySeqTxn).$(", markerSeqTxn=").$(markerEpochSeqTxn)
                         .$(", copyTxn=").$(txReader.getTxn()).$(", markerTxn=").$(candidate.epochTxn).I$();
@@ -389,7 +471,8 @@ public class RecoveryCoordinator {
                     epochGeneration,
                     markerEpochSeqTxn,
                     candidate.epochTxn,
-                    txReader.getColumnVersion()
+                    txReader.getColumnVersion(),
+                    metadataVersion
             );
         } catch (Throwable e) {
             // FAIL SAFE: ANY failure while decoding a torn copy means "invalid -> skip restore", never
@@ -407,6 +490,7 @@ public class RecoveryCoordinator {
         } finally {
             Misc.free(cvReader);
             Misc.free(txReader);
+            Misc.free(epochMetadata);
         }
     }
 
@@ -423,12 +507,25 @@ public class RecoveryCoordinator {
      * ahead -> allow the roll-forward). We only ever SKIP recovery on a CLEAN load that is provably behind
      * the epoch — never on the crash case.
      */
-    private boolean epochIsAheadOfLiveTxn(TableToken token, Path scratch, long epochSeqTxn) {
+    private boolean epochIsAheadOfLiveTxn(TableToken token, Path scratch, SnapshotMarker.Candidate candidate) {
+        final long epochSeqTxn = candidate.epochSeqTxn;
         final int partitionBy;
         final int timestampType;
-        try (TableMetadata meta = engine.getTableMetadata(token)) {
-            partitionBy = meta.getPartitionBy();
-            timestampType = meta.getTimestampType();
+        try {
+            if (candidate.formatVersion != SnapshotMarker.LEGACY_FORMAT_VERSION
+                    && DurableEpochManifest.isMetadataBound(configuration, token, candidate.generation)) {
+                epochCopyPath(scratch, token, TableUtils.META_FILE_NAME, candidate.generation);
+                try (TableReaderMetadata meta = new TableReaderMetadata(configuration)) {
+                    meta.loadMetadata(scratch.$());
+                    partitionBy = meta.getPartitionBy();
+                    timestampType = meta.getTimestampType();
+                }
+            } else {
+                try (TableMetadata meta = engine.getTableMetadata(token)) {
+                    partitionBy = meta.getPartitionBy();
+                    timestampType = meta.getTimestampType();
+                }
+            }
         } catch (CairoException | CairoError e) {
             // Cannot interpret _txn without metadata; do NOT block recovery (the normal open path will
             // surface any real metadata problem properly).
@@ -511,6 +608,25 @@ public class RecoveryCoordinator {
         }
     }
 
+    private void restoreMetadataFile(TableToken token, Path src, Path dst, int epochGeneration) {
+        epochCopyPath(src, token, TableUtils.META_FILE_NAME, epochGeneration);
+        tablePath(dst, token).concat(TableUtils.META_FILE_NAME);
+        // Replace the existing inode in place so any pooled mmap observes the restored bytes. A crash can
+        // tear this copy, but the bound immutable epoch metadata remains authoritative and the next startup's
+        // no-retry metadata probe re-enters recovery and copies it again.
+        if (ff.copy(src.$(), dst.$()) < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("adaptive epoch roll-forward failed to restore metadata [table=").put(token.getTableName())
+                    .put(", src=").put(src).put(", dst=").put(dst).put(']');
+        }
+        fsyncFile(token, dst, TableUtils.META_FILE_NAME);
+        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
+            metadata.loadMetadata(dst.$());
+            LOG.info().$("adaptive epoch metadata restored [table=").$(token)
+                    .$(", metadataVersion=").$(metadata.getMetadataVersion()).I$();
+        }
+    }
+
     /**
      * fsync a single table-dir file by path (open RW, fsync, close).
      */
@@ -560,7 +676,7 @@ public class RecoveryCoordinator {
 
     /**
      * Fail-closed removal of the adaptive durable-epoch anchor for ONE table — the {@code _snapshot}
-     * marker plus the immutable {@code _txn.epoch}/{@code _cv.epoch} copies — given {@code path} positioned
+     * marker plus the immutable {@code _meta.epoch}/{@code _txn.epoch}/{@code _cv.epoch} copies — given {@code path} positioned
      * at the table root and {@code tableRootLen} = the length of that table-root prefix.
      * <p>
      * Call this when the local materialized state has been SUPERSEDED by an external event and the on-disk
@@ -578,9 +694,11 @@ public class RecoveryCoordinator {
      */
     public static void removeAdaptiveEpochArtifacts(FilesFacade ff, Path path, int tableRootLen) {
         removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.SNAPSHOT_FILE_NAME));
+        removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.META_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX));
         removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX));
         removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX));
         for (int generation = 0; generation < 2; generation++) {
+            removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.META_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation));
             removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation));
             removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation));
             removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation));

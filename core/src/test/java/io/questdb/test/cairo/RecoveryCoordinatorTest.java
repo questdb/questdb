@@ -35,10 +35,12 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.SymbolCountProvider;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjHashSet;
@@ -180,6 +182,69 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             new RecoveryCoordinator(engine).recover();
             long after = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events_total");
             assertTrue("a table rewound to its durable epoch at recovery must increment the counter", after > before);
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        }
+    }
+
+    @Test
+    public void testRecoveryRestoresMetadataMatchingEpochTxnAfterStructuralWal() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        try {
+            execute("create table schema_epoch (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("schema_epoch");
+            Assert.assertTrue("creation epoch must bind its metadata payload",
+                    io.questdb.cairo.DurableEpochManifest.isMetadataBound(configuration, token, 0));
+            try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                markerPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                marker.of(markerPath.$());
+                Assert.assertEquals(SnapshotMarker.FORMAT_VERSION, marker.loadCandidates()[0].formatVersion);
+            }
+            execute("alter table schema_epoch add column extra long");
+            drainWalQueue();
+
+            try (Path epochMetaPath = new Path(); TableReaderMetadata epochMetadata = new TableReaderMetadata(configuration)) {
+                epochMetaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME)
+                        .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(0);
+                epochMetadata.loadMetadata(epochMetaPath.$());
+                Assert.assertEquals("creation epoch metadata must remain immutable", 0, epochMetadata.getMetadataVersion());
+            }
+
+            long liveMetadataVersion;
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                liveMetadataVersion = metadata.getMetadataVersion();
+            }
+            Assert.assertTrue("structural WAL must advance live metadata beyond the creation epoch",
+                    liveMetadataVersion > 0);
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            try (Path epochMetaPath = new Path(); TableReaderMetadata epochMetadata = new TableReaderMetadata(configuration)) {
+                epochMetaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME)
+                        .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(0);
+                epochMetadata.loadMetadata(epochMetaPath.$());
+                Assert.assertEquals("writer release must not mutate epoch metadata", 0, epochMetadata.getMetadataVersion());
+                epochMetaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                configuration.getFilesFacade().remove(epochMetaPath.$());
+                Assert.assertFalse("simulate crash during metadata swap", configuration.getFilesFacade().exists(epochMetaPath.$()));
+            }
+            new RecoveryCoordinator(engine).recover();
+
+            final long restoredMetadataVersion;
+            try (Path metaPath = new Path(); TableReaderMetadata metadata = new TableReaderMetadata(configuration);
+                 TxReader txn = new TxReader(configuration.getFilesFacade())) {
+                metaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                metadata.loadMetadata(metaPath.$());
+                restoredMetadataVersion = metadata.getMetadataVersion();
+                metaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
+                txn.ofRO(metaPath.$(), metadata.getTimestampType(), metadata.getPartitionBy());
+                Assert.assertTrue(txn.unsafeLoadAll());
+                Assert.assertEquals("restored _meta and _txn must describe the same schema cut",
+                        restoredMetadataVersion, txn.getMetadataVersion());
+            }
+            Assert.assertEquals("creation baseline must restore metadata version zero", 0, restoredMetadataVersion);
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
@@ -543,6 +608,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             Assert.assertTrue("marker present", epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
             for (int generation = 0; generation < 2; generation++) {
                 final String suffix = TableUtils.EPOCH_COPY_SUFFIX + "." + generation;
+                Assert.assertTrue("meta epoch generation present", epochArtifactExists(tt, TableUtils.META_FILE_NAME, suffix));
                 Assert.assertTrue("txn epoch generation present", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, suffix));
                 Assert.assertTrue("cv epoch generation present", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, suffix));
                 Assert.assertTrue("manifest generation present", epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, "." + generation));
@@ -558,10 +624,12 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             Assert.assertFalse("marker removed", epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
             for (int generation = 0; generation < 2; generation++) {
                 final String suffix = TableUtils.EPOCH_COPY_SUFFIX + "." + generation;
+                Assert.assertFalse("meta epoch generation removed", epochArtifactExists(tt, TableUtils.META_FILE_NAME, suffix));
                 Assert.assertFalse("txn epoch generation removed", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, suffix));
                 Assert.assertFalse("cv epoch generation removed", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, suffix));
                 Assert.assertFalse("manifest generation removed", epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, "." + generation));
             }
+            Assert.assertTrue("live _meta untouched", epochArtifactExists(tt, TableUtils.META_FILE_NAME, ""));
             Assert.assertTrue("live _txn untouched", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, ""));
             Assert.assertTrue("live _cv untouched", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, ""));
 

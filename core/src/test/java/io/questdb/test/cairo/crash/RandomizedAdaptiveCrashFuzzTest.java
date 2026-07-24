@@ -57,8 +57,8 @@ import java.util.concurrent.TimeUnit;
  * exhaustive per-op sweep driver with a randomized/fuzzed workload harness (see
  * {@link io.questdb.test.cairo.fuzz.FuzzRunner} / {@link io.questdb.test.fuzz.FuzzTransaction}) — this
  * task (1 of 7) establishes only the base class and the two primitives every later task in this file
- * relies on: a canonical committed-state {@link #fingerprint} and a {@link #lastMatch} membership check
- * over a recorded fingerprint history.
+ * relies on: a canonical committed-state {@link #fingerprint} and a seqTxn-bound membership check
+ * over recorded committed-state history.
  */
 public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepTest {
 
@@ -97,14 +97,31 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         return fp.toString();
     }
 
-    // Largest index whose recorded fingerprint equals `state`; -1 if none (conservative on coincident txns).
-    private static int lastMatch(ObjList<String> history, CharSequence state) {
+    private static final class CommittedState {
+        private final String fingerprint;
+        private final long seqTxn;
+
+        private CommittedState(long seqTxn, String fingerprint) {
+            this.seqTxn = seqTxn;
+            this.fingerprint = fingerprint;
+        }
+    }
+
+    // Match both causal progress and logical state. Destructive transactions can recreate an earlier
+    // fingerprint at a later seqTxn, so fingerprint-only "last match" is not an ordering oracle.
+    private static int matchingState(ObjList<CommittedState> history, long seqTxn, CharSequence state) {
         for (int i = history.size() - 1; i >= 0; i--) {
-            if (TestUtils.equals(history.getQuick(i), state)) {
+            final CommittedState candidate = history.getQuick(i);
+            if (candidate.seqTxn == seqTxn && TestUtils.equals(candidate.fingerprint, state)) {
                 return i;
             }
         }
         return -1;
+    }
+
+    private long tableSeqTxn(String table) {
+        final TableToken token = engine.verifyTableName(table);
+        return engine.getTableSequencerAPI().getTxnTracker(token).getWriterTxn();
     }
 
     // Uses the 22-arg overload (FuzzRunner.java:757) — the ONLY one that enables partitionToParquet
@@ -134,7 +151,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         return fuzzer.generateTransactions(walTableName, rnd);
     }
 
-    private ObjList<String> buildTwinFingerprints(String twinName, ObjList<FuzzTransaction> txns, Rnd applyRnd) throws Exception {
+    private ObjList<CommittedState> buildTwinFingerprints(String twinName, ObjList<FuzzTransaction> txns, Rnd applyRnd) throws Exception {
         fuzzer.createInitialTableWal(twinName, 0);
         // createInitialTableWal queues its unconditional "column top" ALTERs via WAL but never drains them,
         // so an undrained fp[0] would show the PRE-alter (fewer-column) schema -- a state no crash recovery
@@ -143,15 +160,15 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         // once here so fp[0] reflects the fully-materialized schema with 0 data rows, matching the
         // legitimate committed state a crash during the FIRST transaction's own commit recovers to.
         drainWalQueue();
-        ObjList<String> history = new ObjList<>();
-        history.add(fingerprint(twinName));                          // fp[0] = empty, schema fully materialized
+        ObjList<CommittedState> history = new ObjList<>();
+        history.add(new CommittedState(tableSeqTxn(twinName), fingerprint(twinName))); // empty, schema materialized
         final ObjList<FuzzTransaction> one = new ObjList<>();
         for (int i = 0, n = txns.size(); i < n; i++) {
             one.clear();
             one.add(txns.getQuick(i));
             fuzzer.applyToWal(one, twinName, 1, applyRnd);
             drainWalQueue();
-            history.add(fingerprint(twinName));                      // fp[i+1] = state after txn i
+            history.add(new CommittedState(tableSeqTxn(twinName), fingerprint(twinName))); // state after txn i
         }
         execute("drop table " + twinName);                          // crash(dbRoot) must not see the twin
         return history;
@@ -163,7 +180,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     private final class FuzzCrashWorkload implements AdaptiveCrashWorkload {
         private final long s0, s1;
         private ObjList<FuzzTransaction> txns;
-        private ObjList<String> fp;   // built lazily, once
+        private ObjList<CommittedState> fp;   // built lazily, once
         private TableToken walToken;
 
         FuzzCrashWorkload(long s0, long s1) {
@@ -192,7 +209,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             if (fp == null) {
                 fp = buildTwinFingerprints(TWIN_TABLE, txns, new Rnd(s0, s1)); // once; drops the twin
             }
-            expectedFullCommitIndex = fp.size() - 1;
+            expectedFullCommitSeqTxn = (int) fp.getLast().seqTxn;
             return new TableToken[]{walToken};
         }
 
@@ -206,10 +223,12 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         public int oracle(int k, int n) throws Exception {
             Assert.assertFalse("table left suspended after recovery at k=" + k, anyTableSuspended(walToken)); // bar 2
             String recovered = fingerprint(WAL_TABLE);
-            int p = lastMatch(fp, recovered);                        // bar 1 (membership)
-            Assert.assertTrue("recovered state at k=" + k + " matches NO committed snapshot (corruption?)\n"
-                    + recovered, p >= 0);
-            return p;
+            final long recoveredSeqTxn = tableSeqTxn(WAL_TABLE);
+            int p = matchingState(fp, recoveredSeqTxn, recovered);   // bar 1: causal cut + membership
+            Assert.assertTrue("recovered state at k=" + k + " matches NO committed seqTxn/state (corruption?) "
+                    + "[seqTxn=" + recoveredSeqTxn + "]\n" + recovered, p >= 0);
+            Assert.assertTrue("recovered seqTxn exceeds int test range", recoveredSeqTxn <= Integer.MAX_VALUE);
+            return (int) recoveredSeqTxn;
         }
     }
 
@@ -253,7 +272,20 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         // in the plan. A small interval is wall-clock-timing-flaky against the sweep's `fired` guard.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, windowUs);
-        return forEachAdaptiveCrashPoint(new FuzzCrashWorkload(s0, s1), cap);
+        if (windowUs == 0) {
+            // Pin beyond the one-hour threshold: the first batch deterministically advances one epoch while
+            // the fixed clock makes ApplyWal2TableJob's time quota deterministic across every crash point.
+            // With the real clock, load jitter changed batch boundaries and therefore changed durability-op
+            // identity between adjacent k values, invalidating the W=0 monotone-staircase oracle.
+            setCurrentMicros(3_600_001_000L);
+        }
+        try {
+            return forEachAdaptiveCrashPoint(new FuzzCrashWorkload(s0, s1), cap);
+        } finally {
+            if (windowUs == 0) {
+                setCurrentMicros(-1);
+            }
+        }
     }
 
     private void assertW0MonotonePrefix(SweepResult r) {
@@ -270,10 +302,9 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         Assert.assertFalse("sweep truncated (N=" + r.n + " > cap): size counts so N <= cap, else full history "
                 + "is never checked", r.truncated);
         assertW0MonotonePrefix(r);
-        // r.n is the number of durability operations, not the number of logical fuzz transactions.
-        // The oracle returns an index into fp[], whose final committed state is fp.size()-1.
+        // r.n is the number of durability operations; the oracle returns the materialized sequencer cut.
         Assert.assertEquals("last atomic crash point must recover the full committed history",
-                expectedFullCommitIndex, r.recoveredByK()[r.sweptPoints]);
+                expectedFullCommitSeqTxn, r.recoveredByK()[r.sweptPoints]);
     }
 
     @Test
@@ -312,26 +343,28 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     public void testFingerprintMembershipPrimitive() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table fp (ts timestamp, v long) timestamp(ts) partition by day wal");
-            ObjList<String> history = new ObjList<>();
-            history.add(fingerprint("fp"));                          // fp[0] empty
+            ObjList<CommittedState> history = new ObjList<>();
+            history.add(new CommittedState(tableSeqTxn("fp"), fingerprint("fp"))); // empty
             for (int i = 0; i < 3; i++) {
                 execute("insert into fp values (" + (i * 1_000_000L) + ", " + i + ")");
                 drainWalQueue();
-                history.add(fingerprint("fp"));                      // fp[1..3]
+                history.add(new CommittedState(tableSeqTxn("fp"), fingerprint("fp"))); // states 1..3
             }
             // the current (full) state must match the last snapshot
-            Assert.assertEquals(3, lastMatch(history, fingerprint("fp")));
-            // an intermediate snapshot is found at its own index
-            Assert.assertEquals(1, lastMatch(history, history.getQuick(1)));
-            // a fabricated state matches nothing
-            Assert.assertEquals(-1, lastMatch(history, "not a real dump"));
+            CommittedState full = history.getQuick(3);
+            Assert.assertEquals(3, matchingState(history, full.seqTxn, fingerprint("fp")));
+            // an intermediate snapshot is found only with both its seqTxn and fingerprint
+            CommittedState intermediate = history.getQuick(1);
+            Assert.assertEquals(1, matchingState(history, intermediate.seqTxn, intermediate.fingerprint));
+            Assert.assertEquals(-1, matchingState(history, intermediate.seqTxn, "not a real dump"));
 
-            // lastMatch must return the LARGEST matching index, not merely the first: append a second
-            // snapshot coincident with history[1] at a higher index and confirm the match follows it
-            // there (Tasks 5-7 rely on "largest match", not "first match").
+            // A later destructive transaction may recreate identical rows. Distinct seqTxns must remain
+            // distinguishable instead of being misreported as non-monotone causal progress.
             int coincidentIndex = history.size();
-            history.add(history.getQuick(1));
-            Assert.assertEquals(coincidentIndex, lastMatch(history, history.getQuick(1)));
+            history.add(new CommittedState(intermediate.seqTxn + 100, intermediate.fingerprint));
+            Assert.assertEquals(1, matchingState(history, intermediate.seqTxn, intermediate.fingerprint));
+            Assert.assertEquals(coincidentIndex,
+                    matchingState(history, intermediate.seqTxn + 100, intermediate.fingerprint));
         });
     }
 
@@ -339,18 +372,20 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     public void testTwinFingerprintsDeterministic() throws Exception {
         assertMemoryLeak(() -> {
             final long s0 = 42L, s1 = 99L;
-            ObjList<String> h1 = runTwinOnce("wal_a", "twin_a", s0, s1);
-            ObjList<String> h2 = runTwinOnce("wal_b", "twin_b", s0, s1);
+            ObjList<CommittedState> h1 = runTwinOnce("wal_a", "twin_a", s0, s1);
+            ObjList<CommittedState> h2 = runTwinOnce("wal_b", "twin_b", s0, s1);
             Assert.assertEquals("fp history length must be deterministic", h1.size(), h2.size());
             for (int i = 0; i < h1.size(); i++) {
+                Assert.assertEquals("seqTxn[" + i + "] must be identical across runs",
+                        h1.getQuick(i).seqTxn, h2.getQuick(i).seqTxn);
                 Assert.assertTrue("fp[" + i + "] must be identical across two runs of the same seed",
-                        TestUtils.equals(h1.getQuick(i), h2.getQuick(i)));
+                        TestUtils.equals(h1.getQuick(i).fingerprint, h2.getQuick(i).fingerprint));
             }
             Assert.assertTrue("fp history must be non-trivial", h1.size() > 3);
         });
     }
 
-    private ObjList<String> runTwinOnce(String walName, String twinName, long s0, long s1) throws Exception {
+    private ObjList<CommittedState> runTwinOnce(String walName, String twinName, long s0, long s1) throws Exception {
         Rnd genRnd = new Rnd(s0, s1);
         ObjList<FuzzTransaction> txns = generateTxns(genRnd, walName);
         return buildTwinFingerprints(twinName, txns, new Rnd(s0, s1));
@@ -373,21 +408,21 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         });
     }
 
-    private int expectedFullCommitIndex;
+    private int expectedFullCommitSeqTxn;
 
     private static final long[] FIXED_SEEDS0 = {1234L, 22L, 8080L};
     private static final long[] FIXED_SEEDS1 = {5678L, 33L, 9090L};
 
-    // NIGHTLY-only (run with -Dquestdb.fuzz.nightly=true): the full op library currently gives N≈764
+    // NIGHTLY-only (run with -Dquestdb.fuzz.nightly=true): the full op library currently gives N≈828
     // durability ops and assertW0Bars requires a FULL untruncated sweep (cap≥N), so this is ~85 min for one
     // seed — far past the regular CI ceiling (the @Rule Timeout above lifts to 3h under the nightly flag).
-    // One representative seed; cap 800 avoids truncation. CI covers the ordering fix via the deterministic
+    // One representative seed; cap 900 avoids truncation. CI covers the ordering fix via the deterministic
     // testConvertPartitionCrashSafeW0.
     @Test
     public void testFullLibraryW0() throws Exception {
         Assume.assumeTrue("full-library crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
                 Boolean.getBoolean(NIGHTLY_PROP));
-        runWithCrashFacade(() -> assertW0Bars(runSeedSweep(FIXED_SEEDS0[0], FIXED_SEEDS1[0], 0, 800)));
+        runWithCrashFacade(() -> assertW0Bars(runSeedSweep(FIXED_SEEDS0[0], FIXED_SEEDS1[0], 0, 900)));
     }
 
     // CI-fast regression guard for the applyNonStructural events-before-sequencer ordering fix. Deterministic

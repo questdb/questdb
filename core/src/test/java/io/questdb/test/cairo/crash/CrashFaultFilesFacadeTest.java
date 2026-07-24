@@ -97,6 +97,23 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
     }
 
     @Test
+    public void testCrashPreservesDurableHardLinkContent() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("namespace-hard-link").getAbsolutePath();
+        try (Path source = new Path().of(dir).concat("source.d"); Path target = new Path().of(dir).concat("target.d")) {
+            writeAndSync(ff, source, (byte) 7);
+            syncDirectory(ff, dir);
+            ff.markDurableBaseline(dir);
+            Assert.assertEquals(io.questdb.std.Files.FILES_RENAME_OK, ff.hardLink(source.$(), target.$()));
+            Assert.assertArrayEquals(ff.durableContentOf(source.toString()), ff.durableContentOf(target.toString()));
+            syncDirectory(ff, dir);
+            ff.crash(dir);
+            assertFileBytes(source, (byte) 7);
+            assertFileBytes(target, (byte) 7);
+        }
+    }
+
+    @Test
     public void testCrashRestoresBothFilesAfterUnsyncedRenameOverwrite() throws Exception {
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
         final String dir = temp.newFolder("namespace-rename-overwrite").getAbsolutePath();
