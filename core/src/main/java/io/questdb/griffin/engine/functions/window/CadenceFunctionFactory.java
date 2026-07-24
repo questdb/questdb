@@ -44,11 +44,13 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * cadence(stride) window function.
@@ -170,7 +172,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
     // cadence(stride[, seed]) over (order by xxx) - no partition by, no framing.
     static class CadenceFunction extends BaseWindowFunction implements Reopenable {
 
-        private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+        private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
         private final int seedMode;
         private final int seedPosition;
         // Non-null only in SEED_MODE_DETERMINISTIC; may be a bind variable / runtime constant, so its
@@ -373,6 +375,11 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             selIdx = 0;
             selected.reopen();
             selected.clear();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            selected.setMemoryTracker(tracker);
         }
 
         @Override

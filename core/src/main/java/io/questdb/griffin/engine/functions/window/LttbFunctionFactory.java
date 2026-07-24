@@ -33,9 +33,11 @@ import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.table.LttbAlgorithm;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Micros;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * lttb(ts, value, target) window function.
@@ -174,8 +176,8 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
     // Thin subclass of the shared M4FunctionFactory.BucketSelectWindowFunction purely to release
     // LttbAlgorithm's native scratch lists on close(). M4Algorithm and MinMaxAlgorithm are stateless
     // singletons, so the shared base's close() has nothing algorithm-specific to free - but LttbAlgorithm
-    // owns two DirectLongList/DirectIntList fields (lazily allocated only in gap mode; see
-    // LttbAlgorithm.selectGapPreserving) and must be closed explicitly.
+    // owns two DirectLongList fields (lazily allocated only in gap mode; see
+    // LttbAlgorithm.selectGapPreserving) and must be tracker-bound and closed explicitly.
     static class LttbBucketSelectWindowFunction extends M4FunctionFactory.BucketSelectWindowFunction {
         private final LttbAlgorithm lttbAlgorithm;
 
@@ -188,6 +190,18 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
         public void close() {
             super.close();
             lttbAlgorithm.close();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            lttbAlgorithm.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            lttbAlgorithm.setMemoryTracker(tracker);
         }
     }
 }

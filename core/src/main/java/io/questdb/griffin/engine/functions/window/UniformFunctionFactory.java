@@ -43,10 +43,12 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * uniform(n) window function.
@@ -127,7 +129,7 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
     // uniform(n) over (order by xxx) - no partition by, no framing.
     static class UniformFunction extends BaseWindowFunction implements Reopenable {
 
-        private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+        private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
         // May be a bind variable / runtime constant, so its value is resolved every execution in
         // init() (before pass1/preparePass2 need it) rather than frozen at newInstance.
         private final Function targetArg;
@@ -303,6 +305,11 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
             selIdx = 0;
             selected.reopen();
             selected.clear();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            selected.setMemoryTracker(tracker);
         }
 
         @Override

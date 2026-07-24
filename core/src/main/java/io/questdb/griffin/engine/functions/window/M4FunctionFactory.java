@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
@@ -46,10 +47,12 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * m4(ts, value, target) window function.
@@ -152,8 +155,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         // base re-read; see pass2NeedsBaseRecord(). Same native-memory lifecycle as `selected`
         // (allocate on reopen, clear on toTop, close on reset/close) - a prior real native leak on
         // the lttb gap scratch is the discipline mirrored here.
-        private final DirectLongList nullBits = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-        private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+        private final DirectLongList nullBits = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
+        private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
         // May be a bind variable / runtime constant, so its value is resolved every execution in
         // init() (before pass1/preparePass2 need it) rather than frozen at newInstance.
         private final Function targetArg;
@@ -168,6 +171,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         // appended, never counted) - a null seeding a bucket's min/max would otherwise poison it forever
         // (NaN comparisons are always false, so minVal/maxVal, once NaN, never update again).
         private boolean lastKeep;    // last keep-flag computed in pass2; see getBool() below
+        @Nullable
+        private MemoryTracker memoryTracker;
         private ObjList<ExpressionNode> orderBy;
         // pass1 (count) and pass2 (pass2Ordinal/selIdx) are two separate traversals of the same
         // partition. CachedWindowRecordCursorFactory must replay the SAME WindowSortBuffer order
@@ -365,6 +370,9 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                 appendNullFlag(true);
                 return;
             }
+            if (count >= Integer.MAX_VALUE) {
+                throw CairoException.nonCritical().put(name).put(" input exceeds maximum of ").put(Integer.MAX_VALUE).put(" rows");
+            }
             appendNullFlag(false);
             ensureCapacity();
             final long offset = count * SubsampleAlgorithm.ENTRY_SIZE;
@@ -405,6 +413,9 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             selIdx = 0;
             pass2Ordinal = 0;
             pass2Row = 0;
+            if (count > Integer.MAX_VALUE || target > Integer.MAX_VALUE) {
+                throw CairoException.nonCritical().put(name).put(" input exceeds maximum of ").put(Integer.MAX_VALUE).put(" rows");
+            }
             if (count <= target) {
                 // When the buffered row count already fits the target, keep every buffered row rather
                 // than bucketing. Running algorithm.select here would dedup first/min/max/last and can drop
@@ -430,6 +441,13 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             selected.clear();
             nullBits.reopen();
             nullBits.clear();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            this.memoryTracker = tracker;
+            selected.setMemoryTracker(tracker);
+            nullBits.setMemoryTracker(tracker);
         }
 
         @Override
@@ -482,14 +500,19 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         private void ensureCapacity() {
             if (buffer == 0) {
                 bufferCapacity = INITIAL_CAPACITY;
-                buffer = Unsafe.malloc(bufferCapacity * SubsampleAlgorithm.ENTRY_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+                buffer = Unsafe.malloc(
+                        bufferCapacity * SubsampleAlgorithm.ENTRY_SIZE,
+                        MemoryTag.NATIVE_FUNC_RSS,
+                        memoryTracker
+                );
             } else if (count >= bufferCapacity) {
                 final long newCapacity = bufferCapacity << 1;
                 buffer = Unsafe.realloc(
                         buffer,
                         bufferCapacity * SubsampleAlgorithm.ENTRY_SIZE,
                         newCapacity * SubsampleAlgorithm.ENTRY_SIZE,
-                        MemoryTag.NATIVE_FUNC_RSS
+                        MemoryTag.NATIVE_FUNC_RSS,
+                        memoryTracker
                 );
                 bufferCapacity = newCapacity;
             }
@@ -497,7 +520,12 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
 
         private void freeBuffer() {
             if (buffer != 0) {
-                Unsafe.free(buffer, bufferCapacity * SubsampleAlgorithm.ENTRY_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+                Unsafe.free(
+                        buffer,
+                        bufferCapacity * SubsampleAlgorithm.ENTRY_SIZE,
+                        MemoryTag.NATIVE_FUNC_RSS,
+                        memoryTracker
+                );
                 buffer = 0;
                 bufferCapacity = 0;
             }

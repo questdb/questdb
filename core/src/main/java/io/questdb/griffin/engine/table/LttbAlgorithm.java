@@ -25,10 +25,11 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Largest Triangle Three Buckets (LTTB) downsampling algorithm.
@@ -56,8 +57,10 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
     private final long gapThresholdMicros;
     // Reusable native lists for segment bookkeeping. Stored as cursor-lifetime
     // fields to avoid per-execution allocation. Cleared per execution.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private DirectLongList segments;
-    private DirectIntList targets;
+    private DirectLongList targets;
 
     public LttbAlgorithm(long gapThresholdMicros) {
         this.gapThresholdMicros = gapThresholdMicros;
@@ -71,6 +74,16 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         if (targets != null) {
             targets.close();
             targets = null;
+        }
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
+        if (segments != null) {
+            segments.setMemoryTracker(memoryTracker);
+        }
+        if (targets != null) {
+            targets.setMemoryTracker(memoryTracker);
         }
     }
 
@@ -104,7 +117,9 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                                      DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         // Pass 1: identify segments
         if (segments == null) {
-            segments = new DirectLongList(64, MemoryTag.NATIVE_FUNC_RSS);
+            segments = new DirectLongList(64, MemoryTag.NATIVE_FUNC_RSS, true);
+            segments.setMemoryTracker(memoryTracker);
+            segments.reopen();
         }
         segments.clear();
 
@@ -151,7 +166,9 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         }
 
         if (targets == null) {
-            targets = new DirectIntList(64, MemoryTag.NATIVE_FUNC_RSS);
+            targets = new DirectLongList(64, MemoryTag.NATIVE_FUNC_RSS, true);
+            targets.setMemoryTracker(memoryTracker);
+            targets.reopen();
         }
         targets.clear();
 
@@ -181,7 +198,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             // segments from the last one backward, respecting floor.
             int s = segCount - 1;
             while (totalAllocated > totalPoints && s >= 0) {
-                int t = targets.get(s);
+                int t = (int) targets.get(s);
                 int floor = Math.min(2, (int) segments.get(s * 2 + 1));
                 if (t > floor) {
                     int trim = Math.min(t - floor, totalAllocated - totalPoints);
@@ -196,7 +213,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         for (int s = 0; s < segCount; s++) {
             int start = (int) segments.get(s * 2);
             int size = (int) segments.get(s * 2 + 1);
-            int segTarget = targets.get(s);
+            int segTarget = (int) targets.get(s);
             if (size <= segTarget) {
                 for (int j = start; j < start + size; j++) {
                     if ((j & 0xFFF) == 0) {
