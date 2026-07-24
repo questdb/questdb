@@ -1339,6 +1339,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .put(instance.getDefinition().getViewName()).put(']');
         }
         boolean populateTier = ensureStagingAndTier(instance, outMetadata, cursorTimestampIndex);
+        if (populateTier) {
+            // Seed an empty published slot from the LV table before the drain can
+            // publish into it; see stageInMemoryTierWhenEmpty for why an empty slot
+            // cannot seed its own seam. Runs here, where the tier and the staging
+            // buffer exist but the drain has not staged a row yet.
+            stageInMemoryTierWhenEmpty(instance);
+        }
 
         // Snapshot the LV's latestSeenTs at cycle entry. On O3 detect +
         // rollback any in-cycle bumps from the discarded rows must roll back
@@ -1674,6 +1681,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // served under a passing read fence. Mirrors incrementalRefresh, which
             // calls ensureStagingAndTier up-front.
             final boolean populateTier = ensureStagingAndTier(instance, outMetadata, cursorTimestampIndex);
+            if (populateTier) {
+                // Same empty-slot seed the lead path runs, for the same reason: this
+                // path's publish is a disk subset, and an empty slot would still cut
+                // the seam at its own staging minimum. See stageInMemoryTierWhenEmpty.
+                stageInMemoryTierWhenEmpty(instance);
+            }
             if (overlap) {
                 // Release the scan reader before o3Replay re-pins via its own
                 // waitForApply (don't hold two base readers).
@@ -6689,27 +6702,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // scalar per-row, per-column copy.
                 long leadCount = pubSlot.leadRowCount();
                 long overlapCount = pubSlot.rowCount() - leadCount;
-                // Clamp the eviction threshold to the lead's minimum timestamp so
-                // an overlap group sharing that timestamp stays resident. When the
-                // whole overlap ages out (lo == overlapCount) the seam lands at the
-                // lead minimum (lead_min); a disk-backed overlap row at exactly
-                // lead_min - an additive same-ts row at the frontier, admitted
-                // because the O3 trigger is a strict below-frontier compare - would
-                // then be served by neither disk (the reader's scan stops strictly
-                // below the seam) nor the lead-only slot: silent row loss plus a
-                // size() overcount that breaks LIMIT. Retaining every overlap row
-                // with ts >= lead_min keeps that group in the slot at the seam,
-                // where the overlap band still agrees with disk row-for-row. This
-                // mirrors the tierStale rebuild guard in finishLeadRefresh that
-                // avoids the same additive-same-ts gap. In the common unique-ts
-                // case lead_min is strictly above every overlap ts, so the clamp
-                // retains nothing extra and eviction is unchanged.
+                // Clamp the eviction threshold to the minimum timestamp of whatever
+                // will sit above the retained overlap - the lead's minimum when the
+                // slot carries one, else this cycle's staging minimum - so an overlap
+                // group sharing that timestamp stays resident. When the whole overlap
+                // ages out (lo == overlapCount) the seam lands on that minimum; a
+                // disk-backed overlap row at exactly it - an additive same-ts row at
+                // the frontier, admitted because the O3 trigger is a strict
+                // below-frontier compare - would then be served by neither disk (the
+                // reader's scan stops strictly below the seam) nor the slot: silent
+                // row loss plus a size() overcount that breaks LIMIT. Retaining every
+                // overlap row at or above that minimum keeps the group in the slot at
+                // the seam, where the overlap band still agrees with disk row-for-row.
+                // This mirrors the tierStale rebuild guard in finishLeadRefresh and
+                // the empty-slot seed in stageInMemoryTierWhenEmpty, which close the
+                // same additive-same-ts gap on their own paths. In the common
+                // unique-ts case that minimum sits strictly above every overlap ts,
+                // so the clamp retains nothing extra and eviction is unchanged.
+                //
+                // A lead-carrying slot clamps at the lead rather than at staging
+                // because the lead is the older of the two (staging appends on top of
+                // it) and the whole band above the retained overlap has to survive.
                 long evictionThreshold = retainThreshold;
+                long aboveOverlapMinTs = Numbers.LONG_NULL;
                 if (leadCount > 0) {
-                    long leadMinTs = pubSlot.getLong(overlapCount, tsCol);
-                    if (leadMinTs < evictionThreshold) {
-                        evictionThreshold = leadMinTs;
-                    }
+                    aboveOverlapMinTs = pubSlot.getLong(overlapCount, tsCol);
+                } else if (stagingBuffer.rowCount() > 0) {
+                    aboveOverlapMinTs = stagingBuffer.getLong(0, tsCol);
+                }
+                if (aboveOverlapMinTs != Numbers.LONG_NULL && aboveOverlapMinTs < evictionThreshold) {
+                    evictionThreshold = aboveOverlapMinTs;
                 }
                 long lo = 0;
                 long hi = overlapCount;
@@ -6842,7 +6864,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // disk reader (no intern). The id -> string lists stay for any pinned
         // pre-O3 cursor.
         tier.getSymbolCache().onO3();
-        // Stage the recent IN MEMORY window from the rewritten, applied LV table.
+        restageInMemoryTierFromDisk(instance, tier);
+    }
+
+    /**
+     * Replaces the published slot with the LV table's current {@code IN MEMORY}
+     * window, stamped with the table's applied seqTxn and carrying no un-flushed
+     * lead. The staging half of {@link #rebuildInMemoryTier} (which adds the
+     * post-O3 symbol-cache drop) and of {@link #stageInMemoryTierWhenEmpty}; see
+     * {@link #rebuildInMemoryTier} for the read bound and the acquire protocol.
+     * <p>
+     * Every caller must have zeroed {@code instance.leadRowCount} first: the
+     * staged rows are a pure disk subset, so a surviving lead count would
+     * reclassify durable rows as un-flushed and the next flush would re-append
+     * them as duplicates.
+     */
+    private void restageInMemoryTierFromDisk(LiveViewInstance instance, LiveViewInMemoryTier tier) {
+        // Stage the recent IN MEMORY window from the applied LV table.
         // The reader's getSeqTxn() is the same coordinate a query's disk reader
         // reports, so stamping the slot with it makes the fence pass for an
         // immediately-following cursor (no intervening apply).
@@ -6865,23 +6903,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 throw t;
             }
             tier.releaseWriteWithoutPublish(publishedIdx);
-            // Published slot now mirrors the rewritten disk tail; any prior
-            // stale-row marking is resolved.
+            // Published slot now mirrors the disk tail; any prior stale-row marking
+            // is resolved.
             instance.setTierStale(false);
             return;
         }
         // Slow-path: a reader pins the published slot. Fill the non-published
         // slot and swap to it; the old slot's pinned readers keep their frozen
-        // (pre-O3) rows until they release, and the fence routes them disk-only.
+        // (pre-restage) rows until they release, and the fence routes them disk-only.
         int writeIdx = 1 - publishedIdx;
         LiveViewInMemoryBuffer writeSlot = tier.tryAcquireWrite(writeIdx);
         if (writeSlot == null) {
-            // Both slots reader-pinned: the rebuild is skipped, so the published
-            // slot keeps its pre-O3 rows (the replay re-sequenced them on disk).
-            // Mark the tier stale so the next normal publish drops those retained
-            // rows instead of re-stamping them with a matching seqTxn - otherwise
-            // a read would serve the stale pre-O3 rows. The fence keeps reads
-            // correct until then (the stale slot's seqTxn no longer matches disk).
+            // Both slots reader-pinned: the restage is skipped, so the published slot
+            // keeps whatever it held - the pre-O3 rows the replay re-sequenced on disk
+            // for the rebuild caller, or nothing at all for the empty-slot seed. Mark
+            // the tier stale so the next normal publish drops those retained rows
+            // instead of re-stamping them with a matching seqTxn - otherwise a read
+            // would serve the stale rows - and so the lead path flushes to disk rather
+            // than seaming a slot that does not mirror the disk tail. The fence keeps
+            // reads correct until then (the stale slot's seqTxn no longer matches disk).
             instance.setTierStale(true);
             LOG.info().$("live view in-mem tier rebuild skipped, both slots pinned [view=")
                     .$(instance.getDefinition().getViewName()).I$();
@@ -6919,6 +6959,60 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return null;
         }
         return rebuildActiveWindowStateFromAppliedBase(instance, "mid-drain refresh failure");
+    }
+
+    /**
+     * Seeds an empty published slot from the LV table before the cycle's drain can
+     * publish into it. A restart (and the seed sweep, which appends straight to the
+     * LV WAL) leaves the tier empty over an LV table that already holds rows, and
+     * the first publish into an empty slot seeds {@code seamTs} from the staged
+     * rows' own minimum timestamp.
+     * <p>
+     * That seam is only sound when no disk row below the staged rows shares their
+     * minimum timestamp, and an additive commit that extends the durable frontier's
+     * own timestamp group breaks it: the O3 trigger is a strict below-frontier
+     * compare, so such a commit is an ordinary forward append. The reader then
+     * serves neither side of the disk rows at that timestamp - the disk scan stops
+     * strictly below the seam and the slot never held them - while {@code size()}
+     * still counts them, so the stream and the count disagree and a LIMIT near the
+     * seam reads short. The pure-lead slot the first publish produces is covered by
+     * {@code LiveViewRecordCursor.hasNext}'s {@code leadStart == 0} branch, but the
+     * flush that follows drops the slot's lead count to zero and re-engages the
+     * seam cut over exactly those rows.
+     * <p>
+     * Staging from disk closes it because {@link #stageInMemoryWindowFromDisk} cuts
+     * the window at the first row at or above {@code maxTs - IN_MEMORY}, which is
+     * the first row of its timestamp group: every disk row at or above the seam is
+     * then in the slot, and the drain appends on top without moving it.
+     * <p>
+     * Self-limiting: a publish never empties a populated slot (it always appends
+     * this cycle's staging rows), so this runs at most once per view per process.
+     * When both slots are reader-pinned the stage is skipped and marks the tier
+     * stale, which routes this cycle's lead straight to disk and rebuilds the slot
+     * as a clean disk subset - the same fallback the O3 rebuild-skip takes.
+     * <p>
+     * Callers run this after {@link #ensureStagingAndTier} (which allocates both the
+     * tier and the worker-local staging buffer this borrows) and before the drain
+     * stages its first row, so it hands the buffer back reset.
+     */
+    private void stageInMemoryTierWhenEmpty(LiveViewInstance instance) {
+        final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        if (tier == null || tier.getSlot(tier.getPublishedIdx()).rowCount() > 0) {
+            return;
+        }
+        // An empty slot carries no un-flushed lead, so the staged disk subset cannot
+        // orphan one. Guard anyway: replacing the slot under a non-zero count would
+        // make the next flush re-append rows that are already durable.
+        if (instance.getLeadRowCount() != 0) {
+            return;
+        }
+        try {
+            restageInMemoryTierFromDisk(instance, tier);
+        } finally {
+            // The stage filled the staging buffer with the disk window; the drain
+            // about to run appends from row 0, so give it back empty.
+            stagingBuffer.reset();
+        }
     }
 
     /**

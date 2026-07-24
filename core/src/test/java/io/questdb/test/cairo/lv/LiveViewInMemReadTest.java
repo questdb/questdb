@@ -2348,6 +2348,80 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testEvictedOverlapWithAdditiveFrontierTieKeepsAllRows() throws Exception {
+        // The eviction clamp's other half. The slow path retains every overlap row at
+        // or above the minimum timestamp of whatever ends up above it, so a group
+        // straddling the seam stays resident. That minimum used to be read only off
+        // the un-flushed lead, so a slot with NO lead - the state a flush leaves,
+        // since restampSlotAfterFlush zeroes the count - clamped at nothing and let
+        // the whole overlap age out.
+        //
+        // Reaching it needs one batch wider than the IN MEMORY window, so its own max
+        // pushes the retain threshold past every overlap row, plus an additive same-ts
+        // row at the frontier (a strict below-frontier O3 compare admits it as a
+        // forward append) to put a disk row on the resulting seam. The seam then lands
+        // on that timestamp with the slot holding only the new rows, so the disk row
+        // there is served by neither tier while size() still counts it.
+        assertMemoryLeak(() -> {
+            // Growth budget 0 compacts on every publish, so the publish takes the
+            // evict-and-swap slow path rather than appending in place.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            final long dataStart = 1_700_000_000_000_000L;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "(" + (dataStart + 1) + ", 1), (" + (dataStart + 2) + ", 2), (" + (dataStart + 3) + ", 3)");
+                drainWalQueue();
+                setCurrentMicros(250_000L); // > FLUSH EVERY 100ms: flushes x = 1..3, so the slot carries no lead
+                drainJob(job);
+                drainWalQueue();
+
+                // Inside FLUSH EVERY, so this batch stays the un-flushed lead. Its
+                // minimum ties the frontier and its max sits 5s on, five times the
+                // IN MEMORY window, so the retain threshold clears every overlap row.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "(" + (dataStart + 3) + ", 4), (" + (dataStart + 5_000_000L) + ", 5)");
+                drainWalQueue();
+                setCurrentMicros(300_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Disk holds only the flushed prefix here, so the read is compared against
+            // a from-base recompute rather than against the disk-only path.
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                try (LiveViewRecordCursor cursor = openLvCursor(factory)) {
+                    long streamed = 0;
+                    while (cursor.hasNext()) {
+                        streamed++;
+                    }
+                    Assert.assertEquals("eviction must not carry the seam past the disk row it ties with",
+                            5, streamed);
+                    Assert.assertEquals("size() must agree with the rows the cursor actually serves",
+                            streamed, cursor.size());
+                }
+            }
+
+            // The clamp's shape: the tie row is the one overlap row eviction spared,
+            // so the slot straddles the seam instead of starting above it.
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            LiveViewInMemoryBuffer slot = tier.getSlot(tier.getPublishedIdx());
+            Assert.assertEquals("the two lead rows plus the retained tie row", 3, slot.rowCount());
+            Assert.assertEquals("only the batch is un-flushed", 2, slot.leadRowCount());
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
     public void testNonCapableO3ResyncsLeadRowCount() throws Exception {
         // M1b: finishLeadRefresh zeroes instance.leadRowCount before o3Replay because
         // the capable path rebuilds the tier as a pure disk subset. The non-capable
@@ -3904,6 +3978,57 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRestartThenFlushWithAdditiveFrontierTieKeepsAllRows() throws Exception {
+        // The sequel to testRestartWithAdditiveFrontierTieKeepsAllRows. There the
+        // post-restart slot is PURE lead, which hasNext's leadStart == 0 branch serves by
+        // handing the whole disk over. Flush that lead and the slot stops being pure lead:
+        // restampSlotAfterFlush drops leadRowCount to 0, so every slot row becomes overlap,
+        // leadStart == rowCount, and the seam cut re-engages at the slot's minimum ts.
+        //
+        // The slot's minimum is the frontier the tie sits on, and the slot carries only the
+        // rows the post-restart drain produced - not the pre-restart disk row at that same
+        // timestamp. Disk stops strictly below the seam and the slot never held that row, so
+        // it is served by neither tier, while size() (diskSize - leadStart + rowCount) still
+        // counts it.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLeadWithFrontierTie();
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(restored);
+            restored.setLastFlushTimeUs(0L); // suppress the flush on the restore tick
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job); // restore, then rebuild the lead from the retained base WAL
+                setCurrentMicros(2_000_000L); // past FLUSH EVERY 1s: the lead lands on disk
+                drainJob(job);
+            }
+
+            LiveViewInMemoryTier tier = restored.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            Assert.assertEquals("the flush must leave the slot a pure disk subset",
+                    0, tier.getSlot(tier.getPublishedIdx()).leadRowCount());
+
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                try (LiveViewRecordCursor cursor = openLvCursor(factory)) {
+                    long streamed = 0;
+                    while (cursor.hasNext()) {
+                        streamed++;
+                    }
+                    Assert.assertEquals("the re-engaged seam must not drop the disk row at the slot's minimum ts",
+                            5, streamed);
+                    Assert.assertEquals("size() must agree with the rows the cursor actually serves",
+                            streamed, cursor.size());
+                }
+            }
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
     public void testRestartRecoversUnflushedLeadFromBaseWal() throws Exception {
         // Crash between refresh and flush: the un-flushed lead lives only in RAM,
         // so a restart loses it. The base WAL is retained up to the applied point
@@ -3934,14 +4059,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             }
 
             // The lead is back in RAM (2 rows) and the read equals the recompute.
-            // After a restart the rebuilt tier holds only the lead; the overlap (the
-            // flushed rows within the IN MEMORY window) is served from disk until a
-            // later flush rebuilds the resident window, so only the 2 lead rows are
-            // served from the tier here. Correctness is unaffected - disk holds the
-            // overlap - and the seam cut stitches the two together.
+            // The first post-restart cycle seeds the empty slot from the LV table
+            // (stageInMemoryTierWhenEmpty) before the drain publishes into it, so the
+            // overlap - the 3 flushed rows, all inside the 30m IN MEMORY window - is
+            // resident too and all 5 rows come from the tier.
             InnerRead after = readInner("SELECT * FROM lv");
             Assert.assertTrue("post-restart read must be routing-eligible", after.routingEligible);
-            Assert.assertEquals("only the rebuilt lead is resident after restart", 2, after.inMemRowsServed);
+            Assert.assertEquals("the staged overlap plus the rebuilt lead are resident after restart",
+                    5, after.inMemRowsServed);
             Assert.assertEquals("two un-flushed lead rows recovered from the base WAL", 2, after.leadRowsServed);
             assertLvMatchesOracle("SELECT * FROM lv",
                     "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
@@ -3958,13 +4083,18 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // START FROM boundary that cuts the base in half.
         //
         // The seed deliberately does not populate the tier - it appends straight to the LV WAL and
-        // applies inline - so the tier is empty when the view flips ACTIVE, and the first drain
-        // afterwards fills it with the lead alone. The read therefore has to stitch a RAM lead onto
-        // a disk prefix the tier never staged, and the seam has to be cut in the VIEW's row space,
-        // not the base's: four base rows sit below the boundary and are in neither tier. A seam
-        // derived from base rows would land four rows off and either duplicate the boundary row or
-        // drop it.
+        // applies inline - so the tier is empty when the view flips ACTIVE. The first drain after
+        // it seeds the slot from the LV table (stageInMemoryTierWhenEmpty) and the IN MEMORY window
+        // then ages the oldest of those rows back out, so the read stitches a RAM lead and a
+        // partial overlap onto a disk prefix that runs older than either. The seam has to be cut in
+        // the VIEW's row space, not the base's: four base rows sit below the boundary and are in
+        // neither tier. A seam derived from base rows would land four rows off and either duplicate
+        // the boundary row or drop it.
         assertMemoryLeak(() -> {
+            // Compact on every publish so the IN MEMORY window actually evicts, leaving a disk
+            // band below the seam. Without it every row stays resident and the seam degenerates
+            // into the lead-only split, which cannot tell a mis-cut seam apart.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // Four rows below the boundary, four at or above it.
             execute("INSERT INTO base (ts, x) VALUES " +
@@ -3977,7 +4107,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "('2026-04-01T00:00:07.000000Z', 7)," +
                     "('2026-04-01T00:00:08.000000Z', 8)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM '2026-04-01T00:00:05.000000Z' AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5s START FROM '2026-04-01T00:00:05.000000Z' AS " +
                     "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -4008,16 +4138,15 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                 drainJob(job);
             }
 
-            // The seam. A flush publishes into the tier incrementally - only a rebuild
-            // (stageInMemoryWindowFromDisk) ever re-reads the LV table's whole resident window -
-            // and the seed publishes nothing at all, so the four seeded rows are in NO tier slot
-            // even though the 30m window covers them. The tier holds the flushed pair plus the
-            // un-flushed lead, and the read stitches those 4 RAM rows onto a 6-row disk prefix
-            // whose first four rows only the seed ever wrote.
+            // The seam. The post-seed stage brought the seeded rows into the slot, and the 5s
+            // IN MEMORY window has since aged the oldest of them back out, so the slot is a
+            // PROPER suffix of disk plus the lead: three RAM rows sit below the applied point and
+            // two above it, over a 6-row disk prefix whose first four rows only the seed wrote.
+            // Three disk rows therefore fall below the seam and are served from disk alone.
             InnerRead read = readInner("SELECT * FROM lv");
             Assert.assertTrue("the post-seed read must route through the tier", read.routingEligible);
-            Assert.assertEquals("the seeded rows never enter the tier; only post-seed rows are resident",
-                    4, read.inMemRowsServed);
+            Assert.assertEquals("the resident window is the IN MEMORY suffix plus the lead",
+                    5, read.inMemRowsServed);
             Assert.assertEquals("two un-flushed lead rows served from RAM", 2, read.leadRowsServed);
 
             // The stitched read equals a from-scratch recompute over the admitted base rows, with
@@ -4324,10 +4453,13 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             // The lead is back (2 rows) with correct symbol resolution: re-interning
             // re-derives 'cc' (new) and 'bb' (committed) against a fresh cache + the
-            // restored disk symbol table. Only the rebuilt lead is resident.
+            // restored disk symbol table. The post-restart stage
+            // (stageInMemoryTierWhenEmpty) puts the 3 flushed rows in the slot too, so the
+            // resident window mixes disk-resolved symbol ids with the freshly interned ones.
             InnerRead after = readInner("SELECT * FROM lv");
             Assert.assertTrue("post-restart read must be routing-eligible", after.routingEligible);
-            Assert.assertEquals("only the rebuilt lead is resident after restart", 2, after.inMemRowsServed);
+            Assert.assertEquals("the staged overlap plus the rebuilt lead are resident after restart",
+                    5, after.inMemRowsServed);
             Assert.assertEquals("two un-flushed lead rows recovered", 2, after.leadRowsServed);
             assertLvMatchesOracle("SELECT * FROM lv",
                     "SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
