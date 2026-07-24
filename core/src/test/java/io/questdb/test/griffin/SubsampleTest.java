@@ -2512,6 +2512,110 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowSelectionMapsOrderedTraversalToDescendingInputRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO m VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (NULL, '2024-01-01T01:00:00.000000Z'),
+                    (5.0, '2024-01-01T02:00:00.000000Z'),
+                    (30.0, '2024-01-01T03:00:00.000000Z'),
+                    (15.0, '2024-01-01T04:00:00.000000Z'),
+                    (25.0, '2024-01-01T05:00:00.000000Z'),
+                    (8.0, '2024-01-01T06:00:00.000000Z'),
+                    (35.0, '2024-01-01T07:00:00.000000Z')
+                    """);
+
+            final String descendingM = "(SELECT price, ts FROM m ORDER BY ts DESC)";
+            final String uniform = "SELECT price, ts FROM " + descendingM + " SUBSAMPLE uniform(3)";
+            final String cadence = "SELECT price, ts FROM " + descendingM + " SUBSAMPLE cadence(3, 1)";
+            final String m4 = "SELECT price, ts FROM " + descendingM + " SUBSAMPLE m4(price, 4)";
+            final String minmax = "SELECT price, ts FROM " + descendingM + " SUBSAMPLE minmax(price, 4)";
+
+            assertQuery(uniform).timestampDesc("ts").returns(
+                    "price\tts\n" +
+                            "35.0\t2024-01-01T07:00:00.000000Z\n" +
+                            "15.0\t2024-01-01T04:00:00.000000Z\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n"
+            );
+            // Seed 1 has offset 1 for stride 3, selecting ascending ordinals 0, 4 and 7.
+            assertQuery(cadence).timestampDesc("ts").returns(
+                    "price\tts\n" +
+                            "35.0\t2024-01-01T07:00:00.000000Z\n" +
+                            "15.0\t2024-01-01T04:00:00.000000Z\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n"
+            );
+            // NULL at 01:00 is dropped from the value buffer; selected non-null ordinals must still
+            // map through window traversal to the correct incoming rows.
+            assertQuery(m4).timestampDesc("ts").returns(
+                    "price\tts\n" +
+                            "35.0\t2024-01-01T07:00:00.000000Z\n" +
+                            "5.0\t2024-01-01T02:00:00.000000Z\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n"
+            );
+            assertQuery(minmax).timestampDesc("ts").returns(
+                    "price\tts\n" +
+                            "35.0\t2024-01-01T07:00:00.000000Z\n" +
+                            "8.0\t2024-01-01T06:00:00.000000Z\n" +
+                            "30.0\t2024-01-01T03:00:00.000000Z\n" +
+                            "5.0\t2024-01-01T02:00:00.000000Z\n"
+            );
+
+            execute("CREATE TABLE l (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO l VALUES
+                    (10.0, '2024-01-02T00:00:00.000000Z'),
+                    (20.0, '2024-01-02T01:00:00.000000Z'),
+                    (50.0, '2024-01-02T02:00:00.000000Z'),
+                    (30.0, '2024-01-02T03:00:00.000000Z'),
+                    (15.0, '2024-01-02T04:00:00.000000Z'),
+                    (45.0, '2024-01-02T05:00:00.000000Z'),
+                    (25.0, '2024-01-02T06:00:00.000000Z'),
+                    (35.0, '2024-01-02T07:00:00.000000Z'),
+                    (5.0, '2024-01-02T08:00:00.000000Z'),
+                    (40.0, '2024-01-02T09:00:00.000000Z')
+                    """);
+            final String lttb = "SELECT price, ts FROM (SELECT price, ts FROM l ORDER BY ts DESC) SUBSAMPLE lttb(price, 5)";
+            assertQuery(lttb).timestampDesc("ts").returns(
+                    "price\tts\n" +
+                            "40.0\t2024-01-02T09:00:00.000000Z\n" +
+                            "5.0\t2024-01-02T08:00:00.000000Z\n" +
+                            "15.0\t2024-01-02T04:00:00.000000Z\n" +
+                            "50.0\t2024-01-02T02:00:00.000000Z\n" +
+                            "10.0\t2024-01-02T00:00:00.000000Z\n"
+            );
+
+            execute("CREATE TABLE s (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO s VALUES
+                    (0.0, '2024-01-03T00:00:00.000000Z'),
+                    (0.0, '2024-01-03T01:00:00.000000Z'),
+                    (0.0, '2024-01-03T02:00:00.000000Z'),
+                    (NULL, '2024-01-03T03:00:00.000000Z'),
+                    (5.0, '2024-01-03T04:00:00.000000Z'),
+                    (5.0, '2024-01-03T05:00:00.000000Z')
+                    """);
+            final String sdt = "SELECT price, ts FROM (SELECT price, ts FROM s ORDER BY ts DESC) SUBSAMPLE sdt(price, 0.5)";
+            assertQuery(sdt).timestampDesc("ts").returns(
+                    "price\tts\n" +
+                            "5.0\t2024-01-03T05:00:00.000000Z\n" +
+                            "5.0\t2024-01-03T04:00:00.000000Z\n" +
+                            "null\t2024-01-03T03:00:00.000000Z\n" +
+                            "0.0\t2024-01-03T02:00:00.000000Z\n" +
+                            "0.0\t2024-01-03T00:00:00.000000Z\n"
+            );
+
+            final String[] fusedQueries = {uniform, cadence, m4, minmax, lttb, sdt};
+            for (String query : fusedQueries) {
+                final String plan = planOf(query);
+                Assert.assertTrue("expected fused row-selecting plan: " + plan, plan.contains("CachedWindowLightSelect"));
+                Assert.assertFalse("fused plan must not contain a separate keep filter: " + plan, plan.contains("Filter filter: __keep_subsample"));
+            }
+        });
+    }
+
+    @Test
     public void testWindowSelectionOrdersNegativeTimestampForAlgorithm() throws Exception {
         // SAMPLE BY 1w around 1970-01-01 produces a pre-epoch bucket. The window ORDER BY must place
         // that negative timestamp correctly when choosing the algorithm's first and last points.

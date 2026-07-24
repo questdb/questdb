@@ -401,11 +401,11 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         private final RecordArray narrowChain;
         private final WindowLightRecord recordA;
         private final WindowLightRecord recordB;
-        // Row-selecting mode only: ascending ABSOLUTE base-row indices the sole row-selecting
-        // window function keeps, filled from selectingFunction.getSelectedRows() after preparePass2.
-        // Forward iteration (hasNext) walks this list to position the base at each kept row; outputSize
-        // is its size. Random access (recordAt) receives a getRowId (already an absolute row) directly.
+        // Row-selecting mode only: ascending ABSOLUTE incoming-row indices emitted by this cursor.
+        // The function itself reports pass1 traversal ordinals into selectedTraversalRows; ordered
+        // traversal ordinals are translated through the owning WindowSortBuffer before emission.
         private final DirectLongList selectedRowIds;
+        private final DirectLongList selectedTraversalRows;
         private final ObjList<WindowSortBuffer> sortBuffers;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -432,7 +432,8 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             // Lazy (matches baseRowIds): reopen() under the tracker bound by the first of(). Only
             // allocated/used in row-selecting mode.
             this.selectedRowIds = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
-            // Lazy: the first of() binds the tracker and reopens the chain, row-id list,
+            this.selectedTraversalRows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
+            // Lazy: the first of() binds the tracker and reopens the chain, row-id lists,
             // sort buffers and window-function maps. Starting open would skip that first
             // reopen() and read a closed partition map.
             this.isOpen = false;
@@ -455,6 +456,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 Misc.free(narrowChain);
                 Misc.free(baseRowIds);
                 Misc.free(selectedRowIds);
+                Misc.free(selectedTraversalRows);
                 for (int i = 0, n = sortBuffers.size(); i < n; i++) {
                     Misc.free(sortBuffers.getQuick(i));
                 }
@@ -642,12 +644,12 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
             }
 
-            // Row-selecting fusion: the sole keep-flag function's preparePass2() has now populated its
-            // selection, so we can enumerate the kept ABSOLUTE rows directly and SKIP the per-row
-            // boolean pass2 write over all N rows (and the separate downstream Filter). Otherwise run
-            // the normal pass2 write loops that materialize the boolean into the narrow chain.
+            // Row-selecting fusion: the function reports selected ordinals in its pass1 traversal.
+            // Translate ordered traversal ordinals through the retained sort buffer to absolute
+            // incoming rows, then sort those rows so output preserves incoming cursor order. This
+            // still skips the O(N) boolean pass2 write and downstream Filter.
             if (rowSelecting) {
-                selectingFunction.getSelectedRows(selectedRowIds);
+                mapSelectedRows();
                 outputSize = selectedRowIds.size();
             } else {
                 if (ordered2PassFunctions != null) {
@@ -714,6 +716,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             baseRowIds.clear();
             if (rowSelecting) {
                 selectedRowIds.clear();
+                selectedTraversalRows.clear();
             }
             if (!isOpen) {
                 isOpen = true;
@@ -726,6 +729,8 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 if (rowSelecting) {
                     selectedRowIds.setMemoryTracker(memoryTracker);
                     selectedRowIds.reopen();
+                    selectedTraversalRows.setMemoryTracker(memoryTracker);
+                    selectedTraversalRows.reopen();
                 }
                 reopenSortBuffers(memoryTracker);
                 for (int i = 0, n = allFunctions.size(); i < n; i++) {
@@ -741,6 +746,78 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             for (int i = 0; i < orderedGroupCount; i++) {
                 sortBuffers.getQuick(i).of(this, expectedRows);
             }
+        }
+
+        private void mapSelectedRows() {
+            selectedRowIds.clear();
+            selectedTraversalRows.clear();
+            selectingFunction.getSelectedRows(selectedTraversalRows);
+
+            int orderedGroup = -1;
+            for (int i = 0, n = orderedFunctions.size(); i < n && orderedGroup < 0; i++) {
+                final ObjList<WindowFunction> functions = orderedFunctions.getQuick(i);
+                for (int j = 0, k = functions.size(); j < k; j++) {
+                    if (functions.getQuick(j) == selectingFunction) {
+                        orderedGroup = i;
+                        break;
+                    }
+                }
+            }
+
+            if (orderedGroup >= 0) {
+                final WindowSortBuffer group = sortBuffers.getQuick(orderedGroup);
+                group.toTop();
+                long traversalOrdinal = 0;
+                long selectedIndex = 0;
+                final long selectedCount = selectedTraversalRows.size();
+                while (group.hasNext() && selectedIndex < selectedCount) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    final long absoluteRow = group.next();
+                    final long wantedOrdinal = selectedTraversalRows.get(selectedIndex);
+                    if (wantedOrdinal == traversalOrdinal) {
+                        selectedRowIds.add(absoluteRow);
+                        selectedIndex++;
+                    } else if (wantedOrdinal < traversalOrdinal) {
+                        throw CairoException.nonCritical().put("invalid row-selecting traversal order");
+                    }
+                    traversalOrdinal++;
+                }
+                if (selectedIndex != selectedCount) {
+                    throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
+                }
+            } else if (containsFunction(forwardUnorderedFunctions, selectingFunction)) {
+                for (long i = 0, n = selectedTraversalRows.size(); i < n; i++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    final long traversalOrdinal = selectedTraversalRows.get(i);
+                    if (traversalOrdinal < 0 || traversalOrdinal >= size) {
+                        throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
+                    }
+                    selectedRowIds.add(traversalOrdinal);
+                }
+            } else if (containsFunction(backwardUnorderedFunctions, selectingFunction)) {
+                for (long i = 0, n = selectedTraversalRows.size(); i < n; i++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    final long traversalOrdinal = selectedTraversalRows.get(i);
+                    if (traversalOrdinal < 0 || traversalOrdinal >= size) {
+                        throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
+                    }
+                    selectedRowIds.add(size - 1 - traversalOrdinal);
+                }
+            } else {
+                throw CairoException.nonCritical().put("row-selecting function has no traversal group");
+            }
+            selectedRowIds.sortAsUnsigned();
+        }
+
+        private boolean containsFunction(ObjList<WindowFunction> functions, WindowFunction target) {
+            if (functions != null) {
+                for (int i = 0, n = functions.size(); i < n; i++) {
+                    if (functions.getQuick(i) == target) {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         private void positionRecordA(long rowIndex) {

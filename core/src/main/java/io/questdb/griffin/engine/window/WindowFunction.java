@@ -302,12 +302,13 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * Appends, in ascending order, the ABSOLUTE base-row indices this function selects (keeps).
+     * Appends, in ascending order, the pass1 traversal ordinals this function selects (keeps).
      * Only valid to call after {@link #preparePass2()} has run, and only on functions for which
-     * {@link #isRowSelecting()} returns {@code true}. Enables the keep-flag filter fusion to emit
-     * ONLY the kept rows without materializing a per-row boolean or running a separate filter pass.
+     * {@link #isRowSelecting()} returns {@code true}. The cached executor translates ordered or
+     * backward traversal ordinals to absolute incoming rows before emitting them, avoiding both
+     * per-row boolean materialization and a separate filter pass.
      *
-     * @param dest destination list; cleared and filled with the ascending kept absolute row indices.
+     * @param dest destination list; cleared and filled with ascending selected traversal ordinals.
      */
     default void getSelectedRows(DirectLongList dest) {
         throw new UnsupportedOperationException();
@@ -342,7 +343,7 @@ public interface WindowFunction extends Function {
     /**
      * Whether this two-pass window function is a pure row-selecting keep flag: it produces a
      * BOOLEAN "keep this row?" result and, after {@link #preparePass2()}, can enumerate the exact
-     * set of kept ABSOLUTE base-row indices via {@link #getSelectedRows(DirectLongList)}. When such
+     * set of kept pass1 traversal ordinals via {@link #getSelectedRows(DirectLongList)}. When such
      * a function is the sole window function and its boolean is exactly a filter predicate, the
      * cached executor can fuse the filter into the window cursor and emit only the kept rows.
      *

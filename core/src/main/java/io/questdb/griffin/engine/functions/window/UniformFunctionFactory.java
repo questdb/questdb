@@ -210,8 +210,8 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void getSelectedRows(DirectLongList dest) {
-            // Position-only: `selected` already holds ascending ABSOLUTE row ordinals (no null rows
-            // are dropped), and keepAll means every row 0..count-1 is kept. Byte-identical to the
+            // Position-only: `selected` already holds ascending pass1 traversal ordinals (no null rows
+            // are dropped), and keepAll means every traversal row 0..count-1 is kept. Byte-identical to the
             // rows pass2 would have flagged keep=true.
             dest.clear();
             if (keepAll) {

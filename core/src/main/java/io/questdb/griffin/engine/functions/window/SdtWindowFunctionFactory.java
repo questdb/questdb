@@ -212,10 +212,10 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void getSelectedRows(DirectLongList dest) {
-            // Row-selecting fusion (SUBSAMPLE sdt): enumerate the kept ABSOLUTE rows directly from the
+            // Row-selecting fusion (SUBSAMPLE sdt): enumerate kept pass1 traversal ordinals from the
             // finalized keep-byte buffer instead of materializing a BOOLEAN column + downstream Filter.
             // pass1 writes exactly one keep-byte per row at its own monotonic offset (appendOffset,
-            // 0,1,2,... == the base chain row index on the fused OVER (ORDER BY ts) path), and the
+            // 0,1,2,... == the pass1 traversal ordinal), and the
             // SwingingDoor's eager-tentative-marking + back-patch has converged by end of input: every
             // row still tentatively kept (the last pending point, and any point before a RESPECT-NULLS
             // gap) keeps its keep=1 byte, so the buffer is final by the time this runs (after
@@ -223,9 +223,9 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
             // each keep==1 index is therefore byte-identical to the rows pass2 would have flagged true.
             dest.clear();
             final long rowCount = appendOffset / RECORD_SIZE;
-            for (long absRow = 0; absRow < rowCount; absRow++) {
-                if (mem.getByte(absRow * RECORD_SIZE) != 0) {
-                    dest.add(absRow);
+            for (long traversalOrdinal = 0; traversalOrdinal < rowCount; traversalOrdinal++) {
+                if (mem.getByte(traversalOrdinal * RECORD_SIZE) != 0) {
+                    dest.add(traversalOrdinal);
                 }
             }
         }
@@ -250,8 +250,8 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public boolean isRowSelecting() {
             // Sole-window-function keep flag: after preparePass2 the keep-byte buffer is finalized, so
-            // getSelectedRows() enumerates the exact kept absolute rows and the codegen keep-flag filter
-            // can be fused into the cursor (SUBSAMPLE sdt only ever produces OVER (ORDER BY ts)).
+            // getSelectedRows() enumerates the exact kept traversal ordinals and the codegen keep-flag
+            // filter can be fused into the cursor (SUBSAMPLE sdt only produces OVER (ORDER BY ts)).
             return true;
         }
 

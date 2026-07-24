@@ -147,8 +147,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         private static final long INITIAL_CAPACITY = 64;
         private final SubsampleAlgorithm algorithm;
         private final String name;
-        // Per-absolute-row null bitset built in pass1 (1 bit/row, appended in absolute traversal
-        // order). pass2 consults it instead of re-deriving isNullRow(record) from a random-access
+        // Per-traversal-row null bitset built in pass1 (1 bit/row, appended in traversal order).
+        // pass2 consults it instead of re-deriving isNullRow(record) from a random-access
         // base re-read; see pass2NeedsBaseRecord(). Same native-memory lifecycle as `selected`
         // (allocate on reopen, clear on toTop, close on reset/close) - a prior real native leak on
         // the lttb gap scratch is the discipline mirrored here.
@@ -271,7 +271,7 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public boolean isRowSelecting() {
             // Sole-window-function keep flag: after preparePass2, getSelectedRows() enumerates the
-            // exact kept absolute rows, so the filter can be fused into the cursor.
+            // exact kept traversal ordinals, so the filter can be fused into the cursor.
             return true;
         }
 
@@ -291,8 +291,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void getSelectedRows(DirectLongList dest) {
             // Map `selected` (ascending non-null BUFFER ordinals chosen by preparePass2) back to
-            // ascending ABSOLUTE base-row indices using pass1's null bitset. The o-th non-null row
-            // in absolute traversal order corresponds to buffer ordinal o; a single forward walk
+            // ascending pass1 traversal ordinals using pass1's null bitset. The o-th non-null row
+            // in pass1 traversal order corresponds to buffer ordinal o; a single forward walk
             // over the null bitset advances both cursors monotonically, so this is byte-identical to
             // the rows pass2 would have flagged keep=true.
             dest.clear();
@@ -377,8 +377,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
             final boolean keep;
-            // Consult pass1's cached null bitset in the same absolute traversal order pass1 wrote it
-            // (both passes visit rows in the same order), so this stays byte-identical to the old
+            // Consult pass1's cached null bitset in the same traversal order pass1 wrote it (both
+            // passes visit rows in the same order), so this stays byte-identical to the old
             // isNullRow(record) path while needing no base-record re-read - see pass2NeedsBaseRecord().
             if (nullFlag(pass2Row++)) {
                 // Same row this was in pass1, so this stays aligned with the bufferCount pass1
@@ -504,8 +504,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         /**
-         * Appends one bit for the current pass1 row to {@code nullBits} in absolute traversal
-         * order: {@code true} for a dropped (NULL ts / null-or-NaN value) row, {@code false} for a
+         * Appends one bit for the current pass1 row to {@code nullBits} in traversal order:
+         * {@code true} for a dropped (NULL ts / null-or-NaN value) row, {@code false} for a
          * buffered row. pass1 is called once per row in order, so this is O(1) amortised. pass2
          * reads the same bits back via {@link #nullFlag(long)} instead of re-deriving null-ness from
          * a random-access base re-read: a NULL timestamp or a null/NaN value is dropped.
@@ -524,7 +524,7 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         /**
-         * Reads the null bit for absolute row {@code row} recorded during pass1.
+         * Reads the null bit for traversal ordinal {@code row} recorded during pass1.
          */
         private boolean nullFlag(long row) {
             return (nullBits.get(row >>> 6) & (1L << (row & 63))) != 0;

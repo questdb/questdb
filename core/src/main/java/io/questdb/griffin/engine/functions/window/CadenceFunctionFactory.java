@@ -243,8 +243,8 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void getSelectedRows(DirectLongList dest) {
-            // Position-only: `selected` already holds ascending ABSOLUTE row ordinals (no null rows
-            // are dropped), and keepAll (stride==1) means every row 0..count-1 is kept.
+            // Position-only: `selected` already holds ascending pass1 traversal ordinals (no null rows
+            // are dropped), and keepAll (stride==1) means every traversal row 0..count-1 is kept.
             dest.clear();
             if (keepAll) {
                 for (long i = 0; i < count; i++) {
