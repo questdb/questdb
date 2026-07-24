@@ -62,7 +62,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * Measures a raw timestamp/value projection with a covered residual predicate.
  * Key and residual selectivity use coprime deterministic cycles, preventing the
- * residual distribution from correlating with either indexed key.
+ * residual distribution from correlating with either indexed key. The default
+ * 100-million-row trial yields 1 million and 10 million indexed candidates for
+ * the two key selectivities; use the JMH {@code rowCount} parameter to rescale it.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
@@ -72,7 +74,6 @@ import java.util.concurrent.TimeUnit;
 @Fork(0)
 public class CoveringIndexPostFilterBenchmark {
     private static final int WORKERS = Integer.getInteger("covering.postfilter.workers", 8);
-    private static final long ROWS = Long.getLong("covering.postfilter.rows", 5_000_000L);
     private static final String ROOT = System.getProperty("java.io.tmpdir") + java.io.File.separator + "covering-postfilter-bench";
     private static final DefaultCairoConfiguration CONFIGURATION = new DefaultCairoConfiguration(ROOT) {
         @Override
@@ -81,10 +82,14 @@ public class CoveringIndexPostFilterBenchmark {
         }
     };
 
-    private static CairoEngine engine;
     private static SqlCompiler compiler;
     private static SqlExecutionContext context;
+    private static CairoEngine engine;
+    private static long environmentRowCount = -1;
     private static WorkerPool pool;
+
+    @Param({"100000000"})
+    public long rowCount;
 
     @Param({
             "covering-k1-r10", "no_covering-k1-r10", "no_index-k1-r10",
@@ -123,7 +128,7 @@ public class CoveringIndexPostFilterBenchmark {
 
     @Setup(Level.Trial)
     public void setUp() throws Exception {
-        ensureEnvironment();
+        ensureEnvironment(rowCount);
         final String route = scenario.substring(0, scenario.indexOf('-'));
         final String query = query(scenario, route);
         verifyRoute(query, route);
@@ -154,6 +159,7 @@ public class CoveringIndexPostFilterBenchmark {
         }
         engine = Misc.free(engine);
         context = null;
+        environmentRowCount = -1;
         LogFactory.haltInstance();
     }
 
@@ -170,9 +176,12 @@ public class CoveringIndexPostFilterBenchmark {
         return checksum;
     }
 
-    private static synchronized void ensureEnvironment() throws Exception {
+    private static synchronized void ensureEnvironment(long rowCount) throws Exception {
         if (engine != null) {
-            return;
+            if (environmentRowCount == rowCount) {
+                return;
+            }
+            closeEnvironment();
         }
         Files.createDirectories(Paths.get(ROOT));
         engine = new CairoEngine(CONFIGURATION);
@@ -197,16 +206,17 @@ public class CoveringIndexPostFilterBenchmark {
                     residual INT
                 ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                 """, context);
-        final long spacing = Math.max(1, 16L * 86_400_000_000L / ROWS);
+        final long spacing = Math.max(1, 16L * 86_400_000_000L / rowCount);
         engine.execute(
                 "INSERT INTO post_filter SELECT " +
                         "('2024-01-01'::timestamp + (x - 1) * " + spacing + "L)::timestamp, " +
                         "(CASE WHEN x % 1000 < 10 THEN 'k1' WHEN x % 1000 < 110 THEN 'k10' ELSE 'noise' || (x % 64) END)::symbol, " +
                         "(x % 10_007)::double, (x % 997)::int " +
-                        "FROM long_sequence(" + ROWS + ')',
+                        "FROM long_sequence(" + rowCount + ')',
                 context
         );
         engine.releaseAllWriters();
+        environmentRowCount = rowCount;
         pool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override
             public String getPoolName() {
