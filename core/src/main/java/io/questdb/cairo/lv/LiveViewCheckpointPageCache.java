@@ -65,10 +65,18 @@ import org.jetbrains.annotations.Nullable;
  * worst case LRU has: once the budget falls below the working set, LRU evicts
  * each page just before its next use and the hit rate collapses to nothing while
  * still paying the bookkeeping. This cache instead admits a page iff a hash of
- * its identity falls under {@link #setAdmissionFraction(double)}, pinning a
- * stable subset. The subset does not move between restores, so the hit rate
- * degrades linearly with the shortfall - half the budget serves about half the
- * probes - and a probe costs one hash and one array index.
+ * its identity falls under the admission fraction, pinning a stable subset. The
+ * subset does not move between restores, so the hit rate degrades linearly with
+ * the shortfall - half the budget serves about half the probes - and a probe
+ * costs one hash and one array index.
+ * <p>
+ * The fraction tunes itself. {@link #beginRestore()} and {@link #endRestore()}
+ * bracket one restore, over which the cache sums what holding every page it was
+ * asked for would cost; {@link #endRestore()} folds that into an EWMA of the
+ * working set and sets the fraction to the share of it the budget can carry. A
+ * cap comfortably above the working set therefore saturates at one and admits
+ * everything, and a frame that fills or an ingest rate that climbs walks the
+ * fraction down instead of overrunning the budget.
  * <p>
  * A cache belongs to one live view and runs under the refresh latch that
  * serialises that view's refresh, so nothing here locks. Only the engine-wide
@@ -105,6 +113,14 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
     private static final int MIN_SLOT_SHIFT = Numbers.msb(MIN_SLOT_BYTES);
     private static final int SIZE_CLASSES = Numbers.msb(MAX_SLOT_BYTES) - MIN_SLOT_SHIFT + 1;
     private static final long TOMBSTONE = -1;
+    /**
+     * How much of the working-set estimate one restore rewrites. A restore's own
+     * figure moves with what the refresh happened to touch - a correction deep in
+     * the history walks more partitions than one at the head - so the estimate the
+     * admission fraction is set from follows the trend rather than the last
+     * sample, and a single outlier cannot shut admission down.
+     */
+    private static final double WORKING_SET_EWMA_ALPHA = 0.25;
     private final LiveViewCheckpointPageCacheBudget budget;
     // Free slot addresses per size class. A slot returns here on eviction rather
     // than to the budget: the slab it sits in stays with the cache until close.
@@ -115,13 +131,19 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
     private int[] attrs;
     private long epoch;
     private long hits;
+    // Set by hand, and then left alone by the self-tuner - see setAdmissionFraction.
+    private boolean isAdmissionFractionPinned;
     private long[] keys;
     private int mask;
     private long misses;
     // Live entries plus tombstones - what the table's load factor is measured on.
     private int occupied;
     private int rehashThreshold;
+    // Slot bytes every page probed since beginRestore would cost to hold, whether
+    // the probe hit, missed or named a page too small or too large to cache.
+    private long restoreProbedBytes;
     private int size;
+    private double workingSetBytes;
 
     public LiveViewCheckpointPageCache(@NotNull LiveViewCheckpointPageCacheBudget budget) {
         this.budget = budget;
@@ -177,6 +199,17 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
     }
 
     /**
+     * Starts one restore's working-set measurement, discarding whatever a restore
+     * that never reached {@link #endRestore()} had counted. A restore the caller
+     * abandons - a corrupt root it falls back from, a failure it propagates - is
+     * not a sample of anything, because it stopped part way through the pages it
+     * would have read.
+     */
+    public void beginRestore() {
+        restoreProbedBytes = 0;
+    }
+
+    /**
      * Moves the cache to a new epoch and drops every page the old one held.
      * <p>
      * The caller fires this when a timeline is retired, a repair is published or
@@ -210,6 +243,40 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
         occupied = 0;
         rehashThreshold = 0;
         size = 0;
+    }
+
+    /**
+     * Closes the restore {@link #beginRestore()} opened: folds what it probed into
+     * the working-set estimate and sets the admission fraction to the share of
+     * that working set the budget can carry.
+     * <p>
+     * The share is what the budget still has free plus what this cache already
+     * holds, so several views sharing one cap converge on splitting it rather than
+     * each sizing itself against the whole. A view that stops refreshing hands its
+     * slabs back at close and the views that remain widen into them at their next
+     * restore.
+     * <p>
+     * Lowering the fraction evicts nothing. Capacity pressure must not evict here
+     * (see the class comment), so the fraction governs what the cache takes in
+     * next, and the pages it already holds keep serving until their segment goes.
+     */
+    public void endRestore() {
+        final long probed = restoreProbedBytes;
+        restoreProbedBytes = 0;
+        // A cold cache takes its first restore whole rather than climbing to it
+        // from zero, so one restore is enough to size the fraction.
+        workingSetBytes = workingSetBytes > 0
+                ? WORKING_SET_EWMA_ALPHA * probed + (1 - WORKING_SET_EWMA_ALPHA) * workingSetBytes
+                : probed;
+        if (isAdmissionFractionPinned) {
+            return;
+        }
+        if (workingSetBytes <= 0) {
+            applyAdmissionFraction(1);
+            return;
+        }
+        final long share = budget.getCapacityBytes() - budget.getUsedBytes() + getUsedBytes();
+        applyAdmissionFraction(share / workingSetBytes);
     }
 
     /**
@@ -297,6 +364,16 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
     }
 
     /**
+     * @return what holding every page one restore reads would cost this cache,
+     * smoothed over the restores it has seen. Zero until the first
+     * {@link #endRestore()}, which is when the admission fraction stops being a
+     * guess
+     */
+    public long getWorkingSetBytes() {
+        return (long) workingSetBytes;
+    }
+
+    /**
      * Looks {@code ref}'s page up.
      *
      * @return the address of the decoded image, valid until the next call that
@@ -304,6 +381,10 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
      * {@link #close} - or zero when the page is not cached
      */
     public long probe(@NotNull LiveViewCheckpointStatePageRef ref) {
+        // Every page the restore asks for is part of its working set, whichever way
+        // this probe goes: what endRestore sizes the fraction against is the cost of
+        // holding the whole scan, not the cost of the part already held.
+        restoreProbedBytes += slotBytesOf(ref.getDecodedLength());
         final int index = findIndex(ref.getSegmentId(), ref.getOffset(), ref.getPageKind());
         if (index > -1) {
             if (matches(index, ref)) {
@@ -321,19 +402,20 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
     }
 
     /**
-     * Sets the fraction of pages the cache admits, clamped to {@code [0, 1]}.
+     * Sets the fraction of pages the cache admits, clamped to {@code [0, 1]}, and
+     * pins it there: {@link #endRestore()} keeps measuring the working set but
+     * stops moving the fraction. A caller that wants a cache to hold a known share
+     * of what it reads - a differential that must keep two caches serving
+     * differently, a switch that forces every probe to miss - needs a fraction the
+     * self-tuner cannot walk back.
+     * <p>
      * The decision is a hash of the page identity, so the admitted subset is the
      * same on every restore and shrinking the fraction only ever removes pages
      * from it - the pages that stay keep hitting.
      */
     public void setAdmissionFraction(double fraction) {
-        if (Double.isNaN(fraction) || fraction <= 0) {
-            admissionThreshold = 0;
-        } else if (fraction >= 1) {
-            admissionThreshold = ADMISSION_FULL;
-        } else {
-            admissionThreshold = (long) (fraction * ADMISSION_FULL);
-        }
+        isAdmissionFractionPinned = true;
+        applyAdmissionFraction(fraction);
     }
 
     private static int bucketOf(long segmentId, long offset, int pageKind, int mask) {
@@ -342,6 +424,19 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
 
     private static int sizeClassOf(int decodedLength) {
         return Numbers.msb(Numbers.ceilPow2(decodedLength)) - MIN_SLOT_SHIFT;
+    }
+
+    /**
+     * @return the native bytes a page of {@code decodedLength} spends here, which
+     * is its slot rather than its image: a chunk carries whatever rows one commit
+     * appended, so rounding it up to its size class is most of the difference
+     * between what a working set decodes to and what holding it costs. Zero for a
+     * length no slot class covers, which is a page the cache would refuse
+     */
+    private static int slotBytesOf(int decodedLength) {
+        return decodedLength < MIN_SLOT_BYTES || decodedLength > MAX_SLOT_BYTES
+                ? 0
+                : MIN_SLOT_BYTES << sizeClassOf(decodedLength);
     }
 
     /**
@@ -381,6 +476,16 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
         mask = capacity - 1;
         rehashThreshold = (int) (capacity * LOAD_FACTOR);
         occupied = 0;
+    }
+
+    private void applyAdmissionFraction(double fraction) {
+        if (Double.isNaN(fraction) || fraction <= 0) {
+            admissionThreshold = 0;
+        } else if (fraction >= 1) {
+            admissionThreshold = ADMISSION_FULL;
+        } else {
+            admissionThreshold = (long) (fraction * ADMISSION_FULL);
+        }
     }
 
     /**

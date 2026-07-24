@@ -88,12 +88,14 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
     private static final int CACHE_COMMITS_PER_ROUND = 4;
     private static final int CACHE_KEYS = 8;
     private static final int CACHE_ROUNDS = 10;
-    private static final int CACHE_VIEWS = 3;
-    // Fraction of pages, by identity hash, each of the three views admits. The
-    // fraction is what an engine-wide cap resolves to per view, and it is settable
-    // where the cap is fixed for the engine's life, so the differential drives it
-    // directly.
-    private static final double[] CACHE_ADMISSION_FRACTIONS = {0, 0.5, 1};
+    private static final int CACHE_VIEWS = 4;
+    // Fraction of pages, by identity hash, each view admits. The fraction is what
+    // an engine-wide cap resolves to per view, and it is settable where the cap is
+    // fixed for the engine's life, so the differential drives it directly. The
+    // fourth view is left alone for the self-tuner to size, which is the fraction a
+    // deployment actually runs on.
+    private static final double CACHE_SELF_TUNED = -1;
+    private static final double[] CACHE_ADMISSION_FRACTIONS = {0, 0.5, 1, CACHE_SELF_TUNED};
     // Commits per round of the refresh-lag case: twelve in-order groups and then one
     // historical correction, which is thirteen published generations per round.
     private static final int LAG_COMMITS_PER_ROUND = 12;
@@ -141,12 +143,13 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
     @Test
     public void testViewContentIsIdenticalWhateverThePageCacheHolds() throws Exception {
         assertMemoryLeak(() -> {
-            // Three identical views over three identical bases, refreshed through
-            // the same commits, differing only in how much of their decoded
-            // checkpoint state the page cache is allowed to keep: nothing, a
-            // hash-selected half, everything. A cache that ever answered with the
-            // wrong page would show up here as one view disagreeing with the other
-            // two - and with the recompute all three are measured against.
+            // Four identical views over four identical bases, refreshed through the
+            // same commits, differing only in how much of their decoded checkpoint
+            // state the page cache is allowed to keep: nothing, a hash-selected
+            // half, everything, and whatever the self-tuner sizes the fourth to. A
+            // cache that ever answered with the wrong page would show up here as one
+            // view disagreeing with the others - and with the recompute all four are
+            // measured against.
             for (int i = 0; i < CACHE_VIEWS; i++) {
                 createBaseAndView(cacheBase(i), cacheView(i), RANGE_30S_FRAME);
             }
@@ -196,13 +199,15 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
                 final LiveViewCheckpointPageCache cold = pageCache(cacheView(0));
                 final LiveViewCheckpointPageCache half = pageCache(cacheView(1));
                 final LiveViewCheckpointPageCache warm = pageCache(cacheView(2));
-                // The three views really were served differently, so the equality
-                // above is a differential rather than three runs of one path.
+                final LiveViewCheckpointPageCache tuned = pageCache(cacheView(3));
+                // The four views really were served differently, so the equality
+                // above is a differential rather than four runs of one path.
                 Assert.assertTrue("no view restored a ring page", cold.getMisses() > 0);
-                // Identical data through identical turns, so the three views probed
+                // Identical data through identical turns, so the four views probed
                 // for exactly the same pages and differ only in what came back.
                 Assert.assertEquals(cold.getMisses(), half.getHits() + half.getMisses());
                 Assert.assertEquals(cold.getMisses(), warm.getHits() + warm.getMisses());
+                Assert.assertEquals(cold.getMisses(), tuned.getHits() + tuned.getMisses());
                 Assert.assertEquals("a view admitting nothing must serve nothing", 0, cold.getHits());
                 Assert.assertEquals(0, cold.getPageCount());
                 Assert.assertTrue("the half-admitting view served nothing", half.getHits() > 0);
@@ -216,6 +221,24 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
                                 + ", warm=" + warm.getHits() + ']',
                         warm.getHits() > half.getHits()
                 );
+                // The self-tuned view measured its working set on the restore path -
+                // which is the wiring, since only a restore that ran through
+                // beginRestore/endRestore can have produced a figure at all - and the
+                // engine-wide cap is far above what a view this size reads, so the
+                // fraction saturates and it behaves as the fully-admitting view does.
+                Assert.assertTrue(
+                        "the self-tuned view measured no working set, so it never tuned",
+                        tuned.getWorkingSetBytes() > 0
+                );
+                Assert.assertTrue(
+                        "a cap far above the working set must leave the fraction at 1 [workingSet="
+                                + tuned.getWorkingSetBytes() + ", capacity="
+                                + engine.getLiveViewRegistry().getCheckpointPageCacheBudget().getCapacityBytes()
+                                + ']',
+                        tuned.getAdmissionFraction() == 1.0
+                );
+                Assert.assertEquals(warm.getHits(), tuned.getHits());
+                Assert.assertEquals(warm.getPageCount(), tuned.getPageCount());
             }
         });
     }
@@ -737,7 +760,10 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
      * the view's first restore and rebuilt cold if the view ever lets its refresh
      * state go, so the fraction is pinned after every commit rather than once: a
      * cache that came back at the default would quietly admit everything and turn
-     * the differential into three runs of the same path.
+     * the differential into four runs of the same path.
+     * <p>
+     * The self-tuned view is the exception - nothing is applied to it, so its
+     * fraction is whatever its own restores worked out.
      */
     private void pinAdmissionFractions() {
         final LiveViewCheckpointPageCacheBudget budget =
@@ -746,7 +772,9 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
             final LiveViewCheckpointPageCache cache =
                     viewInstance(cacheView(i)).getOrCreateCheckpointPageCache(budget);
             Assert.assertNotNull("the engine-wide page cache budget must be enabled", cache);
-            cache.setAdmissionFraction(CACHE_ADMISSION_FRACTIONS[i]);
+            if (CACHE_ADMISSION_FRACTIONS[i] != CACHE_SELF_TUNED) {
+                cache.setAdmissionFraction(CACHE_ADMISSION_FRACTIONS[i]);
+            }
         }
     }
 

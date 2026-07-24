@@ -493,8 +493,20 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
 
         validateAnchor(anchorWindow);
         validateFunctions(functions);
+        // The pages restoreFunctions walks are this restore's working set, and what
+        // the cache sizes its admission fraction from. Bracketing the walk rather
+        // than the binding is what keeps a root the fallback loop skips out of the
+        // measurement: it stops part way through the pages it would have read, so
+        // it is not a sample of anything, and the next attempt's beginRestore
+        // discards what it counted.
+        if (pageCache != null) {
+            pageCache.beginRestore();
+        }
         restoreFunctions(functions);
         restoreAnchor(anchorWindow);
+        if (pageCache != null) {
+            pageCache.endRestore();
+        }
 
         final long effectiveLvRowPosition = deltaReader.effectivePosition(
                 pin.getRowPositionDeltaRootRef(),

@@ -54,6 +54,56 @@ public class LiveViewCheckpointPageCacheTest extends AbstractCairoTest {
     private static final int VALUE_KIND = LiveViewCheckpointRangeRingStateReader.DOUBLE_VALUE_PAGE_KIND;
 
     @Test
+    public void testAdmissionFractionFollowsTheWorkingSetAcrossRestores() throws Exception {
+        assertMemoryLeak(() -> {
+            // A cap of exactly 32 widest pages, met first by a restore that fits it
+            // and then by one four times its size.
+            final int pageBytes = MAX_PAGE_BYTES;
+            final long capacity = 32L * pageBytes;
+            final LiveViewCheckpointPageCacheBudget budget = new LiveViewCheckpointPageCacheBudget(capacity);
+            try (LiveViewCheckpointPageCache cache = new LiveViewCheckpointPageCache(budget)) {
+                // Before the first restore the fraction is a guess, and the guess is
+                // that everything fits.
+                Assert.assertEquals(1.0, cache.getAdmissionFraction(), 0.0);
+                Assert.assertEquals(0, cache.getWorkingSetBytes());
+
+                probeRestore(cache, 1, 32, pageBytes);
+                Assert.assertEquals(capacity, cache.getWorkingSetBytes());
+                Assert.assertEquals(1.0, cache.getAdmissionFraction(), 0.0);
+
+                // Four times the cap. The estimate moves a quarter of the way there,
+                // so the fraction lands between the one it held and the one the new
+                // working set alone would ask for - which is the point of smoothing:
+                // one deep correction does not shut admission down.
+                probeRestore(cache, 1, 128, pageBytes);
+                Assert.assertEquals(1.75 * capacity, cache.getWorkingSetBytes(), 1.0);
+                Assert.assertEquals(1 / 1.75, cache.getAdmissionFraction(), 1e-6);
+
+                probeRestore(cache, 1, 128, pageBytes);
+                Assert.assertEquals(2.3125 * capacity, cache.getWorkingSetBytes(), 1.0);
+                Assert.assertEquals(1 / 2.3125, cache.getAdmissionFraction(), 1e-6);
+
+                // Held there, it converges on the share of the working set the cap
+                // covers: a quarter of it, hit for a quarter of the probes, rather
+                // than the nothing an LRU of the same size would serve.
+                for (int i = 0; i < 40; i++) {
+                    probeRestore(cache, 1, 128, pageBytes);
+                }
+                Assert.assertEquals(4.0 * capacity, cache.getWorkingSetBytes(), 1024.0);
+                Assert.assertEquals(0.25, cache.getAdmissionFraction(), 1e-4);
+
+                // And back up when the frame drains: the fraction is not a ratchet.
+                for (int i = 0; i < 40; i++) {
+                    probeRestore(cache, 1, 8, pageBytes);
+                }
+                Assert.assertEquals(0.25 * capacity, cache.getWorkingSetBytes(), 1024.0);
+                Assert.assertEquals(1.0, cache.getAdmissionFraction(), 0.0);
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
     public void testAdmissionFractionSelectsTheSameSubsetEverywhere() throws Exception {
         assertMemoryLeak(() -> {
             final int pages = 4096;
@@ -80,6 +130,35 @@ public class LiveViewCheckpointPageCacheTest extends AbstractCairoTest {
             } finally {
                 Unsafe.free(address, pageBytes, MemoryTag.NATIVE_DEFAULT);
             }
+        });
+    }
+
+    @Test
+    public void testAdmissionFractionSetByHandSurvivesTheSelfTuner() throws Exception {
+        assertMemoryLeak(() -> {
+            final int pageBytes = MAX_PAGE_BYTES;
+            final long capacity = 32L * pageBytes;
+            final LiveViewCheckpointPageCacheBudget budget = new LiveViewCheckpointPageCacheBudget(capacity);
+            try (LiveViewCheckpointPageCache cache = new LiveViewCheckpointPageCache(budget)) {
+                cache.setAdmissionFraction(0.5);
+
+                // A working set far over the cap would walk an untouched fraction
+                // down, and one far under it would take it to 1. Neither moves a
+                // fraction the caller set: a differential that must keep two caches
+                // serving differently cannot have the tuner close the gap.
+                probeRestore(cache, 1, 512, pageBytes);
+                Assert.assertEquals(0.5, cache.getAdmissionFraction(), 1e-9);
+                probeRestore(cache, 1, 1, pageBytes);
+                Assert.assertEquals(0.5, cache.getAdmissionFraction(), 1e-9);
+
+                // The measurement carries on regardless, so the fraction an operator
+                // can read next to it still says what the cache is up against.
+                Assert.assertTrue(
+                        "a pinned fraction must not stop the working-set measurement",
+                        cache.getWorkingSetBytes() > 0
+                );
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
         });
     }
 
@@ -643,6 +722,70 @@ public class LiveViewCheckpointPageCacheTest extends AbstractCairoTest {
         Assert.assertEquals(0, budget.getUsedBytes());
     }
 
+    @Test
+    public void testRestoreAbandonedMidWayIsNotASample() throws Exception {
+        assertMemoryLeak(() -> {
+            final int pageBytes = MAX_PAGE_BYTES;
+            final LiveViewCheckpointPageCacheBudget budget =
+                    new LiveViewCheckpointPageCacheBudget(64L * LiveViewCheckpointPageCache.SLAB_BYTES);
+            try (LiveViewCheckpointPageCache cache = new LiveViewCheckpointPageCache(budget)) {
+                // A root the restore reads part of and then gives up on - the corrupt
+                // one the fallback loop walks past - never reaches endRestore. What
+                // it read must not reach the estimate either, in whole or in part.
+                cache.beginRestore();
+                for (int i = 0; i < 64; i++) {
+                    cache.probe(ref(1, (long) i * pageBytes, TIMESTAMP_KIND, pageBytes));
+                }
+                Assert.assertEquals(0, cache.getWorkingSetBytes());
+
+                probeRestore(cache, 2, 4, pageBytes);
+                Assert.assertEquals(4L * pageBytes, cache.getWorkingSetBytes());
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
+    public void testSelfTunedFractionSplitsTheBudgetBetweenCaches() throws Exception {
+        assertMemoryLeak(() -> {
+            final int pageBytes = MAX_PAGE_BYTES;
+            final long capacity = 32L * pageBytes;
+            final long address = allocScratch(pageBytes, 13);
+            final LiveViewCheckpointPageCacheBudget budget = new LiveViewCheckpointPageCacheBudget(capacity);
+            try (
+                    LiveViewCheckpointPageCache first = new LiveViewCheckpointPageCache(budget);
+                    LiveViewCheckpointPageCache second = new LiveViewCheckpointPageCache(budget)
+            ) {
+                // The first view warms a quarter of the cap and keeps it.
+                for (int i = 0; i < 8; i++) {
+                    Assert.assertTrue(first.admit(ref(1, (long) i * pageBytes, TIMESTAMP_KIND, pageBytes), address));
+                }
+                Assert.assertEquals(8L * pageBytes, budget.getUsedBytes());
+
+                // What it holds is its own, so a working set it already covers still
+                // reads as covered: the fraction stays at 1 rather than counting its
+                // own slabs against itself.
+                probeRestore(first, 1, 8, pageBytes);
+                Assert.assertEquals(1.0, first.getAdmissionFraction(), 0.0);
+
+                // The second view sizes itself against what the budget has left.
+                probeRestore(second, 2, 32, pageBytes);
+                Assert.assertEquals(0.75, second.getAdmissionFraction(), 1e-6);
+
+                // A view that stops refreshing hands its slabs back, and the views
+                // that remain widen into them at their next restore.
+                first.close();
+                Assert.assertEquals(0, budget.getUsedBytes());
+                probeRestore(second, 2, 32, pageBytes);
+                Assert.assertEquals(1.0, second.getAdmissionFraction(), 0.0);
+            } finally {
+                Unsafe.free(address, pageBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+            Assert.assertEquals(0, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_CHECKPOINT_CACHE));
+        });
+    }
+
     private static void admitAll(
             double fraction,
             int pages,
@@ -689,6 +832,19 @@ public class LiveViewCheckpointPageCacheTest extends AbstractCairoTest {
 
     private static String keyOf(LiveViewCheckpointStatePageRef ref) {
         return ref.getSegmentId() + ":" + ref.getOffset() + ":" + ref.getPageKind();
+    }
+
+    /**
+     * Drives one restore that reads {@code pages} pages of {@code pageBytes} off
+     * {@code segmentId} and admits none of them, so it moves the working-set
+     * estimate and the admission fraction without moving what the cache holds.
+     */
+    private static void probeRestore(LiveViewCheckpointPageCache cache, long segmentId, int pages, int pageBytes) {
+        cache.beginRestore();
+        for (int i = 0; i < pages; i++) {
+            cache.probe(ref(segmentId, (long) i * pageBytes, TIMESTAMP_KIND, pageBytes));
+        }
+        cache.endRestore();
     }
 
     private static LiveViewCheckpointStatePageRef ref(long segmentId, long offset, int pageKind, int decodedLength) {
