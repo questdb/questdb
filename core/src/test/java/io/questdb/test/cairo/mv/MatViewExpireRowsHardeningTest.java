@@ -35,6 +35,7 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -316,6 +317,84 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck().returns("p\tr\n4\t4\n");
+        });
+    }
+
+    @Test
+    public void testReplaceFailureMidCopyRollsBackWithoutLeakingRows() throws Exception {
+        // The per-partition catch in cleanupTable0 frees the WAL writer when a REPLACE fails mid-append, so
+        // the half-appended survivors roll back on close and cannot ride along in the NEXT partition's
+        // REPLACE_RANGE commit (which would resurrect them outside the deleted range). The failure is
+        // injected deterministically with the dev-mode test_fault() function as the predicate's FIRST
+        // conjunct (AND short-circuits, so leading with it makes the per-row evaluation count exact):
+        // armed to throw on the evaluation of d1's SECOND survivor, AFTER the first survivor was already
+        // appended to the writer. The parallel filter is disabled so the predicate evaluates row by row
+        // inside the copy loop; the async path reduces a whole page frame before the copier consumes it,
+        // which would fire the fault before any row was appended. d1's sweep fails half-appended; d2 must
+        // then compact cleanly on a fresh writer with no d1 row leaking into its commit, and a later sweep
+        // compacts d1.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "false");
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', -1.0, '2024-01-01T00:00:00.000000Z')," +  // expired (d1)
+                    "('B', 5.0, '2024-01-01T01:00:00.000000Z')," +   // kept (d1 survivor #1: appended, then rolled back)
+                    "('C', 6.0, '2024-01-01T02:00:00.000000Z')," +   // kept (d1 survivor #2: the throwing evaluation)
+                    "('D', -2.0, '2024-01-02T00:00:00.000000Z')," +  // expired (d2)
+                    "('E', 7.0, '2024-01-02T01:00:00.000000Z')," +   // kept (d2 survivor)
+                    "('F', 9.0, '2024-01-03T00:00:00.000000Z')");    // kept (active partition)
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when test_fault() and v < 0");
+            drainWalAndMatViewQueues();
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t6\n");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+
+            // Per-row evaluations in the sweep, in order: d1 count scan (A, B, C = 3 calls), then d1's
+            // survivor SELECT (A, B, C); arming past 5 calls lands the throw on C - d1's second survivor -
+            // with B already appended to the REPLACE writer.
+            // armToFailAfter resets the global trigger counter, so the absolute count below is exact.
+            TestFaultFunctionFactory.armToFailAfter(5);
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.cleanupTable(token, predicate);
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
+            Assert.assertEquals("the injected fault must have fired exactly once",
+                    1, TestFaultFunctionFactory.faultsTriggered());
+            drainWalAndMatViewQueues();
+
+            // d1's REPLACE failed mid-append and rolled back (3 rows intact); d2 compacted to its survivor
+            // on a fresh writer; no half-appended d1 row leaked into d2's commit (B appears exactly once).
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t5\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    B\t5.0
+                    C\t6.0
+                    E\t7.0
+                    F\t9.0
+                    """);
+
+            // A later sweep (fault disarmed) compacts d1 as well; the visible set is unchanged.
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertTrue(job.cleanupTable(token, predicate));
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    B\t5.0
+                    C\t6.0
+                    E\t7.0
+                    F\t9.0
+                    """);
         });
     }
 

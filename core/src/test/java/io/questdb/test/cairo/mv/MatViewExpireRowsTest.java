@@ -29,6 +29,8 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
@@ -347,6 +349,48 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     sym\tv
                     C\tnull
                     D\t9.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testExpireScalarCleanupHourlyPartitionsCompactAndWipe() throws Exception {
+        // Physical reclamation on PARTITION BY HOUR: partition floors and bounds are hourly, so the sweep
+        // must wipe a fully-expired hour, compact a partial hour to its survivors, and leave a kept row
+        // sitting exactly on the next hour's floor untouched by the previous hour's range.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by hour wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-05T00:15:00.000000Z')," +  // v<2 -> h00 fully expired -> wiped
+                    "('B', 1.5, '2024-01-05T01:20:00.000000Z')," +  // v<2 -> expired (h01 partial)
+                    "('C', 5.0, '2024-01-05T01:40:00.000000Z')," +  // kept (h01 survivor)
+                    "('D', 6.0, '2024-01-05T02:00:00.000000Z')," +  // kept; exactly on the h02 floor
+                    "('E', 9.0, '2024-01-05T03:00:00.000000Z')");   // active partition
+            drainWalAndMatViewQueues();
+            // The passthrough view mirrors the base's HOUR partitioning.
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n4\t5\n");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            final boolean reclaimed;
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                reclaimed = job.cleanupTable(token, predicate);
+            }
+            assertTrue("hourly sweep must reclaim", reclaimed);
+            drainWalAndMatViewQueues();
+
+            // h00 wiped; h01 compacted to C; the h02 boundary row and the active h03 stay untouched.
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t3\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    C\t5.0
+                    D\t6.0
+                    E\t9.0
                     """);
         });
     }
@@ -699,6 +743,21 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     "create materialized view mv as (select * from base) EXPIRE ROWS WHEN no_such_col < now()",
                     25,
                     "invalid EXPIRE ROWS predicate"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNonBooleanPredicateRejected() throws Exception {
+        // EXPIRE ROWS WHEN requires a boolean expression; a bare numeric column is rejected at CREATE and
+        // the view is not left behind.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) EXPIRE ROWS WHEN v",
+                    25,
+                    "invalid EXPIRE ROWS predicate: expected a boolean expression"
             );
             org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
         });
@@ -1058,6 +1117,59 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
                 org.junit.Assert.assertNull(metadata.getExpiryPredicate());
             }
+        });
+    }
+
+    @Test
+    public void testAlterMatViewSetExpireNonBooleanPredicateRejected() throws Exception {
+        // EXPIRE ROWS WHEN requires a boolean expression; a bare numeric column is rejected at ALTER and
+        // the view keeps no policy.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv set expire rows when v",
+                    48,
+                    "invalid EXPIRE ROWS predicate: expected a boolean expression"
+            );
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                org.junit.Assert.assertNull(metadata.getExpiryPredicate());
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughFlagPersistedInDefinitionFile() throws Exception {
+        // The passthrough flag drives refresh REPLACE_RANGE chunking and the SET EXPIRE advisory for
+        // aggregating views, so it must survive a definition reload: assert it via the live graph and by
+        // re-reading the _mv definition file from disk after cached objects are released.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
+            execute("create materialized view agg as (select sym, last(v) v, ts from base sample by 1h) partition by day");
+            drainWalAndMatViewQueues();
+
+            final TableToken mvToken = engine.verifyTableName("mv");
+            final TableToken aggToken = engine.verifyTableName("agg");
+            assertTrue(engine.getMatViewGraph().getViewDefinition(mvToken).isPassthrough());
+            assertFalse(engine.getMatViewGraph().getViewDefinition(aggToken).isPassthrough());
+
+            engine.releaseInactive();
+
+            try (BlockFileReader reader = new BlockFileReader(configuration); Path path = new Path()) {
+                path.of(configuration.getDbRoot());
+                final int rootLen = path.size();
+                final MatViewDefinition reloadedMv = new MatViewDefinition();
+                MatViewDefinition.readFrom(engine, reloadedMv, reader, path, rootLen, mvToken);
+                assertTrue("passthrough flag must survive the _mv definition round-trip", reloadedMv.isPassthrough());
+                final MatViewDefinition reloadedAgg = new MatViewDefinition();
+                MatViewDefinition.readFrom(engine, reloadedAgg, reader, path, rootLen, aggToken);
+                assertFalse(reloadedAgg.isPassthrough());
+            }
+
+            // The live graph still serves the flag after the release.
+            assertTrue(engine.getMatViewGraph().getViewDefinition(mvToken).isPassthrough());
         });
     }
 
