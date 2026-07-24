@@ -173,6 +173,11 @@ public class SqlParser {
     // (the mat-view refresh context keeps the filter on every table except the base). Null when parse()
     // was invoked without a context; rowExpiryReadFilterEnabled is the decision then.
     private SqlExecutionContext expiryFilterExecutionContext;
+    // CairoTable whose EXPIRE ROWS predicate was last looked up from the metadata cache (null when the
+    // lookup fell back to authoritative metadata). Carries the per-instance memo of derived read-filter
+    // artifacts (flip eligibility, quoted column CSV); the instance is immutable per hydration, so it is
+    // safe to hold beyond the cache read lock.
+    private CairoTable expiryPolicyTable;
     // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
@@ -964,6 +969,9 @@ public class SqlParser {
             int position,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
+        // Captured before any nested parse: sub-query parsing recurses back into table resolution, which
+        // overwrites the lookup fields when it meets another policied table.
+        final CairoTable policyTable = expiryPolicyTable;
         if (RowExpiryUtil.isKeepLatest(predicate)) {
             // Relative "KEEP LATEST" retention (passthrough mat views): hide all but the latest row per key
             // by rewriting the reference into "SELECT * FROM "t" LATEST ON "<ts>" PARTITION BY <cols>". The
@@ -997,7 +1005,17 @@ public class SqlParser {
             // required but not provided". The scalar and KEEP LATEST rewrites keep the designation naturally
             // (SELECT * / LATEST ON), so only this branch needs it.
             final String windowPredicate = RowExpiryUtil.windowPredicate(predicate, designatedTimestampColumn);
-            final String windowSql = "SELECT " + buildQuotedColumnList(tableName) + " FROM (SELECT *, CASE WHEN ("
+            // The quoted column CSV is a pure function of the CairoTable's column list; memoize it on the
+            // instance so repeated compiles skip the rebuild. The cache-miss path (policyTable == null, the
+            // brief pre-hydration window) still derives it from authoritative metadata per compile.
+            String columnsCsv = policyTable != null ? policyTable.getExpiryQuotedColumnsCsv() : null;
+            if (columnsCsv == null) {
+                columnsCsv = policyTable != null ? buildQuotedColumnList(policyTable) : buildQuotedColumnList(tableName);
+                if (policyTable != null) {
+                    policyTable.setExpiryQuotedColumnsCsv(columnsCsv);
+                }
+            }
+            final String windowSql = "SELECT " + columnsCsv + " FROM (SELECT *, CASE WHEN ("
                     + windowPredicate + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM "
                     + RowExpiryUtil.quoteIdentifier(tableName) + ") timestamp("
                     + RowExpiryUtil.quoteIdentifier(designatedTimestampColumn) + ") WHERE " + RowExpiryUtil.KEEP_COLUMN;
@@ -1019,7 +1037,19 @@ public class SqlParser {
         // reference becomes "SELECT * FROM "t" WHERE <keep-filter>" so only rows that have NOT expired are
         // visible. The keep-filter is parsed inline (so the sub-query model processes it like any WHERE);
         // see keepFilterWhereText for the NULL/three-valued and partition-pruning details.
-        final boolean flip = isTimestampFlippablePredicate(predicate, designatedTimestampColumn, sqlParserCallback, model.getDecls());
+        // The flip verdict is a pure function of (predicate, designated timestamp) - the stored predicate
+        // cannot reference DECLARE variables (DDL validation binds it against table metadata alone) - so the
+        // probe parse runs once per CairoTable instance and every later compile reads the memo.
+        final boolean flip;
+        final int memoizedFlip = policyTable != null ? policyTable.getExpiryFlipEligibility() : CairoTable.EXPIRY_FLIP_UNKNOWN;
+        if (memoizedFlip != CairoTable.EXPIRY_FLIP_UNKNOWN) {
+            flip = memoizedFlip == CairoTable.EXPIRY_FLIP_YES;
+        } else {
+            flip = isTimestampFlippablePredicate(predicate, designatedTimestampColumn, sqlParserCallback, model.getDecls());
+            if (policyTable != null) {
+                policyTable.setExpiryFlipEligibility(flip ? CairoTable.EXPIRY_FLIP_YES : CairoTable.EXPIRY_FLIP_NO);
+            }
+        }
         final String syntheticSql = "SELECT * FROM " + RowExpiryUtil.quoteIdentifier(tableName) + " WHERE "
                 + keepFilterWhereText(predicate, flip);
 
@@ -1107,13 +1137,29 @@ public class SqlParser {
     }
 
     /**
-     * Builds the quoted, comma-separated base column list of a policied table, for the window read-filter's
-     * outer projection (so the synthetic {@link RowExpiryUtil#KEEP_COLUMN} is not exposed through SELECT *).
-     * Reads from the in-memory metadata cache, falling back to the authoritative table metadata on a cache
-     * miss -- exactly as {@link #lookupExpiryPredicate} does. The two MUST agree: the read path reaches this
-     * only after {@code lookupExpiryPredicate} returned a (window/keep-by) predicate, which itself uses the
-     * fallback, so during the brief startup window before the cache hydrates the predicate is non-null while
-     * the cache has no entry; without the same fallback here the column list would be empty and the rewrite
+     * Builds the quoted, comma-separated column list of the given cached table, for the window
+     * read-filter's outer projection (so the synthetic {@link RowExpiryUtil#KEEP_COLUMN} is not exposed
+     * through SELECT *).
+     */
+    private static String buildQuotedColumnList(CairoTable table) {
+        final StringSink sink = new StringSink();
+        final ObjList<CharSequence> names = table.getColumnNames();
+        for (int i = 0, n = names.size(); i < n; i++) {
+            if (i > 0) {
+                sink.putAscii(',');
+            }
+            sink.put(RowExpiryUtil.quoteIdentifier(names.getQuick(i)));
+        }
+        return sink.toString();
+    }
+
+    /**
+     * Name-based variant of {@link #buildQuotedColumnList(CairoTable)}: reads from the in-memory metadata
+     * cache, falling back to the authoritative table metadata on a cache miss -- exactly as
+     * {@link #lookupExpiryPredicate} does. The two MUST agree: the read path reaches this only after
+     * {@code lookupExpiryPredicate} returned a (window/keep-by) predicate, which itself uses the fallback,
+     * so during the brief startup window before the cache hydrates the predicate is non-null while the
+     * cache has no entry; without the same fallback here the column list would be empty and the rewrite
      * would emit {@code SELECT  FROM (...)} and fail every read of the view until hydration caught up.
      */
     private String buildQuotedColumnList(CharSequence tableName) {
@@ -1125,14 +1171,7 @@ public class SqlParser {
         try (MetadataCacheReader metadataRO = cairoEngine.getMetadataCache().readLock()) {
             final CairoTable table = metadataRO.getTable(tt);
             if (table != null) {
-                final ObjList<CharSequence> names = table.getColumnNames();
-                for (int i = 0, n = names.size(); i < n; i++) {
-                    if (i > 0) {
-                        sink.putAscii(',');
-                    }
-                    sink.put(RowExpiryUtil.quoteIdentifier(names.getQuick(i)));
-                }
-                return sink.toString();
+                return buildQuotedColumnList(table);
             }
         }
         // Cache miss (brief startup window before MetadataCache hydration): fall back to the authoritative
@@ -1350,6 +1389,7 @@ public class SqlParser {
      * cache-miss caveat.
      */
     private String lookupExpiryPredicate(TableToken tableToken) {
+        expiryPolicyTable = null;
         expiryTimestampColumnName = null;
         // EXPIRE ROWS is materialized-view-only; require isMatView() (not merely !isView()) so a policy that
         // ever leaks onto a plain table cannot silently hide its rows. Defense-in-depth: the compiler gate is
@@ -1371,6 +1411,7 @@ public class SqlParser {
                     }
                     // Copy: the CairoTable's name view must not outlive the read lock we are about to release.
                     expiryTimestampColumnName = Chars.toString(table.getTimestampName());
+                    expiryPolicyTable = table;
                     return predicate;
                 }
             }
@@ -6382,6 +6423,7 @@ public class SqlParser {
         // reused parser never carries a stale row-expiry gate/timestamp between compilations.
         rowExpiryReadFilterEnabled = true;
         expiryFilterExecutionContext = null;
+        expiryPolicyTable = null;
         expiryTimestampColumnName = null;
     }
 

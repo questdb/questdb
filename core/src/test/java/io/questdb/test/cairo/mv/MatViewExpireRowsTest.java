@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
@@ -44,6 +46,7 @@ import io.questdb.mp.Job;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -1136,6 +1139,67 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
                 org.junit.Assert.assertNull(metadata.getExpiryPredicate());
             }
+        });
+    }
+
+    @Test
+    public void testReadFilterMemoizesFlipEligibilityOnCairoTable() throws Exception {
+        // The parser derives the keep-filter's flip verdict once per CairoTable instance; every later
+        // compile reads the memo. Proven by planting the opposite verdict on the live instance: a fresh
+        // compile (distinct SQL text, so the query cache cannot serve it) obeys the planted value. A
+        // policy or metadata change replaces the CairoTable, so a stale memo cannot survive a change.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-02T00:00:00.000000Z'");
+            drainWalAndMatViewQueues();
+
+            printSql("explain select * from mv");
+            TestUtils.assertContains(sink, "Interval forward scan");
+
+            final CairoTable table;
+            try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
+                table = ro.getTable(engine.verifyTableName("mv"));
+            }
+            assertNotNull(table);
+            assertEquals(CairoTable.EXPIRY_FLIP_YES, table.getExpiryFlipEligibility());
+
+            table.setExpiryFlipEligibility(CairoTable.EXPIRY_FLIP_NO);
+            printSql("explain select * from mv where true");
+            TestUtils.assertContains(sink, "case(");
+
+            table.setExpiryFlipEligibility(CairoTable.EXPIRY_FLIP_YES);
+            printSql("explain select * from mv where not false");
+            TestUtils.assertContains(sink, "Interval forward scan");
+        });
+    }
+
+    @Test
+    public void testReadFilterMemoizesWindowColumnListOnCairoTable() throws Exception {
+        // The window read-filter's outer projection CSV is derived once per CairoTable instance; every
+        // later compile reads the memo. Proven by planting a narrower projection: a fresh compile serves
+        // only the planted columns.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
+            drainWalAndMatViewQueues();
+
+            printSql("select * from mv");
+            TestUtils.assertEquals("k\tv\tts\n", sink);
+
+            final CairoTable table;
+            try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
+                table = ro.getTable(engine.verifyTableName("mv"));
+            }
+            assertNotNull(table);
+            assertEquals("\"k\",\"v\",\"ts\"", table.getExpiryQuotedColumnsCsv());
+
+            table.setExpiryQuotedColumnsCsv("\"k\",\"ts\"");
+            printSql("select * from mv where true");
+            TestUtils.assertEquals("k\tts\n", sink);
+
+            table.setExpiryQuotedColumnsCsv(null);
+            printSql("select * from mv where not false");
+            TestUtils.assertEquals("k\tv\tts\n", sink);
         });
     }
 
