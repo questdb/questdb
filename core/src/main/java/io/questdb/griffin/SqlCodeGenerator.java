@@ -2435,7 +2435,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 listColumnFilterB,
                 writeSymbolAsString,
                 writeStringAsVarcharB,
-                writeTimestampAsNanosB
+                writeTimestampAsNanosB,
+                keyTypes
         );
     }
 
@@ -2447,7 +2448,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 listColumnFilterA,
                 writeSymbolAsString,
                 writeStringAsVarcharA,
-                writeTimestampAsNanosA
+                writeTimestampAsNanosA,
+                keyTypes
         );
     }
 
@@ -4697,10 +4699,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
                     final int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
                     final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
+                    final int numericWidened = ColumnType.commonNumericWideningType(columnTypeA, columnTypeB);
 
                     if (columnTypeB != columnTypeA
                             && !(isSymbolOrStringOrVarchar(columnTypeB) && isSymbolOrStringOrVarchar(columnTypeA))
-                            && !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))) {
+                            && !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))
+                            && numericWidened == ColumnType.UNDEFINED) {
                         throw SqlException.$(asOfJoinContext.aNodes.getQuick(k).position, "join column type mismatch");
                     }
 
@@ -4741,6 +4745,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (!isTimestampNano(columnTypeB)) {
                             writeTimestampAsNanosB.set(columnIndexB);
                         }
+                    } else if (columnTypeA != columnTypeB && numericWidened != ColumnType.UNDEFINED) {
+                        // implicitly widen mismatched-but-compatible numeric join keys (e.g. INT vs
+                        // LONG), the same way WHERE-clause comparisons already do -- see #1679.
+                        asOfJoinKeyTypes.add(numericWidened);
                     } else {
                         asOfJoinKeyTypes.add(columnTypeA);
                     }
@@ -4762,7 +4770,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         null,
                         asOfWriteSymbolAsString,
                         asOfWriteStringAsVarcharB,
-                        writeTimestampAsNanosB
+                        writeTimestampAsNanosB,
+                        asOfJoinKeyTypes
                 );
                 slaveAsOfJoinMapSinkClass = RecordSinkFactory.getInstanceClass(
                         configuration,
@@ -4773,7 +4782,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         null,
                         asOfWriteSymbolAsString,
                         asOfWriteStringAsVarcharA,
-                        writeTimestampAsNanosA
+                        writeTimestampAsNanosA,
+                        asOfJoinKeyTypes
                 );
             }
 
@@ -7166,10 +7176,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
                         final int columnTypeA = slaveMeta.getColumnType(columnIndexA);
                         final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
+                        final int numericWidened = ColumnType.commonNumericWideningType(columnTypeA, columnTypeB);
 
                         if (columnTypeB != columnTypeA
                                 && !(isSymbolOrStringOrVarchar(columnTypeB) && isSymbolOrStringOrVarchar(columnTypeA))
-                                && !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))) {
+                                && !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))
+                                && numericWidened == ColumnType.UNDEFINED) {
                             throw SqlException.$(asOfJoinContext.aNodes.getQuick(k).position, "join column type mismatch");
                         }
 
@@ -7206,6 +7218,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             if (!isTimestampNano(columnTypeB)) {
                                 writeTimestampAsNanosB.set(columnIndexB);
                             }
+                        } else if (columnTypeA != columnTypeB && numericWidened != ColumnType.UNDEFINED) {
+                            // implicitly widen mismatched-but-compatible numeric join keys (e.g.
+                            // INT vs LONG), the same way WHERE-clause comparisons already do -- see #1679.
+                            asOfJoinKeyTypes.add(numericWidened);
                         } else {
                             asOfJoinKeyTypes.add(columnTypeA);
                         }
@@ -7222,11 +7238,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // creates owner + per-worker instances from these classes.
                     masterAsOfJoinMapSinkClasses[s] = RecordSinkFactory.getInstanceClass(
                             configuration, asm, masterMetadata, listColumnFilterB, null, null,
-                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharB, writeTimestampAsNanosB
+                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharB, writeTimestampAsNanosB,
+                            asOfJoinKeyTypes
                     );
                     slaveAsOfJoinMapSinkClasses[s] = RecordSinkFactory.getInstanceClass(
                             configuration, asm, slaveMeta, listColumnFilterA, null, null,
-                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA
+                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA,
+                            asOfJoinKeyTypes
                     );
                 }
                 perSlaveAsOfJoinKeyTypes[s] = asOfJoinKeyTypes;
@@ -11782,9 +11800,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final String columnNameA = slaveMetadata.getColumnName(columnIndexA);
             final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
             final String columnNameB = masterMetadata.getColumnName(columnIndexB);
+            final int numericWidened = ColumnType.commonNumericWideningType(columnTypeA, columnTypeB);
             if (columnTypeB != columnTypeA
                     && !(isSymbolOrStringOrVarchar(columnTypeB) && isSymbolOrStringOrVarchar(columnTypeA))
                     && !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))
+                    && numericWidened == ColumnType.UNDEFINED
             ) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
@@ -11821,6 +11841,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (!isTimestampNano(columnTypeB)) {
                     writeTimestampAsNanosB.set(columnIndexB);
                 }
+            } else if (columnTypeA != columnTypeB && numericWidened != ColumnType.UNDEFINED) {
+                // implicitly widen mismatched-but-compatible numeric join keys (e.g. INT vs LONG),
+                // the same way WHERE-clause comparisons already do -- see #1679. RecordSinkFactory
+                // reads keyTypes[k] as the shared comparison-buffer's target type for this slot and
+                // widens whichever side is narrower when generating the key-copying sink.
+                keyTypes.add(numericWidened);
             } else {
                 keyTypes.add(columnTypeB);
             }

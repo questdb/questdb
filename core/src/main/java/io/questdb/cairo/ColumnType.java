@@ -170,6 +170,30 @@ public final class ColumnType {
     private ColumnType() {
     }
 
+    /**
+     * Returns the wider of two numeric types when one can be losslessly widened to the
+     * other (BYTE/SHORT/INT/LONG/FLOAT/DOUBLE only), or {@link #UNDEFINED} otherwise.
+     * <p>
+     * Unlike {@link #commonWideningType(int, int)}, which resolves a permissive common
+     * type for UNION-style result sets (falling back to STRING, and treating any two
+     * DECIMAL or GEOHASH types as compatible regardless of scale/precision), this method
+     * is deliberately narrow: it exists to decide whether two JOIN key columns of
+     * different numeric types may be implicitly widened, and must never accept a
+     * DECIMAL-scale or GEOHASH-precision mismatch.
+     */
+    public static int commonNumericWideningType(int typeA, int typeB) {
+        if (!isJoinKeyNumericWideningEligible(typeA) || !isJoinKeyNumericWideningEligible(typeB)) {
+            return UNDEFINED;
+        }
+        if (isToSameOrWider(typeA, typeB)) {
+            return typeB;
+        }
+        if (isToSameOrWider(typeB, typeA)) {
+            return typeA;
+        }
+        return UNDEFINED;
+    }
+
     public static int commonWideningType(int typeA, int typeB) {
         // VARCHAR_SLICE is a transient in-memory type that must never appear in union results.
         if (typeA == VARCHAR_SLICE) typeA = VARCHAR;
@@ -827,6 +851,18 @@ public final class ColumnType {
             case SYMBOL -> toTag == TIMESTAMP;
             default -> false;
         };
+    }
+
+    /**
+     * Whitelist for {@link #commonNumericWideningType(int, int)} -- deliberately an exact
+     * tag set rather than a tag-value range, since {@link #isToSameOrWider(int, int)}
+     * unconditionally accepts any two DECIMAL types (regardless of scale) and any two
+     * GEOHASH types (regardless of precision), which must never be treated as "numeric
+     * widening" for JOIN key purposes.
+     */
+    private static boolean isJoinKeyNumericWideningEligible(int type) {
+        final short tag = tagOf(type);
+        return tag == BYTE || tag == SHORT || tag == INT || tag == LONG || tag == FLOAT || tag == DOUBLE;
     }
 
     private static boolean isNarrowingCast(int fromType, int toType) {

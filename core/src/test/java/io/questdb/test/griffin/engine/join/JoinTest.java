@@ -1516,6 +1516,32 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnIntLongKey() throws Exception {
+        // https://github.com/questdb/questdb/issues/1679
+        // same numeric-widening bug as testJoinOnIntLongKey, but exercised through the
+        // single-slave ASOF/HORIZON join code path (generateHorizonJoinFactory), not the
+        // plain hash-join path (processJoinContext) the other testJoinOnIntLongKey* tests use.
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    key\tlong_val\tint_val
+                    1\t10\t100
+                    2\t20\t200
+                    3\t30\t300
+                    4\t40\t400
+                    5\t50\t500
+                    """;
+
+            execute("create table long_tbl as (select x key, x*10 val, timestamp_sequence(0, 1000000) ts from long_sequence(5)) timestamp(ts)");
+            execute("create table int_tbl as (select x::int key, x*100 val, timestamp_sequence(0, 1000000) ts from long_sequence(5)) timestamp(ts)");
+
+            assertQuery("select long_tbl.key, long_tbl.val long_val, int_tbl.val int_val from long_tbl asof join int_tbl on int_tbl.key = long_tbl.key order by long_tbl.key")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnStr() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.c = x.c";
@@ -10246,16 +10272,65 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     private void testTypeMismatch0(boolean fullFatJoins) throws Exception {
+        // https://github.com/questdb/questdb/issues/1679
+        // x.c is LONG, y.c/z.c are INT -- this used to be rejected as a "join column type
+        // mismatch"; it now implicitly widens like a WHERE-clause comparison would.
         assertMemoryLeak(() -> {
             execute("create table x as (select x c, abs(rnd_int() % 650) a from long_sequence(5))");
             execute("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
-            assertExceptionNoLeakCheck(
-                    "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)",
-                    44,
-                    "join column type mismatch",
-                    fullFatJoins
-            );
+            // fullFatJoins=false yields an indeterminate cursor size (-1); fullFatJoins=true
+            // computes a concrete one -- the two variants need different size assertions,
+            // hence the conditional .expectSize() rather than one fixed chain.
+            var assertion = assertQuery("select z.c, x.a, b, d, d-b from x join y on(c) join z on (c) order by z.c, y.b, z.d")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoins);
+            if (fullFatJoins) {
+                assertion = assertion.expectSize();
+            }
+            assertion.returns("""
+                            c\ta\tb\td\tcolumn
+                            1\t120\t6\t0\t-6
+                            1\t120\t6\t50\t44
+                            1\t120\t39\t0\t-39
+                            1\t120\t39\t50\t11
+                            1\t120\t42\t0\t-42
+                            1\t120\t42\t50\t8
+                            1\t120\t71\t0\t-71
+                            1\t120\t71\t50\t-21
+                            2\t568\t14\t55\t41
+                            2\t568\t14\t968\t954
+                            2\t568\t16\t55\t39
+                            2\t568\t16\t968\t952
+                            2\t568\t48\t55\t7
+                            2\t568\t48\t968\t920
+                            2\t568\t72\t55\t-17
+                            2\t568\t72\t968\t896
+                            3\t333\t3\t305\t302
+                            3\t333\t3\t964\t961
+                            3\t333\t12\t305\t293
+                            3\t333\t12\t964\t952
+                            3\t333\t16\t305\t289
+                            3\t333\t16\t964\t948
+                            3\t333\t81\t305\t224
+                            3\t333\t81\t964\t883
+                            4\t371\t5\t104\t99
+                            4\t371\t5\t171\t166
+                            4\t371\t67\t104\t37
+                            4\t371\t67\t171\t104
+                            4\t371\t74\t104\t30
+                            4\t371\t74\t171\t97
+                            4\t371\t97\t104\t7
+                            4\t371\t97\t171\t74
+                            5\t251\t7\t198\t191
+                            5\t251\t7\t279\t272
+                            5\t251\t44\t198\t154
+                            5\t251\t44\t279\t235
+                            5\t251\t47\t198\t151
+                            5\t251\t47\t279\t232
+                            5\t251\t97\t198\t101
+                            5\t251\t97\t279\t182
+                            """);
         });
     }
 
