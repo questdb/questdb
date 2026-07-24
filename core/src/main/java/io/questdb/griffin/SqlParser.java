@@ -175,8 +175,8 @@ public class SqlParser {
     private SqlExecutionContext expiryFilterExecutionContext;
     // CairoTable whose EXPIRE ROWS predicate was last looked up from the metadata cache (null when the
     // lookup fell back to authoritative metadata). Carries the per-instance memo of derived read-filter
-    // artifacts (flip eligibility, quoted column CSV); the instance is immutable per hydration, so it is
-    // safe to hold beyond the cache read lock.
+    // artifacts (flip eligibility, quoted column CSV); the instance's policy-relevant state (predicate,
+    // timestamp, columns) is immutable per hydration, so it is safe to hold beyond the cache read lock.
     private CairoTable expiryPolicyTable;
     // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
@@ -1037,16 +1037,20 @@ public class SqlParser {
         // reference becomes "SELECT * FROM "t" WHERE <keep-filter>" so only rows that have NOT expired are
         // visible. The keep-filter is parsed inline (so the sub-query model processes it like any WHERE);
         // see keepFilterWhereText for the NULL/three-valued and partition-pruning details.
-        // The flip verdict is a pure function of (predicate, designated timestamp) - the stored predicate
-        // cannot reference DECLARE variables (DDL validation binds it against table metadata alone) - so the
-        // probe parse runs once per CairoTable instance and every later compile reads the memo.
+        // The flip verdict is a pure function of (predicate, designated timestamp) for a DECLARE-free
+        // compile, so the probe parse runs once per CairoTable instance and every later compile reads the
+        // memo. A DECLARE-carrying compile neither trusts nor populates it: column names may legally start
+        // with '@', so a declared name can capture an unquoted such column reference in the predicate
+        // during the probe parse and yield a query-specific verdict.
         final boolean flip;
-        final int memoizedFlip = policyTable != null ? policyTable.getExpiryFlipEligibility() : CairoTable.EXPIRY_FLIP_UNKNOWN;
+        final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = model.getDecls();
+        final boolean isMemoUsable = policyTable != null && (decls == null || decls.size() == 0);
+        final int memoizedFlip = isMemoUsable ? policyTable.getExpiryFlipEligibility() : CairoTable.EXPIRY_FLIP_UNKNOWN;
         if (memoizedFlip != CairoTable.EXPIRY_FLIP_UNKNOWN) {
             flip = memoizedFlip == CairoTable.EXPIRY_FLIP_YES;
         } else {
-            flip = isTimestampFlippablePredicate(predicate, designatedTimestampColumn, sqlParserCallback, model.getDecls());
-            if (policyTable != null) {
+            flip = isTimestampFlippablePredicate(predicate, designatedTimestampColumn, sqlParserCallback, decls);
+            if (isMemoUsable) {
                 policyTable.setExpiryFlipEligibility(flip ? CairoTable.EXPIRY_FLIP_YES : CairoTable.EXPIRY_FLIP_NO);
             }
         }

@@ -1153,14 +1153,21 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-02T00:00:00.000000Z'");
             drainWalAndMatViewQueues();
 
-            printSql("explain select * from mv");
-            TestUtils.assertContains(sink, "Interval forward scan");
-
             final CairoTable table;
             try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
                 table = ro.getTable(engine.verifyTableName("mv"));
             }
             assertNotNull(table);
+            assertEquals(CairoTable.EXPIRY_FLIP_UNKNOWN, table.getExpiryFlipEligibility());
+
+            // A DECLARE-carrying compile neither trusts nor populates the memo: a declared name can capture
+            // an unquoted '@'-prefixed column reference in the predicate during the probe parse.
+            printSql("explain declare @unused := 1 select * from mv");
+            TestUtils.assertContains(sink, "Interval forward scan");
+            assertEquals(CairoTable.EXPIRY_FLIP_UNKNOWN, table.getExpiryFlipEligibility());
+
+            printSql("explain select * from mv");
+            TestUtils.assertContains(sink, "Interval forward scan");
             assertEquals(CairoTable.EXPIRY_FLIP_YES, table.getExpiryFlipEligibility());
 
             table.setExpiryFlipEligibility(CairoTable.EXPIRY_FLIP_NO);
