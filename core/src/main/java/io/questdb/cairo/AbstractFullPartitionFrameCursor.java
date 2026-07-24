@@ -112,10 +112,10 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
     }
 
     protected long getLogicalPartitionRowCount(int partitionIndex, long baseRows) {
-        reader.openPartition(partitionIndex);
         if (!reader.getTxFile().getPartitionHasDelta(partitionIndex)) {
             return baseRows;
         }
+        reader.openPartition(partitionIndex);
         final long state = reader.getOrOpenPartitionFrameState(partitionIndex);
         if (state == 0 || !PartitionFrameState.hasCustomFrames(state)) {
             return baseRows;
