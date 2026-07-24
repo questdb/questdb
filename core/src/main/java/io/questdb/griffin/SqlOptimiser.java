@@ -4592,6 +4592,104 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
+    private CharSequence findVisibleSubsampleTimestamp(IQueryModel model) {
+        if (model == null) {
+            return null;
+        }
+        // A timestamp designated on this model is authoritative. It may be translated to an output
+        // alias (for example SAMPLE BY ts -> bucket), but it must not be inferred merely because an
+        // unrelated projected expression happens to use the same alias.
+        if (model.getTimestamp() != null) {
+            final CharSequence timestamp = model.getTimestamp().token;
+            final CharSequence alias = model.getColumnNameToAliasMap().get(timestamp);
+            if (alias != null) {
+                return alias;
+            }
+            if (model.getAliasToColumnMap().get(timestamp) != null || isSubsamplePassThroughProjection(model)) {
+                return timestamp;
+            }
+            return null;
+        }
+
+        final CharSequence nestedTimestamp = findVisibleSubsampleTimestamp(model.getNestedModel());
+        if (nestedTimestamp == null) {
+            return null;
+        }
+        if (isSubsamplePassThroughProjection(model)) {
+            return nestedTimestamp;
+        }
+
+        // An explicit projection preserves designation only through a literal reference to the
+        // incoming designated timestamp. Alias equality alone is insufficient: `42 AS ts` and
+        // `'2024-01-01'::TIMESTAMP AS ts` are ordinary computed columns, not designated timestamps.
+        final boolean rewrittenSampleBy = model.getNestedModel() != null
+                && model.getNestedModel().getFillStride() != null;
+        QueryColumn column = findDesignatedTimestampProjection(model.getColumns(), nestedTimestamp, rewrittenSampleBy);
+        if (column == null) {
+            column = findDesignatedTimestampProjection(model.getBottomUpColumns(), nestedTimestamp, rewrittenSampleBy);
+        }
+        return column != null ? column.getAlias() : null;
+    }
+
+    private QueryColumn findDesignatedTimestampProjection(
+            ObjList<QueryColumn> columns,
+            CharSequence sourceColumn,
+            boolean rewrittenSampleBy
+    ) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode ast = column.getAst();
+            if (ast != null && ast.type == LITERAL && matchesColumnName(ast.token, sourceColumn)) {
+                return column;
+            }
+            // rewriteSampleBy replaces the designated timestamp with this exact bucket-floor function.
+            // It is the only computed projection that carries designation through this rewrite.
+            if (rewrittenSampleBy
+                    && ast != null
+                    && ast.type == FUNCTION
+                    && Chars.equalsIgnoreCase(ast.token, TimestampFloorFromOffsetUtcFunctionFactory.NAME)
+                    && expressionContainsLiteral(ast, sourceColumn)) {
+                return column;
+            }
+        }
+        return null;
+    }
+
+    private boolean expressionContainsLiteral(ExpressionNode node, CharSequence columnName) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == LITERAL && matchesColumnName(node.token, columnName)) {
+            return true;
+        }
+        if (expressionContainsLiteral(node.lhs, columnName) || expressionContainsLiteral(node.rhs, columnName)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expressionContainsLiteral(node.args.getQuick(i), columnName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isSubsamplePassThroughProjection(IQueryModel model) {
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE) {
+            return true;
+        }
+        return hasWildcardColumn(model.getColumns()) || hasWildcardColumn(model.getBottomUpColumns());
+    }
+
+    private static boolean hasWildcardColumn(ObjList<QueryColumn> columns) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast != null && ast.isWildcard()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Finds the position of the first window function or pure window function name in an expression tree.
      * Returns -1 if no window function is found.
@@ -9304,6 +9402,26 @@ public class SqlOptimiser implements Mutable {
         return rewriteSubsample(model, sqlExecutionContext, false);
     }
 
+    private void verifyNoResidualSubsample(IQueryModel model) throws SqlException {
+        if (model == null) {
+            return;
+        }
+        // QueryModelWrapper delegates SUBSAMPLE to its shared model even when it is not optimisable,
+        // so inspect the current node before respecting the recursion boundary.
+        if (model.getSubsample() != null) {
+            throw SqlException.$(model.getSubsamplePosition(), "internal error: unhandled SUBSAMPLE rewrite");
+        }
+        if (!model.isOptimisable()) {
+            return;
+        }
+        verifyNoResidualSubsample(model.getNestedModel());
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            verifyNoResidualSubsample(joinModels.getQuick(i));
+        }
+        verifyNoResidualSubsample(model.getUnionModel());
+    }
+
     /**
      * @param insideJoin true when this {@code model} is already known to sit inside a join - either
      *                    because an ancestor call found {@code nested} to be a multi-branch join
@@ -9312,7 +9430,7 @@ public class SqlOptimiser implements Mutable {
      *                    (nested model, join branches, union model) so a SUBSAMPLE arbitrarily deep
      *                    inside any join branch - not just one directly attached to the join node
      *                    itself - is still flagged. Only sdt refuses a join context (it throws); the
-     *                    count/value methods migrate in a join via the alias-qualified {@code windowTsToken}.
+     *                    count/value methods migrate above the completed join projection.
      */
     private IQueryModel rewriteSubsample(IQueryModel model, @Transient SqlExecutionContext sqlExecutionContext, boolean insideJoin) throws SqlException {
         if (model == null || !model.isOptimisable()) {
@@ -9340,45 +9458,15 @@ public class SqlOptimiser implements Mutable {
             final ExpressionNode subsample = nested.getSubsample();
             if (subsample != null) {
                 final int subsamplePos = nested.getSubsamplePosition();
-                ExpressionNode timestamp = nested.getTimestamp();
-                if (timestamp == null) {
-                    // The designated timestamp may live on an inner model (subquery / CTE / ORDER BY
-                    // wrapper) while still being a visible column at this level - e.g.
-                    // `FROM (SELECT * FROM t) SUBSAMPLE ...`. Mirror the legacy cursor's chain search so
-                    // these valid shapes still migrate rather than being rejected as timestamp-less.
-                    IQueryModel tsSearch = nested.getNestedModel();
-                    while (tsSearch != null) {
-                        if (tsSearch.getTimestamp() != null) {
-                            timestamp = tsSearch.getTimestamp();
-                            break;
-                        }
-                        tsSearch = tsSearch.getNestedModel();
-                    }
-                }
-                // The timestamp reference the injected keep-flag window will see. Normally the bare
-                // designated-timestamp name off a single-table FROM. But when the SUBSAMPLE sits
-                // DIRECTLY on a multi-branch join (`nested` IS the join, i.e. getJoinModels().size() > 1),
-                // both branches expose a timestamp column of the same name, so a bare reference throws
-                // "Ambiguous column [name=ts]". Qualify it with the master (index-0, left / driving) join
-                // model's alias (falling back to its table name) - the join result's designated timestamp
-                // is the master's, so ordering by <master>.<ts> is well-defined even for outer/right
-                // joins that NULL-extend the master. A branch-local SUBSAMPLE reached via the per-branch
-                // recursion below has a single-table `nested`, so it keeps the bare, unambiguous name.
-                CharSequence windowTsToken = timestamp != null ? timestamp.token : null;
-                if (timestamp != null && nested.getJoinModels().size() > 1) {
-                    final CharSequence masterAlias = nested.getJoinModels().getQuick(0).getName();
-                    if (masterAlias != null) {
-                        final int dot = Chars.indexOfLastUnquoted(timestamp.token, '.');
-                        final CharacterStoreEntry e = characterStore.newEntry();
-                        e.put(masterAlias).put('.');
-                        if (dot == -1) {
-                            e.put(timestamp.token);
-                        } else {
-                            e.put(timestamp.token, dot + 1, timestamp.token.length());
-                        }
-                        windowTsToken = e.toImmutable();
-                    }
-                }
+                // SUBSAMPLE consumes the completed SELECT projection, just as the removed cursor consumed
+                // the factory produced for that projection. Resolve the designated timestamp through every
+                // projection alias and reject it when the projection hides it; never reach through the
+                // boundary and bind an inner table's raw timestamp token.
+                final CharSequence windowTsToken = findVisibleSubsampleTimestamp(model);
+                final ExpressionNode sourceTimestamp = findSubsampleSourceTimestamp(nested);
+                final ExpressionNode timestamp = windowTsToken != null
+                        ? nextLiteral(windowTsToken, sourceTimestamp != null ? sourceTimestamp.position : subsamplePos)
+                        : null;
                 // TOTAL count/value + sdt gates. Every SUBSAMPLE shape either MIGRATES to a keep-flag
                 // window function or THROWS a cursor-compatible SqlException here. Structural rejects
                 // (wrong arity, non-literal value, target/stride/seed that is neither a constant nor a
@@ -9387,9 +9475,8 @@ public class SqlOptimiser implements Mutable {
                 // message and position. Range/type errors for a bind-variable target/stride MIGRATE and
                 // are re-reported cursor-identically by the window factory at runtime; LTTB's raw gap
                 // token is validated here so constant expressions do not widen the old grammar.
-                // Aggregation contexts (SAMPLE BY / GROUP BY) and join contexts DO migrate for the five
-                // count/value arms (desugarSubsample wraps the aggregating model; `windowTsToken` qualifies
-                // the join timestamp); only sdt still refuses those.
+                // Aggregation contexts (SAMPLE BY / GROUP BY) and join contexts migrate through the
+                // completed projection wrapper; only sdt still refuses those.
                 if (Chars.equalsIgnoreCase(subsample.token, "uniform")) {
                     if (subsample.paramCount != 1) {
                         throw SqlException.$(subsample.position, "uniform() requires exactly 1 argument: target points");
@@ -9398,7 +9485,7 @@ public class SqlOptimiser implements Mutable {
                         throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
                     }
                     validatePositionTargetOrThrow(subsample.args.getQuick(0), false, sqlExecutionContext);
-                    model = desugarUniformSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin);
+                    model = desugarUniformSubsample(model, nested, subsample, timestamp, windowTsToken);
                 } else if (Chars.equalsIgnoreCase(subsample.token, "cadence")) {
                     if (subsample.paramCount < 1 || subsample.paramCount > 2) {
                         throw SqlException.$(subsample.position, "cadence() requires 1 or 2 arguments: stride and optional seed");
@@ -9410,7 +9497,7 @@ public class SqlOptimiser implements Mutable {
                     if (subsample.paramCount == 2) {
                         validateCadenceSeedOrThrow(subsample.args.getQuick(1), sqlExecutionContext);
                     }
-                    model = desugarCadenceSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin);
+                    model = desugarCadenceSubsample(model, nested, subsample, timestamp, windowTsToken);
                 } else if (Chars.equalsIgnoreCase(subsample.token, "m4")
                         || Chars.equalsIgnoreCase(subsample.token, "minmax")) {
                     if (subsample.paramCount < 2) {
@@ -9423,12 +9510,14 @@ public class SqlOptimiser implements Mutable {
                     }
                     // Legacy codegen resolves the by-name value column before checking the designated
                     // timestamp. Preserve that error precedence for combined-invalid queries.
-                    final QueryColumn valueColumn = resolveValueInspectingColumnOrThrow(model, subsample.args.getQuick(0));
+                    final QueryColumn valueColumn = resolveVisibleSubsampleColumnOrThrow(model, subsample.args.getQuick(0));
                     if (timestamp == null) {
                         throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
                     }
-                    validateValueInspectingArgsOrThrow(valueColumn, subsample, sqlExecutionContext);
-                    model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin, subsample.token);
+                    validateValueInspectingArgsOrThrow(model, valueColumn, subsample, sqlExecutionContext);
+                    model = desugarValueInspectingSubsample(
+                            model, nested, subsample, timestamp, windowTsToken, valueColumn.getAlias(), subsample.token
+                    );
                 } else if (Chars.equalsIgnoreCase(subsample.token, "lttb")) {
                     if (subsample.paramCount < 2) {
                         throw SqlException.$(subsample.position, "SUBSAMPLE lttb() requires at least 2 arguments: column and target points");
@@ -9438,15 +9527,17 @@ public class SqlOptimiser implements Mutable {
                     }
                     // Legacy codegen resolves the by-name value column before checking the designated
                     // timestamp. Preserve that error precedence for combined-invalid queries.
-                    final QueryColumn valueColumn = resolveValueInspectingColumnOrThrow(model, subsample.args.getQuick(0));
+                    final QueryColumn valueColumn = resolveVisibleSubsampleColumnOrThrow(model, subsample.args.getQuick(0));
                     if (timestamp == null) {
                         throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
                     }
-                    validateValueInspectingArgsOrThrow(valueColumn, subsample, sqlExecutionContext);
+                    validateValueInspectingArgsOrThrow(model, valueColumn, subsample, sqlExecutionContext);
                     if (subsample.paramCount == 3) {
                         validateLttbGapOrThrow(subsample.args.getQuick(2));
                     }
-                    model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin, subsample.token);
+                    model = desugarValueInspectingSubsample(
+                            model, nested, subsample, timestamp, windowTsToken, valueColumn.getAlias(), subsample.token
+                    );
                 } else if (Chars.equalsIgnoreCase(subsample.token, "sdt")) {
                     // TOTAL GATE for sdt. Unlike the other methods, sdt has NO custom SUBSAMPLE cursor,
                     // so a non-migrable sdt node must NOT fall through to codegen (which would only emit
@@ -9464,25 +9555,26 @@ public class SqlOptimiser implements Mutable {
                     if (subsampleInJoinContext) {
                         throw SqlException.$(subsample.position, "SUBSAMPLE sdt is not supported inside a join");
                     }
-                    if (timestamp == null) {
-                        throw SqlException.$(subsample.position, "SUBSAMPLE requires a designated timestamp column");
-                    }
                     if (subsample.paramCount != 2) {
                         throw SqlException.$(subsample.position, "sdt() requires exactly 2 arguments: column and compdev");
                     }
                     if (isAggregationContext(model, nested)) {
                         throw SqlException.$(subsample.position, "SUBSAMPLE sdt is not supported in an aggregation context");
                     }
+                    if (timestamp == null) {
+                        throw SqlException.$(subsample.position, "SUBSAMPLE requires a designated timestamp column");
+                    }
                     final ExpressionNode valueNode = subsample.args.getQuick(0);
                     if (valueNode == null || valueNode.type != ExpressionNode.LITERAL) {
                         throw SqlException.$(subsample.position, "SUBSAMPLE sdt requires a plain column as its first argument");
                     }
+                    final QueryColumn valueColumn = resolveVisibleSubsampleColumnOrThrow(model, valueNode);
                     if (!isConstantSdtCompdev(subsample.args.getQuick(1), sqlExecutionContext)) {
                         throw SqlException.$(subsample.position, "SUBSAMPLE sdt requires a constant, non-negative compdev");
                     }
-                    // sdt-in-join already threw above (subsampleInJoinContext), so windowTsToken here is
-                    // always the bare designated-timestamp name.
-                    model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, windowTsToken, insideJoin, subsample.token);
+                    model = desugarValueInspectingSubsample(
+                            model, nested, subsample, timestamp, windowTsToken, valueColumn.getAlias(), subsample.token
+                    );
                 } else {
                     // Timestamp resolution precedes method dispatch on the legacy codegen path.
                     if (timestamp == null) {
@@ -9619,87 +9711,52 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Resolves a value-inspecting SUBSAMPLE's by-name value column before timestamp validation, matching
-     * legacy codegen error precedence. Projection aliases are followed through their literal ASTs while
-     * descending subqueries, CTEs, aggregation wrappers, and join branches. If a known column's type cannot
-     * be resolved safely, the unresolved QueryColumn is returned so FunctionParser remains authoritative.
+     * Resolves a value-inspecting SUBSAMPLE argument against the completed SELECT projection. The
+     * returned alias and type are authoritative for both validation and execution; an underlying table
+     * column with the same name must never shadow a projected cast/expression.
      */
-    private QueryColumn resolveValueInspectingColumnOrThrow(IQueryModel model, ExpressionNode valueNode) throws SqlException {
+    private QueryColumn resolveVisibleSubsampleColumnOrThrow(IQueryModel model, ExpressionNode valueNode) throws SqlException {
         if (valueNode.type != ExpressionNode.LITERAL) {
             throw SqlException.$(valueNode.position, "column not found: ").put(valueNode.token);
         }
-        final QueryColumn valueColumn = resolveValueInspectingColumn(model, valueNode.token, 0);
-        if (valueColumn == null) {
-            throw SqlException.$(valueNode.position, "column not found: ").put(valueNode.token);
+
+        IQueryModel boundary = model;
+        while (boundary != null) {
+            final ObjList<QueryColumn> columns = boundary.getColumns();
+            final ObjList<QueryColumn> bottomUpColumns = boundary.getBottomUpColumns();
+            // Resolve only against visible output aliases. columnNameToAliasMap is deliberately not
+            // consulted here: it also exposes hidden source-expression tokens (e.g. price -> x for
+            // `SELECT price x`), while SUBSAMPLE consumes the completed projection metadata.
+            QueryColumn valueColumn = findQueryColumnByAlias(columns, valueNode.token);
+            if (valueColumn == null) {
+                valueColumn = findQueryColumnByAlias(bottomUpColumns, valueNode.token);
+            }
+            if (valueColumn == null && isSubsamplePassThroughProjection(boundary)) {
+                // Wildcard/NONE projections expose their source schema unchanged. Their alias map is
+                // therefore authoritative (and, unlike columnNameToAliasMap, does not map a hidden
+                // source expression such as price to an explicitly renamed output x).
+                valueColumn = boundary.getAliasToColumnMap().get(valueNode.token);
+            }
+            if (valueColumn != null) {
+                return valueColumn;
+            }
+            if ((columns.size() > 0 || bottomUpColumns.size() > 0)
+                    && !isSubsamplePassThroughProjection(boundary)) {
+                break;
+            }
+            boundary = boundary.getNestedModel();
         }
-        return valueColumn;
+        throw SqlException.$(valueNode.position, "column not found: ").put(valueNode.token);
     }
 
-    private QueryColumn resolveValueInspectingColumn(IQueryModel model, CharSequence token, int depth) {
-        if (model == null || depth > 32) {
-            return null;
-        }
-
-        final int dot = Chars.indexOfLastUnquoted(token, '.');
-        QueryColumn candidate = getQueryColumn(model, token, dot);
-        CharSequence localToken = token;
-        boolean qualifiedForModel = false;
-        if (candidate == null && dot > -1
-                && model.getName() != null
-                && Chars.equalsIgnoreCase(model.getName(), Chars.toString(token, 0, dot))) {
-            localToken = Chars.toString(token, dot + 1, token.length());
-            qualifiedForModel = true;
-        }
-        if (candidate == null && (dot == -1 || qualifiedForModel)) {
-            candidate = model.getAliasToColumnMap().get(localToken);
-            if (candidate == null) {
-                candidate = findQueryColumnByName(model.getColumns(), localToken);
-            }
-            if (candidate == null) {
-                candidate = findQueryColumnByName(model.getBottomUpColumns(), localToken);
+    private static QueryColumn findQueryColumnByAlias(ObjList<QueryColumn> columns, CharSequence token) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (Chars.equalsIgnoreCase(column.getAlias(), token)) {
+                return column;
             }
         }
-        if (candidate != null && candidate.getColumnType() > ColumnType.UNDEFINED) {
-            return candidate;
-        }
-
-        CharSequence nestedToken = token;
-        if (candidate != null) {
-            final ExpressionNode ast = candidate.getAst();
-            if (ast != null && ast.type == ExpressionNode.LITERAL) {
-                nestedToken = ast.token;
-            } else if (ast != null
-                    && ast.type == ExpressionNode.FUNCTION
-                    && ast.paramCount == 1
-                    && (Chars.equalsIgnoreCase(ast.token, "first") || Chars.equalsIgnoreCase(ast.token, "last"))
-                    && ast.rhs != null
-                    && ast.rhs.type == ExpressionNode.LITERAL) {
-                // first()/last() preserve their input type; follow their sole literal argument through
-                // the aggregation wrapper when column enumeration has not populated the output type yet.
-                nestedToken = ast.rhs.token;
-            }
-        }
-
-        QueryColumn resolved = resolveValueInspectingColumn(model.getNestedModel(), nestedToken, depth + 1);
-        if (resolved != null && resolved.getColumnType() > ColumnType.UNDEFINED) {
-            return resolved;
-        }
-
-        final ObjList<IQueryModel> joinModels = model.getJoinModels();
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
-            final IQueryModel joinModel = joinModels.getQuick(i);
-            if (joinModel == model) {
-                continue;
-            }
-            final QueryColumn joinColumn = resolveValueInspectingColumn(joinModel, nestedToken, depth + 1);
-            if (joinColumn != null && joinColumn.getColumnType() > ColumnType.UNDEFINED) {
-                return joinColumn;
-            }
-            if (resolved == null) {
-                resolved = joinColumn;
-            }
-        }
-        return resolved != null ? resolved : candidate;
+        return null;
     }
 
     private static QueryColumn findQueryColumnByName(ObjList<QueryColumn> columns, CharSequence token) {
@@ -9713,18 +9770,108 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
+    private int resolveVisibleSubsampleColumnType(IQueryModel model, CharSequence token, int depth) {
+        if (model == null || depth > 32) {
+            return ColumnType.UNDEFINED;
+        }
+        CharSequence localToken = token;
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        if (dot > -1) {
+            final CharSequence qualifier = Chars.toString(token, 0, dot);
+            if ((model.getName() != null && Chars.equalsIgnoreCase(model.getName(), qualifier))
+                    || (model.getTableName() != null && Chars.equalsIgnoreCase(model.getTableName(), qualifier))) {
+                localToken = Chars.toString(token, dot + 1, token.length());
+            }
+        }
+        QueryColumn candidate = model.getAliasToColumnMap().get(localToken);
+        if (candidate == null) {
+            final CharSequence alias = model.getColumnNameToAliasMap().get(localToken);
+            if (alias != null) {
+                candidate = model.getAliasToColumnMap().get(alias);
+                if (candidate == null) {
+                    candidate = findQueryColumnByName(model.getColumns(), alias);
+                }
+                if (candidate == null) {
+                    candidate = findQueryColumnByName(model.getBottomUpColumns(), alias);
+                }
+            }
+        }
+        if (candidate == null) {
+            candidate = findQueryColumnByName(model.getColumns(), localToken);
+        }
+        if (candidate == null) {
+            candidate = findQueryColumnByName(model.getBottomUpColumns(), localToken);
+        }
+
+        CharSequence nestedToken = token;
+        if (candidate != null) {
+            if (candidate.getColumnType() > ColumnType.UNDEFINED) {
+                return candidate.getColumnType();
+            }
+            final ExpressionNode ast = candidate.getAst();
+            if (ast != null && SqlKeywords.isCastKeyword(ast.token) && ast.rhs != null) {
+                return ColumnType.typeOf(ast.rhs.token);
+            }
+            if (ast != null && ast.type == ExpressionNode.LITERAL) {
+                nestedToken = ast.token;
+            } else if (ast != null
+                    && ast.type == ExpressionNode.FUNCTION
+                    && ast.paramCount == 1
+                    && (Chars.equalsIgnoreCase(ast.token, "first") || Chars.equalsIgnoreCase(ast.token, "last"))
+                    && ast.rhs != null
+                    && ast.rhs.type == ExpressionNode.LITERAL) {
+                nestedToken = ast.rhs.token;
+            } else {
+                // A computed projection is authoritative. Its final type will be checked by
+                // FunctionParser after the wrapper is built; never fall through to a same-named source.
+                return ColumnType.UNDEFINED;
+            }
+        } else if (!isSubsamplePassThroughProjection(model)
+                && (model.getColumns().size() > 0 || model.getBottomUpColumns().size() > 0)) {
+            return ColumnType.UNDEFINED;
+        }
+
+        int type = resolveVisibleSubsampleColumnType(model.getNestedModel(), nestedToken, depth + 1);
+        if (type > ColumnType.UNDEFINED) {
+            return type;
+        }
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            type = resolveVisibleSubsampleColumnType(joinModels.getQuick(i), nestedToken, depth + 1);
+            if (type > ColumnType.UNDEFINED) {
+                return type;
+            }
+        }
+        return ColumnType.UNDEFINED;
+    }
+
+    private static ExpressionNode findSubsampleSourceTimestamp(IQueryModel model) {
+        IQueryModel current = model;
+        while (current != null) {
+            if (current.getTimestamp() != null) {
+                return current.getTimestamp();
+            }
+            current = current.getNestedModel();
+        }
+        return null;
+    }
+
     /**
      * Completes value-inspecting SUBSAMPLE validation after by-name resolution and timestamp validation.
      * Known non-numeric types reproduce the legacy cursor's diagnostic. Unknown types are deliberately
      * deferred to FunctionParser rather than risking a false rejection of a valid derived column.
      */
     private void validateValueInspectingArgsOrThrow(
+            IQueryModel model,
             QueryColumn valueColumn,
             ExpressionNode subsample,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final ExpressionNode valueNode = subsample.args.getQuick(0);
-        final int valueType = valueColumn.getColumnType();
+        int valueType = valueColumn.getColumnType();
+        if (valueType <= ColumnType.UNDEFINED) {
+            valueType = resolveVisibleSubsampleColumnType(model, valueColumn.getAlias(), 0);
+        }
         final int valueTag = ColumnType.tagOf(valueType);
         if (valueType > ColumnType.UNDEFINED
                 && valueTag != ColumnType.DOUBLE && valueTag != ColumnType.FLOAT
@@ -9846,14 +9993,13 @@ public class SqlOptimiser implements Mutable {
             IQueryModel nested,
             ExpressionNode subsample,
             ExpressionNode timestamp,
-            CharSequence windowTsToken,
-            boolean joinOperand
+            CharSequence windowTsToken
     ) throws SqlException {
         // uniform(N) window call. paramCount == 1 => the argument lives in rhs (ExpressionNode invariant).
         final ExpressionNode uni = expressionNodePool.next().of(FUNCTION, "uniform", 0, subsample.position);
         uni.paramCount = 1;
         uni.rhs = ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(0));
-        return desugarSubsample(model, nested, timestamp, windowTsToken, joinOperand, uni);
+        return desugarSubsample(model, nested, timestamp, windowTsToken, uni);
     }
 
     private IQueryModel desugarCadenceSubsample(
@@ -9861,8 +10007,7 @@ public class SqlOptimiser implements Mutable {
             IQueryModel nested,
             ExpressionNode subsample,
             ExpressionNode timestamp,
-            CharSequence windowTsToken,
-            boolean joinOperand
+            CharSequence windowTsToken
     ) throws SqlException {
         // cadence(stride[, seed]) window call. 1 arg => stride in rhs; 2 args => stride in lhs, seed in
         // rhs (ExpressionNode 2-arg invariant). The gate has proved the stride/seed are constants or bind
@@ -9877,7 +10022,7 @@ public class SqlOptimiser implements Mutable {
             cadence.lhs = ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(0));
             cadence.rhs = ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(1));
         }
-        return desugarSubsample(model, nested, timestamp, windowTsToken, joinOperand, cadence);
+        return desugarSubsample(model, nested, timestamp, windowTsToken, cadence);
     }
 
     /**
@@ -9894,17 +10039,15 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode subsample,
             ExpressionNode timestamp,
             CharSequence windowTsToken,
-            boolean joinOperand,
+            CharSequence valueAlias,
             CharSequence fnName
     ) throws SqlException {
         // fnName(ts, value, target[, gap]) window call. FunctionParser reverses argument order for
         // paramCount > 2 (confirmed via rewriteSampleBy's tsFloorFunc), so the args list is built
         // back-to-front: the window factory then reads args.getQuick(0)=ts, (1)=value, (2)=target,
         // (3)=gap.
-        // `windowTsToken` is the timestamp reference the window sees: the bare designated-timestamp
-        // name off a single-table FROM, or - when the SUBSAMPLE sits directly on a multi-branch join -
-        // the master (left / driving) table's alias-qualified `<alias>.<ts>` so the reference is not
-        // ambiguous across the join's branches (both sides expose a `ts`).
+        // `windowTsToken` and `valueAlias` are names visible on the completed projection, so source
+        // aliases and duplicate names inside join branches cannot capture these references.
         final boolean hasGap = subsample.paramCount == 3;
         final ExpressionNode call = expressionNodePool.next().of(FUNCTION, fnName, 0, subsample.position);
         call.paramCount = hasGap ? 4 : 3;
@@ -9912,9 +10055,9 @@ public class SqlOptimiser implements Mutable {
             call.args.add(ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(2))); // gap
         }
         call.args.add(ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(1))); // target
-        call.args.add(ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(0))); // value column
-        call.args.add(expressionNodePool.next().of(LITERAL, windowTsToken, 0, subsample.position)); // ts
-        return desugarSubsample(model, nested, timestamp, windowTsToken, joinOperand, call);
+        call.args.add(expressionNodePool.next().of(LITERAL, valueAlias, 0, subsample.args.getQuick(0).position)); // projected value
+        call.args.add(expressionNodePool.next().of(LITERAL, windowTsToken, 0, subsample.position)); // projected ts
+        return desugarSubsample(model, nested, timestamp, windowTsToken, call);
     }
 
     /**
@@ -9928,7 +10071,6 @@ public class SqlOptimiser implements Mutable {
             IQueryModel nested,
             ExpressionNode timestamp,
             CharSequence windowTsToken,
-            boolean joinOperand,
             ExpressionNode windowCall
     ) throws SqlException {
         // model:  SELECT <cols> FROM <nested>   (nested holds the SUBSAMPLE clause + designated timestamp)
@@ -9949,134 +10091,89 @@ public class SqlOptimiser implements Mutable {
         // OVER (ORDER BY ts): the designated timestamp gives deterministic input order. In the
         // aggregation case (below) `windowTsToken` names the aggregation OUTPUT column (e.g. the
         // sampled/grouped `ts`), which survives as an ordinary column and is what the window orders by.
-        // When the SUBSAMPLE sits directly on a multi-branch join, `windowTsToken` is the master
-        // table's alias-qualified `<alias>.<ts>` (the bare name is ambiguous across the join branches);
-        // otherwise it is the bare designated-timestamp name.
+        // `windowTsToken` is the designated timestamp alias visible on the completed projection.
         final ExpressionNode orderByTs = expressionNodePool.next().of(LITERAL, windowTsToken, 0, timestamp.position);
         keepCol.addOrderBy(orderByTs, IQueryModel.ORDER_DIRECTION_ASCENDING);
 
         // The SUBSAMPLE clause is now expressed by the window + filter; no residual clause reaches codegen.
         nested.setSubsample(null, 0);
 
-        // The model that the keep-flag window is projected alongside, and the model the keep filter
-        // reads from. For a non-aggregation `model` the window is injected directly INTO it (one fewer
-        // projection layer) and the filter is a bare flat model over it. For an aggregating `model`
-        // (SAMPLE BY / GROUP BY / DISTINCT) a window function cannot be injected into the aggregating
-        // projection - code generation throws "Window function is not allowed in context of
-        // aggregation" - so we WRAP: a fresh CHOOSE model (windowModel) selects the aggregation's
-        // output columns FROM the aggregating model as a subquery and carries the keep window, and the
-        // filter is a SELECT * ... WHERE keep over it. The filter must be an artificial-star projection
-        // (not a bare flat model) to mirror the tree the parser builds for
-        //   SELECT <cols> FROM (SELECT * FROM (SELECT <cols>, keep(...) OVER (ORDER BY ts) FROM (<agg>)) WHERE keep)
-        // A bare flat filter model over an aggregation-subquery-backed window does not propagate the
-        // window's column map to the outer projection (Invalid column), whereas the wildcard does. The
-        // `OVER (ORDER BY ts)` references the aggregation's OUTPUT `ts` - an ordinary column (the
-        // aggregation output has no *designated* timestamp, but ordering a window by a plain column
-        // does not need one).
+        // SUBSAMPLE operates on the completed projection. Always place the keep window above `model`
+        // so projected aliases, casts, expressions, aggregate outputs, and join disambiguation are the
+        // values seen by both validation and execution.
         final boolean aggregation = isAggregationContext(model, nested);
-        final IQueryModel windowModel;
-        final IQueryModel filterModel = queryModelPool.next();
-        if (aggregation) {
-            windowModel = queryModelPool.next();
-            windowModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
-            windowModel.setNestedModel(wrapInSubQuery(model));
-            windowModel.setNestedModelIsSubQuery(true);
-            windowModel.setModelPosition(model.getModelPosition());
-            final ObjList<QueryColumn> aggCols = model.getBottomUpColumns();
-            for (int i = 0, n = aggCols.size(); i < n; i++) {
-                windowModel.addBottomUpColumn(nextColumn(aggCols.getQuick(i).getAlias()));
-            }
-            // The keep flag must be visible to the SELECT * of the artificial-star filter model below,
-            // otherwise the wildcard omits it and the whole window is pruned during rewriteSelectClause.
-            // The outer projection re-lists the original columns only, so the keep flag is still dropped
-            // from the final result - it never surfaces in output.
-            keepCol.setIncludeIntoWildcard(true);
-            windowModel.addBottomUpColumn(keepCol);
-
-            // The WHERE __keep_subsample must sit on a plain SELECT_MODEL_NONE wrapper over the window
-            // subquery, NOT on the projecting filter model: rewriteSelectClause0 rebuilds a projecting
-            // (CHOOSE) model into fresh translating/window/group-by layers and does NOT carry the source
-            // model's whereClause onto the rebuilt chain, so a WHERE placed on the projection is silently
-            // dropped. A NONE wrapper is passed through and keeps its whereClause (this is exactly how the
-            // parser lays out `SELECT * FROM (<window>) WHERE __keep_subsample`).
-            final IQueryModel keepFilterWrap = wrapInSubQuery(windowModel);
-            keepFilterWrap.setWhereClause(expressionNodePool.next().of(LITERAL, keepAlias, 0, 0));
-            // Artificial-star projection so the outer model can resolve the (post-filter) columns.
-            filterModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
-            SqlUtil.addSelectStar(filterModel, queryColumnPool, expressionNodePool);
-            filterModel.setNestedModel(keepFilterWrap);
+        final IQueryModel windowModel = queryModelPool.next();
+        windowModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
+        windowModel.setNestedModel(wrapInSubQuery(model));
+        windowModel.setNestedModelIsSubQuery(true);
+        windowModel.setModelPosition(model.getModelPosition());
+        final ObjList<QueryColumn> projectedCols = model.getBottomUpColumns();
+        final boolean wildcardProjection = hasWildcardColumn(model.getColumns()) || hasWildcardColumn(projectedCols);
+        if (wildcardProjection && !aggregation) {
+            // Select the completed projection once. Copying the raw `*` plus explicit aliases would
+            // re-expand the wildcard at every synthetic layer (`x`, `x1`, `x2`, ...).
+            SqlUtil.addSelectStar(windowModel, queryColumnPool, expressionNodePool);
         } else {
-            // Inner projection = the original select model, now also projecting the keep flag.
-            model.addBottomUpColumn(keepCol);
-            windowModel = model;
-            filterModel.setNestedModel(windowModel);
-            // Non-aggregation filter is a bare flat model; its whereClause survives rewriteSelectClause.
-            filterModel.setWhereClause(expressionNodePool.next().of(LITERAL, keepAlias, 0, 0));
+            for (int i = 0, n = projectedCols.size(); i < n; i++) {
+                windowModel.addBottomUpColumn(nextColumn(projectedCols.getQuick(i).getAlias()));
+            }
+        }
+        // Aggregation rewriting requires the artificial-star filter to see the keep flag while column
+        // maps are rebuilt. Ordinary projections keep it excluded so SELECT * cannot expose it.
+        if (aggregation) {
+            keepCol.setIncludeIntoWildcard(true);
+        }
+        windowModel.addBottomUpColumn(keepCol);
+
+        // Keep WHERE on a SELECT_MODEL_NONE boundary: rewriteSelectClause0 rebuilds projecting models
+        // and would otherwise drop the source whereClause while splitting out the window layer.
+        final IQueryModel keepFilterWrap = wrapInSubQuery(windowModel);
+        keepFilterWrap.setWhereClause(expressionNodePool.next().of(LITERAL, keepAlias, 0, 0));
+        if (!aggregation) {
+            keepFilterWrap.setTimestamp(nextLiteral(windowTsToken, timestamp.position));
+            keepFilterWrap.setExplicitTimestamp(true);
         }
 
-        // Filter model boundary.
+        final IQueryModel filterModel = queryModelPool.next();
+        filterModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
+        SqlUtil.addSelectStar(filterModel, queryColumnPool, expressionNodePool);
+        filterModel.setNestedModel(keepFilterWrap);
         filterModel.setNestedModelIsSubQuery(true);
         filterModel.setModelPosition(model.getModelPosition());
 
-        // Outer select: project the original columns only (drop __keep_subsample). These are
-        // windowModel's projected columns (in the wrapping case, the aggregation output columns).
+        // Final projection: preserve exactly the completed input columns and designation, dropping keep.
         final IQueryModel outerModel = queryModelPool.next();
-        if (aggregation) {
-            outerModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
-            outerModel.setNestedModel(wrapInSubQuery(filterModel));
-        } else {
-            outerModel.setNestedModel(filterModel);
-        }
+        outerModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
+        outerModel.setNestedModel(wrapInSubQuery(filterModel));
         outerModel.setNestedModelIsSubQuery(true);
         outerModel.setModelPosition(model.getModelPosition());
         final ObjList<QueryColumn> innerCols = windowModel.getBottomUpColumns();
-        for (int i = 0, n = innerCols.size(); i < n; i++) {
-            final QueryColumn qc = innerCols.getQuick(i);
-            if (!Chars.equalsIgnoreCase(qc.getAlias(), keepAlias)) {
-                outerModel.addBottomUpColumn(nextColumn(qc.getAlias()));
-            }
-        }
-
-        // Preserve the designated timestamp on the desugared subquery when it is itself a join operand.
-        // ASOF / LT / SPLICE JOIN require the slave operand to expose a designated timestamp, and the
-        // pre-desugar projection over the base table did. The window + keep-filter layers we insert
-        // otherwise strip it (a window subquery exposes NO designated timestamp - verified: a hand-written
-        // `... ASOF JOIN (SELECT v, ts, row_number() OVER (ORDER BY ts) FROM b) b` fails with "right side
-        // of time series join has no timestamp"), so the ASOF slave would fail with "TIMESTAMP column is
-        // required but not provided", and top-down column pruning would even drop `ts` entirely when the
-        // outer query does not select it. The fix mirrors the one shape that DOES work by hand:
-        //   ... ASOF JOIN (SELECT v, ts FROM (<window subquery>) timestamp(ts)) b
-        // i.e. an outer projection with an EXPLICIT designated timestamp over the window subquery. We
-        // stamp that explicit designated timestamp on the filter (NONE) subquery boundary directly under
-        // the outer projection; moveTimestampToChooseModel later lifts it onto the outer projection, and
-        // propagateTopDownColumns then retains `ts` through the window layers. Guarded by joinOperand so
-        // standalone SUBSAMPLE queries (never consumed as a time-ordered operand) keep their existing
-        // plans byte-for-byte. Only meaningful for a single-table FROM (Shape A - SUBSAMPLE directly on a
-        // multi-branch join - is not itself a join operand). If the designated timestamp column is not
-        // projected there is nothing to expose, exactly as before.
-        if (joinOperand && !aggregation && timestamp != null && nested.getJoinModels().size() == 1) {
-            final int tsDot = Chars.indexOfLastUnquoted(timestamp.token, '.');
-            final CharSequence bareTs = tsDot == -1
-                    ? timestamp.token
-                    : timestamp.token.subSequence(tsDot + 1, timestamp.token.length());
+        if (wildcardProjection && !aggregation) {
+            SqlUtil.addSelectStar(outerModel, queryColumnPool, expressionNodePool);
+        } else {
             for (int i = 0, n = innerCols.size(); i < n; i++) {
                 final QueryColumn qc = innerCols.getQuick(i);
-                if (Chars.equalsIgnoreCase(qc.getAlias(), keepAlias)) {
-                    continue;
-                }
-                final ExpressionNode ast = qc.getAst();
-                if (ast != null && ast.type == LITERAL && matchesColumnName(ast.token, bareTs)) {
-                    filterModel.setTimestamp(nextLiteral(qc.getAlias(), timestamp.position));
-                    filterModel.setExplicitTimestamp(true);
-                    break;
+                if (!Chars.equalsIgnoreCase(qc.getAlias(), keepAlias)) {
+                    outerModel.addBottomUpColumn(nextColumn(qc.getAlias()));
                 }
             }
         }
+        if (!aggregation) {
+            outerModel.setTimestamp(nextLiteral(windowTsToken, timestamp.position));
+            outerModel.setExplicitTimestamp(true);
+        }
 
-        // Re-lift LIMIT above the keep-flag filter. The parser attaches LIMIT to the projection model
-        // (parseDml0), which is now the inner model of the rewrite. Left in place it would clip the scan
-        // BEFORE __keep_subsample filtering, i.e. LIMIT would apply before subsampling. Move it to the
-        // outer model so LIMIT k returns the first k of the uniformly-selected rows, matching the cursor.
+        // ORDER BY and LIMIT belong after SUBSAMPLE. The parser keeps ORDER BY on the FROM-side model
+        // (`nested`), while LIMIT is owned by the projection (`model`). Recreate that shape on the
+        // wrapper directly below the final projection so later ORDER BY rewriting retains it.
+        final IQueryModel outerOrderModel = outerModel.getNestedModel();
+        outerOrderModel.moveOrderByFrom(model);
+        if (!aggregation) {
+            // Aggregation rewriting installs a timestamp sort below SUBSAMPLE so ordered traversal
+            // indices match its output. Preserve that internal order; only ordinary-query ORDER BY
+            // belongs above the keep filter.
+            outerOrderModel.moveOrderByFrom(nested);
+        }
         outerModel.setLimitPosition(model.getLimitPosition());
         outerModel.moveLimitFrom(model);
 
@@ -13232,6 +13329,7 @@ public class SqlOptimiser implements Mutable {
             propagateHintsTo(rewrittenModel, rewrittenModel.getHints());
             rewrittenModel = rewriteSampleBy(rewrittenModel, sqlExecutionContext);
             rewrittenModel = rewriteSubsample(rewrittenModel, sqlExecutionContext);
+            verifyNoResidualSubsample(rewrittenModel);
 
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             rewriteCount(rewrittenModel);

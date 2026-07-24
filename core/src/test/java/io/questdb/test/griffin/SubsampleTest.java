@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
@@ -906,6 +907,118 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubsampleRejectsHiddenDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rt (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            final String sql = "SELECT x FROM (SELECT price x FROM rt) SUBSAMPLE uniform(2)";
+            assertException(sql, sql.indexOf("SUBSAMPLE"), "SUBSAMPLE requires a designated timestamp column");
+        });
+    }
+
+    @Test
+    public void testSubsampleRejectsComputedTimestampAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rt (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            final String[] sql = {
+                    "SELECT price, '2024-02-01'::TIMESTAMP ts FROM rt SUBSAMPLE uniform(2)",
+                    "SELECT price, timestamp_sequence(0, 1) ts FROM rt SUBSAMPLE uniform(2)",
+                    "SELECT price, timestamp_floor_utc('1h', ts, null, '00:00', null) ts FROM rt SUBSAMPLE uniform(2)",
+                    "SELECT price, 42 ts FROM rt SUBSAMPLE uniform(2)",
+                    "SELECT price, ts::STRING ts FROM rt SUBSAMPLE uniform(2)",
+                    "SELECT price, ts::LONG ts FROM rt SUBSAMPLE uniform(2)"
+            };
+            for (String query : sql) {
+                assertException(query, query.indexOf("SUBSAMPLE"), "SUBSAMPLE requires a designated timestamp column");
+            }
+        });
+    }
+
+    @Test
+    public void testSubsampleRejectsHiddenValueColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rt (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO rt VALUES (10.0, '2024-01-01'), (20.0, '2024-01-02'), (30.0, '2024-01-03')");
+            final String hidden = "SELECT price x, ts FROM rt SUBSAMPLE lttb(price, 2)";
+            assertException(hidden, hidden.lastIndexOf("price"), "column not found: price");
+            final String qualified = "SELECT price x, ts FROM rt SUBSAMPLE lttb(rt.price, 2)";
+            assertException(qualified, qualified.lastIndexOf("rt.price"), "column not found: rt.price");
+            assertQuery("SELECT price x, ts FROM rt SUBSAMPLE lttb(x, 2)")
+                    .timestamp("ts")
+                    .returns("x\tts\n10.0\t2024-01-01T00:00:00.000000Z\n30.0\t2024-01-03T00:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testSubsamplePreservesMixedWildcardProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rt (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO rt VALUES (10.0, '2024-01-01'), (20.0, '2024-01-02'), (30.0, '2024-01-03')");
+            assertQuery("SELECT *, price + 1 x FROM rt SUBSAMPLE uniform(2)")
+                    .timestamp("ts")
+                    .returns("price\tts\tx\n10.0\t2024-01-01T00:00:00.000000Z\t11.0\n30.0\t2024-01-03T00:00:00.000000Z\t31.0\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleUsesProjectedNumericExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rt (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO rt VALUES (1.0, '2024-01-01'), (-4.0, '2024-01-02'), (0.0, '2024-01-03'), (5.0, '2024-01-04'), (0.0, '2024-01-05'), (1.0, '2024-01-06')");
+            // Raw prices choose -4 at index 1; the projected square must instead choose 25 at index 3.
+            assertQuery("SELECT price * price price, ts FROM rt SUBSAMPLE lttb(price, 3)")
+                    .timestamp("ts")
+                    .returns("price\tts\n1.0\t2024-01-01T00:00:00.000000Z\n25.0\t2024-01-04T00:00:00.000000Z\n1.0\t2024-01-06T00:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleUsesProjectedTypeForValidation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rt (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            final String sql = "SELECT price::STRING price, ts FROM rt SUBSAMPLE lttb(price, 2)";
+            assertException(sql, sql.lastIndexOf("price"), "numeric column expected, got: STRING");
+        });
+    }
+
+    @Test
+    public void testSubsampleViaAliasedSampleByColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rt (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO rt VALUES (10.0, '2024-01-01T00:10'), (20.0, '2024-01-01T01:10'), (30.0, '2024-01-01T02:10')");
+            final String expected = "bucket\tav\n2024-01-01T00:00:00.000000Z\t10.0\n2024-01-01T02:00:00.000000Z\t30.0\n";
+            final String prefix = "SELECT ts bucket, avg(price) av FROM rt SAMPLE BY 1h SUBSAMPLE ";
+            for (String method : new String[]{"uniform(2)", "cadence(2)", "m4(av, 2)", "lttb(av, 2)"}) {
+                assertQuery(prefix + method).timestamp("bucket").returns(expected);
+            }
+            final String plan = planOf(prefix + "lttb(av, 2)");
+            Assert.assertTrue("aliased SAMPLE BY must order the window by its output alias: " + plan, plan.contains("order by [bucket]"));
+            Assert.assertFalse("aliased SAMPLE BY must not leave a legacy node: " + plan, plan.contains("Subsample"));
+        });
+    }
+
+    @Test
+    public void testSubsampleViaRenamedSubqueryAndCteColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rt (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO rt VALUES (10.0, '2024-01-01'), (20.0, '2024-01-02'), (30.0, '2024-01-03')");
+            final String expected = "x\tt\n10.0\t2024-01-01T00:00:00.000000Z\n30.0\t2024-01-03T00:00:00.000000Z\n";
+            final String subquery = "SELECT x, t FROM (SELECT price x, ts t FROM rt) SUBSAMPLE lttb(x, 2)";
+            final String cte = "WITH q AS (SELECT price x, ts t FROM rt) SELECT x, t FROM q SUBSAMPLE lttb(x, 2)";
+            assertQuery(subquery).timestamp("t").returns(expected);
+            assertQuery(cte).timestamp("t").returns(expected);
+            final String plan = planOf(cte);
+            Assert.assertTrue("renamed CTE must use a window node: " + plan, plan.contains("CachedWindow"));
+            Assert.assertTrue("renamed CTE must order by visible t: " + plan, plan.contains("order by [t]"));
+            Assert.assertFalse("renamed CTE must not leave a legacy node: " + plan, plan.contains("Subsample"));
+            try (RecordCursorFactory factory = select(subquery)) {
+                final RecordMetadata metadata = factory.getMetadata();
+                Assert.assertEquals(1, metadata.getTimestampIndex());
+                TestUtils.assertEquals("t", metadata.getColumnName(metadata.getTimestampIndex()));
+            }
+        });
+    }
+
+    @Test
     public void testSubsampleViaSubqueryNonDesignatedTimestamp() throws Exception {
         // Subquery wrapping a table with designated timestamp: SUBSAMPLE must work.
         // Subquery wrapping a table WITHOUT designated timestamp: must fail.
@@ -1193,6 +1306,69 @@ public class SubsampleTest extends AbstractCairoTest {
                             "150.0\t2024-01-01T02:00:00.000000Z\t1500.0\n",
                     "SELECT p.price, p.ts, v.volume FROM prices p ASOF JOIN volumes v ON (symbol) SUBSAMPLE lttb(price, 2)"
             );
+        });
+    }
+
+    @Test
+    public void testSubsampleJoinUsesCompletedProjectionWithDuplicateInputNames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE jp (price DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE jq (price DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            // Left and right spikes occur at different timestamps. Target 3 must choose the left
+            // projection's interior spike (Jan 2), proving the hidden right price cannot drive LTTB.
+            execute("INSERT INTO jp VALUES (0.0, 'X', '2024-01-01'), (100.0, 'X', '2024-01-02'), (0.0, 'X', '2024-01-03'), (0.0, 'X', '2024-01-04'), (0.0, 'X', '2024-01-05')");
+            execute("INSERT INTO jq VALUES (0.0, 'X', '2024-01-01'), (0.0, 'X', '2024-01-02'), (0.0, 'X', '2024-01-03'), (1000.0, 'X', '2024-01-04'), (0.0, 'X', '2024-01-05')");
+
+            final String sql = "SELECT p.price, p.ts FROM jp p ASOF JOIN jq q ON (symbol) SUBSAMPLE lttb(price, 3)";
+            assertQuery(sql)
+                    .timestamp("ts")
+                    .returns("price\tts\n" +
+                            "0.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "100.0\t2024-01-02T00:00:00.000000Z\n" +
+                            "0.0\t2024-01-05T00:00:00.000000Z\n");
+            final String plan = planOf(sql);
+            Assert.assertTrue("duplicate join inputs must resolve through the completed projection: " + plan, plan.contains("CachedWindow"));
+            Assert.assertFalse("no legacy SUBSAMPLE node may survive: " + plan, plan.contains("Subsample"));
+        });
+    }
+
+    @Test
+    public void testSubsampledJoinRetainsTimestampAsOuterTimeJoinOperand() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE jo (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE jip (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE jiq (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO jo VALUES (100.0, '2024-01-01'), (200.0, '2024-01-02'), (300.0, '2024-01-03'), (400.0, '2024-01-04'), (500.0, '2024-01-05')");
+            execute("INSERT INTO jip VALUES (10.0, '2024-01-01'), (20.0, '2024-01-02'), (30.0, '2024-01-03'), (40.0, '2024-01-04')");
+            execute("INSERT INTO jiq VALUES (1000.0, '2024-01-01'), (2000.0, '2024-01-02'), (3000.0, '2024-01-03'), (4000.0, '2024-01-04')");
+
+            final String right = "(SELECT p.price x, p.ts FROM jip p ASOF JOIN jiq q SUBSAMPLE lttb(x, 2)) z";
+            final String asof = "SELECT o.price, o.ts, z.x FROM jo o ASOF JOIN " + right;
+            assertQuery(asof)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("price\tts\tx\n" +
+                            "100.0\t2024-01-01T00:00:00.000000Z\t10.0\n" +
+                            "200.0\t2024-01-02T00:00:00.000000Z\t10.0\n" +
+                            "300.0\t2024-01-03T00:00:00.000000Z\t10.0\n" +
+                            "400.0\t2024-01-04T00:00:00.000000Z\t40.0\n" +
+                            "500.0\t2024-01-05T00:00:00.000000Z\t40.0\n");
+
+            final String lt = "SELECT o.price, o.ts, z.x FROM jo o LT JOIN " + right;
+            assertQuery(lt)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("price\tts\tx\n" +
+                            "100.0\t2024-01-01T00:00:00.000000Z\tnull\n" +
+                            "200.0\t2024-01-02T00:00:00.000000Z\t10.0\n" +
+                            "300.0\t2024-01-03T00:00:00.000000Z\t10.0\n" +
+                            "400.0\t2024-01-04T00:00:00.000000Z\t10.0\n" +
+                            "500.0\t2024-01-05T00:00:00.000000Z\t40.0\n");
+            final String plan = planOf(asof);
+            Assert.assertTrue("nested join operand must retain the window plan: " + plan, plan.contains("CachedWindow"));
+            Assert.assertFalse("no legacy SUBSAMPLE node may survive: " + plan, plan.contains("Subsample"));
         });
     }
 
