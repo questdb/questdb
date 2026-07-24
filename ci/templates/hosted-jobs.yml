@@ -4,7 +4,7 @@ jobs:
   - job: MacGriffinSubBaseline
     displayName: "mac-griffin-sub baseline"
     strategy:
-      parallel: 8
+      parallel: 12
     pool:
       vmImage: "macos-14"
       name: "Azure Pipelines"
@@ -30,8 +30,10 @@ jobs:
     steps:
       - template: steps.yml
 
+  # VerifyBeforeGC is the useful discriminator: it can catch a bad oop before
+  # ParallelGC mutates the heap. Before+During+After exhausted the 55-minute cap.
   - job: MacGriffinSubVerified
-    displayName: "mac-griffin-sub verified"
+    displayName: "mac-griffin-sub pre-GC verified"
     strategy:
       parallel: 4
     pool:
@@ -57,8 +59,6 @@ jobs:
       CRASH_REPRO_JAVA_TOOL_OPTIONS: >-
         -XX:+UnlockDiagnosticVMOptions
         -XX:+VerifyBeforeGC
-        -XX:+VerifyDuringGC
-        -XX:+VerifyAfterGC
         -XX:+CheckJNICalls
         -Xlog:gc+verify=debug,safepoint=info:file=$(Build.ArtifactStagingDirectory)/gc-verified-$(System.JobPositionInPhase)-pid%p.log:time,uptime,level,tags
       MAVEN_OPTS: "-Xmx2g -XX:+UseParallelGC"
