@@ -745,6 +745,40 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testO3InsertSelectVarcharToString() throws Exception {
+        assertMemoryLeak(() -> {
+            setCopierType(RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD);
+            execute("CREATE TABLE src (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE dst (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO dst VALUES ('tail', '1970-01-01T03:00:00.000000Z')");
+
+            try (TableWriter writer = getWriter("src")) {
+                TableWriter.Row row = writer.newRow(3_600_000_000L);
+                row.putVarchar(0, new Utf8String("über"));
+                row.append();
+
+                row = writer.newRow(7_200_000_000L);
+                row.putVarchar(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+                writer.commit();
+            }
+
+            execute("INSERT INTO dst SELECT v, ts FROM src");
+
+            assertQuery("SELECT ts, s, s IS NULL AS is_null FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts\tis_null
+                            1970-01-01T01:00:00.000000Z\tüber\tfalse
+                            1970-01-01T02:00:00.000000Z\t\ttrue
+                            1970-01-01T03:00:00.000000Z\ttail\tfalse
+                            """);
+        });
+    }
+
     private static @NotNull Record getLongRecord(int fromType, long value) {
         return new Record() {
             @Override

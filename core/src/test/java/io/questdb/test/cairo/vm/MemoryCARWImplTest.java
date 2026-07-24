@@ -275,17 +275,6 @@ public class MemoryCARWImplTest {
     }
 
     @Test
-    public void testDeadCodeForUtf8() {
-        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
-            try {
-                mem.putStrUtf8(null);
-                Assert.fail();
-            } catch (UnsupportedOperationException ignored) {
-            }
-        }
-    }
-
-    @Test
     public void testDecimal128() {
         try (MemoryARW mem = new MemoryCARWImpl(32, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             int n = 120;
@@ -1009,6 +998,14 @@ public class MemoryCARWImplTest {
     public void testNullBin() {
         try (MemoryARW mem = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             testNullBin0(mem);
+        }
+    }
+
+    @Test
+    public void testNullStrUtf8() {
+        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+            Assert.assertEquals(Integer.BYTES, mem.putStrUtf8(null));
+            Assert.assertNull(mem.getStrA(0));
         }
     }
 
