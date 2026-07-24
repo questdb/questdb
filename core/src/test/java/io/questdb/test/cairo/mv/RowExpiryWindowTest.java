@@ -28,7 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -464,20 +463,22 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
 
     @Test
     public void testRejectedOnBaseTable() throws Exception {
-        assertMemoryLeak(() -> assertCreateFails(
+        assertException(
                 "create table t (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal expire rows keep highest v partition by k",
+                85,
                 "EXPIRE ROWS is only supported on materialized views"
-        ));
+        );
     }
 
     @Test
     public void testRejectedOnUnpartitionedTable() throws Exception {
         // EXPIRE on an un-partitioned CREATE TABLE must give the SPECIFIC message; the rejection used to live
         // inside the PARTITION BY block, so this case fell through to a generic "unexpected token".
-        assertMemoryLeak(() -> assertCreateFails(
+        assertException(
                 "create table t (a int, ts timestamp) timestamp(ts) expire rows when a < 2",
+                51,
                 "EXPIRE ROWS is only supported on materialized views"
-        ));
+        );
     }
 
     @Test
@@ -485,8 +486,9 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         // Same for CREATE TABLE ... AS SELECT (the PARTITION BY block is likewise skipped here).
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            assertCreateFails(
+            assertExceptionNoLeakCheck(
                     "create table cp as (select * from base) expire rows when v < 2.0",
+                    40,
                     "EXPIRE ROWS is only supported on materialized views"
             );
         });
@@ -513,8 +515,9 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     public void testRejectedForUnknownColumn() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
-            assertCreateFails(
+            assertExceptionNoLeakCheck(
                     "create materialized view mvbad as (select * from base) expire rows keep highest nope partition by k",
+                    25,
                     "invalid EXPIRE ROWS policy"
             );
         });
@@ -524,8 +527,9 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     public void testRejectedZeroRowCount() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
-            assertCreateFails(
+            assertExceptionNoLeakCheck(
                     "create materialized view mvbad as (select * from base) expire rows keep 0 highest v partition by k",
+                    72,
                     "positive row count"
             );
         });
@@ -536,8 +540,9 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         // The token after KEEP must be 'latest', 'highest', 'lowest' or a row count; anything else fails.
         assertMemoryLeak(() -> {
             createBase();
-            assertCreateFails(
+            assertExceptionNoLeakCheck(
                     "create materialized view mvbad as (select * from base) expire rows keep bogus v partition by k",
+                    72,
                     "'latest', 'highest', 'lowest' or a row count expected"
             );
         });
@@ -548,8 +553,9 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         // KEEP <N> must be followed by 'highest' or 'lowest'.
         assertMemoryLeak(() -> {
             createBase();
-            assertCreateFails(
+            assertExceptionNoLeakCheck(
                     "create materialized view mvbad as (select * from base) expire rows keep 3 bogus v partition by k",
+                    74,
                     "'highest' or 'lowest' expected"
             );
         });
@@ -561,8 +567,9 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         // treated as a global (un-partitioned) window (which would change the retention semantics).
         assertMemoryLeak(() -> {
             createBase();
-            assertCreateFails(
+            assertExceptionNoLeakCheck(
                     "create materialized view mvbad as (select * from base) expire rows keep highest v partition by cleanup every 1h",
+                    95,
                     "requires a column list"
             );
         });
@@ -792,15 +799,6 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n1\t3\n");
             assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n2\n");
         });
-    }
-
-    private void assertCreateFails(String sql, String contains) throws Exception {
-        try {
-            execute(sql);
-            Assert.fail("expected SqlException containing: " + contains);
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), contains);
-        }
     }
 
     // Runs one cleanup sweep over "mv" and asserts structural cleanup was deferred.

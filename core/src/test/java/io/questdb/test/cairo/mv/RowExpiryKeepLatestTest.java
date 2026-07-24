@@ -30,7 +30,6 @@ import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -131,11 +130,12 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
 
     @Test
     public void testKeepLatestRejectedOnBaseTable() throws Exception {
-        assertMemoryLeak(() -> assertCreateFails(
+        assertException(
                 "create table t (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
                         "expire rows keep latest partition by k",
+                85,
                 "EXPIRE ROWS is only supported on materialized views"
-        ));
+        );
     }
 
     @Test
@@ -143,8 +143,9 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             drainWalAndMatViewQueues();
-            assertCreateFails(
+            assertExceptionNoLeakCheck(
                     "create materialized view mvbad as (select * from base) expire rows keep latest partition by nope",
+                    25,
                     "invalid EXPIRE ROWS KEEP LATEST column: nope"
             );
         });
@@ -157,8 +158,9 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             drainWalAndMatViewQueues();
-            assertCreateFails(
+            assertExceptionNoLeakCheck(
                     "create materialized view mvbad as (select * from base) expire rows keep latest partition by cleanup every 1h",
+                    92,
                     "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list"
             );
         });
@@ -170,8 +172,9 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             drainWalAndMatViewQueues();
-            assertCreateFails(
+            assertExceptionNoLeakCheck(
                     "create materialized view mvbad as (select * from base) expire rows keep latest k",
+                    79,
                     "'partition' expected"
             );
         });
@@ -422,20 +425,12 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             drainWalAndMatViewQueues();
-            assertCreateFails(
+            assertExceptionNoLeakCheck(
                     "create materialized view mv as (select * from base) expire rows keep latest on v partition by k",
+                    25,
                     "EXPIRE ROWS KEEP LATEST ON must name the designated timestamp 'ts', not 'v'"
             );
         });
-    }
-
-    private void assertCreateFails(String sql, String contains) throws Exception {
-        try {
-            execute(sql);
-            Assert.fail("expected SqlException containing: " + contains);
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), contains);
-        }
     }
 
     private void createBaseAndPassthroughKeepLatest() throws Exception {
