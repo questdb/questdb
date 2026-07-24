@@ -54,6 +54,29 @@ public class LogCaptureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAssertOnlyOnceAcceptsARegexWithCapturingGroups() {
+        final String marker = "log-capture-one-group-" + System.nanoTime();
+        final String barrier = "log-capture-barrier-" + System.nanoTime();
+        LOG.info().$(marker).$();
+        LOG.info().$(barrier).$();
+        capture.waitFor(barrier, 5_000);
+
+        capture.assertOnlyOnce("(" + marker + ")");
+    }
+
+    @Test
+    public void testAssertOnlyOnceRejectsASecondMatch() {
+        final String marker = "log-capture-duplicate-" + System.nanoTime();
+        final String barrier = "log-capture-barrier-" + System.nanoTime();
+        LOG.info().$(marker).$();
+        LOG.info().$(marker).$();
+        LOG.info().$(barrier).$();
+        capture.waitFor(barrier, 5_000);
+
+        Assert.assertThrows(AssertionError.class, () -> capture.assertOnlyOnce(marker));
+    }
+
+    @Test
     public void testWaitForBoundedOverloadReturnsWhenLinePresent() {
         final String marker = "log-capture-witness-present-" + System.nanoTime();
         LOG.info().$(marker).$();

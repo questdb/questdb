@@ -59,9 +59,9 @@ public class LogCapture {
     }
 
     public void assertOnlyOnce(String regex) {
-        Matcher m = Pattern.compile(regex).matcher(sink);
-        Assert.assertTrue("Message '" + regex + "' was not logged", m.find());
-        Assert.assertEquals("Message '" + regex + "' was not more than once", 0, m.groupCount());
+        Matcher matcher = Pattern.compile(regex).matcher(sink.toString());
+        Assert.assertTrue("Message '" + regex + "' was not logged", matcher.find());
+        Assert.assertFalse("Message '" + regex + "' was logged more than once", matcher.find());
     }
 
     @TestOnly
