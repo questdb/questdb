@@ -597,7 +597,6 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
                 Assert.assertFalse(job.cleanupTable(token, predicate));
-                Assert.assertEquals(0, job.getSurvivorStreamOpenCount());
             }
             drainWalAndMatViewQueues();
 
