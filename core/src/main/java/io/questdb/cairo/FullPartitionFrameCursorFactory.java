@@ -142,6 +142,7 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
                         fwdRangeIntervals
                 );
                 fwdRangeCursor = new IntervalFwdPartitionFrameCursor(
+                        reader.getConfiguration(),
                         fwdRangeIntervalModel,
                         getMetadata().getTimestampIndex()
                 );
@@ -192,6 +193,7 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
                         bwdRangeIntervals
                 );
                 bwdRangeCursor = new IntervalBwdPartitionFrameCursor(
+                        reader.getConfiguration(),
                         bwdRangeIntervalModel,
                         getMetadata().getTimestampIndex()
                 );

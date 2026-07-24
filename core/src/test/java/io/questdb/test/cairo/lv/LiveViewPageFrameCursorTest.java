@@ -1026,7 +1026,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
     private static void drain(LiveViewPageFrameCursor cursor, RecordMetadata metadata, boolean isDescending, RowSink sink) {
         try (
                 PageFrameAddressCache addressCache = new PageFrameAddressCache();
-                PageFrameMemoryPool pool = new PageFrameMemoryPool(FRAME_CACHE_BYTES);
+                PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, FRAME_CACHE_BYTES);
                 PageFrameMemoryRecord record = new PageFrameMemoryRecord()
         ) {
             addressCache.of(metadata, cursor.getColumnMapping(), cursor.isExternal());

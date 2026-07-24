@@ -74,6 +74,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // required state and does surface to the operator.
     public static final int LV_CHECKPOINT_TIMELINE_INVALID = LV_FILE_VERSION_UNSUPPORTED - 1;
     private static final int TABLE_SUSPENDED = LV_CHECKPOINT_TIMELINE_INVALID - 1;
+    public static final int PARTITION_SNAPSHOT_STALE = TABLE_SUSPENDED - 1;
+    public static final int PARTITION_SNAPSHOT_ID_MISSING = PARTITION_SNAPSHOT_STALE - 1;
     public static final int NON_CRITICAL = -1;
     // Single source of truth for the write-refusal message a read-only node emits. Both a static
     // read-only OSS instance and an enterprise node acting as a read-only replica reach this

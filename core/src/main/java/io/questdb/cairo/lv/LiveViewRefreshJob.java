@@ -212,7 +212,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // per row.
     private final ObjList<LiveViewCheckpointTimelineEntry> emptyRepairBoundaries = new ObjList<>();
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
-    private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
+    private final PageFrameMemoryPool memoryPool;
     private final Path path = new Path();
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
     // Coordinates of the out-of-order repair currently executing: the pinned base
@@ -348,6 +348,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // instance is invoked only via applyWalDirect from incrementalRefresh.
         this.applyJob = new ApplyWal2TableJob(engine, sharedQueryWorkerCount);
         this.walFrameCursor = new WalSegmentPageFrameCursor(engine.getConfiguration());
+        this.memoryPool = new PageFrameMemoryPool(engine.getConfiguration(), 0L);
         this.walRecordCursor = new WalSegmentRecordCursor(addressCache, memoryPool);
         this.rowsBounds = new LiveViewCheckpointRowsBounds(engine.getConfiguration());
     }

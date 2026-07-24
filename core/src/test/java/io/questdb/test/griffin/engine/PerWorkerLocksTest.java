@@ -186,13 +186,25 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         //
         // More threads than slots, so the acquire loop genuinely runs out and spins. workerId = -1
         // makes each thread start its probe at a random slot, which is the work-stealing path.
-        final int threads = 8;
-        final int slots = 3;
-        final int rounds = 2_000;
+        //
+        // The shape scales with the machine because acquireSlot never yields to the OS: once the
+        // spinning threads outnumber the cores, a preempted slot holder cannot get back on CPU
+        // while the waiters burn their quanta, and completion time becomes scheduler luck. The
+        // fixed 8-thread/3-slot version of this run took 12-60s+ on hosted 3-core CI agents next
+        // to sibling surefire forks and timed out; capping threads at the core count keeps every
+        // runnable thread schedulable, while threads > slots keeps the exhaustion path exercised.
+        final int threads = Math.min(8, Math.max(3, Runtime.getRuntime().availableProcessors()));
+        final int slots = Math.min(3, threads - 1);
+        // One shared round quota instead of a per-thread count: a thread the scheduler starves
+        // contributes less instead of gating completion, so the wall clock is bounded by aggregate
+        // throughput rather than by the unluckiest thread.
+        final int totalRounds = 16_000;
+        final AtomicInteger roundTickets = new AtomicInteger();
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, slots);
         // Counts every acquire the run is expected to make, so a lost CAS leaves the latch above
-        // zero when the run ends.
-        final CountDownLatch allAcquired = new CountDownLatch(threads * rounds);
+        // zero when the run ends. Exactly totalRounds tickets win an acquire, so the latch ends at
+        // zero iff each of them counted it down.
+        final CountDownLatch allAcquired = new CountDownLatch(totalRounds);
         locks.setTestAcquireLatch(allAcquired);
         final AtomicIntegerArray owners = new AtomicIntegerArray(slots);
         final AtomicInteger exclusionBreaches = new AtomicInteger();
@@ -209,7 +221,7 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
             final Thread thread = new Thread(() -> {
                 try {
                     start.await();
-                    for (int i = 0; i < rounds; i++) {
+                    while (roundTickets.getAndIncrement() < totalRounds) {
                         final int slot = locks.acquireSlot(-1, circuitBreaker);
                         if (slot < 0 || slot >= slots) {
                             errors.add(new AssertionError("slot out of range: " + slot));
@@ -246,7 +258,14 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         }
 
         try {
-            Assert.assertTrue("threads did not finish", done.await(60, TimeUnit.SECONDS));
+            // Generous backstop: with threads capped at the core count this finishes in well under
+            // a second; the deadline only trips if the whole JVM is denied CPU, and the message
+            // then separates "no progress" from "some threads stalled".
+            if (!done.await(120, TimeUnit.SECONDS)) {
+                Assert.fail("threads did not finish: rounds claimed="
+                        + Math.min(roundTickets.get(), totalRounds) + "/" + totalRounds
+                        + ", acquires counted=" + (totalRounds - allAcquired.getCount()));
+            }
             if (!errors.isEmpty()) {
                 throw new AssertionError("thread failed", errors.peek());
             }
