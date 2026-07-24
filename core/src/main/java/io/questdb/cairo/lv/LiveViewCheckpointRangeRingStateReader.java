@@ -136,12 +136,21 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
             new LiveViewCheckpointDataSegmentReader[DATA_SEGMENT_CACHE_SIZE];
     private final long[] dataSegmentIds = new long[DATA_SEGMENT_CACHE_SIZE];
     private final LiveViewCheckpointStateCodec.Scratch scratch;
+    // Where the last decodeChunk left the current chunk's decoded timestamps and
+    // values: the codec scratch when the page was decoded, the cache's own image
+    // when it was served. Valid until the next decodeChunk.
+    private long chunkTimestampsAddress;
+    private long chunkValuesAddress;
     private long frameSize;
     private int headOffset;
     private boolean initialized;
     private long lastTimestamp;
     // The segment reader the last openPage bound; the decoders read the page off it.
     private LiveViewCheckpointDataSegmentReader openReader;
+    // Decoded pages this view keeps across restores, or null when the view has no
+    // cache. Bound per binding, because the cache belongs to the same view the
+    // checkpoint directory does.
+    private LiveViewCheckpointPageCache pageCache;
     private long rowCount;
     private long scalarWord0;
     private long scalarWord1;
@@ -220,8 +229,11 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         }
         Misc.free(scratch);
         Misc.free(checkpointsDir);
+        chunkTimestampsAddress = 0;
+        chunkValuesAddress = 0;
         initialized = false;
         openReader = null;
+        pageCache = null;
         segmentDirectory = null;
         statePageRefs = new LiveViewCheckpointStatePageRef[0];
     }
@@ -231,6 +243,11 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
      * reader that outlives one restore holds no mapping into files a later retire,
      * repair or compaction deletes - and cannot serve a page out of a segment id
      * a rebuilt timeline re-minted. The next walk re-opens what it touches.
+     * <p>
+     * The decoded page cache is let go with them, because it belongs to the view
+     * this binding read rather than to the reader. It is not emptied: the pages it
+     * holds outlive one restore by design, and the view that owns it moves it to a
+     * new epoch when its timeline is rebuilt.
      */
     public void detach() {
         for (int i = 0; i < DATA_SEGMENT_CACHE_SIZE; i++) {
@@ -241,6 +258,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
             dataSegmentIds[i] = -1;
         }
         openReader = null;
+        pageCache = null;
     }
 
     /**
@@ -342,12 +360,32 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     }
 
     /**
-     * Opens {@code entry} for both metadata and payload access.
+     * Opens {@code entry} for both metadata and payload access, decoding every
+     * page it reads.
      */
     public void of(
             @Transient @NotNull Path checkpointsDir,
             @NotNull LiveViewCheckpointSegmentDirectoryReader segmentDirectory,
             @NotNull LiveViewCheckpointPartitionMapEntry entry
+    ) {
+        of(checkpointsDir, segmentDirectory, entry, null);
+    }
+
+    /**
+     * Opens {@code entry} for both metadata and payload access, serving whatever
+     * {@code pageCache} already holds and offering it whatever this binding
+     * decodes.
+     * <p>
+     * The cache belongs to the same view {@code checkpointsDir} names, because a
+     * page identity is a segment id and segment ids are unique within one view's
+     * directory and nowhere else. Passing null decodes every page, which is what a
+     * view with no cache - or an engine whose page cache budget is disabled - does.
+     */
+    public void of(
+            @Transient @NotNull Path checkpointsDir,
+            @NotNull LiveViewCheckpointSegmentDirectoryReader segmentDirectory,
+            @NotNull LiveViewCheckpointPartitionMapEntry entry,
+            @Nullable LiveViewCheckpointPageCache pageCache
     ) {
         ofMetadata(entry);
         if (!Utf8s.equals(this.checkpointsDir, checkpointsDir)) {
@@ -357,6 +395,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
             this.checkpointsDir.of(checkpointsDir);
         }
         this.segmentDirectory = segmentDirectory;
+        this.pageCache = pageCache;
     }
 
     /**
@@ -373,6 +412,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     public void ofMetadata(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
         initialized = false;
         openReader = null;
+        this.pageCache = null;
         this.segmentDirectory = null;
         final byte[] scalar = entry.getScalarState();
         if (scalar.length < scalarStateBytes(1)) {
@@ -620,14 +660,36 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         return copy;
     }
 
+    /**
+     * Makes chunk {@code chunkIndex}'s decoded pages readable, decoding into the
+     * supplied scratch addresses whatever the page cache could not serve. The
+     * addresses the chunk's rows are actually at land in
+     * {@link #chunkTimestampsAddress} / {@link #chunkValuesAddress}, which is not
+     * {@code timestampAddress} / {@code valueAddress} when the cache served the
+     * page: a hit hands the walk the cache's own image rather than copying it into
+     * the scratch, so the hit path costs a probe and nothing else.
+     *
+     * @return the chunk's physical row count
+     */
     int decodeChunk(int chunkIndex, long timestampAddress, long valueAddress) {
         final int pagesPerChunk = pagesPerChunk(valueKind);
         final LiveViewCheckpointStatePageRef timestampRef = statePageRefs[chunkIndex * pagesPerChunk];
-        decodeTimestamps(timestampRef, timestampAddress);
-        if (pagesPerChunk > 1) {
-            decodeValues(statePageRefs[chunkIndex * pagesPerChunk + 1], valueAddress);
-        }
+        chunkTimestampsAddress = readTimestamps(timestampRef, timestampAddress);
+        chunkValuesAddress = pagesPerChunk > 1
+                ? readValues(statePageRefs[chunkIndex * pagesPerChunk + 1], valueAddress)
+                : 0;
         return timestampRef.getRowCount();
+    }
+
+    /**
+     * Offers the image just decoded into {@code decodedAddress} to the cache. A
+     * refusal - the admission hash, an exhausted budget - costs nothing: the page
+     * is decoded either way and the walk reads it from the scratch.
+     */
+    private void admitPage(LiveViewCheckpointStatePageRef ref, long decodedAddress) {
+        if (pageCache != null) {
+            pageCache.admit(ref, decodedAddress);
+        }
     }
 
     /**
@@ -714,6 +776,54 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     }
 
     /**
+     * Looks {@code ref}'s decoded image up.
+     * <p>
+     * A hit skips both the mapping and the codec, so it also skips the framing
+     * checks {@link #openPage} would have run. Those checks are not what makes the
+     * hit safe; {@link #ofMetadata} is. It validates every reference this reader
+     * will ever walk - page kind, codec, row count, decoded length, flags - before
+     * a single page is read, and the store reader proves each referenced segment
+     * belongs to this root before it restores. What remains is that the cached
+     * image really is this page's, which the cache's own key plus its
+     * codec/rowCount/decodedLength check decide, over data segments that are
+     * immutable by construction.
+     *
+     * @return the address of the decoded image, valid until the next chunk is
+     * read, or zero when the page must be decoded
+     */
+    private long probePage(LiveViewCheckpointStatePageRef ref) {
+        return pageCache != null ? pageCache.probe(ref) : 0;
+    }
+
+    /**
+     * @return the address chunk {@code ref}'s timestamps are decoded at, which is
+     * the cache's image on a hit and {@code scratchAddress} otherwise
+     */
+    private long readTimestamps(LiveViewCheckpointStatePageRef ref, long scratchAddress) {
+        final long cached = probePage(ref);
+        if (cached != 0) {
+            return cached;
+        }
+        decodeTimestamps(ref, scratchAddress);
+        admitPage(ref, scratchAddress);
+        return scratchAddress;
+    }
+
+    /**
+     * @return the address chunk {@code ref}'s values are decoded at, which is the
+     * cache's image on a hit and {@code scratchAddress} otherwise
+     */
+    private long readValues(LiveViewCheckpointStatePageRef ref, long scratchAddress) {
+        final long cached = probePage(ref);
+        if (cached != 0) {
+            return cached;
+        }
+        decodeValues(ref, scratchAddress);
+        admitPage(ref, scratchAddress);
+        return scratchAddress;
+    }
+
+    /**
      * Replays every live row through whichever consumer matches the ring's value
      * width. A function always reads the width it sealed under, so a mismatch means
      * the caller wired the ring to the wrong function rather than that a page is
@@ -738,10 +848,12 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         long previousTimestamp = 0;
         boolean hasPrevious = false;
         for (int chunk = 0, n = statePageRefs.length / pagesPerChunk(valueKind); chunk < n; chunk++) {
+            // Not necessarily the scratch it was asked to decode into: a page the
+            // cache served is read where the cache holds it.
             final int physicalRows = decodeChunk(chunk, scratch.timestampsAddress(), scratch.valuesAddress());
             final int lo = chunk == 0 ? headOffset : 0;
             for (int i = 0; i < physicalRows; i++) {
-                final long timestamp = Unsafe.getLong(scratch.timestampsAddress() + (long) i * Long.BYTES);
+                final long timestamp = Unsafe.getLong(chunkTimestampsAddress + (long) i * Long.BYTES);
                 // Timestamps must not decrease. Values are not checked for
                 // finiteness: NaN is a legitimate first_value/last_value/nth_value
                 // over a frame whose oldest/newest row is NULL. avg/sum, whose ring
@@ -762,7 +874,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
                     }
                     // The value travels as raw 64-bit words, whatever the ring's value
                     // kind; the function reinterprets them.
-                    final long base = scratch.valuesAddress() + (long) i * words * Long.BYTES;
+                    final long base = chunkValuesAddress + (long) i * words * Long.BYTES;
                     if (narrow != null) {
                         narrow.accept(timestamp, Unsafe.getLong(base));
                     } else if (decimal128 != null) {

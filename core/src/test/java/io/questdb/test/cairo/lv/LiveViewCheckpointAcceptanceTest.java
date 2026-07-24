@@ -28,6 +28,8 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointPageCache;
+import io.questdb.cairo.lv.LiveViewCheckpointPageCacheBudget;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
@@ -80,6 +82,18 @@ import org.junit.Test;
  */
 public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
 
+    // Shape of the page cache differential. Every view carries CACHE_KEYS window
+    // partitions, so one anchor restore reads a page pair per key and ten anchors
+    // put a few hundred distinct pages in front of the admission hash.
+    private static final int CACHE_COMMITS_PER_ROUND = 4;
+    private static final int CACHE_KEYS = 8;
+    private static final int CACHE_ROUNDS = 10;
+    private static final int CACHE_VIEWS = 3;
+    // Fraction of pages, by identity hash, each of the three views admits. The
+    // fraction is what an engine-wide cap resolves to per view, and it is settable
+    // where the cap is fixed for the engine's life, so the differential drives it
+    // directly.
+    private static final double[] CACHE_ADMISSION_FRACTIONS = {0, 0.5, 1};
     // Commits per round of the refresh-lag case: twelve in-order groups and then one
     // historical correction, which is thirteen published generations per round.
     private static final int LAG_COMMITS_PER_ROUND = 12;
@@ -122,6 +136,88 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
         // Pin the clock below the (2026) data so a START FROM NOW view resolves its
         // lower bound under every row it will ever see, corrections included.
         setCurrentMicros(0);
+    }
+
+    @Test
+    public void testViewContentIsIdenticalWhateverThePageCacheHolds() throws Exception {
+        assertMemoryLeak(() -> {
+            // Three identical views over three identical bases, refreshed through
+            // the same commits, differing only in how much of their decoded
+            // checkpoint state the page cache is allowed to keep: nothing, a
+            // hash-selected half, everything. A cache that ever answered with the
+            // wrong page would show up here as one view disagreeing with the other
+            // two - and with the recompute all three are measured against.
+            for (int i = 0; i < CACHE_VIEWS; i++) {
+                createBaseAndView(cacheBase(i), cacheView(i), RANGE_30S_FRAME);
+            }
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                pinAdmissionFractions();
+                int second = 0;
+                for (int round = 1; round <= CACHE_ROUNDS; round++) {
+                    for (int i = 0; i < CACHE_COMMITS_PER_ROUND; i++) {
+                        second += 10;
+                        commitEveryKey(job, second, round * 100L + i);
+                        pinAdmissionFractions();
+                    }
+                    driveRefreshToQuiescence(job);
+                    // Two corrections just below the head. Both resume from the
+                    // newest boundary below them - the same root - so the second
+                    // restore meets the pages the first one decoded, which is the
+                    // repeat under sustained out-of-order ingestion the cache is
+                    // for.
+                    commitEveryKey(job, second - 5, 9_000L + round);
+                    pinAdmissionFractions();
+                    commitEveryKey(job, second - 3, 9_500L + round);
+                    pinAdmissionFractions();
+                    driveRefreshToQuiescence(job);
+                }
+
+                for (int i = 0; i < CACHE_VIEWS; i++) {
+                    final LiveViewInstance instance = viewInstance(cacheView(i));
+                    Assert.assertTrue(
+                            cacheView(i) + " never resumed from an anchor checkpoint, so it never"
+                                    + " restored one and the differential below proves nothing",
+                            instance.getO3ResumeReplayRows() > 0
+                    );
+                    assertViewMatchesRecompute(cacheView(i), cacheBase(i), RANGE_30S_FRAME);
+                }
+                // And against each other, not only against their own recompute.
+                for (int i = 1; i < CACHE_VIEWS; i++) {
+                    TestUtils.assertSqlCursors(
+                            engine,
+                            sqlExecutionContext,
+                            "(" + cacheView(0) + ") ORDER BY 2, 1",
+                            "(" + cacheView(i) + ") ORDER BY 2, 1",
+                            LOG,
+                            true
+                    );
+                }
+
+                final LiveViewCheckpointPageCache cold = pageCache(cacheView(0));
+                final LiveViewCheckpointPageCache half = pageCache(cacheView(1));
+                final LiveViewCheckpointPageCache warm = pageCache(cacheView(2));
+                // The three views really were served differently, so the equality
+                // above is a differential rather than three runs of one path.
+                Assert.assertTrue("no view restored a ring page", cold.getMisses() > 0);
+                // Identical data through identical turns, so the three views probed
+                // for exactly the same pages and differ only in what came back.
+                Assert.assertEquals(cold.getMisses(), half.getHits() + half.getMisses());
+                Assert.assertEquals(cold.getMisses(), warm.getHits() + warm.getMisses());
+                Assert.assertEquals("a view admitting nothing must serve nothing", 0, cold.getHits());
+                Assert.assertEquals(0, cold.getPageCount());
+                Assert.assertTrue("the half-admitting view served nothing", half.getHits() > 0);
+                Assert.assertTrue(
+                        "the half-admitting view held as much as the full one [half="
+                                + half.getPageCount() + ", warm=" + warm.getPageCount() + ']',
+                        half.getPageCount() < warm.getPageCount()
+                );
+                Assert.assertTrue(
+                        "holding more pages served no more of them [half=" + half.getHits()
+                                + ", warm=" + warm.getHits() + ']',
+                        warm.getHits() > half.getHits()
+                );
+            }
+        });
     }
 
     @Test
@@ -460,6 +556,14 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
         });
     }
 
+    private static String cacheBase(int index) {
+        return "cache_base_" + index;
+    }
+
+    private static String cacheView(int index) {
+        return "cache_lv_" + index;
+    }
+
     private static Path checkpointsDir(LiveViewInstance instance) {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
@@ -523,6 +627,32 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
         execute("INSERT INTO " + baseName + " (ts, sym, x) VALUES "
                 + "('" + rowTs + "', 'a', " + value + "), "
                 + "('" + rowTs + "', 'b', " + (value + 1) + ")");
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+    }
+
+    /**
+     * Commits one row per key, at the same timestamp, into every base of the page
+     * cache differential, and gives the refresh job a turn on all of them. The
+     * clock steps once for the whole group, so the three views meet identical data
+     * on identical deadlines and the only thing that separates them is what their
+     * caches are allowed to keep.
+     */
+    private void commitEveryKey(LiveViewRefreshJob job, int second, long value) throws Exception {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        final String rowTs = timestamp(second);
+        for (int view = 0; view < CACHE_VIEWS; view++) {
+            final StringBuilder sql = new StringBuilder("INSERT INTO " + cacheBase(view) + " (ts, sym, x) VALUES ");
+            for (int key = 0; key < CACHE_KEYS; key++) {
+                if (key > 0) {
+                    sql.append(", ");
+                }
+                sql.append("('").append(rowTs).append("', '")
+                        .append((char) ('a' + key)).append("', ").append(value + key).append(')');
+            }
+            execute(sql.toString());
+        }
         drainWalQueue();
         drainJob(job);
         drainWalQueue();
@@ -594,6 +724,30 @@ public class LiveViewCheckpointAcceptanceTest extends AbstractLiveViewTest {
             store.of(dir);
         }
         return store;
+    }
+
+    private LiveViewCheckpointPageCache pageCache(String viewName) {
+        final LiveViewCheckpointPageCache cache = viewInstance(viewName).getCheckpointPageCache();
+        Assert.assertNotNull("live view '" + viewName + "' holds no page cache", cache);
+        return cache;
+    }
+
+    /**
+     * Re-applies each differential view's admission fraction. A cache is built on
+     * the view's first restore and rebuilt cold if the view ever lets its refresh
+     * state go, so the fraction is pinned after every commit rather than once: a
+     * cache that came back at the default would quietly admit everything and turn
+     * the differential into three runs of the same path.
+     */
+    private void pinAdmissionFractions() {
+        final LiveViewCheckpointPageCacheBudget budget =
+                engine.getLiveViewRegistry().getCheckpointPageCacheBudget();
+        for (int i = 0; i < CACHE_VIEWS; i++) {
+            final LiveViewCheckpointPageCache cache =
+                    viewInstance(cacheView(i)).getOrCreateCheckpointPageCache(budget);
+            Assert.assertNotNull("the engine-wide page cache budget must be enabled", cache);
+            cache.setAdmissionFraction(CACHE_ADMISSION_FRACTIONS[i]);
+        }
     }
 
     private long timelineEntries(LiveViewInstance instance) {

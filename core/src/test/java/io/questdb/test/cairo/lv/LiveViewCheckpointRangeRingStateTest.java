@@ -29,6 +29,8 @@ import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateBuilder;
 import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
 import io.questdb.cairo.lv.LiveViewCheckpointDataSegmentWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointPageCache;
+import io.questdb.cairo.lv.LiveViewCheckpointPageCacheBudget;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
@@ -59,6 +61,12 @@ import java.util.List;
 
 public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
 
+    // Shape of the ring the page cache differential walks: one chunk per boundary,
+    // each in its own data segment, and enough of them that a half-admitting cache
+    // reliably ends up holding some chunks and not others.
+    private static final int CACHE_RING_BOUNDARIES = 24;
+    private static final int CACHE_RING_HEAD_DROP = 3;
+    private static final int CACHE_RING_ROWS_PER_BOUNDARY = 5;
     private static final String DATA_SEGMENT_PATH_FRAGMENT =
             LiveViewCheckpointLayout.DATA_DIR_NAME + Files.SEPARATOR + LiveViewCheckpointLayout.DATA_SEGMENT_PREFIX;
     private static final byte[] KEY = new byte[]{1, 2, 3};
@@ -226,6 +234,40 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     Assert.assertEquals(2 * boundaries, dataSegmentOpens[0]);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testCachedPagesWalkExactlyAsDecodedPagesDo() throws Exception {
+        // The anti-corruption test for the decoded page cache: a page the cache
+        // serves must produce the same row run the codec would have produced from
+        // the segment, for every value width and with a non-zero head offset. The
+        // walk with no cache is the oracle; a cache that holds everything, and one
+        // that holds a hash-selected half of it, must both reproduce it verbatim.
+        final int[] dataSegmentOpens = {0};
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.containsAscii(name, DATA_SEGMENT_PATH_FRAGMENT)) {
+                    dataSegmentOpens[0]++;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            assertCacheWalksIdentically(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1, true, 200, dataSegmentOpens);
+            assertCacheWalksIdentically(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG, 1, false, 240, dataSegmentOpens);
+            assertCacheWalksIdentically(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_DOUBLE, 1, true, 280, dataSegmentOpens);
+            assertCacheWalksIdentically(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128, 2, false, 320, dataSegmentOpens);
+            assertCacheWalksIdentically(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL256, 4, false, 360, dataSegmentOpens);
+            // count's ring is timestamps alone, so a chunk is one page rather than two.
+            assertCacheWalksIdentically(
+                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_NONE, 0, false, 400, dataSegmentOpens);
         });
     }
 
@@ -565,6 +607,75 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Walks a many-chunk ring of {@code valueKind} with no cache, with a cache that
+     * admits everything and with one that admits half, and asserts the three runs
+     * are identical. Also asserts the cached walk really did take the cache: it
+     * maps no data segment at all, which is only possible when every page came back
+     * from a probe.
+     */
+    private static void assertCacheWalksIdentically(
+            int valueKind,
+            int words,
+            boolean doubleColumn,
+            long firstSegment,
+            int[] dataSegmentOpens
+    ) {
+        try (Catalogue directory = new Catalogue()) {
+            final LiveViewCheckpointPartitionMapEntry root =
+                    writeManyChunkRing(directory, valueKind, words, doubleColumn, firstSegment);
+            final int pagesPerChunk = words == 0 ? 1 : 2;
+            Assert.assertEquals(pagesPerChunk * CACHE_RING_BOUNDARIES, root.getStatePageCount());
+
+            final LongList decoded = new LongList();
+            walkRing(null, directory, root, words, decoded);
+            Assert.assertTrue("the ring must carry rows to compare", decoded.size() > 0);
+
+            final LiveViewCheckpointPageCacheBudget budget =
+                    new LiveViewCheckpointPageCacheBudget(1024L * LiveViewCheckpointPageCache.SLAB_BYTES);
+            final LongList cached = new LongList();
+            try (LiveViewCheckpointPageCache cache = new LiveViewCheckpointPageCache(budget)) {
+                // Cold: every page is decoded off the segment and offered to the cache.
+                dataSegmentOpens[0] = 0;
+                walkRing(cache, directory, root, words, cached);
+                assertRingWalkEquals(valueKind, decoded, cached);
+                Assert.assertEquals(0, cache.getHits());
+                Assert.assertEquals(root.getStatePageCount(), cache.getMisses());
+                Assert.assertEquals(root.getStatePageCount(), cache.getPageCount());
+                Assert.assertEquals(CACHE_RING_BOUNDARIES, dataSegmentOpens[0]);
+
+                // Warm: the same run, and not one segment mapped to produce it.
+                dataSegmentOpens[0] = 0;
+                walkRing(cache, directory, root, words, cached);
+                assertRingWalkEquals(valueKind, decoded, cached);
+                Assert.assertEquals(root.getStatePageCount(), cache.getHits());
+                Assert.assertEquals(root.getStatePageCount(), cache.getMisses());
+                Assert.assertEquals(0, dataSegmentOpens[0]);
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+
+            // Half the pages pinned by the admission hash: every walk mixes cached
+            // chunks with decoded ones, in whatever order the ring lays them out.
+            try (LiveViewCheckpointPageCache cache = new LiveViewCheckpointPageCache(budget)) {
+                cache.setAdmissionFraction(0.5);
+                for (int pass = 0; pass < 3; pass++) {
+                    walkRing(cache, directory, root, words, cached);
+                    assertRingWalkEquals(valueKind, decoded, cached);
+                }
+                Assert.assertTrue(
+                        "a half-admitted cache served nothing [valueKind=" + valueKind + ']',
+                        cache.getHits() > 0
+                );
+                Assert.assertTrue(
+                        "a half-admitted cache admitted everything [valueKind=" + valueKind
+                                + ", pages=" + cache.getPageCount() + ']',
+                        cache.getPageCount() < root.getStatePageCount()
+                );
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        }
+    }
+
     private static void assertDequeRingSharesAndRoundTrips(int valueKind, int expectedPageKind, boolean longColumn) {
         final int initialRows = 4_106;
         final int dropRows = 5;
@@ -679,6 +790,21 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         Assert.assertEquals(expected.getCodec(), actual.getCodec());
         Assert.assertEquals(expected.getRowCount(), actual.getRowCount());
         Assert.assertEquals(expected.getFlags(), actual.getFlags());
+    }
+
+    private static void assertRingWalkEquals(int valueKind, LongList expected, LongList actual) {
+        Assert.assertEquals(
+                "the cached walk produced a different number of words [valueKind=" + valueKind + ']',
+                expected.size(),
+                actual.size()
+        );
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            if (expected.getQuick(i) != actual.getQuick(i)) {
+                Assert.fail("the cached walk diverged at word " + i + " [valueKind=" + valueKind
+                        + ", expected=" + expected.getQuick(i)
+                        + ", actual=" + actual.getQuick(i) + ']');
+            }
+        }
     }
 
     /**
@@ -933,6 +1059,68 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         return refs;
     }
 
+    /**
+     * Appends one row of whatever width {@code words} names, so one builder loop
+     * drives every value kind. The payload only has to be deterministic and varied:
+     * the walk with no cache is what the cached walks are compared against.
+     */
+    private static void appendRingRow(
+            LiveViewCheckpointRangeRingStateBuilder builder,
+            LiveViewCheckpointDataSegmentWriter writer,
+            long timestamp,
+            long seed,
+            int words,
+            boolean doubleColumn
+    ) {
+        switch (words) {
+            case 0 -> builder.append(writer, timestamp);
+            case 1 -> builder.append(writer, timestamp, doubleColumn ? Double.doubleToRawLongBits(seed + 0.25) : seed);
+            case 2 -> builder.append(writer, timestamp, seed, ~seed);
+            default -> builder.append(writer, timestamp, seed, ~seed, seed * 31, Long.MIN_VALUE + seed);
+        }
+    }
+
+    /**
+     * Reads the whole ring through a reader bound to {@code cache} - null for the
+     * decode-everything oracle - and records the consumer callbacks verbatim, one
+     * timestamp followed by its value words per row.
+     * <p>
+     * The reader is built per walk, so its own segment mappings never carry over:
+     * whatever a second walk saves is the page cache's doing and nothing else's.
+     */
+    private static void walkRing(
+            LiveViewCheckpointPageCache cache,
+            Catalogue directory,
+            LiveViewCheckpointPartitionMapEntry entry,
+            int words,
+            LongList out
+    ) {
+        out.clear();
+        try (LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
+             Path dir = new Path()) {
+            reader.of(checkpointsDir(dir), directory.reader, entry, cache);
+            switch (words) {
+                case 0 -> reader.forEachTimestamp(out::add);
+                case 1 -> reader.forEachRow((timestamp, valueBits) -> {
+                    out.add(timestamp);
+                    out.add(valueBits);
+                });
+                case 2 -> reader.forEachRow((timestamp, hi, lo) -> {
+                    out.add(timestamp);
+                    out.add(hi);
+                    out.add(lo);
+                });
+                default -> reader.forEachRow((timestamp, hh, hl, lh, ll) -> {
+                    out.add(timestamp);
+                    out.add(hh);
+                    out.add(hl);
+                    out.add(lh);
+                    out.add(ll);
+                });
+            }
+        }
+    }
+
     private static void writeInitial(
             LiveViewCheckpointPartitionMapEntry out,
             Catalogue directory,
@@ -950,6 +1138,53 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             builder.freeze(writer, KEY, Double.doubleToRawLongBits(42.5), 0, 0, 0, rows, out);
             directory.addSegment(segmentId, writer.commit());
         }
+    }
+
+    /**
+     * Seals one chunk per boundary, each into a data segment of its own, and
+     * expires three rows off the head at the last one. That is the shape a restore
+     * meets: a ring spread over as many segments as boundaries it survived, read
+     * from a head offset inside its first chunk.
+     *
+     * @return the newest root
+     */
+    private static LiveViewCheckpointPartitionMapEntry writeManyChunkRing(
+            Catalogue directory,
+            int valueKind,
+            int words,
+            boolean doubleColumn,
+            long firstSegment
+    ) {
+        final int scalarWords = Math.max(1, words);
+        LiveViewCheckpointPartitionMapEntry root = null;
+        long liveRows = 0;
+        for (int boundary = 0; boundary < CACHE_RING_BOUNDARIES; boundary++) {
+            final long segmentId = firstSegment + boundary;
+            final LiveViewCheckpointPartitionMapEntry sealed = new LiveViewCheckpointPartitionMapEntry();
+            try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                 LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                 Path dir = new Path()) {
+                if (root == null) {
+                    builder.ofEmpty(valueKind, scalarWords);
+                } else {
+                    builder.of(root, valueKind, scalarWords);
+                }
+                if (boundary == CACHE_RING_BOUNDARIES - 1) {
+                    builder.dropHeadRows(CACHE_RING_HEAD_DROP);
+                    liveRows -= CACHE_RING_HEAD_DROP;
+                }
+                writer.of(checkpointsDir(dir), segmentId);
+                for (int i = 0; i < CACHE_RING_ROWS_PER_BOUNDARY; i++) {
+                    final long row = (long) boundary * CACHE_RING_ROWS_PER_BOUNDARY + i;
+                    appendRingRow(builder, writer, row * 1_000L, row + 1, words, doubleColumn);
+                    liveRows++;
+                }
+                builder.freeze(writer, KEY, 1, 2, 3, 4, liveRows, sealed);
+                directory.addSegment(segmentId, writer.commit());
+            }
+            root = sealed;
+        }
+        return root;
     }
 
     /**
