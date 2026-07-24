@@ -479,6 +479,86 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFalseFilterNullPadsDecimalAndVarSizeColumns() throws Exception {
+        // A WINDOW JOIN whose ON filter folds to constant false drops the join entirely and wraps the
+        // master in ExtraNullColumnCursorFactory, which splices one null column per window aggregate.
+        // The spliced columns carry the group-by functions' return types, so a DECIMAL aggregate fell
+        // through to Record's defaults - all six getDecimal* throw UnsupportedOperationException. The
+        // sibling HorizonJoinRecord was audited for exactly this gap; this record was missed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cf_trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    CREATE TABLE cf_prices (
+                      sym SYMBOL,
+                      d8 DECIMAL(2,1), d16 DECIMAL(4,1), d32 DECIMAL(9,2),
+                      d64 DECIMAL(18,2), d128 DECIMAL(38,2), d256 DECIMAL(76,2),
+                      s STRING, v VARCHAR, b BINARY,
+                      ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO cf_trades VALUES ('a', '2024-01-01T00:00:00.000000Z'), ('a', '2024-01-01T00:01:00.000000Z')");
+            execute("""
+                    INSERT INTO cf_prices VALUES ('a', 1.5::decimal(2,1), 2.5::decimal(4,1), 3.25::decimal(9,2),
+                      4.25::decimal(18,2), 5.25::decimal(38,2), 6.25::decimal(76,2), 'str', 'vch', null,
+                      '2024-01-01T00:00:00.000000Z')""");
+
+            // Every DECIMAL width reaches a different getter; all six used to throw.
+            assertQuery("SELECT t.ts, first(p.d8) f8, first(p.d16) f16, first(p.d32) f32, first(p.d64) f64, " +
+                    "first(p.d128) f128, first(p.d256) f256 FROM cf_trades t WINDOW JOIN cf_prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t\t\t
+                            """);
+
+            // sum/avg widen the DECIMAL, so they land on getDecimal128 / getDecimal64 where first()
+            // on the same column would not.
+            assertQuery("SELECT t.ts, sum(p.d64) s64, avg(p.d64) a64, min(p.d64) m64, max(p.d64) x64 " +
+                    "FROM cf_trades t WINDOW JOIN cf_prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ts64\ta64\tm64\tx64
+                            2024-01-01T00:00:00.000000Z\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t
+                            """);
+
+            // length() reads getStrLen straight off the record, so it pins the NULL_LEN contract the
+            // spliced columns used to break by answering 0.
+            assertQuery("SELECT t.ts, first(p.s) fs, first(p.v) fv, length(first(p.s)) ls " +
+                    "FROM cf_trades t WINDOW JOIN cf_prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tfs\tfv\tls
+                            2024-01-01T00:00:00.000000Z\t\t\t-1
+                            2024-01-01T00:01:00.000000Z\t\t\t-1
+                            """);
+
+            // EqVarcharFunctionFactory decides IS NULL by comparing getVarcharSize against
+            // TableUtils.NULL_LEN, so answering 0 made a spliced NULL varchar test as NOT NULL - a
+            // wrong result rather than an exception.
+            assertQuery("SELECT ts, fv FROM (SELECT t.ts, first(p.v) fv FROM cf_trades t " +
+                    "WINDOW JOIN cf_prices p ON (0 = 1) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) " +
+                    "WHERE fv IS NULL")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tfv
+                            2024-01-01T00:00:00.000000Z\t
+                            2024-01-01T00:01:00.000000Z\t
+                            """);
+        });
+    }
+
+    @Test
     public void testCountOnlyWindowJoin() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();

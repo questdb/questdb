@@ -1195,12 +1195,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * 8-byte integer operand.
      * <p>
      * The four-lane backend loads a 4-byte column as four packed i32 in the low half of the
-     * register while an 8-byte column spans all four 64-bit lanes, and {@code avx2::convert()}
-     * has no i32-to-i64 case, so such a pairing silently compares against adjacent rows instead
-     * of declining. Correctness therefore rests entirely on {@link #markWidthSemantics} and the
-     * IN width rules harmonising every pairing up front; this is the backstop that turns a miss
-     * into a test failure instead of wrong rows. Integer-to-float pairings are excluded: those
-     * {@code convert()} does handle.
+     * register while an 8-byte column spans all four 64-bit lanes, so an unharmonised pairing
+     * compares against adjacent rows. {@code avx2::convert()} widens the i32 side of an i32-with-i64
+     * and an i32-with-f64 pairing, so a miss no longer reaches a user as wrong rows - but the
+     * frontend still owns the answer, because only it knows which width the JAVA filter reads at,
+     * and the two must agree. This assert stays the tripwire that turns a miss into a test failure
+     * rather than a silent reliance on the backstop. Integer-to-float pairings are excluded:
+     * {@code convert()} handles them outright.
      * <p>
      * Runs under {@code -ea} only, so it costs nothing in production.
      */
@@ -2010,7 +2011,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (inKey == null) {
             return false;
         }
-        if (inKey.type == ExpressionNode.OPERATION) {
+        if (inKey.type == ExpressionNode.OPERATION || inKey.type == ExpressionNode.CONSTANT) {
+            // A numeric CONSTANT key needs the override for the same reason an arithmetic one does,
+            // and for one more: serializeUntypedNumber emits it at I8 as soon as anything else in
+            // the predicate is I8, so "0 IN (i32, i64)" put an i64 key against the i32 element while
+            // the i64 element paired correctly. genuineArithType is UNDEFINED for a non-numeric
+            // constant - a quoted symbol, a char, NULL - so those keep their own IN function's
+            // semantics and take no numeric override, exactly as for a LITERAL key below.
             final int t = genuineArithType(inKey);
             return t == I1_TYPE || t == I2_TYPE || t == I4_TYPE;
         }
@@ -2436,11 +2443,71 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    /**
+     * Returns the width to emit a never-matching IN pairing at when this pairing can never match, so
+     * it must not reach the backend at all; {@link #UNDEFINED_CODE} when it is an ordinary pairing.
+     * <p>
+     * A NULL element only becomes a hazard once the key is width-sensitive, because that is what
+     * drives the element to I4 (see {@link #inKeyElementWidth}): {@link #serializeConstant} then
+     * keeps the NULL at I4 and {@link #serializeNull}'s "byte/short type is not nullable" decline
+     * never fires. The element reaches the backend as an I4 immediate while the key loads as a
+     * size-1 or size-2 lane, and the comparison runs at the key's width against a register holding
+     * the other one - three of every four BYTE lanes then compare the key against 0. So the fold is
+     * gated on exactly {@link #isWidthSensitiveInKey}, and from there two independent reasons make
+     * the pairing impossible:
+     * <ul>
+     * <li>a numeric CONSTANT key is never NULL, whatever width it ends up emitted at;</li>
+     * <li>any other key read at BYTE or SHORT width has no NULL sentinel - every bit pattern is a
+     * legal value - so no row can make it NULL. That covers a column, a bind variable and any
+     * arithmetic over them, including a unary minus, which {@code genuineArithType} deliberately
+     * sees through.</li>
+     * </ul>
+     * A key that widens to INT keeps the ordinary pairing: INT has a real sentinel, so the pairing is
+     * meaningful, and both sides are already I4 - except a narrow BINARY arithmetic key such as
+     * {@code abyte + 1}, which reads at INT width but emits at the observer's narrow one. That shape
+     * is safe for a different reason: {@code isArithmeticOperation} accepts it ({@code paramCount >= 2}),
+     * so it sets {@code hasArithmeticOperations} and {@code forceScalarMode} routes it to the scalar
+     * backend, whose {@code convert()} has the complete integer table. A UNARY minus does not set
+     * that flag, which is why it needs the fold rather than the forcer.
+     * <p>
+     * GEOHASH, CHAR and BOOLEAN keys share the narrow type codes but {@code isWidthSensitiveInKey}
+     * excludes them, which is what this needs: a GEOHASH has a NULL at every width, CHAR reads
+     * {@code (char) 0} as NULL, and BOOLEAN keeps the decline {@code serializeNull} always gave it.
+     * <p>
+     * The width returned is I4 rather than the key's own. The key's emitted width is not knowable
+     * here - for {@code 0 IN (null, abyte)} this pairing is serialized before {@code abyte} is
+     * observed - and it does not need to be: the fold is an all-zero FULL register, which reads the
+     * same at every lane width.
+     */
+    private int neverMatchingInPairingWidth(ExpressionNode element, ExpressionNode key, boolean isWidthSensitiveKey) {
+        // isWidthSensitiveKey is serializeIn's cached isWidthSensitiveInKey(key), so a non-null key
+        // is implied whenever it is true.
+        if (!isNullConstant(element) || !isWidthSensitiveKey) {
+            return UNDEFINED_CODE;
+        }
+        if (key.type == ExpressionNode.CONSTANT) {
+            return I4_TYPE;
+        }
+        final int keyArithType = genuineArithType(key);
+        return keyArithType == I1_TYPE || keyArithType == I2_TYPE ? I4_TYPE : UNDEFINED_CODE;
+    }
+
     private void putDoubleOperand(long offset, int type, double payload) {
         memory.putInt(offset, CompiledFilterIRSerializer.IMM);
         memory.putInt(offset + Integer.BYTES, type);
         memory.putDouble(offset + 2 * Integer.BYTES, payload);
         memory.putLong(offset + 2 * Integer.BYTES + Double.BYTES, 0L);
+    }
+
+    /**
+     * Emits a pairing that is false on every row. The mask is an all-zero full register, so the
+     * width only has to be one the backend can compare at, not the key's own. See
+     * {@link #neverMatchingInPairingWidth}.
+     */
+    private void putNeverMatchingInPairing(int typeCode) {
+        putOperand(IMM, typeCode, 0);
+        putOperand(IMM, typeCode, 1);
+        putOperator(EQ);
     }
 
     private void putOperand(int opcode, int type, long payload) {
@@ -2807,13 +2874,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (args.size() < 3) {
                 // Single value: short-circuit, unrolled version of the below loop
                 // Two values: short-circuit, unrolled version of the below loop
-                if (isWidthSensitiveKey) {
-                    inKeyWidthOverride = inKeyElementWidth(predicateContext.inOperationNode.rhs);
+                final int scNeverMatchingWidth = neverMatchingInPairingWidth(predicateContext.inOperationNode.rhs, inKey, isWidthSensitiveKey);
+                if (scNeverMatchingWidth != UNDEFINED_CODE) {
+                    putNeverMatchingInPairing(scNeverMatchingWidth);
+                } else {
+                    if (isWidthSensitiveKey) {
+                        inKeyWidthOverride = inKeyElementWidth(predicateContext.inOperationNode.rhs);
+                    }
+                    traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
+                    traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+                    inKeyWidthOverride = UNDEFINED_CODE;
+                    putOperator(EQ);
                 }
-                traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
-                traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
-                inKeyWidthOverride = UNDEFINED_CODE;
-                putOperator(EQ);
                 putOperatorWithLabel(AND_SC, 0); // if false, jump to next_row
             } else {
                 // Multiple values: BEGIN_SC(2), [EQ, OR_SC(2)]*, EQ, AND_SC(0), END_SC(2)
@@ -2824,13 +2896,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
                     // Read both the element and the key at this pairing's width so a coexisting
                     // LONG element cannot widen an overflowing INT-arith element the key wraps.
-                    if (isWidthSensitiveKey) {
-                        inKeyWidthOverride = inKeyElementWidth(args.get(i));
+                    final int neverMatchingWidth = neverMatchingInPairingWidth(args.get(i), inKey, isWidthSensitiveKey);
+                    if (neverMatchingWidth != UNDEFINED_CODE) {
+                        putNeverMatchingInPairing(neverMatchingWidth);
+                    } else {
+                        if (isWidthSensitiveKey) {
+                            inKeyWidthOverride = inKeyElementWidth(args.get(i));
+                        }
+                        traverseAlgo.traverse(args.get(i), this);
+                        traverseAlgo.traverse(args.getLast(), this);
+                        inKeyWidthOverride = UNDEFINED_CODE;
+                        putOperator(EQ);
                     }
-                    traverseAlgo.traverse(args.get(i), this);
-                    traverseAlgo.traverse(args.getLast(), this);
-                    inKeyWidthOverride = UNDEFINED_CODE;
-                    putOperator(EQ);
                     if (i < n - 1) {
                         putOperatorWithLabel(OR_SC, 2); // if true, jump to success
                     } else {
@@ -2847,26 +2924,36 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         // Non-short-circuit mode: use traditional boolean ORs
         if (args.size() < 3) {
-            if (isWidthSensitiveKey) {
-                inKeyWidthOverride = inKeyElementWidth(predicateContext.inOperationNode.rhs);
+            final int singleNeverMatchingWidth = neverMatchingInPairingWidth(predicateContext.inOperationNode.rhs, inKey, isWidthSensitiveKey);
+            if (singleNeverMatchingWidth != UNDEFINED_CODE) {
+                putNeverMatchingInPairing(singleNeverMatchingWidth);
+            } else {
+                if (isWidthSensitiveKey) {
+                    inKeyWidthOverride = inKeyElementWidth(predicateContext.inOperationNode.rhs);
+                }
+                traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
+                traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+                inKeyWidthOverride = UNDEFINED_CODE;
+                putOperator(EQ);
             }
-            traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
-            traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
-            inKeyWidthOverride = UNDEFINED_CODE;
-            putOperator(EQ);
         }
 
         int orCount = -1;
         for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
             // Read both the element and the key at this pairing's width (see the short-circuit
             // loop above and inKeyElementWidth).
-            if (isWidthSensitiveKey) {
-                inKeyWidthOverride = inKeyElementWidth(args.get(i));
+            final int neverMatchingWidth = neverMatchingInPairingWidth(args.get(i), inKey, isWidthSensitiveKey);
+            if (neverMatchingWidth != UNDEFINED_CODE) {
+                putNeverMatchingInPairing(neverMatchingWidth);
+            } else {
+                if (isWidthSensitiveKey) {
+                    inKeyWidthOverride = inKeyElementWidth(args.get(i));
+                }
+                traverseAlgo.traverse(args.get(i), this);
+                traverseAlgo.traverse(args.getLast(), this);
+                inKeyWidthOverride = UNDEFINED_CODE;
+                putOperator(EQ);
             }
-            traverseAlgo.traverse(args.get(i), this);
-            traverseAlgo.traverse(args.getLast(), this);
-            inKeyWidthOverride = UNDEFINED_CODE;
-            putOperator(EQ);
             orCount++;
         }
 

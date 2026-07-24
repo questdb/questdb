@@ -43,6 +43,7 @@ import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -610,6 +611,28 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testInConstantKeyFollowsElementWidth() throws Exception {
+        // A CONSTANT key is emitted at whatever width the predicate's type observer settled on -
+        // serializeUntypedNumber picks I8 as soon as anything in the predicate is I8 - while the
+        // per-element harmonisation in markWidthSemantics only fires when the pairing itself folds
+        // to I8. A key that fits in an int folds to I4 against an INT element, so the element got no
+        // sx_i64 and the four-lane backend compared an i64 key against four packed i32. The key now
+        // takes the per-element override, so each pairing is emitted at its own width.
+        int options = serialize("(0 in (anint, along)) and anint < along", false, false, false);
+        assertIR("(i64 along)(i32 anint)(sx_i64)(<)(i64 along)(i64 0L)(=)(i32 anint)(i32 0L)(=)(||)(&&)(ret)");
+        assertOptionsHint("(0 in (anint, along)) and anint < along", options, OptionsHint.WIDE_LANE);
+
+        // Same without the widening sibling: the pairings are harmonised either way.
+        serialize("0 in (anint, along)", false, false, false);
+        assertIR("(i64 along)(i64 0L)(=)(i32 anint)(i32 0L)(=)(||)(ret)");
+
+        // A key no int can hold keeps I8 for BOTH pairings, and the INT element sign-extends to
+        // meet it rather than the key narrowing onto a value it cannot represent.
+        serialize("3000000000 in (anint, along)", false, false, false);
+        assertIR("(i64 along)(i64 3000000000L)(=)(i32 anint)(sx_i64)(i64 3000000000L)(=)(||)(ret)");
+    }
+
+    @Test
     public void testInNullElementKeepsNarrowKeyVectorized() throws Exception {
         // A NULL element used to widen the key to i64 (it is neither INT- nor LONG-typed, so the
         // per-element width fell through to I8), which emits sx_i64 - an opcode AVX2 does not
@@ -621,8 +644,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i32 -2147483648L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(ret)");
         assertOptionsHint("anint IN (1, 2, null)", options, OptionsHint.SINGLE_SIZE);
 
-        // (BYTE and SHORT keys never reach here with a NULL element: serializeNull rejects the
-        // filter outright, since neither type is nullable.)
+        // (A BYTE or SHORT key takes a different route entirely - neither type has a NULL sentinel,
+        // so the pairing can never match and serializeIn folds it away. See
+        // testInNullElementNonNullableNarrowKeyFoldsToNeverMatching.)
 
         // A genuinely wide element widens the key and selects four-lane AVX2.
         options = serialize("anint IN (1, 5_000_000_000)", false, false, false);
@@ -646,12 +670,110 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // A NULL element beside an OBSERVED wide (LONG) COLUMN element must still keep its own pairing
         // at I4: the null immediate is INT_NULL at I4 (matching the narrow column key read at getInt),
         // not the observer's LONG_NULL at I8. The along pairing widens the key (sx_i64) and selects
-        // four-lane AVX2, where an I8 null immediate would compare i32-vs-i64 (avx2.h#convert has no
-        // such case) and match INT_NULL rows only in some lane positions. A wide CONSTANT element
+        // four-lane AVX2, where an I8 null immediate would compare i32-vs-i64 and match INT_NULL rows
+        // only in some lane positions (avx2.h#convert widens that pairing now, but only as a
+        // backstop - the frontend still has to pick the width the Java filter reads at). A wide CONSTANT element
         // leaves the observer at I4 and so hides this; a wide COLUMN element is observed as I8.
         options = serialize("anint IN (along, null)", false, false, false);
         assertIR("(i32 -2147483648L)(i32 anint)(=)(i64 along)(i32 anint)(sx_i64)(=)(||)(ret)");
         assertOptionsHint("anint IN (along, null)", options, OptionsHint.WIDE_LANE);
+    }
+
+    @Test
+    public void testInNullElementNonNullableNarrowKeyFoldsToNeverMatching() throws Exception {
+        // BYTE and SHORT have no NULL sentinel, so a NULL element matches nothing - which is what the
+        // Java IN functions return. On master serializeNull rejected the whole filter here ("byte
+        // type is not nullable"); once untyped NULLs started comparing at INT width the pairing
+        // compiled instead, as an I4 immediate against a size-1 lane, and the four-lane loop tested
+        // three of every four BYTE lanes against 0. serializeIn folds the pairing to a comparison
+        // that is false on every row, so the filter stays vectorized and agrees with Java.
+        //
+        // The fold is emitted at I4 rather than the key's width: it is an all-zero FULL register,
+        // which reads the same at every lane width, and the key's own width is not knowable at that
+        // point for a constant key.
+        int options = serialize("abyte in (null)", false, false, false);
+        assertIR("(i32 0L)(i32 1L)(=)(ret)");
+        assertOptionsHint("abyte in (null)", options, OptionsHint.SINGLE_SIZE);
+
+        options = serialize("abyte in (null, 1)", false, false, false);
+        assertIR("(i8 1L)(i8 abyte)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        assertOptionsHint("abyte in (null, 1)", options, OptionsHint.SINGLE_SIZE);
+
+        options = serialize("ashort in (null, 1)", false, false, false);
+        assertIR("(i16 1L)(i16 ashort)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        assertOptionsHint("ashort in (null, 1)", options, OptionsHint.SINGLE_SIZE);
+
+        // The gate is isWidthSensitiveInKey, so every key shape it accepts folds - not just a bare
+        // column. A unary minus is the one that bit: genuineArithType deliberately sees through it,
+        // so "-abyte" is width-sensitive at BYTE width, and unlike a BINARY narrow arithmetic key it
+        // does not set hasArithmeticOperations, so nothing forced scalar mode to cover it.
+        serialize("-abyte in (null)", false, false, false);
+        assertIR("(i32 0L)(i32 1L)(=)(ret)");
+        serialize("-ashort in (null, 1)", false, false, false);
+        assertIR("(i16 1L)(i16 ashort)(neg)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        // Narrow BINARY arithmetic reads at SHORT width and folds for the same reason.
+        serialize("abyte + ashort in (null)", false, false, false);
+        assertIR("(i32 0L)(i32 1L)(=)(ret)");
+
+        // A key that widens to INT keeps the ordinary pairing - INT has a real sentinel, and both
+        // sides are already I4.
+        serialize("-anint in (null)", false, false, false);
+        assertIR("(i32 -2147483648L)(i32 anint)(neg)(=)(ret)");
+        // "abyte + 1" promotes to INT width, so it keeps the ordinary pairing too. Its widths are
+        // mismatched, but a narrow BINARY arithmetic predicate forces scalar mode, where convert()
+        // has the complete integer table.
+        serialize("abyte + 1 in (null)", false, false, false);
+        assertIR("(i32 -2147483648L)(i8 1L)(i8 abyte)(+)(=)(ret)");
+
+        // A BIND VARIABLE key reaches the same pairing through VAR I1 / VAR I2 and needs the same
+        // fold - isWidthSensitiveInKey already treats a bind variable like a column.
+        bindVariableService.clear();
+        bindVariableService.setByte("b", (byte) 1);
+        bindVariableService.setShort("s", (short) 243);
+        bindVariableService.setInt("i", 7);
+        serialize(":b in (null)", false, false, false);
+        assertIR("(i32 0L)(i32 1L)(=)(ret)");
+        serialize(":s in (null, 1)", false, false, false);
+        assertIR("(i16 1L)(i16 :0)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        // INT has a real NULL sentinel, so an INT bind variable keeps the ordinary pairing.
+        serialize(":i in (null)", false, false, false);
+        assertIR("(i32 -2147483648L)(i32 :0)(=)(ret)");
+
+        // A numeric CONSTANT key is never NULL either, and it MUST fold for a second reason: the
+        // CONSTANT arm of isWidthSensitiveInKey drives the NULL element to I4, which against a BYTE
+        // or SHORT observer bypasses serializeNull's decline and would leave an I4 immediate against
+        // the size-1 key lane - the very mismatch this fold removes.
+        serialize("0 in (null, abyte)", false, false, false);
+        assertIR("(i8 abyte)(i8 0L)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        serialize("0 in (null, ashort)", false, false, false);
+        assertIR("(i16 ashort)(i16 0L)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        serialize("0 in (null, :b)", false, false, false);
+        assertIR("(i8 :0)(i8 0L)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        serialize("0 in (null, anint)", false, false, false);
+        assertIR("(i32 anint)(i32 0L)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+
+        // A GEOBYTE shares the I1 type code but HAS a NULL at every width, so it keeps the ordinary
+        // pairing and compares against its real sentinel. IPv4 and SYMBOL likewise.
+        serialize("ageobyte in (null)", false, false, false);
+        assertIR("(i8 -1L)(i8 ageobyte)(=)(ret)");
+        serialize("anipv4 in (null)", false, false, false);
+        assertIR("(i32 0L)(i32 anipv4)(=)(ret)");
+
+        // CHAR codes as I2 but reads (char) 0 as NULL, so folding it away would drop real matches.
+        // It keeps the ordinary pairing, which serializeNull still declines - as it always has, and
+        // as BOOLEAN still does too.
+        try {
+            serialize("achar in (null)", false, false, false);
+            Assert.fail("expected the CHAR pairing to decline");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "short type is not nullable");
+        }
+        try {
+            serialize("aboolean in (null)", false, false, false);
+            Assert.fail("expected the BOOLEAN pairing to decline");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "byte type is not nullable");
+        }
     }
 
     @Test

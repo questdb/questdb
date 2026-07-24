@@ -25,12 +25,16 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.NullRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
@@ -76,7 +80,7 @@ public class ExtraNullColumnRecord implements Record {
 
     @Override
     public long getBinLen(int col) {
-        return col < columnSplit ? base.getBinLen(col) : 0;
+        return col < columnSplit ? base.getBinLen(col) : TableUtils.NULL_LEN;
     }
 
     @Override
@@ -97,6 +101,44 @@ public class ExtraNullColumnRecord implements Record {
     @Override
     public long getDate(int col) {
         return col < columnSplit ? base.getDate(col) : Numbers.LONG_NULL;
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        if (col < columnSplit) {
+            base.getDecimal128(col, sink);
+        } else {
+            sink.ofRawNull();
+        }
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return col < columnSplit ? base.getDecimal16(col) : Decimals.DECIMAL16_NULL;
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        if (col < columnSplit) {
+            base.getDecimal256(col, sink);
+        } else {
+            sink.ofRawNull();
+        }
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return col < columnSplit ? base.getDecimal32(col) : Decimals.DECIMAL32_NULL;
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return col < columnSplit ? base.getDecimal64(col) : Decimals.DECIMAL64_NULL;
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return col < columnSplit ? base.getDecimal8(col) : Decimals.DECIMAL8_NULL;
     }
 
     @Override
@@ -203,7 +245,7 @@ public class ExtraNullColumnRecord implements Record {
 
     @Override
     public int getStrLen(int col) {
-        return col < columnSplit ? base.getStrLen(col) : 0;
+        return col < columnSplit ? base.getStrLen(col) : TableUtils.NULL_LEN;
     }
 
     @Override
@@ -238,7 +280,7 @@ public class ExtraNullColumnRecord implements Record {
 
     @Override
     public int getVarcharSize(int col) {
-        return col < columnSplit ? base.getVarcharSize(col) : 0;
+        return col < columnSplit ? base.getVarcharSize(col) : TableUtils.NULL_LEN;
     }
 
     public void of(Record record) {

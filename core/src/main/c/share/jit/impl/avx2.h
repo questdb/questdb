@@ -775,6 +775,25 @@ namespace questdb::avx2 {
         return dst;
     }
 
+    // i32 -> f64. Reads the FOUR i32 lanes in the low 128 bits, so it is correct at four lanes and
+    // only at four lanes - the same restriction cvt_ftod already carries. The four-lane (wide) loop
+    // is the only caller.
+    inline Vec cvt_itod(Compiler &c, const Vec &rhs, bool null_check) {
+        Vec dst = c.new_ymm();
+        c.vcvtdq2pd(dst, rhs.xmm());
+        if (null_check) {
+            // The equality mask comes out in 32-bit lanes; widen it to the 64-bit lanes the
+            // converted value now occupies before blending the NaNs in.
+            Vec int_nulls_mask32 = cmp_eq_null(c, data_type_t::i32, rhs);
+            Vec int_nulls_mask = c.new_ymm();
+            c.vpmovsxdq(int_nulls_mask, int_nulls_mask32.xmm());
+            Vec nans = c.new_ymm();
+            c.vmovups(nans, vec_double_null(c));
+            return select_bytes(c, int_nulls_mask, dst, nans);
+        }
+        return dst;
+    }
+
     inline Vec cvt_ltod(Compiler &c, const Vec &rhs, bool null_check) {
         Vec dst = c.new_ymm();
 

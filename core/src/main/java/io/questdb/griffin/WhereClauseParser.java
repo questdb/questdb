@@ -133,6 +133,14 @@ public final class WhereClauseParser implements Mutable {
     // the same pool that owns that AST rather than a parser-local pool cleared on the next pass.
     private ObjectPool<ExpressionNode> expressionNodePool;
     private boolean isConstFunction;
+    // True while analyzeAndOffset is descending into its wrapped predicate, so a NESTED and_offset
+    // knows its shift does not sit on the designated timestamp itself. moveWhereInsideSubQueries
+    // wraps once per annotated model, and the last wrap applied - the innermost model's - ends up
+    // outermost, so only the outermost node shifts the raw column. An inner node's input is that
+    // node's output, which can exceed the driver's designated-timestamp ceiling by the accumulated
+    // shifts; the wrap guard must fall back to Long.MAX_VALUE there. Mirrors
+    // MonotonicTimestampFunction.shiftInputCeiling, which asks the same question of a function chain.
+    private boolean isInsideAndOffset;
     private boolean noIndex;
     private CharSequence preferredKeyColumn;
     private int reentryDepth;
@@ -171,6 +179,7 @@ public final class WhereClauseParser implements Mutable {
         timestamp = null;
         preferredKeyColumn = null;
         expressionNodePool = null;
+        isInsideAndOffset = false;
         resolvedBoundFunc = null;
         allKeyValuesAreKnown = true;
         allKeyExcludedValuesAreKnown = true;
@@ -606,18 +615,25 @@ public final class WhereClauseParser implements Mutable {
         tempModel.of(timestampType, reader.getPartitionedBy(), executionContext.getCairoEngine().getConfiguration());
 
         // Process the inner predicate recursively
-        boolean extracted = removeAndIntrinsics(
-                timestampDriver,
-                translator,
-                tempModel,
-                predicate,
-                m,
-                functionParser,
-                metadata,
-                executionContext,
-                isKeyColumnSuppressed,
-                reader
-        );
+        final boolean isNestedAndOffset = isInsideAndOffset;
+        boolean extracted;
+        isInsideAndOffset = true;
+        try {
+            extracted = removeAndIntrinsics(
+                    timestampDriver,
+                    translator,
+                    tempModel,
+                    predicate,
+                    m,
+                    functionParser,
+                    metadata,
+                    executionContext,
+                    isKeyColumnSuppressed,
+                    reader
+            );
+        } finally {
+            isInsideAndOffset = isNestedAndOffset;
+        }
 
         if (tempModel.intrinsicValue == IntrinsicModel.FALSE) {
             // The inner predicate is a contradiction (e.g. "ts != ts", folded by analyzeNotEquals0),
@@ -642,7 +658,13 @@ public final class WhereClauseParser implements Mutable {
             // only when the merge fully represents it as an interval; otherwise leave it as a residual
             // filter so a source it cannot push down (e.g. multiple disjoint intervals that must union,
             // or a dynamic bound) still filters correctly.
-            if (model.mergeIntervalModelWithAddMethod(tempModel, addMethod, offsetValue, isInjective)) {
+            // Only the outermost wrapper shifts the designated timestamp itself, so only it may use
+            // the driver's storage ceiling to decide whether the forward dateadd can wrap a real row
+            // into the requested range.
+            final long shiftInputCeiling = isNestedAndOffset
+                    ? Long.MAX_VALUE
+                    : timestampDriver.getMaxDesignatedTimestamp();
+            if (model.mergeIntervalModelWithAddMethod(tempModel, addMethod, offsetValue, isInjective, shiftInputCeiling)) {
                 if (extracted && isInjective) {
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
@@ -2435,6 +2457,7 @@ public final class WhereClauseParser implements Mutable {
         preferredKeyColumn = state.preferredKeyColumn;
         noIndex = state.noIndex;
         isConstFunction = state.isConstFunction;
+        isInsideAndOffset = state.isInsideAndOffset;
         resolvedBoundConst = state.resolvedBoundConst;
         resolvedBoundFunc = state.resolvedBoundFunc;
         allKeyValuesAreKnown = state.allKeyValuesAreKnown;
@@ -2487,6 +2510,7 @@ public final class WhereClauseParser implements Mutable {
         state.preferredKeyColumn = preferredKeyColumn;
         state.noIndex = noIndex;
         state.isConstFunction = isConstFunction;
+        state.isInsideAndOffset = isInsideAndOffset;
         state.resolvedBoundConst = resolvedBoundConst;
         state.resolvedBoundFunc = resolvedBoundFunc;
         state.allKeyValuesAreKnown = allKeyValuesAreKnown;
@@ -3763,6 +3787,7 @@ public final class WhereClauseParser implements Mutable {
         private boolean allKeyExcludedValuesAreKnown;
         private boolean allKeyValuesAreKnown;
         private boolean isConstFunction;
+        private boolean isInsideAndOffset;
         private boolean noIndex;
         private CharSequence preferredKeyColumn;
         private long resolvedBoundConst;

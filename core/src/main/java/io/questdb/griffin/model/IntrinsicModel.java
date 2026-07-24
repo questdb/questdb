@@ -174,7 +174,13 @@ public class IntrinsicModel implements Mutable {
      * @return true if the offset predicate was fully represented as an interval (the caller may
      * consume it); false if it must be left as a residual filter
      */
-    public boolean mergeIntervalModelWithAddMethod(IntrinsicModel other, TimestampDriver.TimestampAddMethod addMethod, int offset, boolean isInjective) throws SqlException {
+    public boolean mergeIntervalModelWithAddMethod(
+            IntrinsicModel other,
+            TimestampDriver.TimestampAddMethod addMethod,
+            int offset,
+            boolean isInjective,
+            long maxTimestamp
+    ) throws SqlException {
         if (other.intrinsicValue == FALSE) {
             // This model absorbs the contradiction, so nothing merges out of other. Free any dynamic
             // bound Function the source analysis compiled into it - the caller only clears other on
@@ -183,7 +189,7 @@ public class IntrinsicModel implements Mutable {
             intersectEmpty();
             return true;
         }
-        return runtimeIntervalBuilder.mergeWithAddMethod(other.runtimeIntervalBuilder, addMethod, offset, isInjective);
+        return runtimeIntervalBuilder.mergeWithAddMethod(other.runtimeIntervalBuilder, addMethod, offset, isInjective, maxTimestamp);
     }
 
     public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {

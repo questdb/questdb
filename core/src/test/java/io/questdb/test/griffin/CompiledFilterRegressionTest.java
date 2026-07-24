@@ -2486,6 +2486,127 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWideLaneFloatArithmeticVsIntegerConstant() throws Exception {
+        // f32 + f64 harmonises to f64 through convert()'s f32 arm, and the comparison then puts that
+        // f64 against the bare integer bound. serializeUntypedNumber keeps such a bound at I4
+        // whenever the predicate carries a float (so that i32 * 2 still wraps mod 2^32), so the IR is
+        // (i32 5)(f64 ...)(<) - and avx2::convert() had no f64-with-i32 arm, so it fell through with
+        // the operands unchanged and emitted vcmppd against a vpbroadcastd register. The bound 5 was
+        // read as 0x0000000500000005 = 1.06e-314 and a negative bound as a NaN, so the four-lane loop
+        // selected almost nothing while the scalar loop and Java agreed. convert() now widens the i32
+        // side, so all three run the same comparison.
+        Assume.assumeTrue("wide-lane lives in the four-lane AVX2 path", Vect.getSupportedInstructionSet() >= 8);
+        assertMemoryLeak(() -> {
+            // rnd_float()/rnd_double() draw from [0, 1), so every bound below holds for EVERY row
+            // whatever the seed: the expected count is the row count, not a property of the draw.
+            // (Integer-valued float columns do not reproduce this - the bound has to land where the
+            // misread denormal separates it from the real one.)
+            execute("create table wlf as (select timestamp_sequence(0, 1_000_000) k," +
+                    " rnd_float() f32, rnd_double() f64" +
+                    " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)");
+            final String allRows = "count\n" + N_SIMD_WITH_SCALAR_TAIL + "\n";
+            // The inexact float bound is what flips the whole filter to four lanes; the arithmetic
+            // comparison beside it is correct in isolation and was dragged in by it.
+            assertJitScalarAndVectorMatchJava("select count() from wlf where f32 + f64 < 5 and f32 < 1.00000003", allRows);
+            // A negative bound was misread as a NaN rather than as a small denormal, so every
+            // comparison against it came out false. Both operand orders reach the same pairing.
+            assertJitScalarAndVectorMatchJava("select count() from wlf where f64 + f32 > -1 and f32 < 1.00000003", allRows);
+            assertJitScalarAndVectorMatchJava("select count() from wlf where f64 >= (1.5 + f32) * -3 and f32 < 1.00000003", allRows);
+        });
+    }
+
+    @Test
+    public void testWideLaneInNarrowElementUnderConstantKey() throws Exception {
+        // markWidthSemantics harmonises an IN element against the key only when the pairing folds to
+        // I8, and a CONSTANT key that fits in an int folds to I4 - so the i32 element got no SX_I64.
+        // The key constant is emitted at I8 anyway, because serializeUntypedNumber follows the
+        // predicate's type observer and the LONG element put I8 in it. That left an i64 key against
+        // an i32 element in the four-lane loop, which loads the INT column as four packed i32 in the
+        // low half of the register. isWidthSensitiveInKey now covers a numeric CONSTANT key, so the
+        // per-element override drives the key's width from each element in turn.
+        Assume.assumeTrue("wide-lane lives in the four-lane AVX2 path", Vect.getSupportedInstructionSet() >= 8);
+        assertMemoryLeak(() -> {
+            execute("create table wlk as (select timestamp_sequence(0, 1_000_000) k," +
+                    " (x % 4)::int i32, ((x % 4) + 1) * 1_000_000_000L i64" +
+                    " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)");
+            // The key matches through the INT element (i32 == 0): the pairing the fix harmonises.
+            assertJitScalarAndVectorMatchJava("select count() from wlk where (0 in (i32, i64)) and i32 < i64",
+                    "count\n128\n");
+            assertJitScalarAndVectorMatchJava("select count() from wlk where (3 in (i32, i64)) and i32 < i64",
+                    "count\n129\n");
+            // A key that only the LONG element can match must keep matching through it.
+            assertJitScalarAndVectorMatchJava("select count() from wlk where (2000000000 in (i32, i64)) and i32 < i64",
+                    "count\n129\n");
+        });
+    }
+
+    @Test
+    public void testInNullElementNonNullableNarrowKeyFolds() throws Exception {
+        // BYTE and SHORT carry no NULL sentinel, so a NULL element matches nothing - which is what
+        // the Java IN functions return. On master the whole filter declined here (serializeNull
+        // throws "byte type is not nullable"); the untyped-NULL-at-INT-width rule made the element
+        // compile as an I4 immediate instead, so the four-lane loop compared an i8 column against
+        // vpbroadcastd(0x80000000), whose byte layout is 00 00 00 80 - three of every four lanes
+        // testing the column against 0. serializeIn now folds the pairing away.
+        //
+        // The fold is a frontend rule and the divergence showed up in the SINGLE-SIZE AVX2 loop, not
+        // the four-lane one (a BYTE or SHORT IN key is not wide-lane eligible), so this test is not
+        // AVX2-gated. It still only DETECTS the regression on an AVX2 host - without AVX2
+        // compiler.cpp falls back to the scalar loop, whose convert() has the complete int table -
+        // and the class as a whole is skipped on ARM64 by setUp()'s JitUtil.isJitSupported() gate.
+        // The host-independent guarantee is the IR pin in CompiledFilterIRSerializerTest.
+        assertMemoryLeak(() -> {
+            execute("create table wln as (select timestamp_sequence(0, 1_000_000) k," +
+                    " (x % 5)::byte i8, (x % 7)::short i16, (x % 3)::char c," +
+                    " x::int i32, (x * 1_000_000_000)::long i64" +
+                    " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)");
+            // A NULL-only list is false on every row, and it must stay vectorized rather than decline.
+            assertJitScalarAndVectorMatchJava("select count() from wln where i8 in (null)", "count\n0\n");
+            assertJitScalarAndVectorMatchJava("select count() from wln where i16 in (null)", "count\n0\n");
+            // A NULL beside a real element must not disturb that element's own matches.
+            assertJitScalarAndVectorMatchJava("select count() from wln where i8 in (null, 1)", "count\n103\n");
+            assertJitScalarAndVectorMatchJava("select count() from wln where i16 in (null, 1)", "count\n74\n");
+            assertJitScalarAndVectorMatchJava("select count() from wln where i8 in (null, 1) and i16 in (null, 2)",
+                    "count\n15\n");
+
+            // Every key shape isWidthSensitiveInKey accepts folds, not just a bare column. A unary
+            // minus reads at BYTE width and, unlike binary narrow arithmetic, does not force scalar
+            // mode - so it was the shape that stayed wrong after the column and bind-variable keys
+            // were covered.
+            assertJitScalarAndVectorMatchJava("select count() from wln where -i8 in (null)", "count\n0\n");
+            assertJitScalarAndVectorMatchJava("select count() from wln where -i16 in (null, -1)", "count\n74\n");
+
+            // NOT IN inverts the fold, so the never-matching pairing has to come out true for every
+            // row - the answer the Java filter gives.
+            assertJitScalarAndVectorMatchJava("select count() from wln where i8 not in (null)",
+                    "count\n" + N_SIMD_WITH_SCALAR_TAIL + "\n");
+            assertJitScalarAndVectorMatchJava("select count() from wln where i8 not in (null, 1)", "count\n412\n");
+
+            // A sibling INT-vs-LONG comparison mixes the fold's size-1 mask with wider ones in the
+            // same predicate (mixed sizes, so this runs the scalar loop rather than four lanes).
+            // Both the empty and the non-empty answer are pinned: the fold emits an all-zero mask,
+            // which reads the same at every lane width.
+            assertJitScalarAndVectorMatchJava("select count() from wln where i8 in (null, 1) and i32 < i64",
+                    "count\n103\n");
+            assertJitScalarAndVectorMatchJava("select count() from wln where i8 in (null) and i32 < i64", "count\n0\n");
+
+            // A numeric CONSTANT key reaches the same pairing from the other side: the key is the
+            // constant and the narrow column is the element. Making that key width-sensitive is what
+            // fixes the constant-key IN test below, and it also stops serializeNull declining here,
+            // so the pairing has to fold or it returns three of every four rows.
+            assertJitScalarAndVectorMatchJava("select count() from wln where 0 in (null, i8)", "count\n103\n");
+            assertJitScalarAndVectorMatchJava("select count() from wln where 0 in (null, i16)", "count\n73\n");
+            // A key with nothing but NULL elements has no column left to read, so the filter never
+            // reaches the JIT at all; pin that it still answers no rows.
+            assertJitMatchesJava("select count() from wln where 0 in (null)", false, "count\n0\n");
+
+            // CHAR shares the I2 type code but DOES read (char) 0 as NULL, so it must keep the
+            // ordinary pairing. It declines the JIT, as it did before, and the Java filter answers.
+            assertJitMatchesJava("select count() from wln where c in (null)", false, "count\n171\n");
+        });
+    }
+
+    @Test
     public void testWideLaneFloatArithmeticAndInBatchLengths() throws Exception {
         assertMemoryLeak(() -> {
             for (int rowCount = 0; rowCount <= 9; rowCount++) {

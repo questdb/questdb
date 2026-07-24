@@ -608,8 +608,20 @@ namespace questdb::avx2 {
         return {div(c, dt, lhs.vec(), rhs.vec(), null_check), dt, dk};
     }
 
+    // Harmonises the two operands of a binary op before emit_bin_op issues the instruction, which
+    // types itself from the LEFT operand alone. A pairing with no case here falls through unchanged
+    // and the op is then emitted at the left width against a register holding the right one - wrong
+    // rows, silently. So every pairing the frontend can produce must have a case.
+    //
+    // The i32-with-i64 and i32-with-f64 pairings are reachable only in four-lane (wide) mode, where
+    // a 4-byte column loads as four packed values in the low 128 bits while an 8-byte column spans
+    // the whole register; outside it a mixed-size predicate runs the scalar loop. Their widenings
+    // read only the low 128 bits and so are gated on wide_lane. The frontend is supposed to
+    // harmonise them up front (CompiledFilterIRSerializer#markWidthSemantics, and its
+    // areWideLaneWidthsHarmonised assert), and these arms are the backstop that keeps a gap there
+    // from reaching a user as wrong rows.
     inline std::pair<jit_value_t, jit_value_t>
-    convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check, bool wide_lane) {
         // data_type_t::i32 -> data_type_t::f32
         // data_type_t::i64 -> data_type_t::f64
         switch (lhs.dtype()) {
@@ -618,12 +630,29 @@ namespace questdb::avx2 {
                     case data_type_t::f32:
                         return std::make_pair(
                                 jit_value_t(cvt_itof(c, lhs.vec(), null_check), data_type_t::f32, lhs.dkind()), rhs);
+                    case data_type_t::i64:
+                        if (wide_lane) {
+                            return std::make_pair(sx_i64(c, lhs, null_check), rhs);
+                        }
+                        break;
+                    case data_type_t::f64:
+                        if (wide_lane) {
+                            return std::make_pair(
+                                    jit_value_t(cvt_itod(c, lhs.vec(), null_check), data_type_t::f64, lhs.dkind()),
+                                    rhs);
+                        }
+                        break;
                     default:
                         break;
                 }
                 break;
             case data_type_t::i64:
                 switch (rhs.dtype()) {
+                    case data_type_t::i32:
+                        if (wide_lane) {
+                            return std::make_pair(lhs, sx_i64(c, rhs, null_check));
+                        }
+                        break;
                     case data_type_t::f32:
                         return std::make_pair(
                                 jit_value_t(cvt_ltod(c, lhs.vec(), null_check), data_type_t::f64, lhs.dkind()),
@@ -653,6 +682,13 @@ namespace questdb::avx2 {
                 break;
             case data_type_t::f64:
                 switch (rhs.dtype()) {
+                    case data_type_t::i32:
+                        if (wide_lane) {
+                            return std::make_pair(
+                                    lhs,
+                                    jit_value_t(cvt_itod(c, rhs.vec(), null_check), data_type_t::f64, rhs.dkind()));
+                        }
+                        break;
                     case data_type_t::i64:
                         return std::make_pair(lhs, jit_value_t(cvt_ltod(c, rhs.vec(), null_check), data_type_t::f64,
                                                                rhs.dkind()));
@@ -675,23 +711,39 @@ namespace questdb::avx2 {
     }
 
     inline std::pair<jit_value_t, jit_value_t>
-    get_arguments(Compiler &c, ArenaVector<jit_value_t> &values, bool ncheck) {
+    get_arguments(Compiler &c, ArenaVector<jit_value_t> &values, bool ncheck, bool wide_lane) {
         auto lhs = values.pop();
         auto rhs = values.pop();
-        return convert(c, lhs, rhs, ncheck);
+        return convert(c, lhs, rhs, ncheck, wide_lane);
     }
 
     void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values, bool ncheck, bool wide_lane) {
-        auto args = get_arguments(c, values, ncheck);
+        // AND and OR combine comparison MASKS, not values, and bin_and / bin_or already widen a
+        // four-lane i32 mask themselves. Routing them through convert() would take the i32-with-i64
+        // arm below and pay for a null blend a mask can never need - a lane is 0 or -1, never
+        // INT_NULL - so they take the operands untouched, exactly as they did before that arm
+        // existed. serializeOperator declines the bitwise operators, so these two opcodes never
+        // carry values.
+        switch (instr.opcode) {
+            case opcodes::And: {
+                auto lhs = get_argument(values);
+                auto rhs = get_argument(values);
+                values.append(arena, bin_and(c, lhs, rhs, wide_lane));
+                return;
+            }
+            case opcodes::Or: {
+                auto lhs = get_argument(values);
+                auto rhs = get_argument(values);
+                values.append(arena, bin_or(c, lhs, rhs, wide_lane));
+                return;
+            }
+            default:
+                break;
+        }
+        auto args = get_arguments(c, values, ncheck, wide_lane);
         auto lhs = args.first;
         auto rhs = args.second;
         switch (instr.opcode) {
-            case opcodes::And:
-                values.append(arena, bin_and(c, lhs, rhs, wide_lane));
-                break;
-            case opcodes::Or:
-                values.append(arena, bin_or(c, lhs, rhs, wide_lane));
-                break;
             case opcodes::Eq:
                 values.append(arena, cmp_eq(c, lhs, rhs));
                 break;

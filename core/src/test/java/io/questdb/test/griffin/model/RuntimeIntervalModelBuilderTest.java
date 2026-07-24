@@ -856,7 +856,8 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
                     source,
                     ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).getAddMethod('h'),
                     0,
-                    true
+                    true,
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).getMaxDesignatedTimestamp()
             );
 
             try (RuntimeIntrinsicIntervalModel model = destination.buildIntervalModel()) {

@@ -467,6 +467,20 @@ compensations exist, and both must run for *any* predicate shape, not only float
 - `markFloatCmpConst` sends a constant with no exact float to the filter at double width, since
   a FLOAT column always compares at DOUBLE width in Java. It runs for a bare FLOAT column and for
   an arithmetic subtree that stays F4-typed.
+- `isWidthSensitiveInKey` accepts a numeric CONSTANT `IN` key, so the per-element override drives
+  the key's emitted width from each element in turn. Without it a key that fits in an int was still
+  emitted at I8 whenever anything else in the predicate was I8, leaving an i64 key against a
+  four-lane i32 element.
+- `isUnmatchableInPairing` folds an `IN` pairing that can never match — a NULL element against a
+  BYTE or SHORT key, neither of which has a NULL sentinel — into a comparison that is false on every
+  row, at the key's own lane width. CHAR shares the I2 type code but reads `(char) 0` as NULL, and a
+  GEOHASH has a NULL at every width, so both keep the ordinary pairing.
+
+The four-lane backend backstops the width question rather than owning it: `avx2::convert()` widens
+the i32 side of an `i32`-with-`i64` and an `i32`-with-`f64` pairing (both read only the low 128
+bits, so both are gated on wide-lane). A frontend gap therefore costs a tripwire failure under
+`-ea` instead of wrong rows — but the frontend still has to pick the width the Java filter reads
+at, because only it knows that.
 
 `isFloatLeaf` deliberately does NOT accept an F8-promoting subtree such as `f + 0.0`. Widening
 only the *bound* there is not enough, because the JIT also computes the arithmetic itself at f32
@@ -478,10 +492,11 @@ shape means promoting the whole subtree to f64, not just its bound.
 Promoting the subtree was attempted and reverted. Marking every constant operand of such a node
 does move the arithmetic to f64, but three things have to move with it and none of them is local:
 an INT literal operand is also claimed by `i64WrapLeaves`, which outranks the widen mark in
-`serializeConstant` and emits an `IMM I4` that the four-lane backend cannot pair with an f64
-(AVX2 `convert()` has no `f64 x i32` arm, so the scalar and vectorized backends disagree); an `IN`
-key needs its ELEMENTS widened too, which `markNarrowConstCmpWidenNode`'s IN branch does not do for
-an F8 key; and a constant sub-expression operand (`f * (1.0 / 3.0)`) is not a constant by
+`serializeConstant` and emits an `IMM I4` against an f64 (AVX2 `convert()` widens that pairing now,
+but the width still has to match what the JAVA filter reads at, so the frontend cannot simply lean
+on the backstop); an `IN` key needs its ELEMENTS widened too, which
+`markNarrowConstCmpWidenNode`'s IN branch does not do for an F8 key; and a constant sub-expression
+operand (`f * (1.0 / 3.0)`) is not a constant by
 `isWideLaneNumericConstant`, so the bound widens while the arithmetic does not. A correct promotion
 has to handle all three together, and extend `requiresWideLane` as well, or an exactly-representable
 bound drops the predicate out of the vectorized loop entirely.
