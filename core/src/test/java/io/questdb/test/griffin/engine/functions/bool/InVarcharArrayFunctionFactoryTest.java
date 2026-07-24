@@ -76,9 +76,53 @@ public class InVarcharArrayFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testNullVarcharArrayElementMatchesNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (str STRING, sym SYMBOL)");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('abc', 'abc'),
+                        (NULL, NULL)
+                    """);
+            sqlExecutionContext.getBindVariableService().setArray(
+                    0,
+                    new TestVarcharArray(
+                            new Utf8String(new byte[]{'a', 'b', 'c', (byte) 0xC3}, false),
+                            null
+                    )
+            );
+
+            assertQuery("SELECT str IN ($1) matched FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            matched
+                            false
+                            true
+                            """);
+            assertQuery("SELECT cast(str AS symbol) IN ($1) matched FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            matched
+                            false
+                            true
+                            """);
+            assertQuery("SELECT sym IN ($1) matched FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            matched
+                            false
+                            true
+                            """);
+        });
+    }
+
     private static class TestVarcharArray extends ArrayView {
 
-        private TestVarcharArray(Utf8Sequence value) {
+        private TestVarcharArray(Utf8Sequence... values) {
             flatView = new FlatArrayView() {
                 @Override
                 public void appendToMemFlat(MemoryA mem, int offset, int length) {
@@ -97,15 +141,15 @@ public class InVarcharArrayFunctionFactoryTest extends AbstractCairoTest {
 
                 @Override
                 public Utf8Sequence getVarcharAt(int index) {
-                    return value;
+                    return values[index];
                 }
 
                 @Override
                 public int length() {
-                    return 1;
+                    return values.length;
                 }
             };
-            flatViewLength = 1;
+            flatViewLength = values.length;
             type = ColumnType.encodeArrayType(ColumnType.VARCHAR, 1, false);
         }
     }
