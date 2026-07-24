@@ -117,6 +117,18 @@ public class WindowContextImpl implements WindowContext, Mutable {
         return partitionBySink;
     }
 
+    /**
+     * Returns the frame's high bound, folding {@code EXCLUDE CURRENT ROW} into it: a raw
+     * {@code CURRENT ROW} becomes one unit below the current row, in whatever unit the framing
+     * mode counts in. For ROWS that is one row, which drops the current physical row and matches
+     * the reference semantics. For RANGE it is one tick of the designated timestamp, which drops
+     * every row tied at the current timestamp - what the standard calls {@code EXCLUDE GROUP}
+     * rather than {@code EXCLUDE CURRENT ROW}. Both dispositions, and the peer-truncated
+     * {@code CURRENT ROW} high bound they compose with, are pinned by
+     * {@code WindowExcludeCurrentRowTest}; a peer-semantics correction has to restate them and to
+     * widen the live-view repair bound that reads the RANGE shape as stateless - see
+     * {@code LastValueWindowFunctionFactoryHelper}.
+     */
     public long getRowsHi() {
         if (exclusionKind == WindowExpression.EXCLUDE_CURRENT_ROW && rowsHi == 0) {
             return -1;
