@@ -44,6 +44,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
+import io.questdb.std.BoolList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -68,6 +69,7 @@ public class ConvertOperatorImpl implements Closeable {
     private final SOUnboundedCountDownLatch countDownLatch;
     private final FilesFacade ff;
     private final int fileOpenOpts;
+    private final BoolList invalidatedByPrepass = new BoolList();
     private final MessageBus messageBus;
     private final ColumnConversionOffsetSink noopConversionOffsetSink = new ColumnConversionOffsetSink() {
         @Override
@@ -149,6 +151,7 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     private void clear() {
+        invalidatedByPrepass.clear();
         purgingOperator.clear();
         Misc.free(symbolMapReader);
     }
@@ -239,41 +242,57 @@ public class ConvertOperatorImpl implements Closeable {
             boolean hasPriorConversion = tableWriter.getMetadata()
                     .getColumnMetadata(existingColIndex).getReplacingIndex() >= 0;
             boolean isTargetSymbol = ColumnType.isSymbol(newType);
-            if (hasPriorConversion || isTargetSymbol) {
-                boolean hasAnyPartitionConverted = false;
-                for (int pi = 0, pn = tableWriter.getPartitionCount(); pi < pn; pi++) {
-                    if (tableWriter.getPartitionFormat(pi) != PartitionFormat.PARQUET) {
-                        continue;
-                    }
-                    int parquetColType = tableWriter.getParquetColumnType(pi, existingColIndex);
-                    if (!ColumnType.isUndefined(parquetColType)
-                            && (isTargetSymbol
-                            || !isParquetStorageCompatible(parquetColType, existingType))) {
-                        long pts = tableWriter.getPartitionTimestamp(pi);
-                        LOG.info()
-                                .$("converting parquet partition to native before type change [partition=").$ts(pts)
-                                .$(", column=").$safe(columnName)
-                                .$(", targetType=").$(ColumnType.nameOf(newType))
-                                .I$();
-                        tableWriter.convertPartitionParquetToNative(pts, false);
-                        hasAnyPartitionConverted = true;
-                    } else {
-                        long pts = tableWriter.getPartitionTimestamp(pi);
-                        LOG.debug()
-                                .$("skipping parquet partition conversion [partition=").$ts(pts)
-                                .$(", column=").$safe(columnName)
-                                .$(", parquetType=").$(ColumnType.nameOf(parquetColType)).$('(').$(parquetColType).$(')')
-                                .$(", existingType=").$(ColumnType.nameOf(existingType)).$('(').$(existingType).$(')')
-                                .$(", targetType=").$(ColumnType.nameOf(newType)).$('(').$(newType).$(')')
-                                .$(", reason=").$(ColumnType.isUndefined(parquetColType)
-                                        ? "column not stored in parquet, column top covers all rows"
-                                        : "parquet storage is compatible with existing type, lazy decode handles conversion")
-                                .I$();
-                    }
+            boolean hasAnyPartitionConverted = false;
+            final int partitionCount = tableWriter.getPartitionCount();
+            invalidatedByPrepass.setAll(partitionCount, false);
+            for (int pi = 0; pi < partitionCount; pi++) {
+                if (tableWriter.getPartitionFormat(pi) != PartitionFormat.PARQUET) {
+                    continue;
                 }
-                if (hasAnyPartitionConverted) {
-                    tableWriter.commitPendingParquetToNativeConversions();
+                if (!hasPriorConversion && !isTargetSymbol) {
+                    if (tableWriter.getTxWriter().isPartitionRemote(pi)) {
+                        tableWriter.markParquetPartitionRemoteStale(pi);
+                    }
+                    continue;
                 }
+                int parquetColType = tableWriter.getParquetColumnType(pi, existingColIndex);
+                if (!ColumnType.isUndefined(parquetColType)
+                        && (isTargetSymbol
+                        || !isParquetStorageCompatible(parquetColType, existingType))) {
+                    long pts = tableWriter.getPartitionTimestamp(pi);
+                    LOG.info()
+                            .$("converting parquet partition to native before type change [partition=").$ts(pts)
+                            .$(", column=").$safe(columnName)
+                            .$(", targetType=").$(ColumnType.nameOf(newType))
+                            .I$();
+                    tableWriter.convertPartitionParquetToNative(pts, false);
+                    // The pre-pass above is a format-preserving conversion, so the conversion
+                    // primitive deliberately keeps REMOTE. This caller is not format-only,
+                    // though: ALTER will replace the column under a new writer index. Invalidate
+                    // the old object generation even when the column is full-top and the native
+                    // loop below therefore has zero physical rows to convert.
+                    tableWriter.markPartitionDataChanged(pi);
+                    invalidatedByPrepass.setQuick(pi, true);
+                    hasAnyPartitionConverted = true;
+                } else {
+                    if (tableWriter.getTxWriter().isPartitionRemote(pi)) {
+                        tableWriter.markParquetPartitionRemoteStale(pi);
+                    }
+                    long pts = tableWriter.getPartitionTimestamp(pi);
+                    LOG.debug()
+                            .$("skipping parquet partition conversion [partition=").$ts(pts)
+                            .$(", column=").$safe(columnName)
+                            .$(", parquetType=").$(ColumnType.nameOf(parquetColType)).$('(').$(parquetColType).$(')')
+                            .$(", existingType=").$(ColumnType.nameOf(existingType)).$('(').$(existingType).$(')')
+                            .$(", targetType=").$(ColumnType.nameOf(newType)).$('(').$(newType).$(')')
+                            .$(", reason=").$(ColumnType.isUndefined(parquetColType)
+                                    ? "column not stored in parquet, column top covers all rows"
+                                    : "parquet storage is compatible with existing type, lazy decode handles conversion")
+                            .I$();
+                }
+            }
+            if (hasAnyPartitionConverted) {
+                tableWriter.commitPendingParquetToNativeConversions();
             }
 
             for (int partitionIndex = 0, n = tableWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
@@ -344,6 +363,14 @@ public class ConvertOperatorImpl implements Closeable {
                                         existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd, rowCount, partitionTimestamp)
                                 ) {
                                     queueCount++;
+                                }
+
+                                // The rewrite replaces the partition's bytes under a new column
+                                // index, so any remote copy is stale: stamp the ALTER's seqTxn and
+                                // clear REMOTE / staged parquet, exactly as the UPDATE path does
+                                // (UpdateOperatorImpl.markPartitionDataChanged).
+                                if (!invalidatedByPrepass.get(partitionIndex)) {
+                                    tableWriter.markPartitionDataChanged(partitionIndex);
                                 }
                             }
 
