@@ -73,6 +73,74 @@ impl RowGroupBuffers {
     pub fn column_buffers(&self) -> &AcVec<ColumnChunkBuffers> {
         &self.column_bufs
     }
+
+    /// Deep-copies the first `col_count` decoded column buffers into a fresh,
+    /// self-owned `RowGroupBuffers`. The streaming parquet export uses this to detach
+    /// the encoder's pending partition from decode buffers that a decode resource
+    /// (held by the decoder) keeps pinned, so that resource can be released as soon as
+    /// the copy returns.
+    ///
+    /// Only valid for materialized column types: a VarcharSlice column's aux entries
+    /// point into `page_buffers`, which this copy does not carry, so the caller must
+    /// not request VarcharSlice. Returns `InvalidLayout` if any source column still
+    /// carries page buffers, so that contract violation fails loudly in a release build
+    /// instead of dropping them and leaving the destination's aux slices dangling.
+    pub fn copy_first_n_columns(
+        &self,
+        col_count: usize,
+        allocator: QdbAllocator,
+    ) -> ParquetResult<Self> {
+        if self.column_bufs.len() < col_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "decoded column count {} is less than expected {}",
+                self.column_bufs.len(),
+                col_count
+            ));
+        }
+        let mut dst = Self::new(allocator);
+        dst.ensure_n_columns(col_count)?;
+        for i in 0..col_count {
+            let src = &self.column_bufs[i];
+            // A VarcharSlice column's aux entries point into `page_buffers`, which this copy
+            // drops; reject it so the destination's aux slices can't dangle in a release build.
+            if src.page_buffers_size != 0 {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "copy_first_n_columns does not carry VarcharSlice page buffers, column index: {i}"
+                ));
+            }
+            let dst_col = &mut dst.column_bufs[i];
+            if src.data_size > 0 {
+                dst_col.data_vec.reserve(src.data_size)?;
+                // SAFETY: `src.data_ptr` is valid for `src.data_size` bytes (it points at the
+                // source column's owned `data_vec`), and the reserve above guarantees the
+                // destination has room. The two vectors are distinct allocations.
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        src.data_ptr,
+                        dst_col.data_vec.as_mut_ptr(),
+                        src.data_size,
+                    );
+                    dst_col.data_vec.set_len(src.data_size);
+                }
+            }
+            if src.aux_size > 0 {
+                dst_col.aux_vec.reserve(src.aux_size)?;
+                // SAFETY: as above, for the aux buffer.
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        src.aux_ptr,
+                        dst_col.aux_vec.as_mut_ptr(),
+                        src.aux_size,
+                    );
+                    dst_col.aux_vec.set_len(src.aux_size);
+                }
+            }
+            dst_col.refresh_ptrs()?;
+        }
+        Ok(dst)
+    }
 }
 
 /// Decompress a varchar_slice data page, choosing the buffer strategy based on encoding.
@@ -4574,5 +4642,72 @@ mod decimal_convert_tests {
         assert_eq!(read_d128(b.as_slice(), 0), 3);
         assert_eq!(read_d128(b.as_slice(), 1), -3);
         assert_eq!(read_d128(b.as_slice(), 2), 2);
+    }
+}
+
+#[cfg(test)]
+mod copy_columns_tests {
+    use super::*;
+    use crate::allocator::TestAllocatorState;
+    use crate::parquet::error::ParquetErrorReason;
+
+    /// `copy_first_n_columns` does not carry a VarcharSlice column's retained `page_buffers`,
+    /// so a source column still holding them must be rejected. Silently dropping them would
+    /// leave the destination's aux pointers dangling -- a release-build use-after-free during
+    /// the subsequent encode -- which the old `debug_assert` did not prevent in production.
+    #[test]
+    fn copy_first_n_columns_rejects_varchar_slice_page_buffers() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let mut src = RowGroupBuffers::new(allocator.clone());
+        src.ensure_n_columns(1).unwrap();
+        // Stand in for a decoded VarcharSlice column whose aux entries point into these pages.
+        src.column_bufs[0].page_buffers.push(vec![0u8; 32]);
+        src.column_bufs[0].refresh_ptrs().unwrap();
+        assert_ne!(src.column_bufs[0].page_buffers_size, 0);
+
+        // map the Ok value to () so unwrap_err doesn't require RowGroupBuffers: Debug.
+        let err = src
+            .copy_first_n_columns(1, allocator)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(matches!(err.reason(), ParquetErrorReason::InvalidLayout));
+        assert!(err
+            .to_string()
+            .contains("does not carry VarcharSlice page buffers"));
+    }
+
+    /// A materialized column (no retained page buffers -- the only kind the export path
+    /// requests) copies into self-owned storage, a distinct allocation with identical bytes.
+    #[test]
+    fn copy_first_n_columns_copies_materialized_column() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let mut src = RowGroupBuffers::new(allocator.clone());
+        src.ensure_n_columns(1).unwrap();
+        src.column_bufs[0]
+            .data_vec
+            .extend_from_slice(&[1u8, 2, 3, 4])
+            .unwrap();
+        src.column_bufs[0]
+            .aux_vec
+            .extend_from_slice(&[10u8, 20])
+            .unwrap();
+        src.column_bufs[0].refresh_ptrs().unwrap();
+
+        let dst = src.copy_first_n_columns(1, allocator).unwrap();
+        let dst_col = &dst.column_buffers()[0];
+        assert_eq!(dst_col.data_size, 4);
+        assert_eq!(dst_col.aux_size, 2);
+        // Distinct allocations from the source.
+        assert_ne!(dst_col.data_ptr, src.column_bufs[0].data_ptr);
+        assert_ne!(dst_col.aux_ptr, src.column_bufs[0].aux_ptr);
+        // SAFETY: dst owns data_vec/aux_vec; the copy filled the recorded sizes at the ptrs.
+        let data = unsafe { std::slice::from_raw_parts(dst_col.data_ptr, dst_col.data_size) };
+        let aux = unsafe { std::slice::from_raw_parts(dst_col.aux_ptr, dst_col.aux_size) };
+        assert_eq!(data, &[1u8, 2, 3, 4]);
+        assert_eq!(aux, &[10u8, 20]);
     }
 }

@@ -262,7 +262,7 @@ public class LegacyRequiredParquetRewriteTest extends AbstractCairoTest {
     @Test
     public void testRewriteAfterTypeConversion() throws Exception {
         // An O3 insert into a parquet partition that has pending type conversions routes through
-        // rewriteParquetRowGroupWithConversions with REAL conversions: c_byte->string is a
+        // ParquetRowGroupMaterializer with REAL conversions: c_byte->string is a
         // fixed->var conversion whose output buffer is malloc'd into tmpBufs and handed to the
         // descriptor. Validates that the (non-owning) descriptor does not double-free it.
         assertMemoryLeak(() -> {

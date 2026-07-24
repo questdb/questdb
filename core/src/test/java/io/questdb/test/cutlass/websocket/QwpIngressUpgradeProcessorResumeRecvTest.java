@@ -194,6 +194,78 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testCloseDrainYieldsWithinQuantumWhenPeerStaysReadable() throws Exception {
+        // Regression: the post-CLOSE read-drain must not spin unbounded while
+        // the peer keeps the socket readable. A continuously-readable peer would
+        // otherwise pin the HTTP worker inside resumeRecv and outlive the drain
+        // deadline, which is only re-checked on dispatch entry (never mid-loop).
+        // The drain now reads at most CLOSE_DRAIN_MAX_RECV_PER_DISPATCH times per
+        // dispatch, then yields via PeerIsSlowToWriteException so the worker can
+        // service other connections and the next dispatch re-evaluates expiry.
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            int quantum = getCloseDrainMaxRecvPerDispatch();
+            AlwaysReadableNetworkFacade mockNf = new AlwaysReadableNetworkFacade();
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (TestableContext context = new TestableContext(
+                    httpConfig, mockNf,
+                    new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
+                    recvBuf, RECV_BUFFER_SIZE
+            )) {
+                QwpIngressProcessorState state = setupState(httpConfig, context);
+                // Arm the post-CLOSE read-drain (fatal CLOSE + FIN already out).
+                state.beginCloseDrain();
+                Assert.assertTrue(state.isCloseDraining());
+                Assert.assertFalse(state.isCloseDrainExpired());
+
+                // First dispatch: peer floods the socket. Without the quantum
+                // this call would never return; with it, it yields after
+                // exactly one quantum of receives.
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("Expected PeerIsSlowToWriteException (drain quantum yield)");
+                } catch (PeerIsSlowToWriteException e) {
+                    // expected: bounded drain quantum yielded to the dispatcher
+                }
+                Assert.assertEquals(quantum, mockNf.recvCount);
+                Assert.assertTrue("drain must stay armed after a yield", state.isCloseDraining());
+
+                // Second dispatch yields again: the drain keeps making bounded
+                // progress rather than monopolizing the worker in one dispatch.
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("Expected PeerIsSlowToWriteException on the second drain dispatch");
+                } catch (PeerIsSlowToWriteException e) {
+                    // expected
+                }
+                Assert.assertEquals(2 * quantum, mockNf.recvCount);
+
+                // When the peer finally stops (would-block), the drain returns
+                // normally and stays parked for the next read -- no disconnect.
+                mockNf.wouldBlock = true;
+                processor.resumeRecv(context);
+                Assert.assertTrue("would-block keeps the drain parked", state.isCloseDraining());
+
+                // When the peer closes, the drain tears the connection down.
+                mockNf.wouldBlock = false;
+                mockNf.closed = true;
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("Expected ServerDisconnectException on peer close during drain");
+                } catch (ServerDisconnectException e) {
+                    // expected
+                }
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testCloseWhenBufferBusy() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -1247,6 +1319,12 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         return frame;
     }
 
+    private static int getCloseDrainMaxRecvPerDispatch() throws Exception {
+        Field f = QwpIngressUpgradeProcessor.class.getDeclaredField("CLOSE_DRAIN_MAX_RECV_PER_DISPATCH");
+        f.setAccessible(true);
+        return f.getInt(null);
+    }
+
     @SuppressWarnings("unchecked")
     private static LocalValue<QwpIngressProcessorState> getLV() throws Exception {
         Field lvField = QwpIngressUpgradeProcessor.class.getDeclaredField("LV");
@@ -1404,6 +1482,36 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
             }
             headerNames.add(new Utf8String(name));
             headerValues.add(directValue);
+        }
+    }
+
+    /**
+     * NetworkFacade simulating a peer that keeps the socket continuously
+     * readable: every non-blocking recv returns a full buffer of data until
+     * {@link #wouldBlock} (returns 0) or {@link #closed} (returns -1) is set.
+     * Used to exercise the post-CLOSE drain's per-dispatch quantum without
+     * relying on wall-clock timing.
+     */
+    private static class AlwaysReadableNetworkFacade extends MockNetworkFacade {
+        boolean closed;
+        int recvCount;
+        boolean wouldBlock;
+
+        AlwaysReadableNetworkFacade() {
+            super(new byte[0]);
+        }
+
+        @Override
+        public int recvRaw(long fd, long buffer, int bufferLen) {
+            recvCount++;
+            if (closed) {
+                return -1;
+            }
+            if (wouldBlock) {
+                return 0;
+            }
+            // The drain discards these bytes unread, so we need not write them.
+            return bufferLen;
         }
     }
 
