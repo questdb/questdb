@@ -1185,9 +1185,14 @@ public class SqlParser {
      *     so {@link WhereClauseParser} can extract a timestamp interval and prune partitions. Safe because
      *     the timestamp is never NULL.</li>
      *     <li>otherwise: {@code CASE WHEN (predicate) THEN false ELSE true END}, which keeps FALSE and NULL
-     *     rows for EVERY predicate shape. A plain {@code NOT(predicate)} would wrongly drop rows whose
-     *     predicate is UNKNOWN (NULL operand — QuestDB filtering is three-valued), and
-     *     {@code (predicate) IS NOT TRUE} is unreliable for composite booleans such as {@code IN}.</li>
+     *     rows for EVERY predicate shape. A plain {@code NOT(predicate)} is unsafe here:
+     *     {@code SqlOptimiser.optimiseBooleanNot} rewrites {@code NOT(a < b)} into the inverted bare
+     *     comparison {@code a >= b}, and a comparison and its inversion BOTH evaluate to false on a
+     *     NULL/NaN operand, so the rewritten filter drops rows the policy must keep (e.g.
+     *     {@code NOT(v < 2.0)} compiles to {@code v >= 2.0}, which hides NULL rows).
+     *     {@code (predicate) IS NOT TRUE} is likewise unreliable for composite booleans such as
+     *     {@code IN}. The CASE form is not JIT-serializable, so reads of a value-policied view run the
+     *     interpreted filter; that standing cost is the price of NULL-correctness.</li>
      * </ul>
      */
     private static String keepFilterWhereText(String predicate, boolean flip) {
