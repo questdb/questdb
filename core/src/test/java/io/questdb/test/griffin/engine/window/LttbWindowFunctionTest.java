@@ -132,7 +132,7 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
         // increasing rows with target=4. Plain LTTB bucketing (numBuckets=2 -> first, one point per
         // interior bucket, last) would likely keep all 4 anyway here, but the point of this test is
         // that bufferCount(4) <= target(4) takes the selectAll() path unconditionally, matching the
-        // old SUBSAMPLE cursor - not that LTTB's own math happens to agree.
+        // captured legacy selectAll behavior - not that LTTB's own math happens to agree.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
             execute("insert into t values (1::timestamp,10.0),(2::timestamp,20.0),(3::timestamp,30.0),(4::timestamp,40.0)");
@@ -147,15 +147,17 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000003Z\t30.0\ttrue
                             1970-01-01T00:00:00.000004Z\t40.0\ttrue
                             """);
-            // Byte-identical to the old SUBSAMPLE cursor on the same data (its selectAll() path).
-            printSql("select ts, v from t SUBSAMPLE lttb(v, 4)");
-            TestUtils.assertEquals("""
-                    ts\tv
-                    1970-01-01T00:00:00.000001Z\t10.0
-                    1970-01-01T00:00:00.000002Z\t20.0
-                    1970-01-01T00:00:00.000003Z\t30.0
-                    1970-01-01T00:00:00.000004Z\t40.0
-                    """, sink);
+            // Captured legacy behavior: the clause keeps all rows at the exact target.
+            assertQuery("select ts, v from t SUBSAMPLE lttb(v, 4)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000001Z\t10.0
+                            1970-01-01T00:00:00.000002Z\t20.0
+                            1970-01-01T00:00:00.000003Z\t30.0
+                            1970-01-01T00:00:00.000004Z\t40.0
+                            """);
         });
     }
 
@@ -163,8 +165,7 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
     public void testMatchesLttbAlgorithmOnTenPoints() throws Exception {
         // Same dataset as SubsampleTest.testLttbBasic (10 points -> target 5): first and last are
         // always kept, plus one point per interior bucket chosen by largest triangle area. Expected
-        // keep flags filled from the FIRST (stable) run and cross-checked below against the old-cursor
-        // "SUBSAMPLE lttb(v, 5)" on the same dataset (byte-for-byte match).
+        // keep flags filled from the captured legacy golden for the same dataset.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
             execute("""
@@ -193,16 +194,18 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
                             2024-01-01T09:00:00.000000Z\t40.0
                             """);
 
-            // Byte-identical to the old SUBSAMPLE cursor on the same data.
-            printSql("select ts, v from t SUBSAMPLE lttb(v, 5)");
-            TestUtils.assertEquals("""
-                    ts\tv
-                    2024-01-01T00:00:00.000000Z\t10.0
-                    2024-01-01T02:00:00.000000Z\t50.0
-                    2024-01-01T04:00:00.000000Z\t15.0
-                    2024-01-01T08:00:00.000000Z\t5.0
-                    2024-01-01T09:00:00.000000Z\t40.0
-                    """, sink);
+            // Captured legacy golden, asserted through the sole window-only clause path.
+            assertQuery("select ts, v from t SUBSAMPLE lttb(v, 5)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t10.0
+                            2024-01-01T02:00:00.000000Z\t50.0
+                            2024-01-01T04:00:00.000000Z\t15.0
+                            2024-01-01T08:00:00.000000Z\t5.0
+                            2024-01-01T09:00:00.000000Z\t40.0
+                            """);
         });
     }
 
@@ -240,15 +243,17 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
                             2024-01-01T05:30:00.000000Z\t80.0\ttrue
                             """);
 
-            // Byte-identical to the old SUBSAMPLE cursor on the same data.
-            printSql("select ts, v from t SUBSAMPLE lttb(v, 4, '1h')");
-            TestUtils.assertEquals("""
-                    ts\tv
-                    2024-01-01T00:00:00.000000Z\t10.0
-                    2024-01-01T00:30:00.000000Z\t40.0
-                    2024-01-01T05:00:00.000000Z\t50.0
-                    2024-01-01T05:30:00.000000Z\t80.0
-                    """, sink);
+            // Captured legacy gap-preserving golden, asserted through the window-only clause path.
+            assertQuery("select ts, v from t SUBSAMPLE lttb(v, 4, '1h')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t10.0
+                            2024-01-01T00:30:00.000000Z\t40.0
+                            2024-01-01T05:00:00.000000Z\t50.0
+                            2024-01-01T05:30:00.000000Z\t80.0
+                            """);
         });
     }
 
@@ -309,14 +314,16 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t1.0\ttrue
                             """);
 
-            // Byte-identical to the old SUBSAMPLE cursor on the same data: same rows kept.
-            printSql("select ts, v from t SUBSAMPLE lttb(v, 4)");
-            TestUtils.assertEquals("""
-                    ts\tv
-                    1970-01-01T00:00:00.000002Z\t5.0
-                    1970-01-01T00:00:00.000003Z\t100.0
-                    1970-01-01T00:00:00.000004Z\t1.0
-                    """, sink);
+            // Captured legacy NULL-filter golden, asserted through the window-only clause path.
+            assertQuery("select ts, v from t SUBSAMPLE lttb(v, 4)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000002Z\t5.0
+                            1970-01-01T00:00:00.000003Z\t100.0
+                            1970-01-01T00:00:00.000004Z\t1.0
+                            """);
         });
     }
 

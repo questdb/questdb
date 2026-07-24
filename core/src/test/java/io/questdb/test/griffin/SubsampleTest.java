@@ -39,14 +39,6 @@ import org.junit.Test;
 
 public class SubsampleTest extends AbstractCairoTest {
 
-    // Local restore of the plain value-only assert helper that master removed from
-    // AbstractCairoTest/TestUtils (consolidated toward fluent assertQuery). Keeps this
-    // PR's existing assertions compiling without a wholesale rewrite to the fluent style.
-    private void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
-        printSql(sql);
-        TestUtils.assertEquals(expected, sink);
-    }
-
     @Test
     public void testConfiguredRowCapAppliesOnlyToSubsampleMethods() throws Exception {
         assertMemoryLeak(() -> {
@@ -133,15 +125,12 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // 10 points downsampled to 5: first and last always selected,
             // plus 3 selected from 3 buckets based on largest triangle area
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 5)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "50.0\t2024-01-01T02:00:00.000000Z\n" +
                             "15.0\t2024-01-01T04:00:00.000000Z\n" +
                             "5.0\t2024-01-01T08:00:00.000000Z\n" +
-                            "40.0\t2024-01-01T09:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 5)"
-            );
+                            "40.0\t2024-01-01T09:00:00.000000Z\n");
         });
     }
 
@@ -156,13 +145,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T02:00:00.000000Z')
                     """);
             // n >= input count: return all points
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 10)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "20.0\t2024-01-01T01:00:00.000000Z\n" +
-                            "30.0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 10)"
-            );
+                            "30.0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -179,12 +165,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (50.0, '2024-01-01T04:00:00.000000Z')
                     """);
             // n=2: only first and last
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -204,13 +187,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (15.0, '2024-01-01T06:00:00.000000Z')
                     """);
             // The spike at 100 should be preserved
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 3)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "100.0\t2024-01-01T03:00:00.000000Z\n" +
-                            "15.0\t2024-01-01T06:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 3)"
-            );
+                            "15.0\t2024-01-01T06:00:00.000000Z\n");
         });
     }
 
@@ -228,12 +208,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (60.0, '2024-01-01T02:30:00.000000Z')
                     """);
             // SAMPLE BY 1h produces 3 rows, then SUBSAMPLE to 2 (first and last)
-            assertSql(
-                    "ts\tavg\n" +
+            assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)").timestamp("ts").returns("ts\tavg\n" +
                             "2024-01-01T00:00:00.000000Z\t15.0\n" +
-                            "2024-01-01T02:00:00.000000Z\t55.0\n",
-                    "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)"
-            );
+                            "2024-01-01T02:00:00.000000Z\t55.0\n");
         });
     }
 
@@ -248,12 +225,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, 200, 'BTC', '2024-01-01T02:00:00.000000Z')
                     """);
             // All columns pass through for selected rows
-            assertSql(
-                    "price\tvolume\tsymbol\tts\n" +
+            assertQuery("SELECT * FROM t SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tvolume\tsymbol\tts\n" +
                             "10.0\t100\tBTC\t2024-01-01T00:00:00.000000Z\n" +
-                            "20.0\t200\tBTC\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT * FROM t SUBSAMPLE lttb(price, 2)"
-            );
+                            "20.0\t200\tBTC\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -275,13 +249,10 @@ public class SubsampleTest extends AbstractCairoTest {
             // M4 with 4 target points on 8 rows = 1 bucket covering all rows
             // first=10 (row 0), last=35 (row 7), min=5 (row 2), max=35 (row 7)
             // Deduplicated (last=max at row 7): rows 0, 2, 7
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "5.0\t2024-01-01T02:00:00.000000Z\n" +
-                            "35.0\t2024-01-01T07:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 4)"
-            );
+                            "35.0\t2024-01-01T07:00:00.000000Z\n");
         });
     }
 
@@ -289,10 +260,7 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            assertSql(
-                    "price\tts\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 5)"
-            );
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 5)").timestamp("ts").returns("price\tts\n");
         });
     }
 
@@ -337,12 +305,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (60.0, '2024-01-01T02:30:00.000000Z')
                     """);
             // SAMPLE BY 1h produces 3 rows, SUBSAMPLE to 2
-            assertSql(
-                    "ts\tavg\n" +
+            assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)").timestamp("ts").returns("ts\tavg\n" +
                             "2024-01-01T00:00:00.000000Z\t15.0\n" +
-                            "2024-01-01T02:00:00.000000Z\t55.0\n",
-                    "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)"
-            );
+                            "2024-01-01T02:00:00.000000Z\t55.0\n");
         });
     }
 
@@ -443,12 +408,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, '2024-01-01T01:00:00.000000Z'),
                     (30.0, '2024-01-01T02:00:00.000000Z')
                     """);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2::LONG)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "30.0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2::LONG)"
-            );
+                            "30.0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -463,12 +425,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, '2024-01-01T01:00:00.000000Z'),
                     (30.0, '2024-01-01T02:00:00.000000Z')
                     """);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("DECLARE @n := 2::LONG SELECT price, ts FROM t SUBSAMPLE lttb(price, @n)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "30.0\t2024-01-01T02:00:00.000000Z\n",
-                    "DECLARE @n := 2::LONG SELECT price, ts FROM t SUBSAMPLE lttb(price, @n)"
-            );
+                            "30.0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -497,12 +456,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T02:00:00.000000Z')
                     """);
             sqlExecutionContext.getBindVariableService().setLong(0, 2L);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, $1)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "30.0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, $1)"
-            );
+                            "30.0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -531,12 +487,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, '2024-01-01T02:00:00.000000Z')
                     """);
             // SUBSAMPLE then ORDER BY price DESC
-            assertSql(
-                    "price\tts\n" +
+            // Sorting by a non-timestamp column removes timestamp designation from the result.
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2) ORDER BY price DESC").returns("price\tts\n" +
                             "20.0\t2024-01-01T02:00:00.000000Z\n" +
-                            "10.0\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2) ORDER BY price DESC"
-            );
+                            "10.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -554,12 +508,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (40.0, 9, '2024-01-01T04:00:00.000000Z')
                     """);
             // LTTB target=2 on 5 rows: first and last
-            assertSql(
-                    "price\tquantity\tts\n" +
+            assertQuery("SELECT price, quantity, ts FROM t SUBSAMPLE lttb(price, 2) ORDER BY quantity").returns("price\tquantity\tts\n" +
                             "10.0\t5\t2024-01-01T00:00:00.000000Z\n" +
-                            "40.0\t9\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, quantity, ts FROM t SUBSAMPLE lttb(price, 2) ORDER BY quantity"
-            );
+                            "40.0\t9\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -581,16 +532,13 @@ public class SubsampleTest extends AbstractCairoTest {
             // Bucket 1 (00:00-02:30): first=10, last=5, min=5, max=50 -> indices 0,1,2
             // Bucket 2 (02:30-05:00): first=30, last=20, min=20, max=45 -> indices 3,4,5
             // All 6 rows selected (each role is a distinct row). ORDER BY quantity.
-            assertSql(
-                    "price\tquantity\tts\n" +
+            assertQuery("SELECT price, quantity, ts FROM t SUBSAMPLE m4(price, 8) ORDER BY quantity").returns("price\tquantity\tts\n" +
                             "30.0\t1\t2024-01-01T03:00:00.000000Z\n" +
                             "20.0\t2\t2024-01-01T05:00:00.000000Z\n" +
                             "50.0\t3\t2024-01-01T01:00:00.000000Z\n" +
                             "10.0\t5\t2024-01-01T00:00:00.000000Z\n" +
                             "5.0\t8\t2024-01-01T02:00:00.000000Z\n" +
-                            "45.0\t9\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, quantity, ts FROM t SUBSAMPLE m4(price, 8) ORDER BY quantity"
-            );
+                            "45.0\t9\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -607,12 +555,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (40.0, '2024-01-01T04:00:00.000000Z')
                     """);
             // SUBSAMPLE to 3, then LIMIT 2
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 3) LIMIT 2").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T01:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 3) LIMIT 2"
-            );
+                            "50.0\t2024-01-01T01:00:00.000000Z\n");
         });
     }
 
@@ -629,12 +574,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (40.0, 'BTC', '2024-01-01T04:00:00.000000Z')
                     """);
             // WHERE filters first, then SUBSAMPLE operates on filtered result
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t WHERE symbol = 'BTC' SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "40.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t WHERE symbol = 'BTC' SUBSAMPLE lttb(price, 2)"
-            );
+                            "40.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -652,12 +594,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // CTE with SUBSAMPLE on the outer query
             final String query = "WITH data AS (SELECT price, ts FROM t) SELECT price, ts FROM data SUBSAMPLE lttb(price, 2)";
-            assertSql(
-                    "price\tts\n" +
+            assertQuery(query).timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "40.0\t2024-01-01T04:00:00.000000Z\n",
-                    query
-            );
+                            "40.0\t2024-01-01T04:00:00.000000Z\n");
             printSql("EXPLAIN " + query);
             final String plan = sink.toString();
             Assert.assertTrue("CTE SUBSAMPLE must use the window path: " + plan, plan.contains("CachedWindow"));
@@ -679,12 +618,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // Subquery wrapping with SUBSAMPLE on the outer query
             final String query = "SELECT price, ts FROM (SELECT * FROM t) SUBSAMPLE lttb(price, 2)";
-            assertSql(
-                    "price\tts\n" +
+            assertQuery(query).timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "40.0\t2024-01-01T04:00:00.000000Z\n",
-                    query
-            );
+                            "40.0\t2024-01-01T04:00:00.000000Z\n");
             printSql("EXPLAIN " + query);
             final String plan = sink.toString();
             Assert.assertTrue("subquery SUBSAMPLE must use the window path: " + plan, plan.contains("CachedWindow"));
@@ -793,12 +729,9 @@ public class SubsampleTest extends AbstractCairoTest {
             // Just verify that with target=4 (1 bucket) we get the extremes:
             // first=10 (row 0), last=60 (row 5), min=10 (row 0), max=60 (row 5)
             // Dedup: rows 0 and 5
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "60.0\t2024-01-01T12:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 4)"
-            );
+                            "60.0\t2024-01-01T12:00:00.000000Z\n");
         });
     }
 
@@ -815,12 +748,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, '2024-01-01T04:00:00.000000Z')
                     """);
             // NULL rows are skipped, 3 non-null rows, target 2 -> first and last
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "20.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
-            );
+                            "20.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -847,30 +777,21 @@ public class SubsampleTest extends AbstractCairoTest {
                     (60.0, '2024-01-01T10:00:00.000000Z'),
                     (25.0, '2024-01-01T11:00:00.000000Z')
                     """);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "5.0\t2024-01-01T05:00:00.000000Z\n" +
                             "80.0\t2024-01-01T07:00:00.000000Z\n" +
-                            "25.0\t2024-01-01T11:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 4)"
-            );
-            assertSql(
-                    "price\tts\n" +
+                            "25.0\t2024-01-01T11:00:00.000000Z\n");
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "50.0\t2024-01-01T02:00:00.000000Z\n" +
                             "5.0\t2024-01-01T05:00:00.000000Z\n" +
                             "80.0\t2024-01-01T07:00:00.000000Z\n" +
-                            "15.0\t2024-01-01T08:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)"
-            );
-            assertSql(
-                    "price\tts\n" +
+                            "15.0\t2024-01-01T08:00:00.000000Z\n");
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "50.0\t2024-01-01T02:00:00.000000Z\n" +
                             "80.0\t2024-01-01T07:00:00.000000Z\n" +
-                            "25.0\t2024-01-01T11:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 4)"
-            );
+                            "25.0\t2024-01-01T11:00:00.000000Z\n");
         });
     }
 
@@ -895,14 +816,11 @@ public class SubsampleTest extends AbstractCairoTest {
             // Segment 2: rows 4-7 (05:00 to 05:30)
             // Target 4 points: 2 per segment (proportional).
             // Each segment selects first and last.
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 4, '1h')").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "40.0\t2024-01-01T00:30:00.000000Z\n" +
                             "50.0\t2024-01-01T05:00:00.000000Z\n" +
-                            "80.0\t2024-01-01T05:30:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 4, '1h')"
-            );
+                            "80.0\t2024-01-01T05:30:00.000000Z\n");
         });
     }
 
@@ -920,12 +838,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // No gaps > 2h exist, so one segment covering all data.
             // Same as regular LTTB with n=2: first and last.
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2, '2h')").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "40.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2, '2h')"
-            );
+                            "40.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -968,11 +883,12 @@ public class SubsampleTest extends AbstractCairoTest {
                     (50.0, '2024-01-01T01:00:00.000000Z'),
                     (20.0, '2024-01-01T02:00:00.000000Z')
                     """);
-            // SUBSAMPLE inside a parenthesized subquery wrapped in count()
-            assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2))"
-            );
+            // SUBSAMPLE inside a parenthesized subquery wrapped in count(). The aggregate cursor
+            // does not support random access even though its inner fused window cursor does.
+            assertQuery("SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2))")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
         });
     }
 
@@ -1104,12 +1020,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, '2024-01-01T01:00:00.000000Z'),
                     (30.0, '2024-01-01T02:00:00.000000Z')
                     """);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM (SELECT * FROM t_designated) SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "30.0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM (SELECT * FROM t_designated) SUBSAMPLE lttb(price, 2)"
-            );
+                            "30.0\t2024-01-01T02:00:00.000000Z\n");
 
             // Negative: no designated timestamp - must fail, not silently succeed
             execute("CREATE TABLE t_no_designated (price DOUBLE, ts TIMESTAMP)");
@@ -1140,12 +1053,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (55.0, 'ETH', '2024-01-01T02:00:00.000000Z')
                     """);
             // SUBSAMPLE after WHERE (which is essentially a filtered scan)
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM prices WHERE symbol = 'BTC' SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "100.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "150.0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM prices WHERE symbol = 'BTC' SUBSAMPLE lttb(price, 2)"
-            );
+                            "150.0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -1163,12 +1073,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // SUBSAMPLE uses 'price' column directly - expression columns
             // in the value parameter are not supported (column name only)
-            assertSql(
-                    "price\tvolume\tts\n" +
+            assertQuery("SELECT price, volume, ts FROM t SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tvolume\tts\n" +
                             "10.0\t100.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "40.0\t400.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, volume, ts FROM t SUBSAMPLE lttb(price, 2)"
-            );
+                            "40.0\t400.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -1184,12 +1091,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T03:00:00.000000Z'),
                     (40.0, '2024-01-01T04:00:00.000000Z')
                     """);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("DECLARE @n := 2 SELECT price, ts FROM t SUBSAMPLE lttb(price, @n)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "40.0\t2024-01-01T04:00:00.000000Z\n",
-                    "DECLARE @n := 2 SELECT price, ts FROM t SUBSAMPLE lttb(price, @n)"
-            );
+                            "40.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -1208,13 +1112,10 @@ public class SubsampleTest extends AbstractCairoTest {
             // M4 with target=4: 1 time bucket, selects first/last/min/max
             // first=10 (row 0), last=40 (row 4), min=10 (row 0), max=50 (row 1)
             // Dedup and sort: 0, 1, 4
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "50.0\t2024-01-01T01:00:00.000000Z\n" +
-                            "40.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 4)"
-            );
+                            "40.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -1231,13 +1132,10 @@ public class SubsampleTest extends AbstractCairoTest {
             // M4 with DECLARE variable, target=4: 1 bucket covering all 3 rows
             // first=10 (row 0), last=20 (row 2), min=10 (row 0), max=50 (row 1)
             // Dedup and sort: 0, 1, 2
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("DECLARE @points := 4 SELECT price, ts FROM t SUBSAMPLE m4(price, @points)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "50.0\t2024-01-01T01:00:00.000000Z\n" +
-                            "20.0\t2024-01-01T02:00:00.000000Z\n",
-                    "DECLARE @points := 4 SELECT price, ts FROM t SUBSAMPLE m4(price, @points)"
-            );
+                            "20.0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -1297,11 +1195,8 @@ public class SubsampleTest extends AbstractCairoTest {
                     (NULL, '2024-01-01T03:00:00.000000Z')
                     """);
             // Only 1 non-NULL row, target 2 - should return the single valid row
-            assertSql(
-                    "price\tts\n" +
-                            "42.0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
-            );
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n" +
+                            "42.0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -1319,12 +1214,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (60.0, 'ETH', '2024-01-01T02:00:00.000000Z')
                     """);
             // LATEST ON then SUBSAMPLE the result
-            assertSql(
-                    "price\tsymbol\tts\n" +
+            assertQuery("SELECT price, symbol, ts FROM t LATEST ON ts PARTITION BY symbol SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tsymbol\tts\n" +
                             "50.0\tBTC\t2024-01-01T02:00:00.000000Z\n" +
-                            "60.0\tETH\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, symbol, ts FROM t LATEST ON ts PARTITION BY symbol SUBSAMPLE lttb(price, 2)"
-            );
+                            "60.0\tETH\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -1343,12 +1235,9 @@ public class SubsampleTest extends AbstractCairoTest {
             // Window function computes on ALL rows first, then SUBSAMPLE
             // picks from the result. row_number() assigns 1-5 to all rows,
             // then SUBSAMPLE selects first (rn=1) and last (rn=5).
-            assertSql(
-                    "price\tts\trn\n" +
+            assertQuery("SELECT price, ts, row_number() OVER () rn FROM t SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\trn\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\t1\n" +
-                            "40.0\t2024-01-01T04:00:00.000000Z\t5\n",
-                    "SELECT price, ts, row_number() OVER () rn FROM t SUBSAMPLE lttb(price, 2)"
-            );
+                            "40.0\t2024-01-01T04:00:00.000000Z\t5\n");
         });
     }
 
@@ -1370,12 +1259,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (1500.0, 'BTC', '2024-01-01T02:00:00.000000Z')
                     """);
             // ASOF JOIN then SUBSAMPLE
-            assertSql(
-                    "price\tts\tvolume\n" +
+            assertQuery("SELECT p.price, p.ts, v.volume FROM prices p ASOF JOIN volumes v ON (symbol) SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\tvolume\n" +
                             "100.0\t2024-01-01T00:00:00.000000Z\t1000.0\n" +
-                            "150.0\t2024-01-01T02:00:00.000000Z\t1500.0\n",
-                    "SELECT p.price, p.ts, v.volume FROM prices p ASOF JOIN volumes v ON (symbol) SUBSAMPLE lttb(price, 2)"
-            );
+                            "150.0\t2024-01-01T02:00:00.000000Z\t1500.0\n");
         });
     }
 
@@ -1467,22 +1353,20 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // SUBSAMPLE is on the outer joined result, not on one branch.
             // The join produces 5 rows, SUBSAMPLE reduces to 2.
-            assertSql(
-                    "price\tts\tvolume\n" +
+            assertQuery("SELECT a.price, a.ts, b.volume FROM a ASOF JOIN b SUBSAMPLE lttb(price, 2)")
+                    .timestamp("ts").returns("price\tts\tvolume\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\t100.0\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\t500.0\n",
-                    "SELECT a.price, a.ts, b.volume FROM a ASOF JOIN b SUBSAMPLE lttb(price, 2)"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\t500.0\n");
             // Verify the join without SUBSAMPLE gives all 5 rows
-            assertSql(
-                    "price\tts\tvolume\n" +
+            assertQuery("SELECT a.price, a.ts, b.volume FROM a ASOF JOIN b")
+                    .expectSize()
+                    .noRandomAccess()
+                    .timestamp("ts").returns("price\tts\tvolume\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\t100.0\n" +
                             "20.0\t2024-01-01T01:00:00.000000Z\t200.0\n" +
                             "30.0\t2024-01-01T02:00:00.000000Z\t300.0\n" +
                             "40.0\t2024-01-01T03:00:00.000000Z\t400.0\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\t500.0\n",
-                    "SELECT a.price, a.ts, b.volume FROM a ASOF JOIN b"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\t500.0\n");
         });
     }
 
@@ -1516,21 +1400,18 @@ public class SubsampleTest extends AbstractCairoTest {
             // For left rows at 01:00-03:00, the nearest right-side match is 100
             // (the only right row with ts <= theirs). At 04:00, it matches 500.
             // If branch SUBSAMPLE were dropped, volumes would be 100,200,300,400,500.
-            assertSql(
-                    "price\tts\tvolume\n" +
-                            "10.0\t2024-01-01T00:00:00.000000Z\t100.0\n" +
-                            "20.0\t2024-01-01T01:00:00.000000Z\t100.0\n" +
-                            "30.0\t2024-01-01T02:00:00.000000Z\t100.0\n" +
-                            "40.0\t2024-01-01T03:00:00.000000Z\t100.0\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\t500.0\n",
-                    """
+            assertQuery("""
                             SELECT a.price, a.ts, b.volume
                             FROM a
                             ASOF JOIN (
                                 SELECT volume, ts FROM b SUBSAMPLE lttb(volume, 2)
                             ) b
-                            """
-            );
+                            """).expectSize().noRandomAccess().timestamp("ts").returns("price\tts\tvolume\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\t100.0\n" +
+                            "20.0\t2024-01-01T01:00:00.000000Z\t100.0\n" +
+                            "30.0\t2024-01-01T02:00:00.000000Z\t100.0\n" +
+                            "40.0\t2024-01-01T03:00:00.000000Z\t100.0\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\t500.0\n");
         });
     }
 
@@ -1549,11 +1430,12 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T03:00:00.000000Z'),
                     (40.0, '2024-01-01T04:00:00.000000Z')
                     """);
-            // count() wrapping SUBSAMPLE: inner reduces 5 -> 2, outer counts 2
-            assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2))"
-            );
+            // count() wrapping SUBSAMPLE: inner reduces 5 -> 2, outer counts 2. The aggregate
+            // wrapper itself is forward-only, independently of the fused window's random access.
+            assertQuery("SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2))")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
         });
     }
 
@@ -1570,13 +1452,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T03:00:00.000000Z')
                     """);
             // Target 3: first, one selected from middle bucket, last
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 3)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "50.0\t2024-01-01T01:00:00.000000Z\n" +
-                            "30.0\t2024-01-01T03:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 3)"
-            );
+                            "30.0\t2024-01-01T03:00:00.000000Z\n");
         });
     }
 
@@ -1595,13 +1474,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // All areas are 0, selects first point in each bucket (index 0 wins ties)
             // Target 3: first + 1 from middle + last
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 3)").timestamp("ts").returns("price\tts\n" +
                             "42.0\t2024-01-01T00:00:00.000000Z\n" +
                             "42.0\t2024-01-01T01:00:00.000000Z\n" +
-                            "42.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 3)"
-            );
+                            "42.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -1616,13 +1492,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T00:00:00.000000Z')
                     """);
             // All same timestamp - M4 falls back to selectAll
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "20.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "30.0\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 4)"
-            );
+                            "30.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -1639,14 +1512,11 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // Gap threshold 1h, but gaps are 6h - every row is its own segment.
             // Each 1-row segment selects all (segment size <= target share).
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2, '1h')").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "20.0\t2024-01-01T06:00:00.000000Z\n" +
                             "30.0\t2024-01-01T12:00:00.000000Z\n" +
-                            "40.0\t2024-01-01T18:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2, '1h')"
-            );
+                            "40.0\t2024-01-01T18:00:00.000000Z\n");
         });
     }
 
@@ -1676,8 +1546,7 @@ public class SubsampleTest extends AbstractCairoTest {
             // Gap mode with target 4: soft target. 5 segments of 2 rows each,
             // each segment gets first/last = 2 points. Total 10, exceeds target 4.
             // Assert exact output: each segment's first and last must be present.
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 4, '1h')").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "11.0\t2024-01-01T00:30:00.000000Z\n" +
                             "20.0\t2024-01-01T06:00:00.000000Z\n" +
@@ -1687,21 +1556,16 @@ public class SubsampleTest extends AbstractCairoTest {
                             "40.0\t2024-01-01T18:00:00.000000Z\n" +
                             "41.0\t2024-01-01T18:30:00.000000Z\n" +
                             "50.0\t2024-01-02T00:00:00.000000Z\n" +
-                            "51.0\t2024-01-02T00:30:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 4, '1h')"
-            );
+                            "51.0\t2024-01-02T00:30:00.000000Z\n");
 
             // Non-gap LTTB with same target: hard maximum of 4.
             // LTTB selects first and last always, plus 2 from middle buckets.
             // The exact middle selections depend on triangle area calculations.
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "11.0\t2024-01-01T00:30:00.000000Z\n" +
                             "40.0\t2024-01-01T18:00:00.000000Z\n" +
-                            "51.0\t2024-01-02T00:30:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 4)"
-            );
+                            "51.0\t2024-01-02T00:30:00.000000Z\n");
         });
     }
 
@@ -1729,8 +1593,7 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // 3 segments of 4 rows, target 10. Floor = 3*2 = 6. Budget above floor = 4.
             // Each segment gets 3 points (first, LTTB-selected middle, last). Total = 9.
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 10, '1h')").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "11.0\t2024-01-01T00:10:00.000000Z\n" +
                             "13.0\t2024-01-01T00:30:00.000000Z\n" +
@@ -1739,9 +1602,7 @@ public class SubsampleTest extends AbstractCairoTest {
                             "23.0\t2024-01-01T06:30:00.000000Z\n" +
                             "30.0\t2024-01-01T12:00:00.000000Z\n" +
                             "31.0\t2024-01-01T12:10:00.000000Z\n" +
-                            "33.0\t2024-01-01T12:30:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 10, '1h')"
-            );
+                            "33.0\t2024-01-01T12:30:00.000000Z\n");
         });
     }
 
@@ -1756,13 +1617,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20, '2024-01-01T02:00:00.000000Z')
                     """);
             // M4 with 4 target on 3 rows = all rows returned
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 12)").timestamp("ts").returns("price\tts\n" +
                             "10\t2024-01-01T00:00:00.000000Z\n" +
                             "50\t2024-01-01T01:00:00.000000Z\n" +
-                            "20\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 12)"
-            );
+                            "20\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -1777,13 +1635,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, '2024-01-01T02:00:00.000000Z')
                     """);
             // Target exactly equals input - returns all
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 3)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "50.0\t2024-01-01T01:00:00.000000Z\n" +
-                            "20.0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 3)"
-            );
+                            "20.0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -1802,12 +1657,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // target=2, numBuckets=1. Bucket emits first(10), max(50), min(5), last(30)
             // sorted by index = [0,1,2,3]. Cap at 2 keeps first two: 10.0 and 50.0.
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T01:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 2)"
-            );
+                            "50.0\t2024-01-01T01:00:00.000000Z\n");
         });
     }
 
@@ -1829,13 +1681,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // 5 rows, target 4, 1 bucket: first=1.7E308(idx0), last=15(idx4),
             // min=-1.7E308(idx2), max=1.7E308(idx0). Deduped: idx0,2,4 = 3 rows.
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "1.7E308\t2024-01-01T00:00:00.000000Z\n" +
                             "-1.7E308\t2024-01-01T02:00:00.000000Z\n" +
-                            "15.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 4)"
-            );
+                            "15.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -1855,14 +1704,11 @@ public class SubsampleTest extends AbstractCairoTest {
             // 5 rows, target 4, 2 buckets of 2h each.
             // Bucket 1 [0h,2h): min=10(1h), max=1.7E308(0h).
             // Bucket 2 [2h,4h]: min=-1.7E308(2h), max=20(3h).
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "1.7E308\t2024-01-01T00:00:00.000000Z\n" +
                             "10.0\t2024-01-01T01:00:00.000000Z\n" +
                             "-1.7E308\t2024-01-01T02:00:00.000000Z\n" +
-                            "20.0\t2024-01-01T03:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)"
-            );
+                            "20.0\t2024-01-01T03:00:00.000000Z\n");
         });
     }
 
@@ -1876,10 +1722,7 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, 'BTC', '2024-01-01T01:00:00.000000Z')
                     """);
             // WHERE filters everything out
-            assertSql(
-                    "price\tts\n",
-                    "SELECT price, ts FROM t WHERE symbol = 'ETH' SUBSAMPLE lttb(price, 2)"
-            );
+            assertQuery("SELECT price, ts FROM t WHERE symbol = 'ETH' SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n");
         });
     }
 
@@ -1897,12 +1740,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (60.0, 'ETH', '2024-01-01T02:00:00.000000Z')
                     """);
             // SAMPLE BY produces 3 rows, SUBSAMPLE to 2
-            assertSql(
-                    "ts\ttotal\n" +
+            assertQuery("SELECT ts, sum(price) total FROM t SAMPLE BY 1h SUBSAMPLE lttb(total, 2)").timestamp("ts").returns("ts\ttotal\n" +
                             "2024-01-01T00:00:00.000000Z\t30.0\n" +
-                            "2024-01-01T02:00:00.000000Z\t110.0\n",
-                    "SELECT ts, sum(price) total FROM t SAMPLE BY 1h SUBSAMPLE lttb(total, 2)"
-            );
+                            "2024-01-01T02:00:00.000000Z\t110.0\n");
         });
     }
 
@@ -1918,12 +1758,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T02:00:00.000000Z')
                     """);
             final String query = "SELECT DISTINCT ts, price FROM t SUBSAMPLE uniform(2)";
-            assertSql(
-                    "ts\tprice\n" +
+            // DISTINCT is implemented by a group-by cursor and does not retain timestamp designation.
+            assertQuery(query).returns("ts\tprice\n" +
                             "2024-01-01T00:00:00.000000Z\t10.0\n" +
-                            "2024-01-01T02:00:00.000000Z\t30.0\n",
-                    query
-            );
+                            "2024-01-01T02:00:00.000000Z\t30.0\n");
             printSql("EXPLAIN " + query);
             final String plan = sink.toString();
             Assert.assertTrue("DISTINCT must execute below the window selector: " + plan, plan.indexOf("CachedWindow") < plan.indexOf("Async Group By"));
@@ -1982,14 +1820,11 @@ public class SubsampleTest extends AbstractCairoTest {
             // Time range: 0h-7h, bucket width = 3.5h
             // Bucket 1 (0h-3.5h): rows 0-3 -> min=5 (row 2), max=50 (row 1)
             // Bucket 2 (3.5h-7h): rows 4-7 -> min=8 (row 6), max=35 (row 7)
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "50.0\t2024-01-01T01:00:00.000000Z\n" +
                             "5.0\t2024-01-01T02:00:00.000000Z\n" +
                             "8.0\t2024-01-01T06:00:00.000000Z\n" +
-                            "35.0\t2024-01-01T07:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)"
-            );
+                            "35.0\t2024-01-01T07:00:00.000000Z\n");
         });
     }
 
@@ -2005,12 +1840,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // MinMax with 2 target = 1 bucket covering all rows
             // min=10 (row 0), max=50 (row 1)
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE minmax(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T01:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE minmax(price, 2)"
-            );
+                            "50.0\t2024-01-01T01:00:00.000000Z\n");
         });
     }
 
@@ -2030,14 +1862,11 @@ public class SubsampleTest extends AbstractCairoTest {
             // Bucket 1 (0h-5.5h): rows 0-1 -> min=10, max=20
             // Bucket 2 (5.5h-11h): rows 2-3 -> min=30, max=40
             // Gap between 01:00 and 10:00 is naturally preserved
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "20.0\t2024-01-01T01:00:00.000000Z\n" +
                             "30.0\t2024-01-01T10:00:00.000000Z\n" +
-                            "40.0\t2024-01-01T11:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)"
-            );
+                            "40.0\t2024-01-01T11:00:00.000000Z\n");
         });
     }
 
@@ -2054,11 +1883,8 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // All identical -> min==max -> 1 point per bucket (deduplicated)
             // 2 target = 1 bucket -> 1 point
-            assertSql(
-                    "price\tts\n" +
-                            "42.0\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE minmax(price, 2)"
-            );
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE minmax(price, 2)").timestamp("ts").returns("price\tts\n" +
+                            "42.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -2082,14 +1908,11 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // M4 target=4, 4 rows: bufferSize(4) <= targetPoints(4), all rows returned.
             // Last data point (2290) must be included.
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2000-01-01T00:00:00.000000Z\n" +
                             "50.0\t2100-01-01T00:00:00.000000Z\n" +
                             "20.0\t2200-01-01T00:00:00.000000Z\n" +
-                            "30.0\t2290-01-01T00:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 4)"
-            );
+                            "30.0\t2290-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -2107,14 +1930,11 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             // MinMax target=4, 2 buckets. Bucket 1: min=10(2000), max=50(2100).
             // Bucket 2: min=20(2200), max=30(2290). All 4 rows selected.
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2000-01-01T00:00:00.000000Z\n" +
                             "50.0\t2100-01-01T00:00:00.000000Z\n" +
                             "20.0\t2200-01-01T00:00:00.000000Z\n" +
-                            "30.0\t2290-01-01T00:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)"
-            );
+                            "30.0\t2290-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -2130,12 +1950,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30, '2024-01-01T03:00:00.000000Z'),
                     (40, '2024-01-01T04:00:00.000000Z')
                     """);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "10\t2024-01-01T00:00:00.000000Z\n" +
-                            "40\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
-            );
+                            "40\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -2149,13 +1966,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (500, '2024-01-01T01:00:00.000000Z'),
                     (200, '2024-01-01T02:00:00.000000Z')
                     """);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 12)").timestamp("ts").returns("price\tts\n" +
                             "100\t2024-01-01T00:00:00.000000Z\n" +
                             "500\t2024-01-01T01:00:00.000000Z\n" +
-                            "200\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 12)"
-            );
+                            "200\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -2196,12 +2010,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (50.0, '2024-01-01T00:00:00.000000Z')
                     """);
             // All same timestamp, 5 rows, target 2 - should cap at 2
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "20.0\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 2)"
-            );
+                            "20.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -2255,16 +2066,15 @@ public class SubsampleTest extends AbstractCairoTest {
                     (60.0, '2024-01-02T02:00:00.000000Z')
                     """);
             // SUBSAMPLE inside each leg of a UNION ALL
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT * FROM (SELECT price, ts FROM t1 SUBSAMPLE lttb(price, 2)) " +
+                            "UNION ALL " +
+                            "SELECT * FROM (SELECT price, ts FROM t2 SUBSAMPLE lttb(price, 2))")
+                    .noRandomAccess()
+                    .returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "30.0\t2024-01-01T02:00:00.000000Z\n" +
                             "40.0\t2024-01-02T00:00:00.000000Z\n" +
-                            "60.0\t2024-01-02T02:00:00.000000Z\n",
-                    "SELECT * FROM (SELECT price, ts FROM t1 SUBSAMPLE lttb(price, 2)) " +
-                            "UNION ALL " +
-                            "SELECT * FROM (SELECT price, ts FROM t2 SUBSAMPLE lttb(price, 2))"
-            );
+                            "60.0\t2024-01-02T02:00:00.000000Z\n");
         });
     }
 
@@ -2297,12 +2107,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (40.0, '2024-01-01T04:00:00.000000Z')
                     """);
             // SUBSAMPLE selects first (10) and last (40), ORDER BY ts DESC reverses
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2) ORDER BY ts DESC").timestampDesc("ts").returns("price\tts\n" +
                             "40.0\t2024-01-01T04:00:00.000000Z\n" +
-                            "10.0\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2) ORDER BY ts DESC"
-            );
+                            "10.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -2321,12 +2128,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30, '2024-01-01T04:00:00.000000Z')
                     """);
             // 3 non-null rows, target 2: first (10) and last (30)
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "10\t2024-01-01T00:00:00.000000Z\n" +
-                            "30\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
-            );
+                            "30\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -2341,12 +2145,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (NULL, '2024-01-01T01:00:00.000000Z'),
                     (200, '2024-01-01T02:00:00.000000Z')
                     """);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "100\t2024-01-01T00:00:00.000000Z\n" +
-                            "200\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
-            );
+                            "200\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -2362,12 +2163,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (0, '2024-01-01T02:00:00.000000Z')
                     """);
             // All 3 rows have valid values (including zeros), target 2 selects first and last
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "0\t2024-01-01T00:00:00.000000Z\n" +
-                            "0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
-            );
+                            "0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -2381,12 +2179,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (5, '2024-01-01T01:00:00.000000Z'),
                     (0, '2024-01-01T02:00:00.000000Z')
                     """);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "0\t2024-01-01T00:00:00.000000Z\n" +
-                            "0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
-            );
+                            "0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -2406,12 +2201,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (40.0, 400, '2024-01-01T04:00:00.000000Z')
                     """);
             // All pass-through columns must be correct via recordAt()
-            assertSql(
-                    "price\tvolume\tts\n" +
+            assertQuery("SELECT price, volume, ts FROM t SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tvolume\tts\n" +
                             "10.0\t100\t2024-01-01T00:00:00.000000Z\n" +
-                            "40.0\t400\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, volume, ts FROM t SUBSAMPLE lttb(price, 2)"
-            );
+                            "40.0\t400\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -2429,12 +2221,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (40.0, 'BTC', '2024-01-01T04:00:00.000000Z')
                     """);
             // WHERE filters to 3 BTC rows, SUBSAMPLE reduces to 2
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t WHERE symbol = 'BTC' SUBSAMPLE lttb(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "40.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t WHERE symbol = 'BTC' SUBSAMPLE lttb(price, 2)"
-            );
+                            "40.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -2452,12 +2241,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (40.0, '2024-01-01T04:00:00.000000Z')
                     """);
             // SUBSAMPLE to 3, then LIMIT 2 - should get first 2 of 3
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 3) LIMIT 2").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T01:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 3) LIMIT 2"
-            );
+                            "50.0\t2024-01-01T01:00:00.000000Z\n");
         });
     }
 
@@ -2512,12 +2298,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (60.0, '2024-01-01T02:30:00.000000Z')
                     """);
             // SAMPLE BY produces 3 rows and SUBSAMPLE reduces them to 2.
-            assertSql(
-                    "ts\tavg\n" +
+            assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)").timestamp("ts").returns("ts\tavg\n" +
                             "2024-01-01T00:00:00.000000Z\t15.0\n" +
-                            "2024-01-01T02:00:00.000000Z\t55.0\n",
-                    "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)"
-            );
+                            "2024-01-01T02:00:00.000000Z\t55.0\n");
         });
     }
 
@@ -2572,12 +2355,9 @@ public class SubsampleTest extends AbstractCairoTest {
             // first (10) and last (40) by ascending timestamp, but - unlike the deleted cursor, which
             // force-sorted its output ascending - the keep-flag window preserves the query's own DESC
             // ordering, so the two kept rows are emitted 40 then 10 (same row SET, honouring ORDER BY).
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM (SELECT price, ts FROM t ORDER BY ts DESC) SUBSAMPLE lttb(price, 2)").timestampDesc("ts").returns("price\tts\n" +
                             "40.0\t2024-01-01T04:00:00.000000Z\n" +
-                            "10.0\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT price, ts FROM (SELECT price, ts FROM t ORDER BY ts DESC) SUBSAMPLE lttb(price, 2)"
-            );
+                            "10.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -2706,18 +2486,15 @@ public class SubsampleTest extends AbstractCairoTest {
             // cursor force-sorted ascending). LTTB's OVER (ORDER BY ts) still selects the first
             // (1969-12-29, negative ts) and last (1970-01-12) buckets by ascending timestamp - proving the
             // negative-timestamp ordering is correct - but they are emitted in the query's DESC order.
-            assertSql(
-                    "ts\tavg\n" +
-                            "1970-01-12T00:00:00.000000Z\t55.0\n" +
-                            "1969-12-29T00:00:00.000000Z\t15.0\n",
-                    """
+            assertQuery("""
                             SELECT ts, avg FROM (
                                 SELECT ts, avg(price) avg FROM t
                                 SAMPLE BY 1w ALIGN TO CALENDAR
                                 ORDER BY ts DESC
                             ) SUBSAMPLE lttb(avg, 2)
-                            """
-            );
+                            """).timestampDesc("ts").returns("ts\tavg\n" +
+                            "1970-01-12T00:00:00.000000Z\t55.0\n" +
+                            "1969-12-29T00:00:00.000000Z\t15.0\n");
         });
     }
 
@@ -2736,12 +2513,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (60.0, '2024-01-01T02:30:00.000000Z')
                     """);
             // SAMPLE BY 1h produces 3 monotonic rows and SUBSAMPLE reduces them to 2.
-            assertSql(
-                    "ts\tavg\n" +
+            assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)").timestamp("ts").returns("ts\tavg\n" +
                             "2024-01-01T00:00:00.000000Z\t15.0\n" +
-                            "2024-01-01T02:00:00.000000Z\t55.0\n",
-                    "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)"
-            );
+                            "2024-01-01T02:00:00.000000Z\t55.0\n");
         });
     }
 
@@ -2750,18 +2524,9 @@ public class SubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            assertSql(
-                    "price\tts\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 10)"
-            );
-            assertSql(
-                    "price\tts\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 10)"
-            );
-            assertSql(
-                    "price\tts\n",
-                    "SELECT price, ts FROM t SUBSAMPLE minmax(price, 10)"
-            );
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 10)").timestamp("ts").returns("price\tts\n");
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 10)").timestamp("ts").returns("price\tts\n");
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE minmax(price, 10)").timestamp("ts").returns("price\tts\n");
         });
     }
 
@@ -2776,13 +2541,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T02:00:00.000000Z')
                     """);
             drainWalQueue();
-            assertSql(
-                    "subsample\tts\n" +
+            assertQuery("SELECT \"subsample\", ts FROM t").expectSize().timestamp("ts").returns("subsample\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "20.0\t2024-01-01T01:00:00.000000Z\n" +
-                            "30.0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT \"subsample\", ts FROM t"
-            );
+                            "30.0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -2796,12 +2558,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, '2024-01-01T01:00:00.000000Z')
                     """);
             drainWalQueue();
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT * FROM \"subsample\"").expectSize().timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "20.0\t2024-01-01T01:00:00.000000Z\n",
-                    "SELECT * FROM \"subsample\""
-            );
+                            "20.0\t2024-01-01T01:00:00.000000Z\n");
         });
     }
 
@@ -2843,12 +2602,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // Outer projection with alias - inner SUBSAMPLE still applies
-            assertSql(
-                    "p\tts\n" +
+            assertQuery("SELECT price AS p, ts FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2))").timestamp("ts").returns("p\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price AS p, ts FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2))"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -2866,11 +2622,8 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // SUBSAMPLE to 2 rows, then LIMIT to 1
-            assertSql(
-                    "price\tts\n" +
-                            "10.0\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT * FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)) LIMIT 1"
-            );
+            assertQuery("SELECT * FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)) LIMIT 1").timestamp("ts").returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -2888,12 +2641,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // SUBSAMPLE first, then ORDER BY DESC
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT * FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)) ORDER BY ts DESC").timestampDesc("ts").returns("price\tts\n" +
                             "50.0\t2024-01-01T04:00:00.000000Z\n" +
-                            "10.0\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT * FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)) ORDER BY ts DESC"
-            );
+                            "10.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -2928,21 +2678,15 @@ public class SubsampleTest extends AbstractCairoTest {
             // M4(price, 4) on all 8 rows: 1 bucket, selects:
             //   first=row0(10,qty=1), min=row5(3,qty=6), max=row4(95,qty=5), last=row7(40,qty=8)
             // Sorted by index: 0, 4, 5, 7 -> qty values: 1, 5, 6, 8
-            assertSql(
-                    "price\tqty\tts\n" +
+            assertQuery("SELECT price, qty, ts FROM t SUBSAMPLE m4(price, 4)").timestamp("ts").returns("price\tqty\tts\n" +
                             "10.0\t1\t2024-01-01T00:00:00.000000Z\n" +
                             "95.0\t5\t2024-01-01T04:00:00.000000Z\n" +
                             "3.0\t6\t2024-01-01T05:00:00.000000Z\n" +
-                            "40.0\t8\t2024-01-01T07:00:00.000000Z\n",
-                    "SELECT price, qty, ts FROM t SUBSAMPLE m4(price, 4)"
-            );
+                            "40.0\t8\t2024-01-01T07:00:00.000000Z\n");
             // Correct: inner M4 selects {qty=1,5,6,8}, outer WHERE qty >= 6 keeps {6,8}
-            assertSql(
-                    "price\tqty\tts\n" +
+            assertQuery("SELECT * FROM (SELECT price, qty, ts FROM t SUBSAMPLE m4(price, 4)) WHERE qty >= 6").timestamp("ts").returns("price\tqty\tts\n" +
                             "3.0\t6\t2024-01-01T05:00:00.000000Z\n" +
-                            "40.0\t8\t2024-01-01T07:00:00.000000Z\n",
-                    "SELECT * FROM (SELECT price, qty, ts FROM t SUBSAMPLE m4(price, 4)) WHERE qty >= 6"
-            );
+                            "40.0\t8\t2024-01-01T07:00:00.000000Z\n");
             // Wrong path (hoisted WHERE) would be: WHERE qty>=6 -> {6,7,8} ->
             // M4(3 rows, target 4) returns all 3 -> {qty=6,7,8}. That's 3 rows
             // with qty=7 present, which differs from the correct 2-row result above.
@@ -2964,12 +2708,9 @@ public class SubsampleTest extends AbstractCairoTest {
             drainWalQueue();
             bindVariableService.clear();
             bindVariableService.setLong(0, 2);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, $1)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, $1)"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\n");
             // A bind-variable target now MIGRATES to the keep-flag window path (no legacy Subsample cursor).
             printSql("EXPLAIN SELECT price, ts FROM t SUBSAMPLE lttb(price, $1)");
             final String plan = sink.toString();
@@ -2991,12 +2732,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (50.0, '2024-01-01T04:00:00.000000Z')
                     """);
             drainWalQueue();
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("DECLARE @n := 2 SELECT price, ts FROM t SUBSAMPLE lttb(price, @n)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\n",
-                    "DECLARE @n := 2 SELECT price, ts FROM t SUBSAMPLE lttb(price, @n)"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -3022,12 +2760,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // SAMPLE BY 1h produces 3 rows, SUBSAMPLE to 2 (first and last)
-            assertSql(
-                    "ts\tavg\n" +
+            assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)").timestamp("ts").returns("ts\tavg\n" +
                             "2024-01-01T00:00:00.000000Z\t12.5\n" +
-                            "2024-01-01T02:00:00.000000Z\t32.5\n",
-                    "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)"
-            );
+                            "2024-01-01T02:00:00.000000Z\t32.5\n");
         });
     }
 
@@ -3049,11 +2784,8 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // SUBSAMPLE(5 rows, target=2) gives {first=10, last=50}, then LIMIT 1
-            assertSql(
-                    "price\tts\n" +
-                            "10.0\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT * FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)) LIMIT 1"
-            );
+            assertQuery("SELECT * FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)) LIMIT 1").timestamp("ts").returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -3074,12 +2806,11 @@ public class SubsampleTest extends AbstractCairoTest {
             drainWalQueue();
             // SUBSAMPLE(5 rows, target=2) gives {first=10 at 00:00, last=50 at 04:00}
             // DISTINCT over price,ts produces 2 rows (already distinct)
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT DISTINCT price, ts FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2))")
+                    .expectSize()
+                    .returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT DISTINCT price, ts FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2))"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -3100,14 +2831,11 @@ public class SubsampleTest extends AbstractCairoTest {
             drainWalQueue();
             // M4(price, 4): 1 bucket. first=30(row0), last=20(row4),
             // min=10(row2), max=90(row1). Sorted by index: 0,1,2,4
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 4)").timestamp("ts").returns("price\tts\n" +
                             "30.0\t2024-01-01T00:00:00.000000Z\n" +
                             "90.0\t2024-01-01T01:00:00.000000Z\n" +
                             "10.0\t2024-01-01T02:00:00.000000Z\n" +
-                            "20.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 4)"
-            );
+                            "20.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -3127,12 +2855,9 @@ public class SubsampleTest extends AbstractCairoTest {
             drainWalQueue();
             // MinMax(price, 2): 1 bucket. min=10(row2), max=90(row1).
             // Sorted by index: 1, 2
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE minmax(price, 2)").timestamp("ts").returns("price\tts\n" +
                             "90.0\t2024-01-01T01:00:00.000000Z\n" +
-                            "10.0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE minmax(price, 2)"
-            );
+                            "10.0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -3155,14 +2880,11 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // 10 rows, target 4: positions 0, 3, 6, 9
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE uniform(4)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "40.0\t2024-01-01T03:00:00.000000Z\n" +
                             "70.0\t2024-01-01T06:00:00.000000Z\n" +
-                            "100.0\t2024-01-01T09:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE uniform(4)"
-            );
+                            "100.0\t2024-01-01T09:00:00.000000Z\n");
         });
     }
 
@@ -3171,10 +2893,7 @@ public class SubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            assertSql(
-                    "price\tts\n",
-                    "SELECT price, ts FROM t SUBSAMPLE uniform(10)"
-            );
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE uniform(10)").timestamp("ts").returns("price\tts\n");
         });
     }
 
@@ -3189,13 +2908,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T02:00:00.000000Z')
                     """);
             drainWalQueue();
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE uniform(10)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "20.0\t2024-01-01T01:00:00.000000Z\n" +
-                            "30.0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE uniform(10)"
-            );
+                            "30.0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -3210,12 +2926,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, '2024-01-01T01:00:00.000000Z')
                     """);
             drainWalQueue();
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE uniform(10)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "20.0\t2024-01-01T01:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE uniform(10)"
-            );
+                            "20.0\t2024-01-01T01:00:00.000000Z\n");
         });
     }
 
@@ -3231,13 +2944,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (NaN, '2024-01-01T02:00:00.000000Z')
                     """);
             drainWalQueue();
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE uniform(10)").timestamp("ts").returns("price\tts\n" +
                             "null\t2024-01-01T00:00:00.000000Z\n" +
                             "20.0\t2024-01-01T01:00:00.000000Z\n" +
-                            "null\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE uniform(10)"
-            );
+                            "null\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -3267,12 +2977,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // target 2: first and last only
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE uniform(2)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE uniform(2)"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -3291,14 +2998,11 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // stride 2, offset 0: emit 0, then 2+0=2, 4+0=4, pin last=5
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence(2)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "30.0\t2024-01-01T02:00:00.000000Z\n" +
                             "50.0\t2024-01-01T04:00:00.000000Z\n" +
-                            "60.0\t2024-01-01T05:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE cadence(2)"
-            );
+                            "60.0\t2024-01-01T05:00:00.000000Z\n");
         });
     }
 
@@ -3307,10 +3011,7 @@ public class SubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            assertSql(
-                    "price\tts\n",
-                    "SELECT price, ts FROM t SUBSAMPLE cadence(5)"
-            );
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence(5)").timestamp("ts").returns("price\tts\n");
         });
     }
 
@@ -3321,11 +3022,8 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO t VALUES (10.0, '2024-01-01T00:00:00.000000Z')");
             drainWalQueue();
-            assertSql(
-                    "price\tts\n" +
-                            "10.0\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE cadence(5)"
-            );
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence(5)").timestamp("ts").returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -3341,13 +3039,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // cadence(1) returns all rows including NaN values
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence(1)").timestamp("ts").returns("price\tts\n" +
                             "null\t2024-01-01T00:00:00.000000Z\n" +
                             "20.0\t2024-01-01T01:00:00.000000Z\n" +
-                            "null\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE cadence(1)"
-            );
+                            "null\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -3363,13 +3058,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // stride 1: all rows returned unchanged
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence(1)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "20.0\t2024-01-01T01:00:00.000000Z\n" +
-                            "30.0\t2024-01-01T02:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE cadence(1)"
-            );
+                            "30.0\t2024-01-01T02:00:00.000000Z\n");
         });
     }
 
@@ -3385,19 +3077,14 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // stride 100 > 3 rows: only first row, no last pinning
-            assertSql(
-                    "price\tts\n" +
-                            "10.0\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE cadence(100)"
-            );
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence(100)").timestamp("ts").returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
     @Test
     public void testCadenceWithSeed() throws Exception {
-        // cadence(3, 42): 10 rows, stride 3, seed 42.
-        // Offset = Rnd(42, 42).nextInt(3). Emit 0, then stride+offset series, then last.
-        // This test computes the expected offset and asserts exact output.
+        // cadence(3, 42): captured exact deterministic output over ten rows, including middle rows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("""
@@ -3414,34 +3101,14 @@ public class SubsampleTest extends AbstractCairoTest {
                     (100.0, '2024-01-01T09:00:00.000000Z')
                     """);
             drainWalQueue();
-            // Compute expected offset using the same splitmix64 hash as production
-            int offset = deterministicCadenceOffset(42, 3);
-            // Build expected rows: 0, then stride+offset, 2*stride+offset, ..., pin last=9
-            String[] rows = {
-                    "10.0\t2024-01-01T00:00:00.000000Z",
-                    "20.0\t2024-01-01T01:00:00.000000Z",
-                    "30.0\t2024-01-01T02:00:00.000000Z",
-                    "40.0\t2024-01-01T03:00:00.000000Z",
-                    "50.0\t2024-01-01T04:00:00.000000Z",
-                    "60.0\t2024-01-01T05:00:00.000000Z",
-                    "70.0\t2024-01-01T06:00:00.000000Z",
-                    "80.0\t2024-01-01T07:00:00.000000Z",
-                    "90.0\t2024-01-01T08:00:00.000000Z",
-                    "100.0\t2024-01-01T09:00:00.000000Z"
-            };
-            StringBuilder expected = new StringBuilder("price\tts\n");
-            expected.append(rows[0]).append('\n');
-            int lastEmitted = 0;
-            for (int pos = 3 + offset; pos < 10; pos += 3) {
-                expected.append(rows[pos]).append('\n');
-                lastEmitted = pos;
-            }
-            if (lastEmitted != 9) {
-                expected.append(rows[9]).append('\n');
-            }
-            assertSql(expected.toString(), "SELECT price, ts FROM t SUBSAMPLE cadence(3, 42)");
-            // Deterministic: second run produces identical output
-            assertSql(expected.toString(), "SELECT price, ts FROM t SUBSAMPLE cadence(3, 42)");
+            // Captured deterministic golden: seed 42 hashes to offset 1 for stride 3.
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence(3, 42)")
+                    .timestamp("ts")
+                    .returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\n" +
+                            "80.0\t2024-01-01T07:00:00.000000Z\n" +
+                            "100.0\t2024-01-01T09:00:00.000000Z\n");
         });
     }
 
@@ -3463,28 +3130,18 @@ public class SubsampleTest extends AbstractCairoTest {
                     (100.0, '2024-01-01T09:00:00.000000Z')
                     """);
             drainWalQueue();
-            // Find two seeds that produce different offsets for stride=5
-            int seedA = -1;
-            int seedB = -1;
-            int offsetA = -1;
-            for (int s = 0; s < 100; s++) {
-                int off = deterministicCadenceOffset(s, 5);
-                if (seedA == -1) {
-                    seedA = s;
-                    offsetA = off;
-                } else if (off != offsetA) {
-                    seedB = s;
-                    break;
-                }
-            }
-            Assert.assertTrue("could not find two seeds with different offsets", seedB != -1);
-            sink.clear();
-            printSql("SELECT price, ts FROM t SUBSAMPLE cadence(5, " + seedA + ")", sink);
-            String resultA = sink.toString();
-            sink.clear();
-            printSql("SELECT price, ts FROM t SUBSAMPLE cadence(5, " + seedB + ")", sink);
-            String resultB = sink.toString();
-            Assert.assertNotEquals("different seeds must produce different output", resultA, resultB);
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence(5, 0)")
+                    .timestamp("ts")
+                    .returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "60.0\t2024-01-01T05:00:00.000000Z\n" +
+                            "100.0\t2024-01-01T09:00:00.000000Z\n");
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence(5, 3)")
+                    .timestamp("ts")
+                    .returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "70.0\t2024-01-01T06:00:00.000000Z\n" +
+                            "100.0\t2024-01-01T09:00:00.000000Z\n");
         });
     }
 
@@ -3501,15 +3158,18 @@ public class SubsampleTest extends AbstractCairoTest {
                     (50.0, '2024-01-01T04:00:00.000000Z')
                     """);
             drainWalQueue();
-            // cadence(3, NULL): random mode. First row always present, last pinned.
-            sink.clear();
-            printSql("SELECT price, ts FROM t SUBSAMPLE cadence(3, NULL)", sink);
-            String result = sink.toString();
-            Assert.assertTrue(result.contains("10.0\t2024-01-01T00:00:00.000000Z"));
-            Assert.assertTrue(result.contains("50.0\t2024-01-01T04:00:00.000000Z"));
-            // 5 rows, stride 3: first + 0-1 stride rows + last = 2-3 rows
-            long rowCount = result.chars().filter(c -> c == '\n').count() - 1;
-            Assert.assertTrue("expected 2-3 rows, got " + rowCount, rowCount >= 2 && rowCount <= 3);
+            // Random mode varies the middle row, but first and last are deterministic invariants.
+            assertQuery("SELECT count() FROM (" +
+                            "SELECT price, ts FROM t SUBSAMPLE cadence(3, NULL)" +
+                            ") WHERE ts IN ('2024-01-01T00:00:00.000000Z', '2024-01-01T04:00:00.000000Z')")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            assertQuery("SELECT count() >= 2 AND count() <= 3 valid_count FROM (" +
+                            "SELECT price, ts FROM t SUBSAMPLE cadence(3, NULL))")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("valid_count\ntrue\n");
         });
     }
 
@@ -3528,13 +3188,10 @@ public class SubsampleTest extends AbstractCairoTest {
             drainWalQueue();
             // stride 3, offset 0: emit 0, then 3+0=3, last=4 (pinned)
             // 5 rows, stride 3 doesn't divide evenly
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence(3)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "40.0\t2024-01-01T03:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE cadence(3)"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -3553,12 +3210,9 @@ public class SubsampleTest extends AbstractCairoTest {
             drainWalQueue();
             bindVariableService.clear();
             bindVariableService.setLong(0, 2);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE uniform($1)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE uniform($1)"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -3575,12 +3229,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (50.0, '2024-01-01T04:00:00.000000Z')
                     """);
             drainWalQueue();
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("DECLARE @n := 2 SELECT price, ts FROM t SUBSAMPLE uniform(@n)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\n",
-                    "DECLARE @n := 2 SELECT price, ts FROM t SUBSAMPLE uniform(@n)"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -3599,12 +3250,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // SAMPLE BY 1h -> 3 rows, uniform(2) -> first and last
-            assertSql(
-                    "ts\tavg\n" +
+            assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE uniform(2)").timestamp("ts").returns("ts\tavg\n" +
                             "2024-01-01T00:00:00.000000Z\t12.5\n" +
-                            "2024-01-01T02:00:00.000000Z\t32.5\n",
-                    "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE uniform(2)"
-            );
+                            "2024-01-01T02:00:00.000000Z\t32.5\n");
         });
     }
 
@@ -3623,11 +3271,8 @@ public class SubsampleTest extends AbstractCairoTest {
             drainWalQueue();
             // uniform(3) on 5 rows: positions 0, 2, 4 -> qty 1, 3, 5
             // outer WHERE qty > 3 -> keeps qty 5 only
-            assertSql(
-                    "price\tqty\tts\n" +
-                            "50.0\t5\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT * FROM (SELECT price, qty, ts FROM t SUBSAMPLE uniform(3)) WHERE qty > 3"
-            );
+            assertQuery("SELECT * FROM (SELECT price, qty, ts FROM t SUBSAMPLE uniform(3)) WHERE qty > 3").timestamp("ts").returns("price\tqty\tts\n" +
+                            "50.0\t5\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -3720,13 +3365,10 @@ public class SubsampleTest extends AbstractCairoTest {
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: volumes\n");
             // Byte-identical rows to what the legacy cursor produced.
-            assertSql(
-                    "price\tts\tvolume\n" +
+            assertQuery(query).timestamp("ts").returns("price\tts\tvolume\n" +
                             "100.0\t2024-01-01T00:00:00.000000Z\t1000.0\n" +
                             "200.0\t2024-01-01T01:00:00.000000Z\t2000.0\n" +
-                            "150.0\t2024-01-01T02:00:00.000000Z\t1500.0\n",
-                    query
-            );
+                            "150.0\t2024-01-01T02:00:00.000000Z\t1500.0\n");
         });
     }
 
@@ -3856,15 +3498,12 @@ public class SubsampleTest extends AbstractCairoTest {
 
             // target 8 >= 5 rows -> all rows kept -> the projected keep must be true for EVERY row
             // (the bug returned false for every row).
-            assertSql(
-                    "ts\tprice\tid\tkeep\n" +
+            assertQuery(sql).timestamp("ts").returns("ts\tprice\tid\tkeep\n" +
                             "2024-01-01T00:00:00.000000Z\t10.0\t1\ttrue\n" +
                             "2024-01-01T01:00:00.000000Z\t20.0\t2\ttrue\n" +
                             "2024-01-01T02:00:00.000000Z\t30.0\t3\ttrue\n" +
                             "2024-01-01T03:00:00.000000Z\t40.0\t4\ttrue\n" +
-                            "2024-01-01T04:00:00.000000Z\t50.0\t5\ttrue\n",
-                    sql
-            );
+                            "2024-01-01T04:00:00.000000Z\t50.0\t5\ttrue\n");
 
             // The real SUBSAMPLE feature must STILL fuse: same m4/target over the same table desugars
             // to the internal marked keep flag and takes the fused row-selecting path.
@@ -3908,14 +3547,11 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // 10 rows, target 4: positions 0, 3, 6, 9. Header must be exactly price, qty, ts.
-            assertSql(
-                    "price\tqty\tts\n" +
+            assertQuery("SELECT * FROM t SUBSAMPLE uniform(4)").timestamp("ts").returns("price\tqty\tts\n" +
                             "10.0\t1\t2024-01-01T00:00:00.000000Z\n" +
                             "40.0\t4\t2024-01-01T03:00:00.000000Z\n" +
                             "70.0\t7\t2024-01-01T06:00:00.000000Z\n" +
-                            "100.0\t10\t2024-01-01T09:00:00.000000Z\n",
-                    "SELECT * FROM t SUBSAMPLE uniform(4)"
-            );
+                            "100.0\t10\t2024-01-01T09:00:00.000000Z\n");
         });
     }
 
@@ -3943,12 +3579,9 @@ public class SubsampleTest extends AbstractCairoTest {
             // m4 keeps first/last/min/max per bucket. With monotonically increasing values, min
             // and max coincide with first/last, so only the global first and last row survive.
             // Header must be exactly price, qty, ts - no __keep_subsample leak.
-            assertSql(
-                    "price\tqty\tts\n" +
+            assertQuery("SELECT * FROM t SUBSAMPLE m4(price, 4)").timestamp("ts").returns("price\tqty\tts\n" +
                             "10.0\t1\t2024-01-01T00:00:00.000000Z\n" +
-                            "100.0\t10\t2024-01-01T09:00:00.000000Z\n",
-                    "SELECT * FROM t SUBSAMPLE m4(price, 4)"
-            );
+                            "100.0\t10\t2024-01-01T09:00:00.000000Z\n");
         });
     }
 
@@ -3974,12 +3607,9 @@ public class SubsampleTest extends AbstractCairoTest {
             drainWalQueue();
             // uniform(4) on 10 rows -> positions 0, 3, 6, 9 (prices 10, 40, 70, 100).
             // LIMIT 2 must keep the FIRST 2 of those selected rows: 10, 40 (not the first 2 raw rows).
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE uniform(4) LIMIT 2").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "40.0\t2024-01-01T03:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE uniform(4) LIMIT 2"
-            );
+                            "40.0\t2024-01-01T03:00:00.000000Z\n");
         });
     }
 
@@ -4032,11 +3662,8 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (10.0, '2024-01-01T00:00:00.000000Z')");
             bindVariableService.clear();
             bindVariableService.setLong(0, 1);
-            assertSql(
-                    "price\tts\n" +
-                            "10.0\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE cadence($1, $2)"
-            );
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence($1, $2)").timestamp("ts").returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -4051,12 +3678,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, '2024-01-01T01:00:00.000000Z')
                     """);
             drainWalQueue();
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence(1, NULL)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                            "20.0\t2024-01-01T01:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE cadence(1, NULL)"
-            );
+                            "20.0\t2024-01-01T01:00:00.000000Z\n");
         });
     }
 
@@ -4075,12 +3699,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             // SAMPLE BY 1h -> 3 rows, cadence(2) -> first, stride row, last
-            assertSql(
-                    "ts\tavg\n" +
+            assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE cadence(2)").timestamp("ts").returns("ts\tavg\n" +
                             "2024-01-01T00:00:00.000000Z\t12.5\n" +
-                            "2024-01-01T02:00:00.000000Z\t32.5\n",
-                    "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE cadence(2)"
-            );
+                            "2024-01-01T02:00:00.000000Z\t32.5\n");
         });
     }
 
@@ -4166,13 +3787,10 @@ public class SubsampleTest extends AbstractCairoTest {
             drainWalQueue();
             bindVariableService.clear();
             bindVariableService.setLong(0, 3);
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence($1)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "40.0\t2024-01-01T03:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\n",
-                    "SELECT price, ts FROM t SUBSAMPLE cadence($1)"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\n");
             // A bind-variable stride now MIGRATES to the keep-flag window path (no legacy Subsample cursor).
             printSql("EXPLAIN SELECT price, ts FROM t SUBSAMPLE cadence($1)");
             final String plan = sink.toString();
@@ -4194,13 +3812,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (50.0, '2024-01-01T04:00:00.000000Z')
                     """);
             drainWalQueue();
-            assertSql(
-                    "price\tts\n" +
+            assertQuery("DECLARE @s := 3 SELECT price, ts FROM t SUBSAMPLE cadence(@s)").timestamp("ts").returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "40.0\t2024-01-01T03:00:00.000000Z\n" +
-                            "50.0\t2024-01-01T04:00:00.000000Z\n",
-                    "DECLARE @s := 3 SELECT price, ts FROM t SUBSAMPLE cadence(@s)"
-            );
+                            "50.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -4256,12 +3871,9 @@ public class SubsampleTest extends AbstractCairoTest {
             drainWalQueue();
             // cadence(3) on 6 rows: emit 0, 3, pin 5 -> qty 1, 4, 6
             // outer WHERE qty > 3 keeps qty 4 and 6
-            assertSql(
-                    "price\tqty\tts\n" +
+            assertQuery("SELECT * FROM (SELECT price, qty, ts FROM t SUBSAMPLE cadence(3)) WHERE qty > 3").timestamp("ts").returns("price\tqty\tts\n" +
                             "40.0\t4\t2024-01-01T03:00:00.000000Z\n" +
-                            "60.0\t6\t2024-01-01T05:00:00.000000Z\n",
-                    "SELECT * FROM (SELECT price, qty, ts FROM t SUBSAMPLE cadence(3)) WHERE qty > 3"
-            );
+                            "60.0\t6\t2024-01-01T05:00:00.000000Z\n");
         });
     }
 
@@ -4280,10 +3892,11 @@ public class SubsampleTest extends AbstractCairoTest {
                     (50.0, '2024-01-01T04:00:00.000000Z')
                     """);
             drainWalQueue();
-            sink.clear();
-            printSql("SELECT price, ts FROM t SUBSAMPLE cadence(3, 42)", sink);
-            String expected = sink.toString();
-            assertSql(expected, "SELECT price, ts FROM t SUBSAMPLE cadence(3, 40 + 2)");
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE cadence(3, 40 + 2)")
+                    .timestamp("ts")
+                    .returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\n");
         });
     }
 
@@ -4339,54 +3952,65 @@ public class SubsampleTest extends AbstractCairoTest {
             // window node (CachedWindowLightSelect) with NO separate Filter and no leaked keep column -
             // sdt exposes its finalized swinging-door keep-set via getSelectedRows() (mirrors
             // testM4DesugarsToWindowFilter). The O(N) BOOLEAN Filter is replaced by O(selected) output.
-            assertSql(
-                    "QUERY PLAN\n" +
+            assertQuery("EXPLAIN SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    CachedWindowLightSelect\n" +
                             "      unorderedFunctions: [sdt(ts, price, 0.5) over (order by [ts])]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n",
-                    "EXPLAIN SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)"
-            );
+                            "            Frame forward scan on: x\n");
         });
     }
 
     @Test
     public void testSdtKeepsAllRowsFused() throws Exception {
-        // compdev = 0 forces the swinging door to keep (nearly) every row: exercises the fused
-        // row-selecting path where the keep-set is the full/near-full result, and confirms it stays
-        // byte-identical to the unfused window+keep-filter oracle.
+        // compdev = 0 over a zig-zag series exercises the fused near-full keep-set against a
+        // hard-coded golden rather than comparing SUBSAMPLE with the same SDT implementation.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO x SELECT rnd_double() * 100, timestamp_sequence('2024-01-01', 60000000) FROM long_sequence(200)");
-            printSql("SELECT ts, price FROM (SELECT *, sdt(ts, price, 0.0) OVER (ORDER BY ts) k FROM x) WHERE k");
-            final String expected = sink.toString();
-            assertSql(expected, "SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.0)");
+            execute("INSERT INTO x VALUES " +
+                    "(0.0, 1::timestamp),(1.0, 2::timestamp),(0.0, 3::timestamp)," +
+                    "(1.0, 4::timestamp),(0.0, 5::timestamp)");
+            assertQuery("SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.0)")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tprice
+                            1970-01-01T00:00:00.000001Z\t0.0
+                            1970-01-01T00:00:00.000002Z\t1.0
+                            1970-01-01T00:00:00.000003Z\t0.0
+                            1970-01-01T00:00:00.000004Z\t1.0
+                            1970-01-01T00:00:00.000005Z\t0.0
+                            """);
             // and the fused plan is used
-            assertSql(
-                    "QUERY PLAN\n" +
+            assertQuery("EXPLAIN SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.0)")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    CachedWindowLightSelect\n" +
                             "      unorderedFunctions: [sdt(ts, price, 0.0) over (order by [ts])]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n",
-                    "EXPLAIN SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.0)"
-            );
+                            "            Frame forward scan on: x\n");
         });
     }
 
     @Test
-    public void testSdtMatchesWindowFunction() throws Exception {
-        // The sdt window function IS the oracle (sdt has no byte-identity cursor). The desugared
-        // SUBSAMPLE must be byte-identical to the explicit window+keep-filter it lowers to.
+    public void testSdtMatchesCapturedGolden() throws Exception {
+        // A monotonic ramp stays inside the swinging door and keeps only its endpoints.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO x SELECT rnd_double() * 100, timestamp_sequence('2024-01-01', 60000000) FROM long_sequence(500)");
-            printSql("SELECT ts, price FROM (SELECT *, sdt(ts, price, 0.5) OVER (ORDER BY ts) k FROM x) WHERE k");
-            final String expected = sink.toString();
-            assertSql(expected, "SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)");
+            execute("INSERT INTO x SELECT x::double, x::timestamp FROM long_sequence(5)");
+            assertQuery("SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tprice
+                            1970-01-01T00:00:00.000001Z\t1.0
+                            1970-01-01T00:00:00.000005Z\t5.0
+                            """);
         });
     }
 
@@ -4396,19 +4020,19 @@ public class SubsampleTest extends AbstractCairoTest {
         // window function's null handling byte-for-byte.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO x VALUES
-                    (10.0, '2024-01-01T00:00:00.000000Z'),
-                    (10.0, '2024-01-01T01:00:00.000000Z'),
-                    (10.0, '2024-01-01T02:00:00.000000Z'),
-                    (NULL, '2024-01-01T03:00:00.000000Z'),
-                    (50.0, '2024-01-01T04:00:00.000000Z'),
-                    (50.0, '2024-01-01T05:00:00.000000Z'),
-                    (90.0, '2024-01-01T06:00:00.000000Z')
-                    """);
-            printSql("SELECT ts, price FROM (SELECT *, sdt(ts, price, 0.5) OVER (ORDER BY ts) k FROM x) WHERE k");
-            final String expected = sink.toString();
-            assertSql(expected, "SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)");
+            execute("INSERT INTO x VALUES " +
+                    "(0.0, 1::timestamp),(0.0, 2::timestamp),(0.0, 3::timestamp)," +
+                    "(NULL, 4::timestamp),(5.0, 5::timestamp),(5.0, 6::timestamp)");
+            assertQuery("SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.5)")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tprice
+                            1970-01-01T00:00:00.000001Z\t0.0
+                            1970-01-01T00:00:00.000003Z\t0.0
+                            1970-01-01T00:00:00.000004Z\tnull
+                            1970-01-01T00:00:00.000005Z\t5.0
+                            1970-01-01T00:00:00.000006Z\t5.0
+                            """);
         });
     }
 
@@ -4523,14 +4147,5 @@ public class SubsampleTest extends AbstractCairoTest {
                     "SUBSAMPLE sdt requires a plain column as its first argument"
             );
         });
-    }
-
-    private static int deterministicCadenceOffset(long seed, int stride) {
-        long h = seed;
-        h = (h ^ (h >>> 30)) * 0xbf58476d1ce4e5b9L;
-        h = (h ^ (h >>> 27)) * 0x94d049bb133111ebL;
-        h = h ^ (h >>> 31);
-        // mirror production: floorMod, not Math.abs(h) % stride (Math.abs(Long.MIN_VALUE) is negative)
-        return (int) Math.floorMod(h, (long) stride);
     }
 }

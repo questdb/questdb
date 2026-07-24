@@ -132,7 +132,7 @@ public class MinMaxWindowFunctionTest extends AbstractCairoTest {
         // Distinguishing case for the count <= target keep-all short-circuit: 2 monotonically
         // increasing rows with target=2 -> numBuckets=1 (single bucket over all rows). Bucketing
         // would collapse min=row0, max=row1 to {0,1} anyway here, so use 4 rows / target=4 instead:
-        // numBuckets=2, but bufferCount(4) <= target(4), so the old SUBSAMPLE cursor's selectAll()
+        // numBuckets=2, but bufferCount(4) <= target(4), so captured legacy selectAll behavior
         // keeps every row rather than bucketing (which could dedup min==max within a bucket) -
         // minmax() must match, keeping all four.
         assertMemoryLeak(() -> {
@@ -149,24 +149,24 @@ public class MinMaxWindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000003Z\t30.0\ttrue
                             1970-01-01T00:00:00.000004Z\t40.0\ttrue
                             """);
-            // Byte-identical to the old SUBSAMPLE cursor on the same data (its selectAll() path).
-            printSql("select ts, v from t SUBSAMPLE minmax(v, 4)");
-            TestUtils.assertEquals("""
-                    ts\tv
-                    1970-01-01T00:00:00.000001Z\t10.0
-                    1970-01-01T00:00:00.000002Z\t20.0
-                    1970-01-01T00:00:00.000003Z\t30.0
-                    1970-01-01T00:00:00.000004Z\t40.0
-                    """, sink);
+            // Captured legacy behavior: the clause keeps all rows at the exact target.
+            assertQuery("select ts, v from t SUBSAMPLE minmax(v, 4)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000001Z\t10.0
+                            1970-01-01T00:00:00.000002Z\t20.0
+                            1970-01-01T00:00:00.000003Z\t30.0
+                            1970-01-01T00:00:00.000004Z\t40.0
+                            """);
         });
     }
 
     @Test
     public void testMatchesMinMaxAlgorithmOnSpike() throws Exception {
         // Deterministic spike; keep min/max per time bucket. Expected output filled from the
-        // FIRST (stable) run and cross-checked against the old-cursor
-        // "SELECT ts, v FROM t SUBSAMPLE minmax(v, 8) ORDER BY ts" on the same dataset
-        // (byte-for-byte match).
+        // captured legacy golden for the same dataset.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
             execute("insert into t select x::timestamp, case when x%5=0 then 100.0 else x end from long_sequence(20)");
@@ -239,8 +239,8 @@ public class MinMaxWindowFunctionTest extends AbstractCairoTest {
         // A NULL/NaN value must not poison a bucket's min/max the way an unfiltered scan would:
         // MinMaxAlgorithm.select seeds a bucket's min/max from the first row it sees, and NaN
         // comparisons are always false, so if that seed row is NaN the real min/max in the
-        // bucket would never be detected. The old SUBSAMPLE cursor
-        // SUBSAMPLE drops NULL ts / null-or-NaN value rows
+        // bucket would never be detected. Captured legacy SUBSAMPLE behavior drops NULL ts /
+        // null-or-NaN value rows
         // before bucketing; minmax() must match it exactly.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
@@ -268,18 +268,16 @@ public class MinMaxWindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t1.0\ttrue
                             """);
 
-            // Byte-identical to the old SUBSAMPLE cursor on the same data: same rows kept.
-            // Plain printSql/assertEquals (not the fluent assertQuery battery) - the SUBSAMPLE
-            // cursor's recordCursorSupportsRandomAccess()/getRecordB() combination doesn't fit
-            // assertQuery's noRandomAccess() expectations, same reason SubsampleTest.java uses a
-            // bespoke assertSql helper instead of assertQuery for its own SUBSAMPLE assertions.
-            printSql("select ts, v from t SUBSAMPLE minmax(v, 4)");
-            TestUtils.assertEquals("""
-                    ts\tv
-                    1970-01-01T00:00:00.000002Z\t5.0
-                    1970-01-01T00:00:00.000003Z\t100.0
-                    1970-01-01T00:00:00.000004Z\t1.0
-                    """, sink);
+            // Captured legacy behavior for NULL filtering, asserted through the window-only clause.
+            assertQuery("select ts, v from t SUBSAMPLE minmax(v, 4)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000002Z\t5.0
+                            1970-01-01T00:00:00.000003Z\t100.0
+                            1970-01-01T00:00:00.000004Z\t1.0
+                            """);
         });
     }
 

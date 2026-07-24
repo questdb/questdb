@@ -132,7 +132,7 @@ public class M4WindowFunctionTest extends AbstractCairoTest {
         // increasing rows with target=4 -> numBuckets=1 (single bucket over all rows). Bucketing
         // would collapse first=min=row0 and last=max=row3 to just {0,3}, DROPPING the two interior
         // rows (pre-fix window output: true,false,false,true). But bufferCount(4) <= target(4), so
-        // the old SUBSAMPLE cursor's selectAll() keeps every row - m4() must match, keeping all four.
+        // captured legacy selectAll behavior keeps every row - m4() must match, keeping all four.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
             execute("insert into t values (1::timestamp,10.0),(2::timestamp,20.0),(3::timestamp,30.0),(4::timestamp,40.0)");
@@ -147,23 +147,24 @@ public class M4WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000003Z\t30.0\ttrue
                             1970-01-01T00:00:00.000004Z\t40.0\ttrue
                             """);
-            // Byte-identical to the old SUBSAMPLE cursor on the same data (its selectAll() path).
-            printSql("select ts, v from t SUBSAMPLE m4(v, 4)");
-            TestUtils.assertEquals("""
-                    ts\tv
-                    1970-01-01T00:00:00.000001Z\t10.0
-                    1970-01-01T00:00:00.000002Z\t20.0
-                    1970-01-01T00:00:00.000003Z\t30.0
-                    1970-01-01T00:00:00.000004Z\t40.0
-                    """, sink);
+            // Captured legacy behavior: the clause keeps all rows at the exact target.
+            assertQuery("select ts, v from t SUBSAMPLE m4(v, 4)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000001Z\t10.0
+                            1970-01-01T00:00:00.000002Z\t20.0
+                            1970-01-01T00:00:00.000003Z\t30.0
+                            1970-01-01T00:00:00.000004Z\t40.0
+                            """);
         });
     }
 
     @Test
     public void testMatchesM4AlgorithmOnSpike() throws Exception {
         // Deterministic spike; keep first/min/max/last per time bucket. Expected output filled from
-        // the FIRST (stable) run and cross-checked against the old-cursor
-        // "SELECT ts, v FROM t SUBSAMPLE m4(v, 8) ORDER BY ts" on the same dataset (byte-for-byte match).
+        // the captured legacy golden for the same dataset.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
             execute("insert into t select x::timestamp, case when x%5=0 then 100.0 else x end from long_sequence(20)");
@@ -264,18 +265,16 @@ public class M4WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t1.0\ttrue
                             """);
 
-            // Byte-identical to the old SUBSAMPLE cursor on the same data: same rows kept.
-            // Plain printSql/assertEquals (not the fluent assertQuery battery) - the SUBSAMPLE
-            // cursor's recordCursorSupportsRandomAccess()/getRecordB() combination doesn't fit
-            // assertQuery's noRandomAccess() expectations, same reason SubsampleTest.java uses a
-            // bespoke assertSql helper instead of assertQuery for its own SUBSAMPLE assertions.
-            printSql("select ts, v from t SUBSAMPLE m4(v, 4)");
-            TestUtils.assertEquals("""
-                    ts\tv
-                    1970-01-01T00:00:00.000002Z\t5.0
-                    1970-01-01T00:00:00.000003Z\t100.0
-                    1970-01-01T00:00:00.000004Z\t1.0
-                    """, sink);
+            // Captured legacy behavior for NULL filtering, asserted through the window-only clause.
+            assertQuery("select ts, v from t SUBSAMPLE m4(v, 4)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000002Z\t5.0
+                            1970-01-01T00:00:00.000003Z\t100.0
+                            1970-01-01T00:00:00.000004Z\t1.0
+                            """);
         });
     }
 
@@ -285,9 +284,8 @@ public class M4WindowFunctionTest extends AbstractCairoTest {
         // re-deriving isNullRow(record) via a random-access base re-read). Interleaved NULL / NaN
         // and normal values is the alignment-sensitive case: null rows are dropped from the bucket
         // buffer, so pass2 must skip exactly the same rows pass1 dropped or the keep-set shifts. We
-        // assert BOTH the full m4() keep-flag column (pins the false rows around nulls) AND that the
-        // kept (ts,v) set is byte-identical to the old SUBSAMPLE cursor - a single kept-row
-        // difference here is a correctness failure, not a perf detail.
+        // assert BOTH the full m4() keep-flag column (pins the false rows around nulls) AND the
+        // captured legacy kept-row golden - a single difference is a correctness failure.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
             // x%7==0 -> null value; x%5==0 -> spike (100.0); else x. Nulls and spikes interleave so
@@ -346,13 +344,20 @@ public class M4WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000040Z\t100.0\ttrue
                             """);
 
-            // Cross-check: the kept (ts,v) rows must be byte-identical to the old SUBSAMPLE cursor
-            // on the same data. Capture the window's kept rows, then compare the SUBSAMPLE output
-            // to them directly - if the pass2 null-alignment drifted, these diverge.
-            printSql("select ts, v from (select ts, v, m4(ts, v, 8) over (order by ts) keep from t) where keep");
-            final String windowKept = sink.toString();
-            printSql("select ts, v from t SUBSAMPLE m4(v, 8)");
-            TestUtils.assertEquals(windowKept, sink);
+            // Independent captured golden for the clause path. This avoids comparing SUBSAMPLE to
+            // the same M4 window implementation while still pinning null-bitset row alignment.
+            assertQuery("select ts, v from t SUBSAMPLE m4(v, 8)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000001Z\t1.0
+                            1970-01-01T00:00:00.000005Z\t100.0
+                            1970-01-01T00:00:00.000019Z\t19.0
+                            1970-01-01T00:00:00.000020Z\t100.0
+                            1970-01-01T00:00:00.000022Z\t22.0
+                            1970-01-01T00:00:00.000040Z\t100.0
+                            """);
         });
     }
 
