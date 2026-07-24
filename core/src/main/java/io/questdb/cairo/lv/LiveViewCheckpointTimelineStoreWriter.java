@@ -188,6 +188,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     throw CairoException.critical(0).put("could not replace live view checkpoint history epoch");
                 }
                 epochRetry = true;
+            } catch (BoundaryNotAboveHeadException e) {
+                // The append refused before touching a file, and the reconciliation
+                // above still holds, so the key stays: this seal is skipped, not failed.
+                throw e;
             } catch (RuntimeException | Error e) {
                 lifecycleReconciledDirs.remove(lifecycleKey);
                 throw e;
@@ -869,7 +873,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPageRef oldDirectoryRoot = copy(superblock.segmentDirectoryRootRef);
             final LiveViewCheckpointTimelineEntry previousEntry = new LiveViewCheckpointTimelineEntry();
             final boolean hasPrevious = timelineReader.last(oldTimelineRoot, previousEntry);
-            if (hasPrevious && maxTimestamp <= previousEntry.maxTimestamp) {
+            if (hasPrevious && maxTimestamp == previousEntry.maxTimestamp) {
+                // The head's own timestamp group grew. Nothing to seal - see
+                // BoundaryNotAboveHeadException, which the caller treats as a skipped
+                // cadence rather than a failed one.
+                throw BoundaryNotAboveHeadException.INSTANCE;
+            }
+            if (hasPrevious && maxTimestamp < previousEntry.maxTimestamp) {
                 throw CairoException.critical(0)
                         .put("normal live view checkpoint boundary overlaps current head")
                         .put(" [head=").put(previousEntry.maxTimestamp)
@@ -1427,6 +1437,31 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         @Override
         public long getMaxTimestamp() {
             return maxTimestamp;
+        }
+    }
+
+    /**
+     * Signals a cadence seal whose candidate boundary lands exactly on the timeline
+     * head's {@code maxTimestamp}: every row the cycle produced shared that timestamp,
+     * so the group the head already covers grew rather than a new one opening above it.
+     * <p>
+     * A normal root may only extend the timeline strictly upwards - a restore reads a
+     * root's {@code maxTimestamp} as "everything at or below this is covered" and
+     * replays from one tick above it, and the seal's chunk sharing rests on the batch
+     * sitting strictly above the head - so there is nothing to append. This is ordinary
+     * data rather than a fault: a designated timestamp that spans two refresh cycles
+     * produces it. The caller skips the seal and leaves its cadence counters open, so
+     * the next cycle to reach a higher timestamp seals both cycles' rows at once.
+     * <p>
+     * A candidate strictly <em>below</em> the head is a different matter - it means a
+     * cycle emitted output under a sealed boundary without retiring it - and keeps
+     * throwing {@link CairoException}.
+     */
+    public static final class BoundaryNotAboveHeadException extends RuntimeException {
+        public static final BoundaryNotAboveHeadException INSTANCE = new BoundaryNotAboveHeadException();
+
+        private BoundaryNotAboveHeadException() {
+            super(null, null, false, false);
         }
     }
 

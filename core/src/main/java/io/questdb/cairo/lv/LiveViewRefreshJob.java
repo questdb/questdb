@@ -5647,6 +5647,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // cadence-gate clock read above. Surfaced via
             // live_views().checkpoint_last_write_micros.
             instance.recordCheckpointWriteMicros(engine.getConfiguration().getMicrosecondClock().getTicks() - nowUs);
+        } catch (LiveViewCheckpointTimelineStoreWriter.BoundaryNotAboveHeadException e) {
+            // Every row this cycle emitted sat on the head boundary's own designated
+            // timestamp, so the group that boundary covers grew instead of a new one
+            // opening above it. A normal root only ever extends the timeline upwards,
+            // which leaves nothing to seal. Ordinary data reaches here - a timestamp
+            // that spans two refresh cycles - so it is a skipped cadence, not a failed
+            // one: the head, the cadence counters and the batch-minimum the next seal
+            // shares chunks against all stay where they are, and the next cycle to
+            // reach a higher timestamp seals this cycle's rows along with its own.
+            LOG.debug().$("live view head checkpoint boundary not above head, seal skipped [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", head=").$ts(instance.getHeadCheckpointMaxTs())
+                    .$(", candidate=").$ts(batchMaxTs).I$();
         } catch (Throwable t) {
             // Derived state: the seal failed, so the head and the cadence counters
             // stay parked on the previous root and the next eligible cycle seals
@@ -7249,6 +7262,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     dataOffset
             );
             instance.recordSeedCheckpointWritten(dataOffset, batchMaxTs, nowUs);
+        } catch (LiveViewCheckpointTimelineStoreWriter.BoundaryNotAboveHeadException e) {
+            // The turn ended on the timestamp the head boundary already covers. The
+            // sealedMaxTs gate above normally catches that, so reaching here means the
+            // mirror trails the timeline; either way there is nothing to seal and the
+            // next turn that reaches a higher timestamp seals this turn's rows too.
+            LOG.debug().$("live view seed checkpoint boundary not above head, seal skipped [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", candidate=").$ts(batchMaxTs).I$();
         } catch (Throwable t) {
             LOG.critical().$("could not write live view seed checkpoint [view=")
                     .$(instance.getDefinition().getViewName())
