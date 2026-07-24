@@ -127,12 +127,14 @@ public interface NetworkFacade {
     long socketUdp();
 
     /**
-     * Returns true if a disconnect happened, false otherwise.
+     * Returns true if the peer has disconnected, false otherwise. The implementation probes the
+     * socket directly (see {@link Net#isPeerDisconnected(long)}); the {@code buffer}/{@code bufferSize}
+     * arguments are retained only for backward compatibility and are no longer read.
      *
      * @param fd         file descriptor
-     * @param buffer     test buffer
-     * @param bufferSize test buffer size
-     * @return true if a disconnect happened, false otherwise
+     * @param buffer     unused; retained for signature compatibility
+     * @param bufferSize unused; retained for signature compatibility
+     * @return true if the peer has disconnected, false otherwise
      */
     boolean testConnection(long fd, long buffer, int bufferSize);
 }

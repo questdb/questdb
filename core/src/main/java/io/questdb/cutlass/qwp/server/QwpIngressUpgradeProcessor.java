@@ -131,6 +131,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     public static final int GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET = 256 * 1024;
     // Cumulative ACK batch size
     private static final int ACK_BATCH_SIZE = 8;
+    // Upper bound on socket.recv() calls per resumeRecv dispatch while draining a
+    // post-CLOSE connection. The drain loop discards inbound bytes until the
+    // socket would-block or the peer closes; without a per-dispatch cap a peer
+    // that keeps the socket continuously readable spins that loop unbounded,
+    // monopolizing the HTTP worker and starving the drain deadline -- which is
+    // only re-evaluated on dispatch entry, never mid-loop. On hitting the cap we
+    // yield via PeerIsSlowToWriteException so the worker can service other
+    // connections and the next dispatch re-checks isCloseDrainExpired().
+    private static final int CLOSE_DRAIN_MAX_RECV_PER_DISPATCH = 32;
     // HTTP response templates
     private static final byte[] BAD_REQUEST_PREFIX =
             "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: ".getBytes(StandardCharsets.US_ASCII);
@@ -528,6 +537,51 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         long recvBuffer = context.getRecvBuffer();
         int recvBufferSize = context.getRecvBufferSize();
 
+        // Post-CLOSE read-drain (see gracefulCloseAndDrain): the fatal CLOSE and
+        // FIN are out; inbound bytes are frames the client pipelined before it
+        // observed them. Consume and discard so the fd close cannot race those
+        // in-flight bytes into an RST that destroys the final ACK/durable-ACK +
+        // CLOSE still queued unread in the peer's receive buffer. Exit on the
+        // peer's close (FIN/RST -- the peer provably consumed or abandoned the
+        // goodbye) or on the bounded drain deadline; a fully silent peer is
+        // reaped by the transport idle timeout.
+        if (state.isCloseDraining()) {
+            if (state.isCloseDrainExpired()) {
+                LOG.info().$("close drain deadline expired, disconnecting [fd=").$(context.getFd()).I$();
+                throw ServerDisconnectException.INSTANCE;
+            }
+            try {
+                int drained;
+                int recvCount = 0;
+                while ((drained = socket.recv(recvBuffer, recvBufferSize)) > 0) {
+                    // discard
+                    if (++recvCount == CLOSE_DRAIN_MAX_RECV_PER_DISPATCH) {
+                        // Per-dispatch drain quantum exhausted while the socket is
+                        // still readable. Yield rather than keep looping: PISW
+                        // re-arms the fd for read and re-fires on the bytes still
+                        // buffered (edge-triggered epoll), matching the
+                        // forceRecvFragmentationChunkSize reschedule in the main
+                        // recv path below. Returning to the dispatcher lets this
+                        // worker run other connections and makes the next dispatch
+                        // re-check isCloseDrainExpired() above, so a continuously
+                        // readable peer can no longer monopolize the worker or
+                        // outlive the drain deadline.
+                        throw PeerIsSlowToWriteException.INSTANCE;
+                    }
+                }
+                if (drained < 0) {
+                    LOG.debug().$("peer closed during close drain [fd=").$(context.getFd()).I$();
+                    throw ServerDisconnectException.INSTANCE;
+                }
+            } catch (ServerDisconnectException | PeerIsSlowToWriteException e) {
+                throw e;
+            } catch (Throwable e) {
+                throw ServerDisconnectException.INSTANCE;
+            }
+            // Would-block: keep the drain parked; the caller re-registers for read.
+            return;
+        }
+
         try {
             if (state.hasLostCloseEchoSync()) {
                 // Frame sync died earlier in the close-echo wait (a too-big
@@ -580,7 +634,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 sendFatalClose(context, state,
                         WebSocketCloseCode.MESSAGE_TOO_BIG,
                         "frame payload exceeds receive buffer capacity");
-                return; // unreachable -- sendFatalClose throws when no echo wait is in progress
+                return; // CLOSE sent (echo wait or drain armed) or parked for resume.
             }
 
             int remaining = recvBufferSize - recvBufferLen;
@@ -759,9 +813,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // transition and discards bytes buffered before this CLOSE.
                 state.onResumeCloseComplete();
                 LOG.debug().$("Resumed CLOSE frame sent [fd=").$(context.getFd()).I$();
-                if (!beginCloseEchoWaitIfEligible(context, state)) {
-                    gracefulCloseAndDisconnect(context);
-                }
+                finishServerFatalClose(context, state);
             }
             case QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE_RESPONSE -> {
                 context.resumeResponseSend();
@@ -1046,7 +1098,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void drainBufferedFrames(HttpConnectionContext context, QwpIngressProcessorState state)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
-        if (state.isSendReady() && state.getRecvBufferLen() > 0) {
+        // isCloseDraining: a resume-path fatal close (finishDeferredFatalClose)
+        // leaves the send state READY after the CLOSE flush; buffered frames are
+        // pipelined pre-CLOSE input and must be discarded by the read-drain, not
+        // processed against the engine.
+        if (!state.isCloseDraining() && state.isSendReady() && state.getRecvBufferLen() > 0) {
             processWebSocketFrames(context, state, context.getRecvBuffer(), state.getRecvBufferLen());
         }
     }
@@ -1176,6 +1232,21 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         gracefulCloseAndDisconnect(context);
     }
 
+    private void finishServerFatalClose(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws ServerDisconnectException {
+        if (beginCloseEchoWaitIfEligible(context, state)) {
+            return;
+        }
+        if (state.isRoleChangeCloseInitiated()) {
+            // Role-change closes that do not carry a fully covered durable ack
+            // favor prompt teardown over the duplicate guard. Preserve that
+            // contract instead of entering the general fatal-close linger.
+            gracefulCloseAndDisconnect(context);
+            return;
+        }
+        gracefulCloseAndDrain(context, state);
+    }
+
     private void flushPendingAck(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         flushPendingAck(context, state, true);
@@ -1186,18 +1257,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             QwpIngressProcessorState state,
             boolean isDurableAckPollAllowed
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (state.isAwaitingCloseEcho()) {
-            // Our role-change CLOSE is already on the wire and RFC 6455 forbids
-            // any frame following it. The final durable ack went out with the
-            // CLOSE (sendFatalClose's T1 flush); this gate makes "no ack after
-            // CLOSE" structural rather than dependent on the pending maps being
-            // empty by coincidence. It closes the two recv-driven vectors that
-            // would otherwise leak a STATUS_DURABLE_ACK behind the CLOSE: the
-            // trailing flush after a discarded inbound frame, and the
-            // onConnectionClosed teardown flush. The direct trySendDurableAck
-            // calls in resumeSend's RESUME_ACK/RESUME_DURABLE_ACK branches
-            // bypass this method but cannot run during the wait: it arms only
-            // from a READY send state and nothing re-enters a send state after.
+        if (state.isAwaitingCloseEcho() || state.isCloseDraining()) {
+            // A server CLOSE is already on the wire and RFC 6455 forbids any
+            // frame following it. The final ACKs went out before the CLOSE;
+            // this gate keeps "no ack after CLOSE" structural for both the
+            // role-change echo wait and the general fatal-close read-drain.
+            // It blocks the trailing frame-loop flush and onConnectionClosed's
+            // best-effort teardown flush. Direct trySendDurableAck calls in
+            // resumeSend cannot run here: both modes start from READY and no
+            // send state begins after either mode arms.
             return;
         }
         if (state.hasPendingAck()) {
@@ -1210,20 +1278,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     /**
      * Half-closes the write side of the socket so the kernel emits FIN instead
-     * of an abortive RST, then signals the framework to tear the connection
-     * down. shutdown(WR) is best-effort: even if it fails (e.g. the peer is
-     * already gone) we still raise ServerDisconnectException so the framework
-     * proceeds with cleanup.
+     * of an abortive RST, performs a bounded best-effort inbound drain, then
+     * signals the framework to tear the connection down. This prompt path is
+     * reserved for role-change closes whose upload or echo grace expired and
+     * for completed client-initiated close handshakes.
      * <p>
-     * The pre-close inbound drain is bounded
-     * ({@link #GRACEFUL_CLOSE_DRAIN_READ_BUDGET}) rather than delegated to
-     * {@code HttpConnectionContext.drainRecvBuffer()}, whose
-     * {@code while (recv() > 0)} loop a peer that keeps the kernel buffer
-     * non-empty can keep positive indefinitely -- and this method runs on
-     * the grace-expiry path, whose entire purpose is a prompt teardown. The
-     * drain is best-effort either way: it empties what is buffered at this
-     * instant to lower the RST risk, but a peer still streaming cannot be
-     * outdrained and must not be allowed to try to make us.
+     * The pre-close inbound drain is bounded by both
+     * {@link #GRACEFUL_CLOSE_DRAIN_READ_BUDGET} and
+     * {@link #GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET}. A peer that keeps the kernel
+     * buffer non-empty therefore cannot pin the worker on a path whose purpose
+     * is prompt teardown.
      */
     private void gracefulCloseAndDisconnect(HttpConnectionContext context)
             throws ServerDisconnectException {
@@ -1233,10 +1297,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 socket.shutdown(Net.SHUT_WR);
                 long recvBuffer = context.getRecvBuffer();
                 int recvBufferSize = context.getRecvBufferSize();
-                // Dual guard: read count bounds syscalls, byte budget bounds
-                // copy work independently of the configured buffer size --
-                // this is the prompt-teardown path and must not perform
-                // bufferSize-scaled work against a still-streaming peer.
                 int drained = 0;
                 for (int i = 0; i < GRACEFUL_CLOSE_DRAIN_READ_BUDGET; i++) {
                     int cap = Math.min(recvBufferSize, GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET - drained);
@@ -1253,6 +1313,31 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         } catch (Throwable ignored) {
         }
         throw ServerDisconnectException.INSTANCE;
+    }
+
+    /**
+     * Orderly teardown of a server-initiated fatal close that does not enter
+     * the role-change CLOSE-echo handshake. Half-closes the write side so the
+     * kernel emits FIN behind the CLOSE frame and its preceding ACKs, then
+     * parks the connection in a bounded read-drain
+     * ({@link QwpIngressProcessorState#beginCloseDrain}). Subsequent inbound
+     * events land in {@code resumeRecv}'s drain branch and get discarded.
+     * <p>
+     * Closing the fd while a streaming client still has frames in flight can
+     * force an RST and destroy the CLOSE or preceding ACKs in the peer's unread
+     * receive queue. The drain exits when the peer closes, when
+     * {@link QwpIngressProcessorState#CLOSE_DRAIN_TIMEOUT_MICROS} expires, or
+     * when the transport idle timeout reaps a silent peer. A failed half-close
+     * means the peer is already gone and triggers immediate cleanup.
+     */
+    private void gracefulCloseAndDrain(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws ServerDisconnectException {
+        Socket socket = context.getSocket();
+        if (socket == null || socket.shutdown(Net.SHUT_WR) != 0) {
+            throw ServerDisconnectException.INSTANCE;
+        }
+        state.beginCloseDrain();
+        LOG.debug().$("fatal CLOSE sent, draining until peer close [fd=").$(context.getFd()).I$();
     }
 
     private void handleBinaryMessage(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
@@ -1949,7 +2034,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         sendFatalClose(context, state,
                                 WebSocketCloseCode.MESSAGE_TOO_BIG,
                                 "frame payload exceeds maximum size");
-                        return; // unreachable -- sendFatalClose throws when no echo wait is in progress
+                        return; // CLOSE sent (echo wait or drain armed) or parked for resume.
                     }
                     break;
                 }
@@ -2000,6 +2085,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     // arrived before that CLOSE and therefore cannot contain its
                     // echo. Drop the pipelined suffix without parsing it; later
                     // receives use the bounded close-echo read cap above.
+                    pos = bufferEnd;
+                    return;
+                }
+                if (state.isCloseDraining()) {
+                    // The write side is shut down. Every remaining buffered
+                    // frame predates the server CLOSE, so discard the lot and
+                    // let the post-CLOSE read-drain consume future input.
                     pos = bufferEnd;
                     return;
                 }
@@ -2099,10 +2191,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             throw e;
         }
 
-        if (beginCloseEchoWaitIfEligible(context, state)) {
-            return;
-        }
-        gracefulCloseAndDisconnect(context);
+        finishServerFatalClose(context, state);
     }
 
     private void sendErrorResponse(
@@ -2170,15 +2259,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     /**
      * Emits a fatal WebSocket CLOSE frame with the given protocol-level close
-     * code and disconnects. Routes through the send state machine so the CLOSE
-     * lands even when an ACK/durable-ACK is mid-flight:
+     * code, then enters the role-change echo wait, performs prompt role-change
+     * teardown, or hands the connection to the bounded post-CLOSE read-drain.
+     * Routes through the send state machine so the CLOSE lands even when an
+     * ACK/durable-ACK is mid-flight:
      * <ul>
      *   <li>Awaiting close echo → a CLOSE is already on the wire and no frame
      *       may follow it (RFC 6455); polls the echo grace budget and returns
-     *       WITHOUT emitting a second CLOSE, whatever prompted this call.</li>
-     *   <li>State READY, send succeeds → half-close (FIN) + ServerDisconnect,
-     *       or, when the CLOSE completes a deferred role-change close, enters
-     *       the close-echo wait and returns normally.</li>
+     *       without emitting a second CLOSE.</li>
+     *   <li>State READY, send succeeds → enters the role-change close-echo
+     *       wait when eligible, tears down a grace-expired role-change close
+     *       promptly, or half-closes and drains any other fatal close.</li>
      *   <li>State READY, send returns PeerIsSlow → bytes queued in framework
      *       buffer, transitions to RESUME_CLOSE, throws PeerIsSlow.</li>
      *   <li>State not READY → stores (code, reason), transitions to
@@ -2243,10 +2334,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             throw slow;
         }
 
-        if (beginCloseEchoWaitIfEligible(context, state)) {
-            return;
-        }
-        gracefulCloseAndDisconnect(context);
+        finishServerFatalClose(context, state);
     }
 
     /**

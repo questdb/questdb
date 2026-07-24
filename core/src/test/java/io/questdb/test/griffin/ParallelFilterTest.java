@@ -45,7 +45,6 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -865,7 +864,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-                        final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration, MemoryTag.NATIVE_DEFAULT);
+                        final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration);
                         try {
                             engine.execute(
                                     "create table x ( " +
