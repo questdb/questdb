@@ -589,11 +589,17 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     // Phase B: in-place demote. seq=1 is gate-rejected; the
                     // role-change close is deferred awaiting upload coverage
                     // (registry watermark lags at -1).
+                    int lookupsBeforeDeferral = registryLookups.get();
                     readOnly.set(true);
                     drive(processor, context, nf, frame1.length);
                     Assert.assertTrue(
                             "test setup: role-change close must be deferred awaiting durable upload coverage",
                             state.isRoleChangeCloseDeferred()
+                    );
+                    Assert.assertEquals(
+                            "first-entry coverage and progress must share one registry traversal",
+                            1,
+                            registryLookups.get() - lookupsBeforeDeferral
                     );
 
                     // Phase C: uploads STALL past the grace budget; committed
@@ -625,8 +631,8 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                         capture.stop();
                     }
                     Assert.assertEquals(
-                            "one completion event must scan pending tables only for the PING flush, diagnostic, and final pre-close flush",
-                            3,
+                            "one send-ready completion event must use one fused durable-progress and coverage scan",
+                            1,
                             registryLookups.get() - lookupsBeforeCompletion
                     );
 

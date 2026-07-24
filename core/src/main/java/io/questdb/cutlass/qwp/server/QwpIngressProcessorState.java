@@ -181,6 +181,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // the second-fragment send without ever surfacing to the park/resume path.
     private boolean handshakeFlushPending;
     private long highestProcessedSequence = -1;
+    private boolean isDurableProgressSnapshotFullyUploaded;
     private long lastAckedSequence = -1;
     private long messageSequence;
     private byte negotiatedVersion = QwpConstants.VERSION;
@@ -373,7 +374,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     /**
      * Collects per-table durable progress from the registry. Returns the
      * snapshot map (owned by this instance) containing only tables whose
-     * durable seqTxn has advanced since the last durable ack was sent.
+     * durable seqTxn has advanced since the last durable ack was sent. The
+     * same traversal also determines whether the registry covers all pending
+     * work; callers can read that result via
+     * {@link #isDurableProgressSnapshotFullyUploaded()} until the next call.
      * The caller must consume the map before the next call.
      * <p>
      * Only iterates tables with outstanding durable work, not every table
@@ -381,14 +385,22 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      */
     public CharSequenceLongHashMap collectDurableProgress(DurableAckRegistry registry) {
         durableProgressSnapshot.clear();
+        isDurableProgressSnapshotFullyUploaded = true;
         if (!durableAckEnabled) {
             return durableProgressSnapshot;
         }
-        ObjList<CharSequence> tableNames = pendingDurableDirNames.keys();
+        ObjList<CharSequence> tableNames = pendingDurableSeqTxns.keys();
         for (int i = 0, n = tableNames.size(); i < n; i++) {
             CharSequence tableName = tableNames.getQuick(i);
             String dirName = pendingDurableDirNames.get(tableName);
+            if (dirName == null) {
+                isDurableProgressSnapshotFullyUploaded = false;
+                continue;
+            }
             long uploadedSeqTxn = registry.getDurablyUploadedSeqTxn(dirName);
+            if (uploadedSeqTxn < pendingDurableSeqTxns.get(tableName)) {
+                isDurableProgressSnapshotFullyUploaded = false;
+            }
             if (uploadedSeqTxn >= 0) {
                 long lastSent = lastDurableSeqTxns.get(tableName);
                 if (uploadedSeqTxn > lastSent) {
@@ -460,6 +472,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public byte getDeferredErrorStatus() {
         return deferredErrorStatus;
+    }
+
+    public CharSequenceLongHashMap getDurableProgressSnapshot() {
+        return durableProgressSnapshot;
     }
 
     public String getErrorText() {
@@ -680,12 +696,24 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Returns the full-coverage result produced by the most recent
+     * {@link #collectDurableProgress(DurableAckRegistry)} traversal.
+     */
+    public boolean isDurableProgressSnapshotFullyUploaded() {
+        return isDurableProgressSnapshotFullyUploaded;
+    }
+
+    /**
      * True when every seqTxn this connection has committed but not yet durably
      * acked is covered by the registry's durable-upload watermark -- i.e. a
      * durable ack flushed right now would advance the client's replay watermark
      * past ALL of this connection's committed work, leaving no replay window.
      * Trivially true when nothing is pending (or durable ack is disabled:
      * {@code pendingDurableSeqTxns} is only populated when enabled).
+     * <p>
+     * This coverage-only traversal exists for the send-blocked path, where
+     * {@code durableProgressSnapshot} may belong to an in-flight durable ACK
+     * and must remain unchanged until {@link #onDurableAckSent()} consumes it.
      */
     public boolean isDurableWorkFullyUploaded(DurableAckRegistry registry) {
         ObjList<CharSequence> tableNames = pendingDurableSeqTxns.keys();
@@ -904,6 +932,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         resumeAckSeqTxns.clear();
         lastDurableSeqTxns.clear();
         durableProgressSnapshot.clear();
+        isDurableProgressSnapshotFullyUploaded = false;
         tableDirNames.clear();
 
         // Log cache stats before clearing (only if there were any lookups)

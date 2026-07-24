@@ -1260,13 +1260,22 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void flushPendingAck(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
-        flushPendingAck(context, state, true);
+        flushPendingAck(context, state, true, false);
     }
 
     private void flushPendingAck(
             HttpConnectionContext context,
             QwpIngressProcessorState state,
             boolean isDurableAckPollAllowed
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        flushPendingAck(context, state, isDurableAckPollAllowed, false);
+    }
+
+    private void flushPendingAck(
+            HttpConnectionContext context,
+            QwpIngressProcessorState state,
+            boolean isDurableAckPollAllowed,
+            boolean isDurableProgressCollected
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (state.isAwaitingCloseEcho() || state.isCloseDraining()) {
             // A server CLOSE is already on the wire and RFC 6455 forbids any
@@ -1282,8 +1291,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         if (state.hasPendingAck()) {
             trySendAck(context, state);
         }
-        if (isDurableAckPollAllowed && state.isDurableAckEnabled() && state.isSendReady()) {
-            trySendDurableAck(context, state);
+        if (state.isDurableAckEnabled() && state.isSendReady()) {
+            if (isDurableProgressCollected) {
+                trySendCollectedDurableAck(context, state);
+            } else if (isDurableAckPollAllowed) {
+                trySendDurableAck(context, state);
+            }
         }
     }
 
@@ -1693,13 +1706,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // alarm). While the deferral holds, fall through to the pong keepalive.
         if (state.isRoleChangeCloseDeferred()) {
             boolean isGraceExpired = state.isRoleChangeCloseGraceExpired();
-            // When the send side is READY, flushPendingAck above prunes every
-            // table whose final durable ACK was sent, so local pending state
-            // gives the result without another registry scan. A pre-existing
-            // parked send prevents that flush; query coverage once in that case
-            // so the CLOSE can chain behind the parked frame.
-            boolean isDurableWorkFullyUploaded = state.isSendReady()
-                    ? !state.hasPendingDurableWork()
+            // When the send side is READY, flushPendingAck above produced both
+            // the progress frame and its full-coverage result in one registry
+            // traversal. A pre-existing parked send prevents that flush; use
+            // the coverage-only traversal in that case because an in-flight
+            // durable ACK may still own durableProgressSnapshot.
+            boolean isDurableProgressFlushed = state.isSendReady();
+            boolean isDurableWorkFullyUploaded = isDurableProgressFlushed
+                    ? state.isDurableProgressSnapshotFullyUploaded()
                     : state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry());
             if (isDurableWorkFullyUploaded || isGraceExpired) {
                 roleChangeCloseWithUploadGrace(
@@ -1707,7 +1721,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         state,
                         state.getRoleChangeCloseReason(),
                         isDurableWorkFullyUploaded,
-                        isGraceExpired
+                        isGraceExpired,
+                        isDurableProgressFlushed,
+                        false
                 );
                 return;
             }
@@ -1797,45 +1813,44 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             CharSequence reason
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         boolean isGraceExpired = state.isRoleChangeCloseGraceExpired();
+        boolean isDurableProgressCollected = false;
+        boolean isDurableProgressFlushed = false;
         boolean isDurableWorkFullyUploaded;
         if (!state.isDurableAckEnabled() || !state.hasPendingDurableWork()) {
             // Nothing committed awaits a durable ack (or durable acks are
             // disabled): trivially covered, no registry pass needed.
             isDurableWorkFullyUploaded = true;
-        } else if (!isGraceExpired && state.isRoleChangeCloseDeferred() && state.isSendReady()) {
-            // Deferral re-entry with a clear send side: flush first, so ONE
-            // registry pass both pushes durable progress to the client and
-            // answers coverage -- onDurableAckSent prunes every table whose
-            // pending seqTxn the registry covers (residual tables always have
-            // lastSent < pending, so a covered table necessarily reports
-            // progress and gets pruned), leaving local pending state as the
-            // poll-fresh coverage result. Same fused pattern as handlePing.
-            // Flush-before-decide is safe ONLY here: the deferral is already
-            // armed, so a send parked mid-flush (PISR) leaves it in place for
-            // the next recv-driven poll instead of dropping the close. Grace
-            // expiry is excluded: the expired close is the availability-over-
-            // duplicate-guard promise and must not risk a one-poll delay from
-            // a throwing flush -- it takes the branch below, where the CLOSE
-            // chains behind any backpressure inside sendFatalClose
-            // (onFatalCloseBlocked) with no further inbound traffic needed.
-            flushPendingAck(context, state);
-            isDurableWorkFullyUploaded = !state.hasPendingDurableWork();
+        } else if (state.isSendReady()) {
+            if (!isGraceExpired && state.isRoleChangeCloseDeferred()) {
+                // Deferral re-entry with a clear send side may flush before the
+                // decision because the close is already armed. One fused pass
+                // both sends progress and returns poll-fresh coverage.
+                flushPendingAck(context, state);
+                isDurableProgressFlushed = true;
+            } else {
+                // First entry must mark/arm the close before any throwing send,
+                // and an expired close must not acquire a one-poll delay if its
+                // send blocks. Collect without sending; the overload below
+                // consumes this snapshot only after recording the close state.
+                state.collectDurableProgress(engine.getDurableAckRegistry());
+                isDurableProgressCollected = true;
+            }
+            isDurableWorkFullyUploaded = state.isDurableProgressSnapshotFullyUploaded();
         } else {
-            // First entry (the arming marks in the overload below must precede
-            // any throwing send, so no flush may run yet) or a pre-parked send
-            // (no flush possible): one standalone coverage scan. Expiry alone
-            // completes the deferral -- skip the scan in that case; the
-            // diagnostic path in the overload performs one fresh check so
-            // concurrent catch-up can still suppress a false duplicate warning.
-            isDurableWorkFullyUploaded = !isGraceExpired
-                    && state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry());
+            // The durable progress snapshot may belong to a parked durable ACK,
+            // so preserve it for onDurableAckSent and use the coverage-only
+            // traversal. The continuation performs a fresh fused pass after
+            // the genuine blocked-send interval when pending work remains.
+            isDurableWorkFullyUploaded = state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry());
         }
         roleChangeCloseWithUploadGrace(
                 context,
                 state,
                 reason,
                 isDurableWorkFullyUploaded,
-                isGraceExpired
+                isGraceExpired,
+                isDurableProgressFlushed,
+                isDurableProgressCollected
         );
     }
 
@@ -1844,7 +1859,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             QwpIngressProcessorState state,
             CharSequence reason,
             boolean isDurableWorkFullyUploaded,
-            boolean isGraceExpired
+            boolean isGraceExpired,
+            boolean isDurableProgressFlushed,
+            boolean isDurableProgressCollected
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (state.isAwaitingCloseEcho()) {
             // CLOSE already sent; the deferral has completed. Just poll the
@@ -1868,23 +1885,22 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         .$(context.getFd()).I$();
                 // Push whatever cumulative/durable progress exists right now;
                 // the final durable ack goes out with the close itself once
-                // coverage is confirmed. Only the FIRST deferral flushes here:
-                // every re-entry that can flush already did so in the 3-arg
-                // overload (its fused coverage poll), and repeating the
-                // registry pass on the same dispatch cannot observe progress
-                // that the next recv-driven poll (or the final pre-CLOSE
-                // flush) would not deliver.
-                flushPendingAck(context, state);
+                // coverage is confirmed. Reuse a snapshot collected before
+                // the close state was armed, or skip the poll when this
+                // dispatch already flushed the fused result.
+                flushPendingAck(
+                        context,
+                        state,
+                        !isDurableProgressFlushed && !isDurableProgressCollected,
+                        isDurableProgressCollected
+                );
             }
             return;
         }
-        if (isGraceExpired
-                && !isDurableWorkFullyUploaded
-                && !state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())) {
-            // Grace expired with genuinely un-acked durable work: the one
-            // close the operator must see. A slow-but-clean close -- uploads
-            // catching up after the deadline but before this re-entry --
-            // leaves an empty replay window and must not raise this alarm.
+        if (isGraceExpired && !isDurableWorkFullyUploaded) {
+            // Grace expired with genuinely un-acked durable work according to
+            // the fused completion snapshot: the one close the operator must
+            // see. Do not repeat the registry traversal just for diagnostics.
             LOG.error().$("role-change close upload grace expired; closing with un-acked durable work, client replay may duplicate [fd=")
                     .$(context.getFd()).I$();
         }
@@ -1897,7 +1913,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 context,
                 state,
                 WebSocketCloseCode.ROLE_CHANGE,
-                state.isRoleChangeCloseDeferred() ? state.getRoleChangeCloseReason() : reason
+                state.isRoleChangeCloseDeferred() ? state.getRoleChangeCloseReason() : reason,
+                isDurableProgressFlushed,
+                isDurableProgressCollected
         );
     }
 
@@ -2294,6 +2312,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             int closeCode,
             CharSequence reason
     ) throws PeerIsSlowToReadException, ServerDisconnectException {
+        sendFatalClose(context, state, closeCode, reason, false, false);
+    }
+
+    private void sendFatalClose(
+            HttpConnectionContext context,
+            QwpIngressProcessorState state,
+            int closeCode,
+            CharSequence reason,
+            boolean isDurableProgressFlushed,
+            boolean isDurableProgressCollected
+    ) throws PeerIsSlowToReadException, ServerDisconnectException {
         if (state.isAwaitingCloseEcho()) {
             // Our role-change CLOSE is already on the wire and nothing may
             // follow it. The connection exists only to observe the client's
@@ -2309,7 +2338,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // no-op when state is not READY (ACK already in flight), so it does
         // not interfere with the deferred path below.
         try {
-            flushPendingAck(context, state);
+            flushPendingAck(
+                    context,
+                    state,
+                    !isDurableProgressFlushed && !isDurableProgressCollected,
+                    isDurableProgressCollected
+            );
         } catch (PeerDisconnectedException pde) {
             throw ServerDisconnectException.INSTANCE;
         } catch (PeerIsSlowToReadException slow) {
@@ -2401,11 +2435,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void trySendDurableAck(HttpConnectionContext context, QwpIngressProcessorState state)
+    private void trySendCollectedDurableAck(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
-        assert state.isSendReady() : "trySendDurableAck called in wrong state";
+        assert state.isSendReady() : "trySendCollectedDurableAck called in wrong state";
 
-        CharSequenceLongHashMap progress = state.collectDurableProgress(engine.getDurableAckRegistry());
+        CharSequenceLongHashMap progress = state.getDurableProgressSnapshot();
         if (progress.size() == 0) {
             return;
         }
@@ -2439,6 +2473,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             LOG.debug().$("Durable ACK blocked [fd=").$(context.getFd()).I$();
             throw e;
         }
+    }
+
+    private void trySendDurableAck(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        assert state.isSendReady() : "trySendDurableAck called in wrong state";
+
+        state.collectDurableProgress(engine.getDurableAckRegistry());
+        trySendCollectedDurableAck(context, state);
     }
 
     // Per-connection holder for the byte count of a 4xx upgrade rejection
