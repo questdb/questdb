@@ -62,9 +62,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * Measures a raw timestamp/value projection with a covered residual predicate.
  * Key and residual selectivity use coprime deterministic cycles, preventing the
- * residual distribution from correlating with either indexed key. The default
- * 100-million-row trial yields 1 million and 10 million indexed candidates for
- * the two key selectivities; use the JMH {@code rowCount} parameter to rescale it.
+ * residual distribution from correlating with any indexed key. The default
+ * 100-million-row trial sweeps 0.1% to 20% key selectivity and 1% to 100%
+ * residual selectivity; use the JMH {@code rowCount} parameter to rescale it.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
@@ -73,6 +73,10 @@ import java.util.concurrent.TimeUnit;
 @Measurement(iterations = 3)
 @Fork(0)
 public class CoveringIndexPostFilterBenchmark {
+    // Baseline runs set this to false when they compile the benchmark against a pre-JIT covering build.
+    private static final boolean EXPECT_JIT = Boolean.parseBoolean(
+            System.getProperty("covering.postfilter.expect.jit", "true")
+    );
     private static final int WORKERS = Integer.getInteger("covering.postfilter.workers", 8);
     private static final String ROOT = System.getProperty("java.io.tmpdir") + java.io.File.separator + "covering-postfilter-bench";
     private static final DefaultCairoConfiguration CONFIGURATION = new DefaultCairoConfiguration(ROOT) {
@@ -92,10 +96,20 @@ public class CoveringIndexPostFilterBenchmark {
     public long rowCount;
 
     @Param({
-            "covering-k1-r10", "no_covering-k1-r10", "no_index-k1-r10",
-            "covering-k1-r100", "no_covering-k1-r100", "no_index-k1-r100",
+            "covering-k10-r1", "no_covering-k10-r1", "no_index-k10-r1",
+            "covering-k10-r2", "no_covering-k10-r2", "no_index-k10-r2",
+            "covering-k10-r5", "no_covering-k10-r5", "no_index-k10-r5",
             "covering-k10-r10", "no_covering-k10-r10", "no_index-k10-r10",
-            "covering-k10-r100", "no_covering-k10-r100", "no_index-k10-r100"
+            "covering-k10-r20", "no_covering-k10-r20", "no_index-k10-r20",
+            "covering-k10-r50", "no_covering-k10-r50", "no_index-k10-r50",
+            "covering-k10-r100", "no_covering-k10-r100", "no_index-k10-r100",
+            "covering-k01-r10", "no_covering-k01-r10", "no_index-k01-r10",
+            "covering-k02-r10", "no_covering-k02-r10", "no_index-k02-r10",
+            "covering-k05-r10", "no_covering-k05-r10", "no_index-k05-r10",
+            "covering-k1-r10", "no_covering-k1-r10", "no_index-k1-r10",
+            "covering-k2-r10", "no_covering-k2-r10", "no_index-k2-r10",
+            "covering-k5-r10", "no_covering-k5-r10", "no_index-k5-r10",
+            "covering-k20-r10", "no_covering-k20-r10", "no_index-k20-r10"
     })
     public String scenario;
 
@@ -210,8 +224,17 @@ public class CoveringIndexPostFilterBenchmark {
         engine.execute(
                 "INSERT INTO post_filter SELECT " +
                         "('2024-01-01'::timestamp + (x - 1) * " + spacing + "L)::timestamp, " +
-                        "(CASE WHEN x % 1000 < 10 THEN 'k1' WHEN x % 1000 < 110 THEN 'k10' ELSE 'noise' || (x % 64) END)::symbol, " +
-                        "(x % 10_007)::double, (x % 997)::int " +
+                        "(CASE " +
+                        "WHEN x % 10_000 < 10 THEN 'k01' " +
+                        "WHEN x % 10_000 < 30 THEN 'k02' " +
+                        "WHEN x % 10_000 < 80 THEN 'k05' " +
+                        "WHEN x % 10_000 < 180 THEN 'k1' " +
+                        "WHEN x % 10_000 < 380 THEN 'k2' " +
+                        "WHEN x % 10_000 < 880 THEN 'k5' " +
+                        "WHEN x % 10_000 < 1880 THEN 'k10' " +
+                        "WHEN x % 10_000 < 3880 THEN 'k20' " +
+                        "ELSE 'noise' || (x % 64) END)::symbol, " +
+                        "(x % 10_007)::double, (x % 1009)::int " +
                         "FROM long_sequence(" + rowCount + ')',
                 context
         );
@@ -241,7 +264,16 @@ public class CoveringIndexPostFilterBenchmark {
             case "no_index" -> "/*+ no_index */ ";
             default -> throw new IllegalArgumentException("unknown route: " + route);
         };
-        final int residualLimit = "r10".equals(parts[2]) ? 100 : 997;
+        final int residualLimit = switch (parts[2]) {
+            case "r1" -> 10;
+            case "r2" -> 20;
+            case "r5" -> 50;
+            case "r10" -> 101;
+            case "r20" -> 202;
+            case "r50" -> 505;
+            case "r100" -> 1009;
+            default -> throw new IllegalArgumentException("unknown residual selectivity: " + parts[2]);
+        };
         return "SELECT " + hint + "ts, value FROM post_filter WHERE sym = '" + parts[1] +
                 "' AND residual < " + residualLimit;
     }
@@ -257,7 +289,10 @@ public class CoveringIndexPostFilterBenchmark {
         }
         final String text = plan.toString();
         final boolean isValid = switch (route) {
-            case "covering" -> text.contains("Async JIT Filter") && text.contains("CoveringIndex");
+            case "covering" -> text.contains("CoveringIndex")
+                    && (EXPECT_JIT
+                        ? text.contains("Async JIT Filter")
+                        : text.contains("Async Filter") && !text.contains("Async JIT Filter"));
             case "no_covering" -> !text.contains("CoveringIndex") && text.contains("Index");
             case "no_index" -> !text.contains("CoveringIndex") && !text.contains("Index forward scan");
             default -> false;
