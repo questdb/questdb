@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
@@ -123,15 +124,23 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
             }
         }
 
-        return new UniformFunction(targetArg, targetPosition, resolvedTarget);
+        return new UniformFunction(
+                targetArg,
+                targetPosition,
+                resolvedTarget,
+                configuration.getSubsampleMaxRows(),
+                position
+        );
     }
 
     // uniform(n) over (order by xxx) - no partition by, no framing.
     static class UniformFunction extends BaseWindowFunction implements Reopenable {
 
         private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
+        private final int functionPosition;
         // May be a bind variable / runtime constant, so its value is resolved every execution in
         // init() (before pass1/preparePass2 need it) rather than frozen at newInstance.
+        private final long maxRows;
         private final Function targetArg;
         private final int targetPosition;
         private long count;          // running row counter during pass1; becomes totalRows
@@ -147,10 +156,12 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         private long pass2Ordinal;   // running row counter during pass2 (same traversal order as pass1)
         private long selIdx;         // monotonic cursor into `selected` during pass2
 
-        UniformFunction(Function targetArg, int targetPosition, long resolvedTarget) {
+        UniformFunction(Function targetArg, int targetPosition, long resolvedTarget, long maxRows, int functionPosition) {
             super(null);
             this.targetArg = targetArg;
             this.targetPosition = targetPosition;
+            this.maxRows = maxRows;
+            this.functionPosition = functionPosition;
             // For a constant target, already range-validated at newInstance (compile time); for a
             // bind-variable target this is an unused placeholder, overwritten every execution in
             // init() below.
@@ -246,6 +257,10 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (isSubsampleKeepFlag() && count >= maxRows) {
+                throw CairoException.nonCritical().position(functionPosition)
+                        .put("SUBSAMPLE input exceeds maximum of ").put(maxRows).put(" rows");
+            }
             count++;
         }
 

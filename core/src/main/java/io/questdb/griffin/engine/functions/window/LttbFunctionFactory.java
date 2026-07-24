@@ -80,7 +80,7 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return newInstance0(position, args, argPositions, sqlExecutionContext, false, supportNullsDesc());
+        return newInstance0(position, args, argPositions, configuration, sqlExecutionContext, false, supportNullsDesc());
     }
 
     // Shared by LttbFunctionFactory (lttb(NDl)) and LttbGapFunctionFactory (lttb(NDls)).
@@ -88,6 +88,7 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
             int position,
             ObjList<Function> args,
             IntList argPositions,
+            CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext,
             boolean hasGap,
             boolean supportNullsDesc
@@ -138,7 +139,17 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
             gapThresholdMicros = parseGapThreshold(args.getQuick(3), argPositions.getQuick(3));
         }
 
-        return new LttbBucketSelectWindowFunction(tsArg, valueArg, targetArg, targetPosition, resolvedTarget, new LttbAlgorithm(gapThresholdMicros), NAME);
+        return new LttbBucketSelectWindowFunction(
+                tsArg,
+                valueArg,
+                targetArg,
+                targetPosition,
+                resolvedTarget,
+                new LttbAlgorithm(gapThresholdMicros),
+                NAME,
+                configuration.getSubsampleMaxRows(),
+                position
+        );
     }
 
     // Preserves SUBSAMPLE's gap-threshold parsing contract: the same TimestampSamplerFactory calls,
@@ -181,8 +192,18 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
     static class LttbBucketSelectWindowFunction extends M4FunctionFactory.BucketSelectWindowFunction {
         private final LttbAlgorithm lttbAlgorithm;
 
-        LttbBucketSelectWindowFunction(Function tsArg, Function valueArg, Function targetArg, int targetPosition, long resolvedTarget, LttbAlgorithm algorithm, String name) {
-            super(tsArg, valueArg, targetArg, targetPosition, resolvedTarget, algorithm, name);
+        LttbBucketSelectWindowFunction(
+                Function tsArg,
+                Function valueArg,
+                Function targetArg,
+                int targetPosition,
+                long resolvedTarget,
+                LttbAlgorithm algorithm,
+                String name,
+                long maxRows,
+                int functionPosition
+        ) {
+            super(tsArg, valueArg, targetArg, targetPosition, resolvedTarget, algorithm, name, maxRows, functionPosition);
             this.lttbAlgorithm = algorithm;
         }
 

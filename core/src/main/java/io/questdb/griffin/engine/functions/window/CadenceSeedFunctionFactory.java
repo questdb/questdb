@@ -54,6 +54,14 @@ public class CadenceSeedFunctionFactory extends AbstractWindowFunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return CadenceFunctionFactory.newInstance0(position, args, argPositions, sqlExecutionContext, true, supportNullsDesc());
+        return CadenceFunctionFactory.newInstance0(
+                position,
+                args,
+                argPositions,
+                configuration,
+                sqlExecutionContext,
+                true,
+                supportNullsDesc()
+        );
     }
 }

@@ -106,6 +106,16 @@ public class MinMaxFunctionFactory extends AbstractWindowFunctionFactory {
         final long resolvedTarget = M4FunctionFactory.BucketSelectWindowFunction.coerceAndValidateConstantTarget(
                 targetArg, targetPosition, sqlExecutionContext);
 
-        return new M4FunctionFactory.BucketSelectWindowFunction(tsArg, valueArg, targetArg, targetPosition, resolvedTarget, MinMaxAlgorithm.INSTANCE, NAME);
+        return new M4FunctionFactory.BucketSelectWindowFunction(
+                tsArg,
+                valueArg,
+                targetArg,
+                targetPosition,
+                resolvedTarget,
+                MinMaxAlgorithm.INSTANCE,
+                NAME,
+                configuration.getSubsampleMaxRows(),
+                position
+        );
     }
 }

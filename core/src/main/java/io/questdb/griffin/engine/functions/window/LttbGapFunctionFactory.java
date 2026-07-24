@@ -57,6 +57,14 @@ public class LttbGapFunctionFactory extends AbstractWindowFunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return LttbFunctionFactory.newInstance0(position, args, argPositions, sqlExecutionContext, true, supportNullsDesc());
+        return LttbFunctionFactory.newInstance0(
+                position,
+                args,
+                argPositions,
+                configuration,
+                sqlExecutionContext,
+                true,
+                supportNullsDesc()
+        );
     }
 }

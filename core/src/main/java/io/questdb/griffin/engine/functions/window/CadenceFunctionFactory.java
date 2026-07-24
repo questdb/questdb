@@ -91,7 +91,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return newInstance0(position, args, argPositions, sqlExecutionContext, false, supportNullsDesc());
+        return newInstance0(position, args, argPositions, configuration, sqlExecutionContext, false, supportNullsDesc());
     }
 
     // Shared by CadenceFunctionFactory (cadence(L)) and CadenceSeedFunctionFactory (cadence(LL)).
@@ -99,6 +99,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             int position,
             ObjList<Function> args,
             IntList argPositions,
+            CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext,
             boolean hasSeed,
             boolean supportNullsDesc
@@ -166,13 +167,24 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             }
         }
 
-        return new CadenceFunction(strideArg, stridePosition, resolvedStride, seedFunc, seedMode, seedPosition);
+        return new CadenceFunction(
+                strideArg,
+                stridePosition,
+                resolvedStride,
+                seedFunc,
+                seedMode,
+                seedPosition,
+                configuration.getSubsampleMaxRows(),
+                position
+        );
     }
 
     // cadence(stride[, seed]) over (order by xxx) - no partition by, no framing.
     static class CadenceFunction extends BaseWindowFunction implements Reopenable {
 
         private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
+        private final int functionPosition;
+        private final long maxRows;
         private final int seedMode;
         private final int seedPosition;
         // Non-null only in SEED_MODE_DETERMINISTIC; may be a bind variable / runtime constant, so its
@@ -199,10 +211,21 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         private long pass2Ordinal;   // running row counter during pass2 (same traversal order as pass1)
         private long selIdx;         // monotonic cursor into `selected` during pass2
 
-        CadenceFunction(Function strideFunc, int stridePosition, long resolvedStride, Function seedFunc, int seedMode, int seedPosition) {
+        CadenceFunction(
+                Function strideFunc,
+                int stridePosition,
+                long resolvedStride,
+                Function seedFunc,
+                int seedMode,
+                int seedPosition,
+                long maxRows,
+                int functionPosition
+        ) {
             super(null);
             this.strideFunc = strideFunc;
             this.stridePosition = stridePosition;
+            this.maxRows = maxRows;
+            this.functionPosition = functionPosition;
             // For a constant stride, already range-validated at newInstance (compile time); for a
             // bind-variable stride this is an unused placeholder, overwritten every execution in
             // init() below.
@@ -314,6 +337,11 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            // Preserve the legacy cadence(1) no-op: it bypassed buffering and the SUBSAMPLE cap.
+            if (isSubsampleKeepFlag() && stride > 1 && count >= maxRows) {
+                throw CairoException.nonCritical().position(functionPosition)
+                        .put("SUBSAMPLE input exceeds maximum of ").put(maxRows).put(" rows");
+            }
             count++;
         }
 

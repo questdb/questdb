@@ -133,7 +133,17 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         final long resolvedTarget = BucketSelectWindowFunction.coerceAndValidateConstantTarget(
                 targetArg, targetPosition, sqlExecutionContext);
 
-        return new BucketSelectWindowFunction(tsArg, valueArg, targetArg, targetPosition, resolvedTarget, M4Algorithm.INSTANCE, NAME);
+        return new BucketSelectWindowFunction(
+                tsArg,
+                valueArg,
+                targetArg,
+                targetPosition,
+                resolvedTarget,
+                M4Algorithm.INSTANCE,
+                NAME,
+                configuration.getSubsampleMaxRows(),
+                position
+        );
     }
 
     // m4(ts, value, target) over (order by xxx) - no partition by, no framing.
@@ -149,6 +159,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
 
         private static final long INITIAL_CAPACITY = 64;
         private final SubsampleAlgorithm algorithm;
+        private final int functionPosition;
+        private final long maxRows;
         private final String name;
         // Per-traversal-row null bitset built in pass1 (1 bit/row, appended in traversal order).
         // pass2 consults it instead of re-deriving isNullRow(record) from a random-access
@@ -192,7 +204,17 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         // readValue() for the per-type null -> NaN mapping.
         private final short valueTag;
 
-        BucketSelectWindowFunction(Function tsArg, Function valueArg, Function targetArg, int targetPosition, long resolvedTarget, SubsampleAlgorithm algorithm, String name) {
+        BucketSelectWindowFunction(
+                Function tsArg,
+                Function valueArg,
+                Function targetArg,
+                int targetPosition,
+                long resolvedTarget,
+                SubsampleAlgorithm algorithm,
+                String name,
+                long maxRows,
+                int functionPosition
+        ) {
             super(null);
             this.tsArg = tsArg;
             this.valueArg = valueArg;
@@ -204,6 +226,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             // init() below.
             this.target = resolvedTarget;
             this.algorithm = algorithm;
+            this.functionPosition = functionPosition;
+            this.maxRows = maxRows;
             this.name = name;
         }
 
@@ -370,8 +394,13 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                 appendNullFlag(true);
                 return;
             }
+            if (isSubsampleKeepFlag() && count >= maxRows) {
+                throw CairoException.nonCritical().position(functionPosition)
+                        .put("SUBSAMPLE input exceeds maximum of ").put(maxRows).put(" rows");
+            }
             if (count >= Integer.MAX_VALUE) {
-                throw CairoException.nonCritical().put(name).put(" input exceeds maximum of ").put(Integer.MAX_VALUE).put(" rows");
+                throw CairoException.nonCritical()
+                        .put(name).put(" input exceeds maximum of ").put(Integer.MAX_VALUE).put(" rows");
             }
             appendNullFlag(false);
             ensureCapacity();

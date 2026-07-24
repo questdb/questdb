@@ -1329,6 +1329,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSubsampleMaxRows() {
+        return getDelegate().getSubsampleMaxRows();
+    }
+
+    @Override
     public long getSymbolTableMaxAllocationPageSize() {
         return getDelegate().getSymbolTableMaxAllocationPageSize();
     }

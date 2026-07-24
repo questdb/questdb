@@ -24,6 +24,8 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -42,6 +44,73 @@ public class SubsampleTest extends AbstractCairoTest {
     private void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
         printSql(sql);
         TestUtils.assertEquals(expected, sink);
+    }
+
+    @Test
+    public void testConfiguredRowCapAppliesOnlyToSubsampleMethods() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS, 5L);
+            execute("CREATE TABLE at_cap AS (" +
+                    "SELECT x::double price, timestamp_sequence(0, 1) ts FROM long_sequence(5)) TIMESTAMP(ts)");
+            execute("CREATE TABLE over_cap AS (" +
+                    "SELECT x::double price, timestamp_sequence(0, 1) ts FROM long_sequence(6)) TIMESTAMP(ts)");
+
+            final String[] methods = {
+                    "uniform(2)",
+                    "cadence(2)",
+                    "cadence(2, 7)",
+                    "m4(price, 2)",
+                    "minmax(price, 2)",
+                    "lttb(price, 2)",
+                    "lttb(price, 2, '1h')"
+            };
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String method : methods) {
+                    try (RecordCursorFactory factory = compiler.compile(
+                            "SELECT price, ts FROM at_cap SUBSAMPLE " + method,
+                            sqlExecutionContext).getRecordCursorFactory();
+                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue("expected rows at cap for " + method, cursor.hasNext());
+                        while (cursor.hasNext()) {
+                            // drain
+                        }
+                    }
+
+                    final String overCapQuery = "SELECT price, ts FROM over_cap SUBSAMPLE " + method;
+                    try (RecordCursorFactory factory = compiler.compile(
+                            overCapQuery,
+                            sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            while (cursor.hasNext()) {
+                                // drain until cap breach
+                            }
+                            Assert.fail("expected row-cap breach for " + method);
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "SUBSAMPLE input exceeds maximum of 5 rows");
+                            Assert.assertEquals(overCapQuery.indexOf(method.substring(0, method.indexOf('('))), e.getPosition());
+                        }
+                    }
+                }
+
+                // Direct public window calls are governed by the query memory tracker, not the
+                // clause-specific cap. cadence(1) also preserves the legacy no-op cap bypass.
+                final String[] uncappedQueries = {
+                        "SELECT uniform(2) OVER (ORDER BY ts) FROM over_cap",
+                        "SELECT m4(ts, price, 2) OVER (ORDER BY ts) FROM over_cap",
+                        "SELECT price, ts FROM over_cap SUBSAMPLE cadence(1)"
+                };
+                for (String query : uncappedQueries) {
+                    try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long count = 0;
+                        while (cursor.hasNext()) {
+                            count++;
+                        }
+                        Assert.assertEquals(query, 6, count);
+                    }
+                }
+            }
+        });
     }
 
     @Test
