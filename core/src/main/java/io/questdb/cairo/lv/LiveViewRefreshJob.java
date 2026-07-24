@@ -82,6 +82,7 @@ import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
@@ -3936,13 +3937,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
         // (0 on the common path); the anchor fields record which logical boundary the
         // resume rolled back to, so a wide gap or a distant anchor is diagnosable.
-        LOG.info().$("live view O3 resume replay completed [view=")
+        final LogRecord replayLog = LOG.info().$("live view O3 resume replay completed [view=")
                 .$(viewName)
                 .$(", advanceTo=").$(committedSeqTxn)
                 .$(", anchorCheckpointId=").$(anchorCheckpointId)
                 .$(", anchorMaxTs=").$(anchorMaxTs)
                 .$(", applyAheadGap=").$(plan.getPinnedSeqTxn() - plan.getTriggerSeqTxn())
-                .$(", rowsEmitted=").$(appendedRows).I$();
+                .$(", rowsEmitted=").$(appendedRows);
+        // What the restore above took from the decoded page cache, and what it had
+        // to map and decode instead - the two numbers that say whether this path is
+        // paying the anchor reload the cache exists to remove. They are this
+        // replay's, not the cache's life, so they read alongside rowsEmitted rather
+        // than against the lifetime totals live_views() carries. A view with no
+        // cache - the engine-wide budget is off - omits the pair rather than
+        // reporting zeroes a cold cache would also report.
+        final LiveViewCheckpointPageCache pageCache = instance.getCheckpointPageCache();
+        if (pageCache != null) {
+            replayLog.$(", pageCacheHits=").$(pageCache.getRestoreHits())
+                    .$(", pageCacheMisses=").$(pageCache.getRestoreMisses());
+        }
+        replayLog.I$();
     }
 
     /**

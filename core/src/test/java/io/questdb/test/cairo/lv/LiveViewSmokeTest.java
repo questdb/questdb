@@ -80,6 +80,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -1620,6 +1621,35 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         drainWalQueue();
         drainJob(job);
         drainWalQueue();
+    }
+
+    /**
+     * Drives the page cache fixture's view: four in-order commits lay down the
+     * boundaries a resume can anchor on, then three corrections just below the head
+     * resume from the same one. The restores after the first are the point - each
+     * meets the pages its predecessor decoded, which is the repeat the cache exists
+     * for and the only way a hit is counted at all. Three corrections rather than
+     * two so the hit count outruns the miss count, which is what lets a caller tell
+     * the two apart.
+     *
+     * @return the view's instance, having resumed from an anchor at least once
+     */
+    private LiveViewInstance drivePageCacheResumeReplays(LiveViewRefreshJob job) throws Exception {
+        for (int second = 10; second <= 40; second += 10) {
+            commitPageCacheRow(job, second, second);
+        }
+        commitPageCacheRow(job, 35, 350);
+        commitPageCacheRow(job, 37, 370);
+        commitPageCacheRow(job, 39, 390);
+
+        final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(lv);
+        Assert.assertTrue(
+                "the view never resumed from an anchor, so it restored no checkpoint and the"
+                        + " assertions that follow would pass over a cache nothing ever probed",
+                lv.getO3ResumeReplayRows() > 0
+        );
+        return lv;
     }
 
     @Test
@@ -13814,28 +13844,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 assertQuery(PAGE_CACHE_QUERY).noLeakCheck().noRandomAccess()
                         .returns(PAGE_CACHE_HEADER + "null\tnull\tnull\tnull\tnull\n");
 
-                // Four in-order commits lay down the boundaries a resume can
-                // anchor on, then three corrections just below the head resume
-                // from the same one. The restores after the first are the point:
-                // each meets the pages its predecessor decoded, which is the
-                // repeat the cache exists for and the only way a hit is counted at
-                // all. Three rather than two so the hit count outruns the miss
-                // count, which is what lets the tuple below tell the two columns
-                // apart.
-                for (int second = 10; second <= 40; second += 10) {
-                    commitPageCacheRow(job, second, second);
-                }
-                commitPageCacheRow(job, 35, 350);
-                commitPageCacheRow(job, 37, 370);
-                commitPageCacheRow(job, 39, 390);
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                Assert.assertTrue(
-                        "the view never resumed from an anchor, so it restored no checkpoint and"
-                                + " the assertions below would pass over a cache nothing ever probed",
-                        lv.getO3ResumeReplayRows() > 0
-                );
+                final LiveViewInstance lv = drivePageCacheResumeReplays(job);
                 final LiveViewCheckpointPageCache cache = lv.getCheckpointPageCache();
                 Assert.assertNotNull("a view that restored under an enabled budget must hold a cache", cache);
                 Assert.assertTrue("the restores probed no ring page", cache.getMisses() > 0);
@@ -13861,6 +13870,49 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         .put(cache.getMisses()).put('\t')
                         .put(cache.getAdmissionFraction()).put('\n');
                 assertQuery(PAGE_CACHE_QUERY).noLeakCheck().noRandomAccess().returns(expected.toString());
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testResumeReplayLogLineCarriesThisReplaysPageCacheCounters() throws Exception {
+        // The resume replay line is the per-commit record of the path the page
+        // cache exists to make cheap, so what it has to carry is what THIS replay
+        // took from the cache. The lifetime totals live_views() reports would say
+        // nothing about the replay being logged - by the tenth of a second they are
+        // a sum over hundreds of restores.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW)");
+
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance lv = drivePageCacheResumeReplays(job);
+                final LiveViewCheckpointPageCache cache = lv.getCheckpointPageCache();
+                Assert.assertNotNull("a view that restored under an enabled budget must hold a cache", cache);
+                Assert.assertTrue("the last restore served nothing, so no line can show a hit", cache.getRestoreHits() > 0);
+                // The controls the match below rests on: with either pair equal to
+                // its lifetime counterpart, a line built from the wrong one would
+                // read the same and the assertion would stop discriminating.
+                Assert.assertNotEquals(cache.getHits(), cache.getRestoreHits());
+                Assert.assertNotEquals(cache.getMisses(), cache.getRestoreMisses());
+
+                // The log is written asynchronously, so plant a sentinel behind the
+                // last replay line and wait for it: one FIFO path means every
+                // earlier line is in the sink by the time this one is.
+                LOG.info().$("live view page cache log flush barrier").$();
+                capture.waitForRegex("live view page cache log flush barrier");
+                capture.assertLoggedRE("live view O3 resume replay completed \\[view=lv, .*"
+                        + ", pageCacheHits=" + cache.getRestoreHits()
+                        + ", pageCacheMisses=" + cache.getRestoreMisses() + "]");
+            } finally {
+                capture.stop();
             }
             execute("DROP LIVE VIEW lv");
         });

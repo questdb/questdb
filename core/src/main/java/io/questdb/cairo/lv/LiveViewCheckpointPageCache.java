@@ -139,6 +139,12 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
     // Live entries plus tombstones - what the table's load factor is measured on.
     private int occupied;
     private int rehashThreshold;
+    // What the restore beginRestore opened has served, and what it has gone on to
+    // decode instead. Counted per restore rather than accumulated, because the
+    // line the refresh job logs when a resume replay completes describes that one
+    // replay - the lifetime pair below is what live_views() carries.
+    private long restoreHits;
+    private long restoreMisses;
     // Slot bytes every page probed since beginRestore would cost to hold, whether
     // the probe hit, missed or named a page too small or too large to cache.
     private long restoreProbedBytes;
@@ -204,8 +210,14 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
      * abandons - a corrupt root it falls back from, a failure it propagates - is
      * not a sample of anything, because it stopped part way through the pages it
      * would have read.
+     * <p>
+     * The per-restore hit and miss counts restart here for the same reason: the
+     * root a fallback loop gives up on describes no restore that happened, so the
+     * attempt that follows must not inherit its tally.
      */
     public void beginRestore() {
+        restoreHits = 0;
+        restoreMisses = 0;
         restoreProbedBytes = 0;
     }
 
@@ -351,6 +363,26 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
     }
 
     /**
+     * @return page probes this cache served since {@link #beginRestore()}, which
+     * after {@link #endRestore()} is what the restore just finished took from the
+     * cache. Unlike {@link #getHits()} this counts one restore rather than the
+     * cache's life, which is what the refresh job puts on the line it logs when a
+     * resume replay completes
+     */
+    public long getRestoreHits() {
+        return restoreHits;
+    }
+
+    /**
+     * @return page probes since {@link #beginRestore()} that went on to map the
+     * segment and decode. Together with {@link #getRestoreHits()} this is one
+     * restore's hit ratio, and their sum is the pages that restore read
+     */
+    public long getRestoreMisses() {
+        return restoreMisses;
+    }
+
+    /**
      * @return pages the cache currently holds from {@code segmentId}, which is
      * what an eviction of that segment would drop
      */
@@ -404,6 +436,7 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
         if (index > -1) {
             if (matches(index, ref)) {
                 hits++;
+                restoreHits++;
                 return addresses[index];
             }
             // A data segment's bytes are immutable, so two refs that name one
@@ -413,6 +446,7 @@ public class LiveViewCheckpointPageCache implements QuietCloseable {
             removeAt(index);
         }
         misses++;
+        restoreMisses++;
         return 0;
     }
 

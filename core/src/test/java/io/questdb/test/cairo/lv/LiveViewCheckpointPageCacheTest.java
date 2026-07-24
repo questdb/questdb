@@ -746,6 +746,58 @@ public class LiveViewCheckpointPageCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestoreHitsAndMissesCountOneRestoreNotTheCachesLife() throws Exception {
+        assertMemoryLeak(() -> {
+            final int pageBytes = 512;
+            final long address = allocScratch(pageBytes, 5);
+            final LiveViewCheckpointPageCacheBudget budget =
+                    new LiveViewCheckpointPageCacheBudget(64L * LiveViewCheckpointPageCache.SLAB_BYTES);
+            try (LiveViewCheckpointPageCache cache = new LiveViewCheckpointPageCache(budget)) {
+                // A cold restore decodes everything it reads.
+                cache.beginRestore();
+                for (int i = 0; i < 4; i++) {
+                    final LiveViewCheckpointStatePageRef ref = ref(1, (long) i * pageBytes, TIMESTAMP_KIND, pageBytes);
+                    Assert.assertEquals(0, cache.probe(ref));
+                    Assert.assertTrue(cache.admit(ref, address));
+                }
+                cache.endRestore();
+                Assert.assertEquals(0, cache.getRestoreHits());
+                Assert.assertEquals(4, cache.getRestoreMisses());
+
+                // The next one meets all four, plus a page the first never read.
+                cache.beginRestore();
+                for (int i = 0; i < 4; i++) {
+                    Assert.assertTrue(cache.probe(ref(1, (long) i * pageBytes, TIMESTAMP_KIND, pageBytes)) != 0);
+                }
+                Assert.assertEquals(0, cache.probe(ref(1, 4L * pageBytes, TIMESTAMP_KIND, pageBytes)));
+                cache.endRestore();
+                // This restore's tally rather than the two summed, which is the
+                // whole difference between these counters and the lifetime pair -
+                // the line the refresh job logs describes one replay.
+                Assert.assertEquals(4, cache.getRestoreHits());
+                Assert.assertEquals(1, cache.getRestoreMisses());
+                Assert.assertEquals(4, cache.getHits());
+                Assert.assertEquals(5, cache.getMisses());
+
+                // A restore the caller abandons leaves its tally for the next
+                // beginRestore to clear, the rule the working set already follows.
+                cache.beginRestore();
+                Assert.assertTrue(cache.probe(ref(1, 0, TIMESTAMP_KIND, pageBytes)) != 0);
+                cache.beginRestore();
+                Assert.assertEquals(0, cache.getRestoreHits());
+                Assert.assertEquals(0, cache.getRestoreMisses());
+                // The lifetime pair counts it, because the probe did happen.
+                Assert.assertEquals(5, cache.getHits());
+                Assert.assertEquals(5, cache.getMisses());
+            } finally {
+                Unsafe.free(address, pageBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+            Assert.assertEquals(0, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_CHECKPOINT_CACHE));
+        });
+    }
+
+    @Test
     public void testSelfTunedFractionSplitsTheBudgetBetweenCaches() throws Exception {
         assertMemoryLeak(() -> {
             final int pageBytes = MAX_PAGE_BYTES;
