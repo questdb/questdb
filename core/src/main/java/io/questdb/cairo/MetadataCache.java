@@ -206,6 +206,15 @@ public class MetadataCache implements QuietCloseable {
         }
     }
 
+    /**
+     * Identity of the published expiry-policy snapshot. A republish constructs a new snapshot
+     * object, so tests can assert whether an operation republished without exposing the contents.
+     */
+    @TestOnly
+    public Object getExpiryPolicySnapshotIdentity() {
+        return expiryPolicySnapshot;
+    }
+
     public long getExpiryPolicyVersion() {
         return expiryPolicyVersion;
     }
@@ -877,7 +886,12 @@ public class MetadataCache implements QuietCloseable {
                     token.getTableId(),
                     table.getMetadataVersion()
             );
-            if (fullyHydrated || hasPendingExpiryPublication) {
+            // Same narrowing as hydrateTable(TableMetadata): only a table that can affect the policy
+            // snapshot pays the O(all tables) rebuild.
+            final String hydratedPredicate = table.getExpiryPredicate();
+            final boolean isPolicySnapshotAffected = (hydratedPredicate != null && !hydratedPredicate.isEmpty())
+                    || expiryPolicySnapshot.tableIds.contains(token.getTableId());
+            if (hasPendingExpiryPublication || (fullyHydrated && isPolicySnapshotAffected)) {
                 publishActiveExpiryPolicySnapshot();
             }
             LOG.debug().$("hydrated metadata [table=").$(token).I$();
@@ -1328,12 +1342,16 @@ public class MetadataCache implements QuietCloseable {
                 tableMap.remove(tableName);
             }
             final boolean hasPendingExpiryPublication = clearPendingExpiryPolicy(tableToken.getTableId());
-            if (entry != null
-                    || hasPendingExpiryPublication
-                    || expiryPolicySnapshot.tableIds.contains(tableToken.getTableId())) {
+            final String droppedPredicate = entry != null ? entry.getExpiryPredicate() : null;
+            if (hasPendingExpiryPublication
+                    || expiryPolicySnapshot.tableIds.contains(tableToken.getTableId())
+                    || (droppedPredicate != null && !droppedPredicate.isEmpty())) {
                 // DROP is authoritative even when failed hydration already evicted the CairoTable. Rebuild the
                 // immutable snapshot so this exact table ID cannot keep the conservative gate open forever.
+                // A policy-less table contributed nothing to the snapshot, so its drop skips the rebuild.
                 publishActiveExpiryPolicySnapshot();
+            }
+            if (entry != null) {
                 LOG.info().$("dropped [table=").$(tableToken).I$();
             }
         }
@@ -1458,7 +1476,14 @@ public class MetadataCache implements QuietCloseable {
 
             tableMap.put(table.getTableName(), table);
             final boolean hasPendingExpiryPublication = clearPendingExpiryPolicy(tableToken.getTableId(), metadataVersion);
-            if (fullyHydrated || hasPendingExpiryPublication) {
+            // Republish only when this table can affect the policy snapshot: it carries a predicate
+            // (the snapshot must reference the fresh CairoTable), its id is in the published policied
+            // set (covers a dropped policy), or its pending mark was just cleared. Hydration of any
+            // other table would rebuild an identical snapshot, making every DDL of any table - the
+            // ILP auto-ADD-COLUMN path included - O(all tables) for no observable change.
+            final boolean isPolicySnapshotAffected = (expiryPredicate != null && !expiryPredicate.isEmpty())
+                    || expiryPolicySnapshot.tableIds.contains(tableToken.getTableId());
+            if (hasPendingExpiryPublication || (fullyHydrated && isPolicySnapshotAffected)) {
                 publishActiveExpiryPolicySnapshot();
             }
             LOG.info().$("hydrated [table=").$(table.getTableToken()).I$();
@@ -1478,8 +1503,14 @@ public class MetadataCache implements QuietCloseable {
             if (index < 0) {
                 CairoTable fromTab = tableMap.valueAt(index);
                 tableMap.removeAt(index);
-                tableMap.put(toTableToken.getTableName(), new CairoTable(toTableToken, fromTab));
-                if (fullyHydrated) {
+                final CairoTable toTab = new CairoTable(toTableToken, fromTab);
+                tableMap.put(toTableToken.getTableName(), toTab);
+                // Rename keeps the table id, so the snapshot needs a rebuild only when it references
+                // this table - cleanup discovery must see the renamed token.
+                final String renamedPredicate = toTab.getExpiryPredicate();
+                if (fullyHydrated
+                        && ((renamedPredicate != null && !renamedPredicate.isEmpty())
+                        || expiryPolicySnapshot.tableIds.contains(toTableToken.getTableId()))) {
                     publishActiveExpiryPolicySnapshot();
                 }
             }

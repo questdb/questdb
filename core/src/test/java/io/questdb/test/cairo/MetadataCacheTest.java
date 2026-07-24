@@ -1072,6 +1072,120 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpirySnapshotRepublishSkipsUnrelatedTableDdl() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE bystander (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            final TableToken mv = engine.verifyTableName("mv");
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(mv));
+            // A definitive "no policy" verdict for the bystander proves fullyHydrated is latched,
+            // so the assertSame checks below exercise the narrowed gate rather than passing
+            // vacuously through the not-yet-hydrated publish skip.
+            Assert.assertFalse(cache.mayTableHaveExpiryPolicy(engine.verifyTableName("bystander")));
+
+            // DDL on a table outside the policy snapshot leaves the published snapshot object
+            // untouched: rebuilding it would make every DDL of any table O(all tables).
+            final Object snapshotBefore = cache.getExpiryPolicySnapshotIdentity();
+            execute("ALTER TABLE bystander ADD COLUMN y INT");
+            drainWalQueue();
+            Assert.assertSame(
+                    "hydration of a policy-less table must not rebuild the snapshot",
+                    snapshotBefore, cache.getExpiryPolicySnapshotIdentity()
+            );
+
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.hydrateTable(engine.verifyTableName("bystander"));
+            }
+            Assert.assertSame(
+                    "re-hydration of a policy-less table must not rebuild the snapshot",
+                    snapshotBefore, cache.getExpiryPolicySnapshotIdentity()
+            );
+
+            execute("RENAME TABLE bystander TO onlooker");
+            drainWalQueue();
+            Assert.assertSame(
+                    "rename of a policy-less table must not rebuild the snapshot",
+                    snapshotBefore, cache.getExpiryPolicySnapshotIdentity()
+            );
+
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.dropTable(engine.verifyTableName("onlooker"));
+            }
+            Assert.assertSame(
+                    "drop of a policy-less table must not rebuild the snapshot",
+                    snapshotBefore, cache.getExpiryPolicySnapshotIdentity()
+            );
+
+            // The policy gate and cleanup discovery still see the policied view.
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(mv));
+            final ObjList<TableToken> tokens = new ObjList<>();
+            try (MetadataCacheReader ro = cache.readLock()) {
+                ro.collectPoliciedTables(tokens, new ObjList<>(), new LongList());
+            }
+            Assert.assertEquals(1, tokens.size());
+        });
+    }
+
+    @Test
+    public void testExpirySnapshotRepublishesForPolicyAffectingDdl() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            final TableToken mv = engine.verifyTableName("mv");
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(mv));
+
+            // Replacing the predicate republishes and cleanup discovery sees the new predicate.
+            final Object beforeReplace = cache.getExpiryPolicySnapshotIdentity();
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < 1");
+            drainWalQueue();
+            Assert.assertNotSame(beforeReplace, cache.getExpiryPolicySnapshotIdentity());
+            final ObjList<TableToken> tokens = new ObjList<>();
+            final ObjList<String> predicates = new ObjList<>();
+            try (MetadataCacheReader ro = cache.readLock()) {
+                ro.collectPoliciedTables(tokens, predicates, new LongList());
+            }
+            Assert.assertEquals(1, tokens.size());
+            TestUtils.assertContains(predicates.get(0), "v < 1");
+
+            // Re-hydration of the policied view republishes so the snapshot references the fresh CairoTable.
+            final Object beforeHydrate = cache.getExpiryPolicySnapshotIdentity();
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.hydrateTable(mv);
+            }
+            Assert.assertNotSame(beforeHydrate, cache.getExpiryPolicySnapshotIdentity());
+
+            // DROP EXPIRE removes the id from the snapshot and discovery goes empty.
+            execute("ALTER MATERIALIZED VIEW mv DROP EXPIRE");
+            drainWalQueue();
+            Assert.assertFalse(cache.mayTableHaveExpiryPolicy(mv));
+            tokens.clear();
+            try (MetadataCacheReader ro = cache.readLock()) {
+                ro.collectPoliciedTables(tokens, new ObjList<>(), new LongList());
+            }
+            Assert.assertEquals(0, tokens.size());
+
+            // Dropping a policied view closes the gate as well.
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < 2");
+            drainWalQueue();
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(mv));
+            execute("DROP MATERIALIZED VIEW mv");
+            drainWalQueue();
+            Assert.assertFalse(cache.mayTableHaveExpiryPolicy(mv));
+        });
+    }
+
+    @Test
     public void testPendingExpiryPolicyCancellationPreservesActivePolicy() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
