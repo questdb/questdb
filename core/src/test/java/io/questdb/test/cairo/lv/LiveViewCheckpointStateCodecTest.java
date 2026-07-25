@@ -348,6 +348,58 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
                         2,
                         "overflows 64 bits"
                 );
+
+                // A delta-of-delta that carries the running delta past Long.MAX_VALUE is
+                // a distinct rejection from one that drags it below zero: the first
+                // overflows the accumulator, the second decodes exactly and decreases.
+                encoded.truncate();
+                encoded.putLong(0);
+                for (int i = 0; i < 8; i++) {
+                    encoded.putByte((byte) 0xff); // first delta = Long.MAX_VALUE
+                }
+                encoded.putByte((byte) 0x7f);
+                encoded.putByte((byte) 0x02); // ZigZag(1), taking the delta past the top
+                assertTimestampDecodeFails(
+                        encoded,
+                        target,
+                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
+                        3,
+                        "timestamp delta arithmetic overflow"
+                );
+            }
+        });
+    }
+
+    /**
+     * The XOR stream packs a row's control bits and its significant bits at whatever
+     * bit offset the previous row left behind, so a field can start at any of the
+     * eight alignments and span up to nine bytes. A repeated full-width window costs
+     * 66 bits a row, which walks the alignment round and leaves most fields crossing a
+     * byte - and sweeping the row count ends the stream at every byte offset, so the
+     * last field of some arm sits against the end of the stream. The other arm varies
+     * the window width instead, which moves the two 6-bit headers through alignments
+     * a uniform run never reaches.
+     */
+    @Test
+    public void testDoubleXorRoundTripsFieldsAtEveryAlignment() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int n = 2; n <= 40; n++) {
+                final long[] bits = new long[n];
+                for (int i = 0; i < n; i++) {
+                    // Consecutive values XOR to 0x8000000000000001: no leading and no
+                    // trailing zeros, so every window spans the full 64 bits.
+                    bits[i] = (i & 1) == 0 ? 1L : Long.MIN_VALUE;
+                }
+                assertDoubleRoundTrip(bits, LiveViewCheckpointStateCodec.DOUBLE_XOR);
+            }
+            for (int n = 2; n <= 40; n++) {
+                final long[] bits = new long[n];
+                long value = 0x3ff0_0000_0000_0000L;
+                for (int i = 0; i < n; i++) {
+                    bits[i] = value;
+                    value ^= 1L << (i % Long.SIZE);
+                }
+                assertDoubleRoundTrip(bits, LiveViewCheckpointStateCodec.DOUBLE_XOR);
             }
         });
     }
