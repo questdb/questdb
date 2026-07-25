@@ -417,8 +417,8 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                 execute("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not access parquet data file for _pm metadata");
-                TestUtils.assertContains(e.getFlyweightMessage(), TableUtils.PARQUET_METADATA_FILE_NAME);
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
+                TestUtils.assertContains(e.getFlyweightMessage(), "detachStatus=ATTACH_ERR_MISSING_PARQUET_DATA");
             }
         });
     }

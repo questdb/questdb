@@ -26,6 +26,7 @@ use crate::parquet::error::{
     fmt_err, ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult,
 };
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
+use crate::parquet_metadata::types::SeqTxn;
 use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{
     to_compressions, to_encodings, to_parquet_schema, Column, Partition,
@@ -38,7 +39,9 @@ use parquet2::schema::types::ParquetType;
 use parquet2::schema::Repetition;
 use parquet2::write;
 use parquet2::write::footer_cache::FooterCache;
-use parquet2::write::{ColumnOffsetsMetadata, CopiedColumnIndex, ParquetFile, Version};
+use parquet2::write::{
+    write_row_group, ColumnOffsetsMetadata, CopiedColumnIndex, ParquetFile, Version,
+};
 use parquet_format_safe::thrift::protocol::{TCompactInputProtocol, TCompactOutputProtocol};
 use parquet_format_safe::{
     ColumnChunk, ColumnMetaData, CompressionCodec, DataPageHeader, DictionaryPageHeader,
@@ -46,6 +49,7 @@ use parquet_format_safe::{
     Type,
 };
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use qdb_parquet_meta::convert::resolve_column_id;
 use rapidhash::RapidHashMap;
 use std::collections::HashSet;
 use std::fs::File;
@@ -144,6 +148,8 @@ pub struct ParquetUpdater {
     // incremental gate in end(). It is not a `_pm` size.
     existing_parquet_file_size: i64,
     result_parquet_meta_size: i64,
+    /// Apply-time `seqTxn` for the new `_pm` snapshot.
+    seq_txn: SeqTxn,
     // Per-VARCHAR-column "still all-ASCII" tracker, keyed by parquet field_id.
     // Seeded at construction from the old qdb_meta's ascii flag:
     //   old.ascii == Some(true)  -> initial value `true`  (scan new aux to verify)
@@ -161,6 +167,43 @@ pub struct ParquetUpdater {
     // Columns missing from the map at end() (no old entry and no
     // set_target_schema seeding) resolve to `false` via unwrap_or(false).
     varchar_all_ascii: RapidHashMap<i32, bool>,
+    /// Deterministic work counters used by resource/performance regression
+    /// tests. They also make hybrid-rewrite behavior observable without a
+    /// timing-sensitive wall-clock assertion.
+    hybrid_copied_column_chunks: u64,
+    hybrid_encoded_column_chunks: u64,
+}
+
+fn publish_parquet_meta_with_sync<S>(
+    parquet_meta_file: &mut File,
+    new_file_size: u64,
+    sync: bool,
+    sync_tail_before_publish: bool,
+    mut sync_data: S,
+) -> ParquetResult<()>
+where
+    S: FnMut(&File) -> std::io::Result<()>,
+{
+    if sync && sync_tail_before_publish {
+        sync_data(parquet_meta_file)
+            .map_err(ParquetError::from)
+            .context("could not fsync appended _pm snapshot before publication")?;
+    }
+    parquet_meta_file
+        .seek(SeekFrom::Start(
+            crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF as u64,
+        ))
+        .map_err(ParquetError::from)?;
+    parquet_meta_file
+        .write_all(&new_file_size.to_le_bytes())
+        .map_err(ParquetError::from)
+        .context("could not patch header parquet_meta_file_size in _pm file")?;
+    if sync {
+        sync_data(parquet_meta_file)
+            .map_err(ParquetError::from)
+            .context("could not fsync published _pm header")?;
+    }
+    Ok(())
 }
 
 impl ParquetUpdater {
@@ -183,6 +226,7 @@ impl ParquetUpdater {
         parquet_meta_file_size: u64,
         append_base: u64,
         existing_parquet_file_size: i64,
+        seq_txn: SeqTxn,
     ) -> ParquetResult<Self> {
         fn version_from(value: i32) -> ParquetResult<Version> {
             match value {
@@ -429,7 +473,10 @@ impl ParquetUpdater {
             append_base,
             existing_parquet_file_size,
             result_parquet_meta_size: -1,
+            seq_txn,
             varchar_all_ascii,
+            hybrid_copied_column_chunks: 0,
+            hybrid_encoded_column_chunks: 0,
         })
     }
 
@@ -687,7 +734,7 @@ impl ParquetUpdater {
         }
 
         let sorting_columns = self.parquet_file.sorting_columns().map(<[_]>::to_vec);
-        let thrift_rg = build_raw_row_group(columns, row_count, sorting_columns);
+        let thrift_rg = build_raw_row_group(columns, row_count, sorting_columns)?;
 
         self.parquet_file
             .write_raw_row_group_with_index(
@@ -713,7 +760,8 @@ impl ParquetUpdater {
     /// metadata. Format hints (e.g. `LocalKeyIsGlobal` for SYMBOL columns)
     /// are preserved from the old schema for columns that still exist.
     pub fn set_target_schema(&mut self, partition: &Partition) -> ParquetResult<()> {
-        let (schema, _kv) = to_parquet_schema(partition, self.raw_array_encoding, -1)?;
+        let (schema, _kv) =
+            to_parquet_schema(partition, self.raw_array_encoding, -1, SeqTxn::UNSET)?;
         self.parquet_file.set_schema(schema);
 
         // Build column_id → old schema index from the old file's parquet field_ids.
@@ -774,11 +822,16 @@ impl ParquetUpdater {
                 col.data_type
             };
 
+            let ascii = old_col_id_to_idx
+                .get(&col.id)
+                .and_then(|&old_idx| old_qdb_meta.as_ref().and_then(|m| m.schema.get(old_idx)))
+                .and_then(|old_col| old_col.ascii);
+
             qdb_meta.schema.push(QdbMetaCol {
                 column_type,
                 column_top: 0,
                 format,
-                ascii: None,
+                ascii,
                 id: Some(col.id),
             });
         }
@@ -953,7 +1006,7 @@ impl ParquetUpdater {
             .collect::<ParquetResult<Vec<_>>>()?;
 
         let sorting_columns = self.parquet_file.sorting_columns().map(<[_]>::to_vec);
-        let thrift_rg = build_raw_row_group(columns, row_count, sorting_columns);
+        let thrift_rg = build_raw_row_group(columns, row_count, sorting_columns)?;
 
         // Concatenate existing + null bytes and write as one raw row group.
         self.copy_buffer.extend_from_slice(&null_bytes_buf);
@@ -966,6 +1019,303 @@ impl ParquetUpdater {
                     format!("Failed to raw-copy row group {rg_idx} with null columns"),
                 )
             })
+    }
+
+    /// Rewrites only the columns supplied in `partition` and streams every
+    /// other target-schema column chunk byte-for-byte from the source row
+    /// group. The supplied columns are matched by stable parquet field id, so
+    /// their order does not need to match the target schema.
+    ///
+    /// This operation is rewrite-only and requires `set_target_schema()` first.
+    /// Chunk statistics, encodings, compression, bloom filters, and page
+    /// indexes are preserved for copied columns; changed columns get freshly
+    /// generated page indexes.
+    pub fn rewrite_row_group_columns(
+        &mut self,
+        rg_index: i32,
+        partition: &Partition,
+    ) -> ParquetResult<()> {
+        if !self.is_rewrite {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "rewrite_row_group_columns requires rewrite mode"
+            ));
+        }
+        if rg_index < 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "rewrite_row_group_columns: negative rg_index: {}",
+                rg_index
+            ));
+        }
+        let rg_idx = rg_index as usize;
+        if rg_idx >= self.file_metadata.row_groups.len() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "rewrite_row_group_columns: row group index {} out of range [0,{})",
+                rg_idx,
+                self.file_metadata.row_groups.len()
+            ));
+        }
+        if partition.columns.is_empty() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "rewrite_row_group_columns: no changed columns"
+            ));
+        }
+        if self.target_col_id_to_pos.is_none() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "rewrite_row_group_columns: target schema not set"
+            ));
+        }
+
+        let row_count = self.file_metadata.row_groups[rg_idx].num_rows();
+        if partition
+            .columns
+            .iter()
+            .any(|col| col.row_count != row_count)
+        {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "rewrite_row_group_columns: changed column row count does not match source row group {}",
+                row_count
+            ));
+        }
+
+        self.track_ascii(partition);
+        self.track_new_data_ascii(partition);
+
+        let target_fields = self.parquet_file.schema().fields().to_vec();
+        let target_descriptors = self.parquet_file.schema().columns().to_vec();
+        let target_col_count = target_fields.len();
+        let target_col_id_to_pos = self.target_col_id_to_pos.as_ref().unwrap();
+        let old_fields = self.file_metadata.schema_descr.fields().to_vec();
+        let old_col_id_to_pos: RapidHashMap<i32, usize> = old_fields
+            .iter()
+            .enumerate()
+            .filter_map(|(i, field)| field.get_field_info().id.map(|id| (id, i)))
+            .collect();
+
+        let mut changed_target_positions = Vec::with_capacity(partition.columns.len());
+        let mut changed_ids = HashSet::with_capacity(partition.columns.len());
+        for col in &partition.columns {
+            let target_pos = target_col_id_to_pos.get(&col.id).copied().ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "rewrite_row_group_columns: changed column id {} is absent from target schema",
+                    col.id
+                )
+            })?;
+            if !changed_ids.insert(col.id) {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "rewrite_row_group_columns: duplicate changed column id {}",
+                    col.id
+                ));
+            }
+            changed_target_positions.push(target_pos);
+        }
+
+        self.parquet_file.ensure_started().map_err(|e| {
+            ParquetError::with_descr(
+                ParquetErrorReason::Parquet2(e),
+                "Failed to write file header before hybrid row-group rewrite",
+            )
+        })?;
+        let output_start = self.parquet_file.current_offset();
+        let mut bytes_written = 0u64;
+        let mut columns: Vec<Option<ColumnChunk>> = vec![None; target_col_count];
+        let mut bloom_bitsets: Vec<Option<Vec<u8>>> = vec![None; target_col_count];
+        let mut copied_page_index = std::iter::repeat_with(|| None)
+            .take(target_col_count)
+            .collect::<Vec<_>>();
+        let mut stream_buf = [0u8; 64 * 1024];
+
+        // Stream unchanged compressed page bytes (and their serialized bloom
+        // filters) directly from source to destination. Only the fixed-size
+        // transfer buffer above is retained, independent of table width.
+        for (target_pos, target_field) in target_fields.iter().enumerate() {
+            let target_id = target_field.get_field_info().id.ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "rewrite_row_group_columns: target column {} has no field id",
+                    target_pos
+                )
+            })?;
+            if changed_ids.contains(&target_id) {
+                continue;
+            }
+            let source_pos = old_col_id_to_pos.get(&target_id).copied().ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "rewrite_row_group_columns: unchanged target column id {} is absent from source",
+                    target_id
+                )
+            })?;
+            let source_col = self.file_metadata.row_groups[rg_idx].columns()[source_pos].clone();
+            let source_descriptor = source_col.descriptor();
+            let target_descriptor = &target_descriptors[target_pos];
+            let source_primitive = &source_descriptor.descriptor.primitive_type;
+            let target_primitive = &target_descriptor.descriptor.primitive_type;
+            if source_primitive.physical_type != target_primitive.physical_type
+                || source_primitive.logical_type != target_primitive.logical_type
+                || source_primitive.converted_type != target_primitive.converted_type
+                || source_descriptor.descriptor.max_def_level
+                    != target_descriptor.descriptor.max_def_level
+                || source_descriptor.descriptor.max_rep_level
+                    != target_descriptor.descriptor.max_rep_level
+            {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "rewrite_row_group_columns: unchanged column id {} has incompatible source and target parquet types",
+                    target_id
+                ));
+            }
+
+            let (source_data_offset, source_data_len) = source_col.byte_range();
+            let target_data_offset = output_start + bytes_written;
+            let offset_delta = target_data_offset as i64 - source_data_offset as i64;
+            copied_page_index[target_pos] = build_copied_column_index(
+                source_col.column_chunk(),
+                &mut self.reader,
+                offset_delta,
+            )?;
+            copy_file_range(
+                &mut self.reader,
+                self.parquet_file.writer_mut(),
+                source_data_offset,
+                source_data_len,
+                &mut stream_buf,
+            )?;
+            bytes_written += source_data_len;
+
+            let mut thrift_col = source_col.column_chunk().clone();
+            adjust_column_chunk_offsets(&mut thrift_col, offset_delta);
+            if let Some(source_bloom_offset) = source_col
+                .metadata()
+                .bloom_filter_offset
+                .filter(|&offset| offset > 0)
+            {
+                let bloom_size = parquet2::bloom_filter::total_size(&source_col, &mut self.reader)?;
+                if bloom_size > 0 {
+                    let bloom_size_usize = usize::try_from(bloom_size).map_err(|_| {
+                        fmt_err!(
+                            InvalidLayout,
+                            "rewrite_row_group_columns: bloom filter size {} does not fit usize",
+                            bloom_size
+                        )
+                    })?;
+                    let mut bloom_bytes = Vec::new();
+                    bloom_bytes.try_reserve_exact(bloom_size_usize).map_err(|_| {
+                        fmt_err!(
+                            InvalidLayout,
+                            "rewrite_row_group_columns: bloom filter size {} exceeds available memory",
+                            bloom_size
+                        )
+                    })?;
+                    bloom_bytes.resize(bloom_size_usize, 0);
+                    self.reader
+                        .seek(SeekFrom::Start(source_bloom_offset as u64))?;
+                    self.reader.read_exact(&mut bloom_bytes)?;
+                    let target_bloom_offset = output_start + bytes_written;
+                    self.parquet_file.writer_mut().write_all(&bloom_bytes)?;
+                    bytes_written += bloom_size as u64;
+                    thrift_col.meta_data.as_mut().unwrap().bloom_filter_offset =
+                        Some(target_bloom_offset as i64);
+                    bloom_bitsets[target_pos] =
+                        parquet2::bloom_filter::read_from_slice_at_offset(0, &bloom_bytes)
+                            .ok()
+                            .filter(|bitset| !bitset.is_empty())
+                            .map(<[u8]>::to_vec);
+                }
+            }
+            thrift_col.meta_data.as_mut().unwrap().path_in_schema =
+                target_descriptor.path_in_schema.clone();
+            columns[target_pos] = Some(thrift_col);
+        }
+
+        // Encode only changed columns. Their temporary schema is deliberately
+        // narrow, so the encoder's CPU and working set scale with the number of
+        // changes rather than with the full table width.
+        let (changed_schema, _) =
+            to_parquet_schema(partition, self.raw_array_encoding, -1, SeqTxn::UNSET)?;
+        let changed_bloom_columns: HashSet<usize> = changed_target_positions
+            .iter()
+            .enumerate()
+            .filter_map(|(changed_pos, target_pos)| {
+                self.bloom_filter_columns
+                    .contains(target_pos)
+                    .then_some(changed_pos)
+            })
+            .collect();
+        let options = self.row_group_options();
+        let (changed_iter, changed_bloom_hashes) = create_row_group(
+            partition,
+            0,
+            row_count,
+            changed_schema.fields(),
+            &to_encodings(partition),
+            options,
+            &to_compressions(partition),
+            &changed_bloom_columns,
+            false,
+        )?;
+        let changed_offset = output_start + bytes_written;
+        let bloom_filter_fpp = self.parquet_file.options().bloom_filter_fpp;
+        let (changed_rg, changed_page_specs, changed_size, changed_blooms) = write_row_group(
+            self.parquet_file.writer_mut(),
+            changed_offset,
+            changed_schema.columns(),
+            changed_iter,
+            &None,
+            rg_idx,
+            bloom_filter_fpp,
+            &changed_bloom_hashes,
+        )?;
+        bytes_written += changed_size;
+        let mut page_specs = (0..target_col_count)
+            .map(|_| Vec::new())
+            .collect::<Vec<_>>();
+        for (changed_pos, (mut changed_col, changed_specs)) in changed_rg
+            .columns
+            .into_iter()
+            .zip(changed_page_specs)
+            .enumerate()
+        {
+            let target_pos = changed_target_positions[changed_pos];
+            changed_col.meta_data.as_mut().unwrap().path_in_schema =
+                target_descriptors[target_pos].path_in_schema.clone();
+            columns[target_pos] = Some(changed_col);
+            bloom_bitsets[target_pos] = changed_blooms[changed_pos].clone();
+            page_specs[target_pos] = changed_specs;
+        }
+
+        let columns = columns
+            .into_iter()
+            .enumerate()
+            .map(|(position, col)| {
+                col.ok_or_else(|| {
+                    fmt_err!(
+                        InvalidLayout,
+                        "rewrite_row_group_columns: target column slot {} is empty",
+                        position
+                    )
+                })
+            })
+            .collect::<ParquetResult<Vec<_>>>()?;
+        let sorting_columns = self.parquet_file.sorting_columns().map(<[_]>::to_vec);
+        let thrift_rg = build_raw_row_group(columns, row_count, sorting_columns)?;
+        self.parquet_file.register_streamed_hybrid_row_group(
+            bytes_written,
+            thrift_rg,
+            bloom_bitsets,
+            page_specs,
+            copied_page_index,
+        );
+        self.hybrid_copied_column_chunks += (target_col_count - partition.columns.len()) as u64;
+        self.hybrid_encoded_column_chunks += partition.columns.len() as u64;
+        Ok(())
     }
 
     pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> ParquetResult<u64> {
@@ -1033,6 +1383,8 @@ impl ParquetUpdater {
             }
             meta
         };
+
+        qdb_meta.seq_txn = self.seq_txn.get();
 
         // Emit the VARCHAR column-level ascii flag from the tracker built
         // during writes. Each tracker entry started life as `true` for an
@@ -1137,6 +1489,7 @@ impl ParquetUpdater {
                     bloom_bitsets,
                     self.result_unused_bytes,
                     qdb_meta.squash_tracker,
+                    self.seq_txn,
                 )?;
                 self.result_parquet_meta_size = parquet_meta_bytes.len() as i64;
                 parquet_meta_file
@@ -1181,6 +1534,7 @@ impl ParquetUpdater {
                     footer_length,
                     bloom_bitsets,
                     self.result_unused_bytes,
+                    self.seq_txn,
                 )?;
 
                 // Write the new snapshot at the append base. The header still
@@ -1188,10 +1542,11 @@ impl ParquetUpdater {
                 // patches it after the index build. So any failure before that
                 // header patch lands leaves the committed header and footer
                 // intact, with the new bytes an invisible dead tail past the
-                // header. Once the patch lands the snapshot is published even if
-                // commit_parquet_meta's own fsync then throws (see its doc); the
-                // committed `_txn` size is unchanged, so readers walk the MVCC
-                // chain back to the committed footer regardless.
+                // header. In sync modes commit_parquet_meta durably flushes this
+                // tail before patching the header, then flushes the header before
+                // the `_txn` commit. If that second flush throws, the tail is
+                // already durable and the committed `_txn` size is unchanged, so
+                // readers can walk the MVCC chain back to the committed footer.
                 parquet_meta_file
                     .seek(SeekFrom::Start(append_base))
                     .map_err(ParquetError::from)?;
@@ -1211,37 +1566,40 @@ impl ParquetUpdater {
         self.result_unused_bytes
     }
 
-    /// Publishes the new `_pm` snapshot: patches the committed
-    /// `parquet_meta_file_size` into the header (the MVCC commit signal), then
-    /// fsyncs when `sync` is set. The caller must invoke this after `end()` wrote
-    /// the new footer and the index build mapped it, and before the matching
-    /// `_txn` commit. The header patch is the last `_pm` write, so a failure
-    /// before it leaves the committed header and footer intact; the fsync
-    /// (skipped in NOSYNC commit mode) stops a power loss from leaving `_txn`
-    /// pointing at a footer the page cache lost. A no-op when no `_pm` fd is
-    /// attached.
+    /// Publishes the new `_pm` snapshot. For an in-place incremental update in a
+    /// sync mode, first flushes the appended snapshot while the old header is
+    /// still authoritative, then patches the new `parquet_meta_file_size` into
+    /// the header (the MVCC commit signal), and flushes again before the matching
+    /// `_txn` commit. The first barrier prevents a power loss from exposing a
+    /// header whose newest footer is torn; the second prevents `_txn` from
+    /// outliving the new header. Full-create/rewrite paths write a non-authoritative
+    /// file and need only the final barrier. NOSYNC deliberately skips both. A
+    /// no-op when no `_pm` fd is attached.
     pub fn commit_parquet_meta(&mut self, sync: bool) -> ParquetResult<()> {
+        self.commit_parquet_meta_with_sync_data(sync, File::sync_data)
+    }
+
+    fn commit_parquet_meta_with_sync_data<S>(
+        &mut self,
+        sync: bool,
+        sync_data: S,
+    ) -> ParquetResult<()>
+    where
+        S: FnMut(&File) -> std::io::Result<()>,
+    {
         let new_file_size = self.result_parquet_meta_size;
         if let Some(ref mut parquet_meta_file) = self.parquet_meta_fd {
             debug_assert!(
                 new_file_size > 0,
                 "commit_parquet_meta called before end() wrote the _pm"
             );
-            parquet_meta_file
-                .seek(SeekFrom::Start(
-                    crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF as u64,
-                ))
-                .map_err(ParquetError::from)?;
-            parquet_meta_file
-                .write_all(&(new_file_size as u64).to_le_bytes())
-                .map_err(ParquetError::from)
-                .context("could not patch header parquet_meta_file_size in _pm file")?;
-            if sync {
-                parquet_meta_file
-                    .sync_data()
-                    .map_err(ParquetError::from)
-                    .context("could not fsync _pm file")?;
-            }
+            publish_parquet_meta_with_sync(
+                parquet_meta_file,
+                new_file_size as u64,
+                sync,
+                !self.is_rewrite && self.existing_parquet_file_size > 0,
+                sync_data,
+            )?;
         }
         Ok(())
     }
@@ -1337,6 +1695,29 @@ impl ParquetUpdater {
     }
 }
 
+fn copy_file_range<W: std::io::Write>(
+    reader: &mut File,
+    writer: &mut W,
+    offset: u64,
+    len: u64,
+    buffer: &mut [u8],
+) -> ParquetResult<()> {
+    reader.seek(SeekFrom::Start(offset))?;
+    let mut remaining = len;
+    while remaining > 0 {
+        let chunk = usize::try_from(remaining.min(buffer.len() as u64)).map_err(|_| {
+            fmt_err!(
+                InvalidLayout,
+                "copy_file_range: chunk length does not fit usize"
+            )
+        })?;
+        reader.read_exact(&mut buffer[..chunk])?;
+        writer.write_all(&buffer[..chunk])?;
+        remaining -= chunk as u64;
+    }
+    Ok(())
+}
+
 /// Extracts bloom filter bitsets from a raw byte buffer that contains a copied
 /// row group's data. The buffer starts at `buf_file_offset` in the original file.
 /// Returns one `Option<Vec<u8>>` per column.
@@ -1393,82 +1774,97 @@ fn build_copied_page_index(
 ) -> ParquetResult<Option<Vec<CopiedColumnIndex>>> {
     let mut result = Vec::with_capacity(columns.len());
     for col in columns {
-        let (Some(oi_offset), Some(oi_length)) = (col.offset_index_offset, col.offset_index_length)
-        else {
+        let Some(copied) = build_copied_column_index(col, reader, offset_delta)? else {
             return Ok(None);
         };
-        // A corrupt footer can encode a negative offset/length; reject it before casting
-        // to usize/u64, which would request a usize::MAX allocation and abort the JVM.
-        if oi_offset < 0 || oi_length < 0 {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "negative offset index location: offset={oi_offset}, length={oi_length}"
-            ));
-        }
-
-        // Read and rebase the OffsetIndex. Reserve fallibly: a corrupt footer can
-        // encode a huge positive length, and an infallible alloc would abort the JVM.
-        let mut oi_bytes = Vec::new();
-        oi_bytes
-            .try_reserve_exact(oi_length as usize)
-            .map_err(|_| {
-                fmt_err!(
-                    InvalidLayout,
-                    "offset index length {oi_length} exceeds available memory"
-                )
-            })?;
-        oi_bytes.resize(oi_length as usize, 0);
-        reader.seek(SeekFrom::Start(oi_offset as u64))?;
-        reader.read_exact(&mut oi_bytes)?;
-        let mut offset_index = {
-            // Generous byte cap, matching parquet2's reader.
-            let max_bytes = oi_bytes.len() * 2 + 1024;
-            let mut prot = TCompactInputProtocol::new(oi_bytes.as_slice(), max_bytes);
-            OffsetIndex::read_from_in_protocol(&mut prot)
-                .map_err(|e| fmt_err!(InvalidLayout, "could not read source offset index: {e}"))?
-        };
-        for location in &mut offset_index.page_locations {
-            location.offset = location.offset.checked_add(offset_delta).ok_or_else(|| {
-                fmt_err!(InvalidLayout, "offset index page location offset overflow")
-            })?;
-        }
-        let mut rebased = Vec::with_capacity(oi_bytes.len());
-        {
-            let mut prot = TCompactOutputProtocol::new(&mut rebased);
-            offset_index
-                .write_to_out_protocol(&mut prot)
-                .map_err(|e| fmt_err!(InvalidLayout, "could not write offset index: {e}"))?;
-        }
-
-        // ColumnIndex has no file offsets, so copy its bytes verbatim.
-        let column_index = match (col.column_index_offset, col.column_index_length) {
-            (Some(ci_offset), Some(ci_length)) => {
-                if ci_offset < 0 || ci_length < 0 {
-                    return Err(fmt_err!(
-                        InvalidLayout,
-                        "negative column index location: offset={ci_offset}, length={ci_length}"
-                    ));
-                }
-                let mut ci_bytes = Vec::new();
-                ci_bytes
-                    .try_reserve_exact(ci_length as usize)
-                    .map_err(|_| {
-                        fmt_err!(
-                            InvalidLayout,
-                            "column index length {ci_length} exceeds available memory"
-                        )
-                    })?;
-                ci_bytes.resize(ci_length as usize, 0);
-                reader.seek(SeekFrom::Start(ci_offset as u64))?;
-                reader.read_exact(&mut ci_bytes)?;
-                Some(ci_bytes)
-            }
-            _ => None,
-        };
-
-        result.push(CopiedColumnIndex { column_index, offset_index: rebased });
+        result.push(copied);
     }
     Ok(Some(result))
+}
+
+fn build_copied_column_index(
+    col: &ColumnChunk,
+    reader: &mut File,
+    offset_delta: i64,
+) -> ParquetResult<Option<CopiedColumnIndex>> {
+    let (Some(oi_offset), Some(oi_length)) = (col.offset_index_offset, col.offset_index_length)
+    else {
+        return Ok(None);
+    };
+    // A corrupt footer can encode a negative offset/length; reject it before casting
+    // to usize/u64, which would request a usize::MAX allocation and abort the JVM.
+    if oi_offset < 0 || oi_length < 0 {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "negative offset index location: offset={oi_offset}, length={oi_length}"
+        ));
+    }
+
+    // Read and rebase the OffsetIndex. Reserve fallibly: a corrupt footer can
+    // encode a huge positive length, and an infallible alloc would abort the JVM.
+    let mut oi_bytes = Vec::new();
+    oi_bytes
+        .try_reserve_exact(oi_length as usize)
+        .map_err(|_| {
+            fmt_err!(
+                InvalidLayout,
+                "offset index length {oi_length} exceeds available memory"
+            )
+        })?;
+    oi_bytes.resize(oi_length as usize, 0);
+    reader.seek(SeekFrom::Start(oi_offset as u64))?;
+    reader.read_exact(&mut oi_bytes)?;
+    let mut offset_index = {
+        // Generous byte cap, matching parquet2's reader.
+        let max_bytes = oi_bytes.len() * 2 + 1024;
+        let mut prot = TCompactInputProtocol::new(oi_bytes.as_slice(), max_bytes);
+        OffsetIndex::read_from_in_protocol(&mut prot)
+            .map_err(|e| fmt_err!(InvalidLayout, "could not read source offset index: {e}"))?
+    };
+    for location in &mut offset_index.page_locations {
+        location.offset = location
+            .offset
+            .checked_add(offset_delta)
+            .ok_or_else(|| fmt_err!(InvalidLayout, "offset index page location offset overflow"))?;
+    }
+    let mut rebased = Vec::with_capacity(oi_bytes.len());
+    {
+        let mut prot = TCompactOutputProtocol::new(&mut rebased);
+        offset_index
+            .write_to_out_protocol(&mut prot)
+            .map_err(|e| fmt_err!(InvalidLayout, "could not write offset index: {e}"))?;
+    }
+
+    // ColumnIndex has no file offsets, so copy its bytes verbatim.
+    let column_index = match (col.column_index_offset, col.column_index_length) {
+        (Some(ci_offset), Some(ci_length)) => {
+            if ci_offset < 0 || ci_length < 0 {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "negative column index location: offset={ci_offset}, length={ci_length}"
+                ));
+            }
+            let mut ci_bytes = Vec::new();
+            ci_bytes
+                .try_reserve_exact(ci_length as usize)
+                .map_err(|_| {
+                    fmt_err!(
+                        InvalidLayout,
+                        "column index length {ci_length} exceeds available memory"
+                    )
+                })?;
+            ci_bytes.resize(ci_length as usize, 0);
+            reader.seek(SeekFrom::Start(ci_offset as u64))?;
+            reader.read_exact(&mut ci_bytes)?;
+            Some(ci_bytes)
+        }
+        _ => None,
+    };
+
+    Ok(Some(CopiedColumnIndex {
+        column_index,
+        offset_index: rebased,
+    }))
 }
 
 /// File-level `sorting_columns` for a QuestDB parquet file: the designated
@@ -1497,36 +1893,58 @@ fn build_raw_row_group(
     columns: Vec<ColumnChunk>,
     num_rows: usize,
     sorting_columns: Option<Vec<SortingColumn>>,
-) -> RowGroup {
-    let total_byte_size: i64 = columns
-        .iter()
-        .filter_map(|c| c.meta_data.as_ref())
-        .map(|m| m.total_uncompressed_size)
-        .sum();
-    let total_compressed_size: i64 = columns
-        .iter()
-        .filter_map(|c| c.meta_data.as_ref())
-        .map(|m| m.total_compressed_size)
-        .sum();
-    // RowGroup.file_offset points at the start of the row group, which is
-    // the offset of the first page of the first column chunk. When that
-    // column has a dictionary page, the dictionary precedes the data pages
-    // and is the actual start; reading data_page_offset alone overshoots by
-    // dict_bytes_written. Mirror parquet2's helper so the dict-or-data
-    // fallback stays in lockstep with write_row_group.
-    let file_offset = columns
-        .first()
-        .and_then(|c| ColumnOffsetsMetadata::from_column_chunk(c).calc_row_group_file_offset());
+) -> ParquetResult<RowGroup> {
+    let mut total_byte_size = 0i64;
+    let mut total_compressed_size = 0i64;
+    let mut file_offset: Option<i64> = None;
+    for (column_index, column) in columns.iter().enumerate() {
+        let metadata = column.meta_data.as_ref().ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "build_raw_row_group: column {} has no metadata",
+                column_index
+            )
+        })?;
+        total_byte_size = total_byte_size
+            .checked_add(metadata.total_uncompressed_size)
+            .ok_or_else(|| fmt_err!(InvalidLayout, "row-group uncompressed size overflow"))?;
+        total_compressed_size = total_compressed_size
+            .checked_add(metadata.total_compressed_size)
+            .ok_or_else(|| fmt_err!(InvalidLayout, "row-group compressed size overflow"))?;
 
-    RowGroup {
+        let column_offset = ColumnOffsetsMetadata::from_column_chunk(column)
+            .calc_row_group_file_offset()
+            .ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "build_raw_row_group: column {} has no page offset",
+                    column_index
+                )
+            })?;
+        if column_offset < 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "build_raw_row_group: column {} has negative page offset {}",
+                column_index,
+                column_offset
+            ));
+        }
+        file_offset = Some(file_offset.map_or(column_offset, |current| current.min(column_offset)));
+    }
+    // Hybrid rewrites stream unchanged chunks before freshly encoded chunks,
+    // so physical order need not match schema order. The row-group start is
+    // the minimum dictionary/data page offset across every column, not the
+    // first schema column's offset.
+    Ok(RowGroup {
         columns,
         total_byte_size,
-        num_rows: num_rows as i64,
+        num_rows: i64::try_from(num_rows)
+            .map_err(|_| fmt_err!(InvalidLayout, "row count {} exceeds i64", num_rows))?,
         sorting_columns,
         file_offset,
         total_compressed_size: Some(total_compressed_size),
         ordinal: None,
-    }
+    })
 }
 
 /// Generates the raw bytes and thrift `ColumnChunk` for an all-NULL (or
@@ -1852,10 +2270,7 @@ fn build_column_infos_from_qdb_meta<'a>(
                 col_type_code,
                 // Prefer QuestDB's authoritative id from QdbMeta over the parquet
                 // field_id, matching the convert path's `_pm` generation.
-                id: crate::parquet_read::meta::resolve_column_id(
-                    cm.and_then(|c| c.id),
-                    field_info.id,
-                ),
+                id: resolve_column_id(cm.and_then(|c| c.id), field_info.id),
                 flags,
                 fixed_byte_len: match phys_type {
                     parquet2::schema::types::PhysicalType::FixedLenByteArray(len) => len as i32,
@@ -1871,17 +2286,19 @@ fn build_column_infos_from_qdb_meta<'a>(
 
 #[cfg(test)]
 mod tests {
+    use super::SeqTxn;
     use crate::parquet::tests::ColumnTypeTagExt;
     use bytes::Bytes;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::compression::CompressionOptions;
     use parquet2::write::{ParquetFile, Version};
+    use qdb_parquet_meta::NoBloomFilterSource;
+    use std::cell::Cell;
     use std::collections::HashSet;
     use std::env;
     use std::error::Error;
     use std::fs::File;
-    use std::io::Cursor;
-    use std::io::Write;
+    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
     use std::ptr::null;
 
     use super::adjust_column_chunk_offsets;
@@ -1898,6 +2315,180 @@ mod tests {
     use parquet2::write;
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
     use tempfile::NamedTempFile;
+
+    fn read_pm_header(file: &NamedTempFile) -> Result<u64, Box<dyn Error>> {
+        let mut bytes = [0u8; size_of::<u64>()];
+        file.reopen()?.read_exact(&mut bytes)?;
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    fn publish_test_updater(
+        allocator: &crate::allocator::TestAllocatorState,
+        pm: &NamedTempFile,
+        is_rewrite: bool,
+        existing_parquet_file_size: i64,
+    ) -> Result<super::ParquetUpdater, Box<dyn Error>> {
+        let (source, _partition) = write_initial_zstd_file()?;
+        let source_len = source.as_file().metadata()?.len();
+        let output = NamedTempFile::new()?;
+        let writer = if is_rewrite {
+            output.reopen()?
+        } else {
+            source.reopen()?
+        };
+        let write_file_size = if is_rewrite { 0 } else { source_len };
+        let mut updater = super::ParquetUpdater::new(
+            allocator.allocator(),
+            source.reopen()?,
+            source_len,
+            writer,
+            write_file_size,
+            None,
+            true,
+            false,
+            CompressionOptions::Zstd(None),
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            Some(pm.reopen()?),
+            0,
+            0,
+            existing_parquet_file_size,
+            SeqTxn::UNSET,
+        )?;
+        updater.result_parquet_meta_size = 42;
+        Ok(updater)
+    }
+
+    #[test]
+    fn commit_parquet_meta_tail_sync_error_does_not_publish_header() -> Result<(), Box<dyn Error>> {
+        let allocator = crate::allocator::TestAllocatorState::new();
+        let pm = NamedTempFile::new()?;
+        pm.as_file().set_len(64)?;
+        let mut updater = publish_test_updater(&allocator, &pm, false, 1)?;
+        let err = updater
+            .commit_parquet_meta_with_sync_data(true, |_| {
+                Err(std::io::Error::other("injected sync failure"))
+            })
+            .unwrap_err();
+
+        assert_eq!(read_pm_header(&pm)?, 0);
+        assert!(
+            err.to_string()
+                .contains("could not fsync appended _pm snapshot before publication"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("injected sync failure"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn commit_parquet_meta_sync_false_skips_sync() -> Result<(), Box<dyn Error>> {
+        let allocator = crate::allocator::TestAllocatorState::new();
+        let pm = NamedTempFile::new()?;
+        pm.as_file().set_len(64)?;
+        let mut updater = publish_test_updater(&allocator, &pm, false, 1)?;
+        let sync_calls = Cell::new(0);
+        updater.commit_parquet_meta_with_sync_data(false, |_| {
+            sync_calls.set(sync_calls.get() + 1);
+            Err(std::io::Error::other("sync must be skipped"))
+        })?;
+
+        assert_eq!(sync_calls.get(), 0);
+        assert_eq!(read_pm_header(&pm)?, 42);
+        Ok(())
+    }
+
+    #[test]
+    fn commit_parquet_meta_sync_true_orders_footer_before_header_publication(
+    ) -> Result<(), Box<dyn Error>> {
+        let allocator = crate::allocator::TestAllocatorState::new();
+        let pm = NamedTempFile::new()?;
+        pm.as_file().set_len(64)?;
+        let mut updater = publish_test_updater(&allocator, &pm, false, 1)?;
+        let sync_calls = Cell::new(0);
+        updater.commit_parquet_meta_with_sync_data(true, |file| {
+            let sync_call = sync_calls.get();
+            let mut published = file.try_clone()?;
+            published.seek(SeekFrom::Start(0))?;
+            let mut bytes = [0u8; size_of::<u64>()];
+            published.read_exact(&mut bytes)?;
+            let expected_header = if sync_call == 0 { 0 } else { 42 };
+            assert_eq!(u64::from_le_bytes(bytes), expected_header);
+            sync_calls.set(sync_call + 1);
+            Ok(())
+        })?;
+
+        assert_eq!(sync_calls.get(), 2);
+        assert_eq!(read_pm_header(&pm)?, 42);
+        Ok(())
+    }
+
+    #[test]
+    fn commit_parquet_meta_header_sync_error_is_propagated_after_publication(
+    ) -> Result<(), Box<dyn Error>> {
+        let allocator = crate::allocator::TestAllocatorState::new();
+        let pm = NamedTempFile::new()?;
+        pm.as_file().set_len(64)?;
+        let mut updater = publish_test_updater(&allocator, &pm, false, 1)?;
+        let sync_calls = Cell::new(0);
+        let err = updater
+            .commit_parquet_meta_with_sync_data(true, |_| {
+                let sync_call = sync_calls.get();
+                sync_calls.set(sync_call + 1);
+                if sync_call == 0 {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::other("injected sync failure"))
+                }
+            })
+            .unwrap_err();
+
+        assert_eq!(sync_calls.get(), 2);
+        assert_eq!(read_pm_header(&pm)?, 42);
+        assert!(
+            err.to_string()
+                .contains("could not fsync published _pm header"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("injected sync failure"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn commit_parquet_meta_non_authoritative_files_sync_only_after_publication(
+    ) -> Result<(), Box<dyn Error>> {
+        for (mode, is_rewrite, existing_parquet_file_size) in
+            [("first-create", false, -1), ("rewrite", true, 1)]
+        {
+            let allocator = crate::allocator::TestAllocatorState::new();
+            let pm = NamedTempFile::new()?;
+            pm.as_file().set_len(64)?;
+            let mut updater =
+                publish_test_updater(&allocator, &pm, is_rewrite, existing_parquet_file_size)?;
+            let sync_calls = Cell::new(0);
+            updater.commit_parquet_meta_with_sync_data(true, |file| {
+                sync_calls.set(sync_calls.get() + 1);
+                let mut published = file.try_clone()?;
+                published.seek(SeekFrom::Start(0))?;
+                let mut bytes = [0u8; size_of::<u64>()];
+                published.read_exact(&mut bytes)?;
+                assert_eq!(u64::from_le_bytes(bytes), 42, "mode={mode}");
+                Ok(())
+            })?;
+
+            assert_eq!(sync_calls.get(), 1, "mode={mode}");
+            assert_eq!(read_pm_header(&pm)?, 42, "mode={mode}");
+        }
+        Ok(())
+    }
 
     fn save_to_file(bytes: &Bytes) {
         if let Ok(path) = env::var("OUT_PARQUET_FILE") {
@@ -1934,6 +2525,270 @@ mod tests {
             0,
         )
         .unwrap()
+    }
+
+    fn exercise_hybrid_rewrite(
+        unchanged_count: usize,
+        changed_position: usize,
+    ) -> Result<std::time::Duration, Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use arrow::array::Int64Array;
+
+        let total_column_count = unchanged_count + 1;
+        assert!(changed_position < total_column_count);
+        let row_count = 32usize;
+        let source_changed: Vec<i32> = (0..row_count as i32).collect();
+        let target_changed: Vec<i64> = source_changed
+            .iter()
+            .map(|value| i64::from(*value) * 10)
+            .collect();
+        let unchanged_values: Vec<Vec<i64>> = (0..unchanged_count)
+            .map(|column| {
+                (0..row_count)
+                    .map(|row| (column as i64 + 1) * 10_000 + row as i64)
+                    .collect()
+            })
+            .collect();
+
+        let mut source_columns = Vec::with_capacity(total_column_count);
+        let mut target_columns = Vec::with_capacity(total_column_count);
+        let mut expected_target_bounds = Vec::with_capacity(total_column_count);
+        let mut unchanged_index = 0usize;
+        for column_position in 0..total_column_count {
+            let column_id = column_position as i32;
+            if column_position == changed_position {
+                source_columns.push(make_column_with_id(
+                    column_id,
+                    "changed",
+                    ColumnTypeTag::Int.into_type(),
+                    &source_changed,
+                ));
+                target_columns.push(make_column_with_id(
+                    column_id,
+                    "changed",
+                    ColumnTypeTag::Long.into_type(),
+                    &target_changed,
+                ));
+                expected_target_bounds.push((target_changed[0], target_changed[row_count - 1]));
+            } else {
+                let name: &'static str =
+                    Box::leak(format!("unchanged_{column_position}").into_boxed_str());
+                let values = &unchanged_values[unchanged_index];
+                source_columns.push(make_column_with_id(
+                    column_id,
+                    name,
+                    ColumnTypeTag::Long.into_type(),
+                    values,
+                ));
+                target_columns.push(make_column_with_id(
+                    column_id,
+                    name,
+                    ColumnTypeTag::Long.into_type(),
+                    values,
+                ));
+                expected_target_bounds.push((values[0], values[row_count - 1]));
+                unchanged_index += 1;
+            }
+        }
+
+        let source_partition = Partition {
+            table: "hybrid".to_string(),
+            columns: source_columns,
+        };
+        let target_partition = Partition {
+            table: "hybrid".to_string(),
+            columns: target_columns,
+        };
+        let changed_partition = Partition {
+            table: "hybrid".to_string(),
+            columns: vec![target_partition.columns[changed_position]],
+        };
+
+        let source = NamedTempFile::new()?;
+        ParquetWriter::new(source.reopen()?)
+            .with_compression(CompressionOptions::Zstd(None))
+            .finish(source_partition)?;
+        let source_len = source.as_file().metadata()?.len();
+        let source_bytes = std::fs::read(source.path())?;
+        let source_meta = read_metadata_with_size(&mut source.reopen()?, source_len)?;
+        assert!(
+            source_meta.row_groups[0]
+                .columns()
+                .iter()
+                .all(|column| column.offset_index_offset().is_some()
+                    && column.column_index_offset().is_some()),
+            "source fixture must carry both page indexes"
+        );
+        let expected_unchanged: Vec<(usize, Vec<u8>)> = source_meta.row_groups[0]
+            .columns()
+            .iter()
+            .enumerate()
+            .filter(|(position, _)| *position != changed_position)
+            .map(|(position, column)| {
+                let (offset, len) = column.byte_range();
+                (
+                    position,
+                    source_bytes[offset as usize..(offset + len) as usize].to_vec(),
+                )
+            })
+            .collect();
+
+        let output = NamedTempFile::new()?;
+        let alloc_state = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc_state.allocator(),
+            source.reopen()?,
+            source_len,
+            output.reopen()?,
+            0,
+            None,
+            true,
+            false,
+            CompressionOptions::Zstd(None),
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )?;
+        updater.set_target_schema(&target_partition)?;
+        let started = std::time::Instant::now();
+        updater.rewrite_row_group_columns(0, &changed_partition)?;
+        let output_len = updater.end(None)?;
+        let rewrite_elapsed = started.elapsed();
+        assert_eq!(
+            updater.copy_buffer.capacity(),
+            0,
+            "hybrid rewrite must not retain a row-group-sized copy buffer at width {unchanged_count}, changed position {changed_position}"
+        );
+        assert_eq!(
+            updater.hybrid_copied_column_chunks, unchanged_count as u64,
+            "every unchanged chunk must take the raw-copy path"
+        );
+        assert_eq!(
+            updater.hybrid_encoded_column_chunks, 1,
+            "encoding work must stay constant as unchanged width grows"
+        );
+        assert_eq!(
+            alloc_state.rss_mem_used(),
+            0,
+            "hybrid updater retained memory in its native allocator at width {unchanged_count}, changed position {changed_position}"
+        );
+        drop(updater);
+
+        let output_bytes = std::fs::read(output.path())?;
+        let output_meta = read_metadata_with_size(&mut output.reopen()?, output_len)?;
+        assert_eq!(
+            output_meta.row_groups[0].columns().len(),
+            total_column_count
+        );
+        assert!(
+            output_meta.row_groups[0]
+                .columns()
+                .iter()
+                .all(|column| column.offset_index_offset().is_some()
+                    && column.column_index_offset().is_some()),
+            "hybrid output must retain copied indexes and generate the changed column index"
+        );
+        for (position, expected) in expected_unchanged {
+            let column = &output_meta.row_groups[0].columns()[position];
+            let (offset, len) = column.byte_range();
+            assert_eq!(
+                &output_bytes[offset as usize..(offset + len) as usize],
+                expected,
+                "unchanged compressed chunk changed at width {unchanged_count}, changed position {changed_position}, column {position}"
+            );
+            assert_eq!(column.compression(), Compression::Zstd);
+        }
+
+        use parquet::arrow::arrow_reader::ArrowReaderOptions;
+        use parquet::file::page_index::index::Index;
+
+        let bytes: Bytes = output_bytes.into();
+        let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(
+            bytes,
+            ArrowReaderOptions::new().with_page_index(true),
+        )?;
+        {
+            let metadata = builder.metadata();
+            let column_index = metadata.column_index().expect("parsed mixed column index");
+            let offset_index = metadata.offset_index().expect("parsed mixed offset index");
+            for column_position in 0..total_column_count {
+                let page_locations = offset_index[0][column_position].page_locations();
+                assert_eq!(
+                    page_locations[0].offset,
+                    metadata.row_group(0).column(column_position).data_page_offset(),
+                    "mixed offset index must point at the copied/encoded data page for column {column_position}"
+                );
+                match &column_index[0][column_position] {
+                    Index::INT64(native) => {
+                        let (expected_min, expected_max) =
+                            expected_target_bounds[column_position];
+                        assert_eq!(
+                            native.indexes[0].min,
+                            Some(expected_min),
+                            "mixed column index min at column {column_position}"
+                        );
+                        assert_eq!(
+                            native.indexes[0].max,
+                            Some(expected_max),
+                            "mixed column index max at column {column_position}"
+                        );
+                    }
+                    other => panic!(
+                        "expected INT64 mixed column index at column {column_position}, got {other:?}"
+                    ),
+                }
+            }
+        }
+        let mut batches = builder.build()?;
+        let batch = batches.next().transpose()?.expect("one output batch");
+        let changed = batch
+            .column(changed_position)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("changed column must be INT64");
+        assert_eq!(
+            changed.values().as_ref(),
+            target_changed.as_slice(),
+            "changed column values at width {unchanged_count}, changed position {changed_position}"
+        );
+        Ok(rewrite_elapsed)
+    }
+
+    #[test]
+    fn hybrid_rewrite_raw_copies_unchanged_columns_across_widths() -> Result<(), Box<dyn Error>> {
+        for unchanged_count in [1usize, 32, 256] {
+            let total_column_count = unchanged_count + 1;
+            let mut changed_positions = vec![0, total_column_count / 2, total_column_count - 1];
+            changed_positions.sort_unstable();
+            changed_positions.dedup();
+            for changed_position in changed_positions {
+                exercise_hybrid_rewrite(unchanged_count, changed_position)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Manual CPU smoke benchmark for the hybrid rewrite's width scaling. Run with:
+    /// `cargo test -p qdbr --lib hybrid_rewrite_width_sweep_benchmark -- --ignored --nocapture`.
+    /// The shared helper asserts deterministic copied/encoded work counters;
+    /// elapsed time is diagnostic rather than a timing-sensitive pass/fail oracle.
+    #[test]
+    #[ignore = "manual hybrid rewrite CPU width sweep"]
+    fn hybrid_rewrite_width_sweep_benchmark() -> Result<(), Box<dyn Error>> {
+        for unchanged_count in [1usize, 32, 256] {
+            let changed_position = unchanged_count.div_ceil(2);
+            let elapsed = exercise_hybrid_rewrite(unchanged_count, changed_position)?;
+            eprintln!(
+                "hybrid rewrite: unchanged_columns={unchanged_count}, encoded_columns=1, elapsed={elapsed:?}"
+            );
+        }
+        Ok(())
     }
 
     /// Builds a designated (ascending) TIMESTAMP column. The encoder records the
@@ -1985,8 +2840,8 @@ mod tests {
             table: "t".to_string(),
             columns: vec![make_column_with_id(0, "s", symbol_type, &[1i32])],
         };
-        let (int_schema, _) = to_parquet_schema(&int_partition, false, -1)?;
-        let (symbol_schema, _) = to_parquet_schema(&symbol_partition, false, -1)?;
+        let (int_schema, _) = to_parquet_schema(&int_partition, false, -1, SeqTxn::UNSET)?;
+        let (symbol_schema, _) = to_parquet_schema(&symbol_partition, false, -1, SeqTxn::UNSET)?;
 
         let (_, int_chunk) =
             super::generate_null_column_chunk_bytes(&int_schema.fields()[0], int_type, 10, 100)?;
@@ -2059,7 +2914,7 @@ mod tests {
         let orig_offset = buf.position();
         let metadata = read_metadata_with_size(&mut buf, orig_offset)?;
 
-        let (schema, _) = to_parquet_schema(&new_partition, false, -1)?;
+        let (schema, _) = to_parquet_schema(&new_partition, false, -1, SeqTxn::UNSET)?;
 
         let foptions = WriteOptions {
             write_statistics: true,
@@ -2223,6 +3078,7 @@ mod tests {
                 0,                              // parquet_meta_file_size
                 0,                              // append_base
                 -1,                             // existing_parquet_file_size
+                SeqTxn::UNSET,                  // seq_txn
             )?;
 
             updater.insert_row_group(&new_partition, 1)?;
@@ -2284,6 +3140,7 @@ mod tests {
                 0,    // parquet_meta_file_size
                 0,    // append_base
                 -1,   // existing_parquet_file_size
+                SeqTxn::UNSET,
             )?;
 
             updater.insert_row_group(&new_partition, 1)?;
@@ -2346,8 +3203,9 @@ mod tests {
             0.0,  // min_compression_ratio
             None, // parquet_meta_fd
             0,    // parquet_meta_file_size
-            0,    // append_base
-            -1,   // existing_parquet_file_size
+            0,
+            -1, // existing_parquet_file_size
+            SeqTxn::UNSET,
         )?;
 
         // Append a second row group, then re-read the footer.
@@ -2429,9 +3287,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         let o3_ts = [5i64, 6, 7];
         let o3_val = [50i32, 60, 70];
@@ -2654,9 +3513,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // raw-copied: source index rebased
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?; // fresh
@@ -2719,9 +3579,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // raw-copied: source DESCENDING index rebased verbatim
         updater.end(None)?;
@@ -2777,9 +3638,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
         updater.end(None)?;
@@ -2843,9 +3705,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // source has no index -> not indexable
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
@@ -2909,9 +3772,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
         updater.end(None)?;
@@ -2971,9 +3835,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // source has an OffsetIndex but no ColumnIndex
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
@@ -3049,9 +3914,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // copied group has an OffsetIndex but no ColumnIndex
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
@@ -3127,9 +3993,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
         updater.end(None)?;
@@ -3187,9 +4054,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
         updater.end(None)?;
@@ -3336,6 +4204,7 @@ mod tests {
             0,  // parquet_meta_file_size
             0,  // append_base
             -1, // existing_parquet_file_size
+            SeqTxn::UNSET,
         )?;
         updater.insert_row_group(&app_partition, 1)?;
         updater.end(None)?;
@@ -3414,6 +4283,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
         let target = Partition {
             table: "t".to_string(),
@@ -3474,6 +4344,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
         updater.insert_row_group(&app, 1)?;
         updater.end(None)?;
@@ -3523,8 +4394,12 @@ mod tests {
             ],
         };
 
-        let (schema, _) =
-            crate::parquet_write::schema::to_parquet_schema(&partition_rg0, false, -1)?;
+        let (schema, _) = crate::parquet_write::schema::to_parquet_schema(
+            &partition_rg0,
+            false,
+            -1,
+            SeqTxn::UNSET,
+        )?;
         let encodings = to_encodings(&partition_rg0);
 
         let mut bloom_cols = HashSet::new();
@@ -3971,7 +4846,8 @@ mod tests {
         // file matches the pre-247cb447cd layout. The repetition-aware
         // dispatch in encode.rs picks encode_int_notnull for this field, so
         // the pages on disk are also in the legacy shape (no def-levels).
-        let (modern_schema, additional_meta) = to_parquet_schema(&initial_partition, false, -1)?;
+        let (modern_schema, additional_meta) =
+            to_parquet_schema(&initial_partition, false, -1, SeqTxn::UNSET)?;
         let mut legacy_fields = modern_schema.fields().to_vec();
         for field in legacy_fields.iter_mut() {
             if let parquet2::schema::types::ParquetType::PrimitiveType(ref mut pt) = field {
@@ -4028,6 +4904,7 @@ mod tests {
             0,  // parquet_meta_file_size
             0,  // append_base
             -1, // existing_parquet_file_size
+            SeqTxn::UNSET,
         )?;
 
         let extra = [5i8, 6, 7, 8];
@@ -4099,7 +4976,7 @@ mod tests {
             make_column_chunk(2000, None),
         ];
 
-        let rg = super::build_raw_row_group(columns, 10, None);
+        let rg = super::build_raw_row_group(columns, 10, None).unwrap();
         assert_eq!(
             rg.file_offset,
             Some(dict_offset),
@@ -4112,7 +4989,7 @@ mod tests {
         let data_offset: i64 = 1000;
         let columns = vec![make_column_chunk(data_offset, None)];
 
-        let rg = super::build_raw_row_group(columns, 10, None);
+        let rg = super::build_raw_row_group(columns, 10, None).unwrap();
         assert_eq!(rg.file_offset, Some(data_offset));
     }
 
@@ -4123,8 +5000,24 @@ mod tests {
         let data_offset: i64 = 1000;
         let columns = vec![make_column_chunk(data_offset, Some(0))];
 
-        let rg = super::build_raw_row_group(columns, 10, None);
+        let rg = super::build_raw_row_group(columns, 10, None).unwrap();
         assert_eq!(rg.file_offset, Some(data_offset));
+    }
+
+    #[test]
+    fn build_raw_row_group_uses_minimum_physical_column_offset() {
+        let columns = vec![
+            make_column_chunk(3000, None),
+            make_column_chunk(1000, Some(900)),
+            make_column_chunk(2000, None),
+        ];
+
+        let rg = super::build_raw_row_group(columns, 10, None).unwrap();
+        assert_eq!(
+            rg.file_offset,
+            Some(900),
+            "schema order may differ from streamed physical order"
+        );
     }
 
     /// Regression for the no-sorting-columns case (a table with no designated
@@ -4175,6 +5068,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
 
         // 3. Copy the existing row group, then append a fresh O3 row group.
@@ -4271,6 +5165,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
 
         // 3. Copy the existing row group, then append a fresh O3 row group.
@@ -4367,6 +5262,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
 
         // 3. Target schema drops the leading column and adds a trailing one:
@@ -4477,6 +5373,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
 
         // 3. Copy the existing row group and append a fresh O3 group, same schema.
@@ -4563,6 +5460,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
 
         // Append a fresh O3 row group, then finish.
@@ -4601,8 +5499,9 @@ mod tests {
             .and_then(|kv| kv.value.as_ref())
             .expect("updated file must carry qdb_meta");
         let qdb_meta = QdbMeta::deserialize(qdb_raw)?;
-        let (pm_bytes, pm_size) = convert_from_parquet(&md, Some(&qdb_meta), 0, 0, None, None)
-            .expect("migration must tolerate the update-mode footer via qdb_meta");
+        let (pm_bytes, pm_size) =
+            convert_from_parquet(&md, Some(&qdb_meta), 0, 0, &NoBloomFilterSource, None)
+                .expect("migration must tolerate the update-mode footer via qdb_meta");
         let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size).unwrap();
         assert_eq!(reader.designated_timestamp(), Some(0));
         assert_eq!(reader.sorting_column_count(), 1);
@@ -4654,9 +5553,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
 
         // Physical output order (rewrite ignores the insert position):
@@ -4736,9 +5636,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             Some(pm.reopen()?), // real _pm fd exercises the id-resolution path
-            0,                  // parquet_meta_file_size
-            0,                  // append_base
-            -1,                 // existing_parquet_file_size
+            0,
+            0,
+            -1, // no existing _pm -> full-create branch
+            SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?;
         updater.end(None)?;
@@ -4848,6 +5749,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
         let target = Partition {
             table: "t".to_string(),

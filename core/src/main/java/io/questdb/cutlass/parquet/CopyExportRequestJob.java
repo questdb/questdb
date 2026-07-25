@@ -33,6 +33,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -145,6 +147,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         }
 
         CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
+        MemoryTracker memoryTracker = null;
         try {
             entry.setStartTime(microsecondClock.getTicks(), carrierId);
             SqlExecutionCircuitBreaker circuitBreaker = localTaskCopy.getCircuitBreaker();
@@ -164,6 +167,12 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         0,
                         localTaskCopy.getTableName(),
                         localTaskCopy.getCopyID());
+                memoryTracker = engine.getMemoryTrackerProvider().acquire(
+                        localTaskCopy.getSecurityContext(),
+                        localTaskCopy.getCopyID(),
+                        MemoryTrackerWorkload.QUERY
+                );
+                localTaskCopy.setMemoryTracker(memoryTracker);
                 serialExporter.of(localTaskCopy);
                 phase = serialExporter.process(); // throws CopyExportException
 
@@ -201,7 +210,12 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         localTaskCopy.getCopyID()
                 );
             } finally {
-                localTaskCopy.clear();
+                try {
+                    localTaskCopy.clear();
+                } finally {
+                    serialExporter.clearMemoryTracker();
+                    Misc.free(memoryTracker);
+                }
             }
         } finally {
             copyContext.releaseEntry(entry);

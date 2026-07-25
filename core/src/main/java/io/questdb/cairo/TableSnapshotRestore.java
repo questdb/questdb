@@ -723,7 +723,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             if (rebuildIndexes) {
                 rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
-                decoder = new ParquetPartitionDecoder();
+                decoder = configuration.newParquetPartitionDecoder();
                 indexWriters = new ObjList<>();
                 columnNamesSink = new StringSink();
                 columnTops = new LongList();
@@ -731,6 +731,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             int i;
             while (!abortParallelTasks.get() && (i = cursor.getAndIncrement()) < partitionCount) {
                 if (!txWriter.isPartitionParquet(i)) {
+                    continue;
+                }
+                if (txWriter.isPartitionRemotelyServed(i)) {
                     continue;
                 }
                 final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);

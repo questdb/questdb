@@ -81,10 +81,24 @@ import org.jetbrains.annotations.Nullable;
  * <pre>
  * variable length encoding, starting at the offset specified in the `aux` entry.
  *     * START ALIGNMENT: the start of each entry in the data vector is aligned at 32 bits.
- *     * Shape: len-prefixed ints
- *         * A list of dimension sizes of the array.
- *         * Starts with a 32-bit length (number of dimensions).
- *         * Each dimension size is a 32-bit int, but uses only 27 bits.
+ *         * A double array's entry is in fact 8-byte aligned, and readers depend on it. It follows
+ *           by induction rather than by this rule: writeDataEntry() pads off the absolute offset,
+ *           the first entry starts at 0, a NULL writes no data, and every double entry's size is a
+ *           multiple of 8, so the next entry starts 8-aligned again. That is what fixes a 1D double
+ *           array's padding at exactly 4 bytes and its entry size at {@code 8 * (length + 1)} -
+ *           {@code PageFrameMemoryRecord.getArrayDouble1d2d0} reads values at a constant offset past
+ *           the shape on the strength of it, and {@code getArrayDimLen0} takes a 1D length from the
+ *           aux entry's size instead of reading the shape at all. Enabling a 4-byte element type in
+ *           {@code ColumnType.arrayTypeSet} breaks both; they guard on the element type for that
+ *           reason.
+ *     * Shape: one int per dimension, and nothing else.
+ *         * A list of dimension sizes of the array, in dimension order.
+ *         * There is NO length prefix: the dimension count comes from the column type, so the
+ *           shape of an N-dimensional array is exactly N ints starting at the entry's offset.
+ *           Readers that walk the shape by hand rely on this - see
+ *           {@code PageFrameMemoryRecord.getArrayDimLen0} and {@code getArrayDouble1d2d0}.
+ *         * Each dimension size is a 32-bit int, but uses only 28 bits: {@link ArrayView#DIM_MAX_LEN}
+ *           caps it at {@code (1 << 28) - 1}.
  *     * Padding:
  *         * enough padding to satisfy the datatype alignment requirements.
  *         * e.g. for 64-bit numeric types, the following section starts on an
