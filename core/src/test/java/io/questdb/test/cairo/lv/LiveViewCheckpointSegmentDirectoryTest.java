@@ -30,7 +30,9 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaSegmentWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
+import io.questdb.cairo.lv.LiveViewCheckpointRingSeal;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
@@ -40,6 +42,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Zip;
 import io.questdb.std.str.Path;
@@ -336,6 +339,55 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
                         Assert.assertEquals((long) oracle.lastKey(), reader.lastSegmentId());
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testRepeatedLookupsDoNotOutliveTheirRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            // One restore resolves the same handful of segment ids over and over, so
+            // the reader memoises what the bound root answered. The memo has to key
+            // on the id rather than on the slot it lands in, and a root published
+            // after it may not be answered out of it.
+            final long collidingStride = Numbers.ceilPow2(LiveViewCheckpointRingSeal.MAX_LIVE_CHUNKS);
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter()) {
+                writer.begin(root);
+                writer.addSegment(5, 50, 1);
+                writer.addSegment(5 + collidingStride, 70, 1);
+                writer.publish(1, root);
+            }
+
+            final LiveViewCheckpointPageRef nextRoot = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter()) {
+                writer.begin(root);
+                final LongList removed = new LongList();
+                final LongList added = new LongList();
+                added.add(5);
+                writer.applyRootReferenceChanges(removed, added, 9);
+                writer.publish(2, nextRoot);
+            }
+
+            final LiveViewCheckpointSegmentDirectoryEntry entry = new LiveViewCheckpointSegmentDirectoryEntry();
+            try (LiveViewCheckpointSegmentDirectoryReader reader = openReader(root)) {
+                // Two ids one cache span apart share a slot; each repeat must answer
+                // with its own entry.
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(50, reader.getFileLength(5));
+                    Assert.assertEquals(70, reader.getFileLength(5 + collidingStride));
+                    Assert.assertEquals(1, reader.getReferenceCount(5));
+                    Assert.assertFalse(reader.find(6, entry));
+                }
+
+                try (Path dir = new Path()) {
+                    reader.of(checkpointsDir(dir), nextRoot);
+                }
+                Assert.assertEquals(2, reader.getReferenceCount(5));
+                Assert.assertEquals(50, reader.getFileLength(5));
+
+                reader.clear();
+                Assert.assertFalse(reader.find(5, entry));
             }
         });
     }

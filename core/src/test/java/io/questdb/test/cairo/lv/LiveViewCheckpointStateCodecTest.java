@@ -269,6 +269,22 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
                         "non-canonical LEB128"
                 );
 
+                // Padding a value out over several bytes is the same corruption as
+                // padding it out over two, however many of the extra bytes carry
+                // payload bits.
+                encoded.truncate();
+                encoded.putLong(7);
+                encoded.putByte((byte) 0x81);
+                encoded.putByte((byte) 0x82);
+                encoded.putByte((byte) 0x00);
+                assertTimestampDecodeFails(
+                        encoded,
+                        target,
+                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
+                        2,
+                        "non-canonical LEB128"
+                );
+
                 encoded.truncate();
                 encoded.putLong(Long.MAX_VALUE);
                 encoded.putByte((byte) 1);
@@ -384,6 +400,14 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
             assertTimestampRoundTrip(
                     new long[]{Long.MIN_VALUE, 0, Long.MAX_VALUE},
                     LiveViewCheckpointStateCodec.TIMESTAMP_RAW_64
+            );
+            // Delta-of-delta 64 zigzags to 128, whose canonical encoding spends a
+            // first byte carrying no payload bits at all. Only the terminator says
+            // whether an encoding is canonical, so this must round-trip rather than
+            // read as the padding the case above rejects.
+            assertTimestampRoundTrip(
+                    new long[]{0, 100, 264, 8_620},
+                    LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT
             );
         });
     }

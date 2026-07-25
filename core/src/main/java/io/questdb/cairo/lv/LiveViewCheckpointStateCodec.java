@@ -539,7 +539,11 @@ public final class LiveViewCheckpointStateCodec {
             value |= (long) (b & 0x7f) << shift;
             if ((b & 0x80) == 0) {
                 final int bytes = i + 1;
-                if (unsignedLeb128Length(value) != bytes) {
+                // A canonical encoding spends its last byte on at least one set bit,
+                // so a zero terminator means the writer padded a shorter value out.
+                // Equivalent to unsignedLeb128Length(value) == bytes, without the
+                // per-value shift loop this decodes 4096 timestamps a chunk through.
+                if (bytes > 1 && b == 0) {
                     throw invalid("non-canonical LEB128 value");
                 }
                 Unsafe.putLong(valueAddress, value);
@@ -625,6 +629,8 @@ public final class LiveViewCheckpointStateCodec {
     public static final class Scratch implements Closeable {
         private final DirectLongList timestamps = new DirectLongList(CHUNK_ROWS, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
         private final DirectLongList values = new DirectLongList(CHUNK_ROWS, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
+        private long timestampsAddress;
+        private long valuesAddress;
 
         public Scratch(@Nullable MemoryTracker memoryTracker) {
             values.setMemoryTracker(memoryTracker);
@@ -635,16 +641,34 @@ public final class LiveViewCheckpointStateCodec {
         public void close() {
             values.close();
             timestamps.close();
+            timestampsAddress = 0;
+            valuesAddress = 0;
         }
 
+        /**
+         * @return the timestamp buffer's address, allocating it on first use. Both
+         * the ring walk and the ring builder address the buffer a row at a time, so
+         * the accessor caches what {@link DirectLongList#reopen()} resolved rather
+         * than re-entering the list on every row
+         */
         public long timestampsAddress() {
-            timestamps.reopen();
-            return timestamps.getAddress();
+            if (timestampsAddress == 0) {
+                timestamps.reopen();
+                timestampsAddress = timestamps.getAddress();
+            }
+            return timestampsAddress;
         }
 
+        /**
+         * @return the value buffer's address, allocating it on first use. See
+         * {@link #timestampsAddress()} for why the address is cached
+         */
         public long valuesAddress() {
-            values.reopen();
-            return values.getAddress();
+            if (valuesAddress == 0) {
+                values.reopen();
+                valuesAddress = values.getAddress();
+            }
+            return valuesAddress;
         }
     }
 

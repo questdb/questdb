@@ -737,11 +737,15 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         long rowsRead = 0;
         long previousTimestamp = 0;
         boolean hasPrevious = false;
+        // Both buffers keep their address for the whole walk, so the row loop reads
+        // them out of a local rather than re-entering the scratch accessor per row.
+        final long timestampsAddress = scratch.timestampsAddress();
+        final long valuesAddress = scratch.valuesAddress();
         for (int chunk = 0, n = statePageRefs.length / pagesPerChunk(valueKind); chunk < n; chunk++) {
-            final int physicalRows = decodeChunk(chunk, scratch.timestampsAddress(), scratch.valuesAddress());
+            final int physicalRows = decodeChunk(chunk, timestampsAddress, valuesAddress);
             final int lo = chunk == 0 ? headOffset : 0;
             for (int i = 0; i < physicalRows; i++) {
-                final long timestamp = Unsafe.getLong(scratch.timestampsAddress() + (long) i * Long.BYTES);
+                final long timestamp = Unsafe.getLong(timestampsAddress + (long) i * Long.BYTES);
                 // Timestamps must not decrease. Values are not checked for
                 // finiteness: NaN is a legitimate first_value/last_value/nth_value
                 // over a frame whose oldest/newest row is NULL. avg/sum, whose ring
@@ -762,7 +766,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
                     }
                     // The value travels as raw 64-bit words, whatever the ring's value
                     // kind; the function reinterprets them.
-                    final long base = scratch.valuesAddress() + (long) i * words * Long.BYTES;
+                    final long base = valuesAddress + (long) i * words * Long.BYTES;
                     if (narrow != null) {
                         narrow.accept(timestamp, Unsafe.getLong(base));
                     } else if (decimal128 != null) {

@@ -27,11 +27,13 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.Arrays;
 
 /**
  * Read-only navigator over the persistent copy-on-write segment directory B+
@@ -54,10 +56,28 @@ import java.io.Closeable;
  */
 public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
 
+    /**
+     * Entries the bound root memoises, so a repeat lookup of the same segment id
+     * costs a slot probe rather than a root-to-leaf descent that opens, checksums
+     * and decodes a metadata page per level. A restore resolves the same handful
+     * of ids over and over - once per state page it reads, and again for every
+     * partition whose ring spans the same chunks - so the repeat is the common
+     * case rather than the exception.
+     * <p>
+     * Direct-mapped on the segment id, which the seal mints sequentially, so a
+     * span that fits collides nowhere; a span that does not degrades to a descent
+     * for the ids that collide. Sized to the chunks one partition's ring may span,
+     * which is the widest run of segments one restore walks.
+     */
+    private static final int ENTRY_CACHE_SIZE = Numbers.ceilPow2(LiveViewCheckpointRingSeal.MAX_LIVE_CHUNKS);
     private static final int SEGMENT_CACHE_SIZE = 4;
     private final Aggregate aggregate = new Aggregate();
     private final Path checkpointsDir = new Path();
     private final CairoConfiguration configuration;
+    private final long[] entryFileLength = new long[ENTRY_CACHE_SIZE];
+    private final long[] entryReferenceCount = new long[ENTRY_CACHE_SIZE];
+    private final long[] entryRetireGeneration = new long[ENTRY_CACHE_SIZE];
+    private final long[] entrySegmentId = new long[ENTRY_CACHE_SIZE];
     private final LiveViewCheckpointSegmentDirectoryEntry lookupEntry = new LiveViewCheckpointSegmentDirectoryEntry();
     private final LiveViewCheckpointSegmentDirectoryNode navNode = new LiveViewCheckpointSegmentDirectoryNode();
     private final LiveViewCheckpointPageRef rootRef = new LiveViewCheckpointPageRef();
@@ -72,6 +92,7 @@ public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
         for (int i = 0; i < SEGMENT_CACHE_SIZE; i++) {
             segReaderSegId[i] = -1;
         }
+        clearEntryCache();
     }
 
     /**
@@ -79,6 +100,7 @@ public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
      */
     public void clear() {
         rootRef.clear();
+        clearEntryCache();
     }
 
     @Override
@@ -88,6 +110,7 @@ public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
             segReaderSegId[i] = -1;
         }
         rootRef.clear();
+        clearEntryCache();
         Misc.free(checkpointsDir);
     }
 
@@ -105,15 +128,26 @@ public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
         }
         segReaderClock = 0;
         rootRef.clear();
+        clearEntryCache();
     }
 
     /**
      * Point lookup by {@code segmentId}. Fills {@code out} and returns true when
-     * the segment is catalogued.
+     * the segment is catalogued. An id the bound root already resolved comes back
+     * out of the entry cache instead of walking the tree again: the directory is
+     * copy-on-write, so what a bound root holds cannot change until {@link #of}
+     * binds another.
      */
     public boolean find(long segmentId, @NotNull LiveViewCheckpointSegmentDirectoryEntry out) {
         if (rootRef.isNull()) {
             return false;
+        }
+        // An empty slot holds -1, which no catalogued segment can carry, so a
+        // negative id asks the tree rather than reading an empty slot as a hit.
+        final int slot = (int) (segmentId & (ENTRY_CACHE_SIZE - 1));
+        if (segmentId >= 0 && entrySegmentId[slot] == segmentId) {
+            out.of(segmentId, entryFileLength[slot], entryReferenceCount[slot], entryRetireGeneration[slot]);
+            return true;
         }
         long seg = rootRef.getSegmentId();
         long off = rootRef.getOffset();
@@ -126,6 +160,10 @@ public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
                     return false;
                 }
                 navNode.copyEntryTo(index, out);
+                entryFileLength[slot] = out.fileLength;
+                entryReferenceCount[slot] = out.referenceCount;
+                entryRetireGeneration[slot] = out.retireGeneration;
+                entrySegmentId[slot] = segmentId;
                 return true;
             }
             if (navNode.count() == 0) {
@@ -233,6 +271,8 @@ public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
         }
         segReaderClock = 0;
         this.rootRef.clear();
+        // The entries the previous root published say nothing about this one.
+        clearEntryCache();
         if (rootRef.isNull()) {
             return;
         }
@@ -272,6 +312,10 @@ public class LiveViewCheckpointSegmentDirectoryReader implements Closeable {
     private static CairoException invalid(CharSequence reason) {
         return CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                 .put("live view checkpoint ").put(reason);
+    }
+
+    private void clearEntryCache() {
+        Arrays.fill(entrySegmentId, -1);
     }
 
     private void iterateRec(long seg, long off, long len, Visitor visitor, int depth) {
