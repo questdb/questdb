@@ -992,10 +992,10 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
             freeList.clear();
             if (dequeMemory != null) {
-                dequeMemory.truncateKeepCapacity();
+                dequeMemory.jumpTo(0);
             }
             dequeFreeList.clear();
         }
@@ -1554,9 +1554,9 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
             if (dequeMemory != null) {
-                dequeMemory.truncateKeepCapacity();
+                dequeMemory.jumpTo(0);
             }
         }
 

@@ -198,16 +198,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     @Override
-    public void truncateKeepCapacity() {
-        // Unlike truncate(), this keeps the contiguous region at its current size:
-        // extend0(0) would hand all but the first page back to the allocator, and
-        // the caller that refills the buffer would then pay a chain of doubling
-        // reallocations plus a page fault per page it writes.
-        appendAddress = pageAddress;
-        shiftAddressRight(0);
-    }
-
-    @Override
     public void zero() {
         long baseLength = lim - pageAddress;
         Vect.memset(pageAddress, baseLength, 0);

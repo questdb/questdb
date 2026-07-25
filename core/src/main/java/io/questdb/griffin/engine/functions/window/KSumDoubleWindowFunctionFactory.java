@@ -901,7 +901,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
         }
 
         @Override

@@ -494,10 +494,13 @@ public interface WindowFunction extends Function {
      * and clear their free list. Default no-op (scalar functions hold a single
      * field that {@code restoreCheckpointState} overwrites directly).
      * <p>
-     * The arena rewinds through {@link MemoryA#truncateKeepCapacity()} rather
-     * than {@code truncate()}: the restore about to run refills it to roughly
-     * the size it just held, so handing the pages back only to fault them in
-     * again costs the refresh loop a full re-allocation per replay.
+     * The arena rewinds through {@link MemoryA#jumpTo(long) jumpTo(0)} rather
+     * than {@link MemoryA#truncate()}: truncate reallocates the region down to a
+     * single page, and the restore about to run refills it to roughly the size it
+     * just held, so the pages would go back to the allocator only to be faulted
+     * in again - a full re-grow per replay on the live-view refresh loop.
+     * Rewinding leaves stale bytes above the append offset, which is safe because
+     * every restore path writes each slot before reading it.
      */
     default void onCheckpointRestoreBegin() {
     }

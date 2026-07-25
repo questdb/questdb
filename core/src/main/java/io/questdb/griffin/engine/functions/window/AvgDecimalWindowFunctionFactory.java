@@ -1400,7 +1400,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
             freeList.clear();
         }
 
@@ -1860,7 +1860,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -3218,7 +3218,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
             freeList.clear();
         }
 
@@ -3627,7 +3627,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -4938,7 +4938,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
             freeList.clear();
         }
 
@@ -5425,7 +5425,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -6829,7 +6829,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
             freeList.clear();
         }
 
@@ -7238,7 +7238,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -8501,7 +8501,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
             freeList.clear();
         }
 
@@ -8930,7 +8930,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -10223,7 +10223,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
             freeList.clear();
         }
 
@@ -10632,7 +10632,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
         }
 
         @Override

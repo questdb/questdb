@@ -1259,7 +1259,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -2606,7 +2606,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
             freeList.clear();
         }
 
@@ -2948,7 +2948,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
-            memory.truncateKeepCapacity();
+            memory.jumpTo(0);
         }
 
         @Override
