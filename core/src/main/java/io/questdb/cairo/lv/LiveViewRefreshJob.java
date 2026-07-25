@@ -8631,8 +8631,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * The versioned timeline's predecessor lookup, in the shape
      * {@link LiveViewCheckpointRepairPlan} plans a resume through. Every logical
-     * boundary the timeline holds is a candidate, so however old a correction is,
-     * the search still answers with the newest boundary below it.
+     * boundary that still covers its own timestamp group is a candidate, so
+     * however old a correction is, the search still answers with the newest such
+     * boundary below it.
      * <p>
      * The lookup binds the worker's timeline store reader per search rather than
      * holding it bound across the repair. A repair runs at most two searches, both
@@ -8651,6 +8652,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         @Override
         public boolean findAnchorBelow(long ceilTs, @NotNull LiveViewCheckpointTimelineEntry out) {
+            long ceiling = ceilTs;
             try (Path checkpointsDir = new Path()) {
                 checkpointsDir.of(engine.getConfiguration().getDbRoot())
                         .concat(instance.getLiveViewToken())
@@ -8658,7 +8660,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final LiveViewCheckpointTimelineStoreReader reader =
                         borrowCheckpointTimelineStoreReader(checkpointsDir);
                 try {
-                    return reader.predecessor(ceilTs, out);
+                    while (true) {
+                        final long lvRowPosition = reader.predecessorLvRowPosition(ceiling, out);
+                        if (lvRowPosition == Numbers.LONG_NULL) {
+                            return false;
+                        }
+                        if (coversOwnTimestampGroup(out, lvRowPosition)) {
+                            return true;
+                        }
+                        LOG.info().$("live view resume anchor no longer covers its timestamp group, re-anchoring below it [view=")
+                                .$(instance.getDefinition().getViewName())
+                                .$(", anchorMaxTs=").$ts(out.maxTimestamp)
+                                .$(", anchorCheckpointId=").$(out.checkpointId)
+                                .$(", lvRowPosition=").$(lvRowPosition).I$();
+                        // Strictly below the boundary just rejected, which is the
+                        // next-older root - the rejected one only under-covers its
+                        // own group, so everything below it is still sealed against
+                        // this correction.
+                        ceiling = out.maxTimestamp;
+                    }
                 } finally {
                     reader.detach();
                 }
@@ -8668,6 +8688,54 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", ceilTs=").$ts(ceilTs)
                         .$(", reason=").$(t).I$();
                 return false;
+            }
+        }
+
+        /**
+         * Whether the candidate boundary still means what a resume reads it to mean:
+         * the window state after <i>every</i> qualifying row at or below its
+         * {@code maxTimestamp}.
+         * <p>
+         * A root can stop meaning that after it is written. The cadence seal refuses
+         * to append a second boundary at the head's own timestamp, so when a later
+         * in-order commit adds more rows at that timestamp the existing root is left
+         * describing only part of the group. A resume anchored there restores the
+         * partial state and replays from {@code maxTimestamp + 1}, which reads back
+         * neither the missing rows nor their contribution - every value it computes
+         * from then on is short by them, durably.
+         * <p>
+         * Two checks, because the evidence differs either side of a head transition:
+         * <ul>
+         *     <li><b>The head's own root</b> answers from the runtime.
+         *     {@code minSeenTsSinceCheckpoint} is reset by the seal and lowered by
+         *     every row the runtime consumes since, and immediately after a seal the
+         *     frontier sits at the boundary - so a row at or below it is exactly the
+         *     tie growing. This costs nothing and covers the common resume, whose
+         *     anchor is the head.</li>
+         *     <li><b>Every older root</b> answers from the durable live-view table,
+         *     which is authoritative for a root's position (the corrupt-root heal
+         *     positions its repaired roots the same way). The table can lag a root -
+         *     a live-view block committed but not yet applied - and never leads it,
+         *     so holding strictly more rows at or below the boundary than the root
+         *     claims as its whole prefix proves rows landed there after it was
+         *     sealed. The head's in-memory answer does not survive the head moving
+         *     on, and this one does, including across a restart.</li>
+         * </ul>
+         * A boundary partition the live-view table does not hold natively has no
+         * searchable prefix, so it yields no evidence either way and the anchor
+         * stands.
+         */
+        private boolean coversOwnTimestampGroup(LiveViewCheckpointTimelineEntry entry, long lvRowPosition) {
+            if (entry.maxTimestamp == instance.getHeadCheckpointMaxTs()
+                    && entry.checkpointId == instance.getHeadCheckpointRootId()) {
+                return instance.getMinSeenTsSinceCheckpoint() > entry.maxTimestamp;
+            }
+            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                final long durableRowsBelow = countDurableRowsBelow(
+                        lvReader,
+                        entry.maxTimestamp == Long.MAX_VALUE ? Long.MAX_VALUE : entry.maxTimestamp + 1
+                );
+                return durableRowsBelow < 0 || durableRowsBelow <= lvRowPosition;
             }
         }
 

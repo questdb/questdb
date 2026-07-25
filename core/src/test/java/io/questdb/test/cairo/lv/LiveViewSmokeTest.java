@@ -17931,15 +17931,248 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 // Reuse would hand the replay a runtime holding BOTH ts=10 rows and
                 // a lifetime position of 2, while the root the head mirrors froze
                 // one row at position 1. The two are not the same state, so the
-                // replay takes the restore. Only the branch is asserted here: what
-                // the restore then produces for a root whose timestamp group grew
-                // under it is a separate, pre-existing question this optimization
-                // neither creates nor changes.
+                // replay takes the restore - and the restore must then refuse that
+                // root outright, because it describes only half the group sitting
+                // at its own boundary while the replay starts above it.
                 Assert.assertEquals(
                         "a row on the head's own timestamp must deny reuse",
                         0L,
                         job.runtimeAnchorReuseCountForTest()
                 );
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts, x")
+                        .noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                                "2026-11-01T00:00:10.000000Z\t11\t2\n" +
+                                "2026-11-01T00:00:15.000000Z\t15\t3\n" +
+                                "2026-11-01T00:00:20.000000Z\t20\t4\n");
+
+                // The grown tie is the only root the timeline holds, so nothing
+                // survives below it and the repair falls all the way back to the
+                // boundary rebuild.
+                assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n0\t4\n");
+
+                // The durable half of the damage: a resume anchored on the partial
+                // root also under-counts the lifetime row position, and every root
+                // sealed afterwards inherits the drift.
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(
+                        "the lifetime row position must match the live view table",
+                        4L,
+                        lv.getLvRowsTotal()
+                );
+            }
+
+            // The online path must leave the state a restart would rebuild: the
+            // restart reconciles the restored root plus its forward replay against
+            // the durable table, and a grown tie always fails that.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(3_000_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+                Assert.assertTrue(
+                        "the repaired timeline must restore without a reconciliation rebuild",
+                        reloaded.isCheckpointRestoreSucceeded()
+                );
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts, x")
+                        .noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                                "2026-11-01T00:00:10.000000Z\t11\t2\n" +
+                                "2026-11-01T00:00:15.000000Z\t15\t3\n" +
+                                "2026-11-01T00:00:20.000000Z\t20\t4\n");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ResumeDeniesStaleAnchorWhoseTimestampGroupGrew() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-11-01T00:00:10.000000Z', 10, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(1_000_000L);
+                execute("INSERT INTO base VALUES ('2026-11-01T00:00:10.000000Z', 11, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Seal a fresh head above the grown tie. The root at 10 stops being
+                // the head, so minSeenTsSinceCheckpoint - which the seal resets -
+                // no longer carries the proof, while the root itself stays in the
+                // timeline as a candidate every later resume can still select.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base VALUES ('2026-11-01T00:00:30.000000Z', 30, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:30.000000Z"),
+                        lv.getHeadCheckpointMaxTs()
+                );
+                Assert.assertEquals(
+                        "the seal must have reset the in-memory tie signal",
+                        Long.MAX_VALUE,
+                        lv.getMinSeenTsSinceCheckpoint()
+                );
+
+                // O3 between the stale root and the head, so the anchor search
+                // lands on the stale root rather than on the head.
+                setCurrentMicros(3_000_000L);
+                execute("INSERT INTO base VALUES ('2026-11-01T00:00:20.000000Z', 20, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts, x")
+                        .noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                                "2026-11-01T00:00:10.000000Z\t11\t2\n" +
+                                "2026-11-01T00:00:20.000000Z\t20\t3\n" +
+                                "2026-11-01T00:00:30.000000Z\t30\t4\n");
+                Assert.assertEquals(
+                        "the lifetime row position must match the live view table",
+                        4L,
+                        lv.getLvRowsTotal()
+                );
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ResumeReanchorsBelowHeadWhoseTimestampGroupGrew() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // A retained root at 10 that no tie ever grew under, then the head
+                // at 20 which one does. Denying the head must cost one boundary,
+                // not the whole history.
+                for (int seconds = 10; seconds <= 20; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ", 'a')");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                setCurrentMicros(1_000_000L);
+                execute("INSERT INTO base VALUES ('2026-11-01T00:00:20.000000Z', 21, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base VALUES " +
+                        "('2026-11-01T00:00:40.000000Z', 40, 'a'), " +
+                        "('2026-11-01T00:00:30.000000Z', 30, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts, x")
+                        .noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                                "2026-11-01T00:00:20.000000Z\t20\t2\n" +
+                                "2026-11-01T00:00:20.000000Z\t21\t3\n" +
+                                "2026-11-01T00:00:30.000000Z\t30\t4\n" +
+                                "2026-11-01T00:00:40.000000Z\t40\t5\n");
+
+                // Re-anchored one root down rather than rebuilt: the resume still
+                // ran, replaying the four rows above the boundary at 10.
+                assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n4\t0\n");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ResumeDeniesHeadAnchorWhenTieGrewWithoutSealAttempt() throws Exception {
+        // A cadence wide enough that the commit growing the tie triggers no seal at
+        // all, so BoundaryNotAboveHeadException never fires. The exception is a
+        // symptom of one path; the condition the denial keys off is the runtime's
+        // own minSeenTsSinceCheckpoint.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 1_000_000_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The view's first cadence seals unconditionally, which is what puts
+                // a root at 10 there to grow a tie under.
+                execute("INSERT INTO base VALUES ('2026-11-01T00:00:10.000000Z', 10, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:10.000000Z"),
+                        lv.getHeadCheckpointMaxTs()
+                );
+
+                setCurrentMicros(1_000L);
+                execute("INSERT INTO base VALUES ('2026-11-01T00:00:10.000000Z', 11, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Neither cadence trigger fired, so the generation the first seal
+                // published still stands and its single root is the only anchor a
+                // resume can select. Nothing on disk records that its group grew.
+                assertQuery("SELECT checkpoint_timeline_generation, checkpoint_timeline_entries FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_timeline_generation\tcheckpoint_timeline_entries\n1\t1\n");
+
+                setCurrentMicros(2_000L);
+                execute("INSERT INTO base VALUES " +
+                        "('2026-11-01T00:00:20.000000Z', 20, 'a'), " +
+                        "('2026-11-01T00:00:15.000000Z', 15, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts, x")
+                        .noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                                "2026-11-01T00:00:10.000000Z\t11\t2\n" +
+                                "2026-11-01T00:00:15.000000Z\t15\t3\n" +
+                                "2026-11-01T00:00:20.000000Z\t20\t4\n");
             }
             execute("DROP LIVE VIEW lv");
         });

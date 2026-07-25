@@ -350,22 +350,32 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
 
     /**
      * Finds the newest logical boundary whose {@code maxTimestamp} is strictly
-     * below {@code correctionTimestamp} and copies it into {@code out}. The strict
-     * inequality preserves a complete timestamp tie: a boundary at exactly the
-     * correction covers only part of the rows sitting there.
+     * below {@code correctionTimestamp}, copies it into {@code out} and returns its
+     * lifetime output row position. The strict inequality preserves a complete
+     * timestamp tie: a boundary at exactly the correction covers only part of the
+     * rows sitting there.
+     * <p>
+     * The position comes back with the boundary because a caller vetting an anchor
+     * needs both, and reading them apart would need a second pin: the raw
+     * {@link LiveViewCheckpointTimelineEntry#baseLvRowPosition} is only half the
+     * figure, and the generation's row-position delta index supplies the rest.
      * <p>
      * Lookup runs under one generation pin, released before this returns. The
      * caller re-identifies the boundary by its composite key when it restores, so
      * a generation published in between is caught there rather than silently
      * mixed in here.
      *
-     * @return false when the current generation holds no boundary below the
-     * correction
+     * @return the boundary's effective lifetime row position, or
+     * {@link Numbers#LONG_NULL} when the current generation holds no boundary
+     * below the correction - in which case {@code out} is left untouched
      */
-    public boolean predecessor(long correctionTimestamp, @NotNull LiveViewCheckpointTimelineEntry out) {
+    public long predecessorLvRowPosition(long correctionTimestamp, @NotNull LiveViewCheckpointTimelineEntry out) {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
-            return timelineReader.predecessor(pin.getTimelineRootRef(), correctionTimestamp, out);
+            if (!timelineReader.predecessor(pin.getTimelineRootRef(), correctionTimestamp, out)) {
+                return Numbers.LONG_NULL;
+            }
+            return deltaReader.effectivePosition(pin.getRowPositionDeltaRootRef(), out);
         }
     }
 
