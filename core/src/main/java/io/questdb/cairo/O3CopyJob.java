@@ -830,6 +830,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     }
                 }
                 indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
+                // Thread the table's EFFECTIVE commit mode into this (possibly transient) index writer, so
+                // its commit() flush decision matches the destination-column sync gate above
+                // (CommitMode.appliesColumnSync on getEffectiveCommitMode). Without it the index kept
+                // reading the instance-global mode and flushed on every O3 merge of an ADAPTIVE table --
+                // whose merged columns are deliberately left lazy and made durable by the epoch instead.
+                indexWriter.setCommitMode(tableWriter.getEffectiveCommitMode());
                 updateIndex(dstFixAddr, Math.abs(dstFixSize), indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
                 indexWriter.commit();
             } finally {

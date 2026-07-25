@@ -113,6 +113,9 @@ public class TableConverter {
                                     txWriter = new TxWriter(ff, configuration);
                                 }
                                 txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
+                                // Structural one-shot conversion, outside any table writer and outside the
+                                // adaptive epoch's coverage: take the SYNC grade under ADAPTIVE.
+                                txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
                                 txWriter.resetLagValuesUnsafe();
 
                                 if (walEnabled) {

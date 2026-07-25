@@ -55,6 +55,9 @@ public class BitmapIndexWriter implements IndexWriter {
     private int blockCapacity;
     private int blockValueCountMod;
     private int keyCount = -1;
+    // The owning table's PER-TABLE EFFECTIVE commit mode; CommitMode.UNSET (default) => defer to the global
+    // cairo.commit.mode, so a transient writer that is never threaded a mode is byte-identical to before.
+    private int tableCommitMode = CommitMode.UNSET;
     private long seekValueBlockOffset;
     private long seekValueCount;
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
@@ -165,10 +168,21 @@ public class BitmapIndexWriter implements IndexWriter {
     }
 
     public void commit() {
-        int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
+        // Per-table EFFECTIVE mode, and appliesColumnSync (SYNC/ASYNC only) rather than `!= NOSYNC`:
+        // the .k/.v files are re-derivable from the durable WAL just like the column they index, so under
+        // ADAPTIVE they stay lazy on the apply path and are made durable by the epoch (TableWriter
+        // .fsyncMaterializedState forces sync(false) on every indexer, then one filesystem-wide syncfs).
+        // Reading the GLOBAL mode here also inverted the per-table polarity every other adaptive decision
+        // point uses. See IndexWriter.setCommitMode.
+        final int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
+        if (CommitMode.appliesColumnSync(commitMode)) {
             sync(commitMode == CommitMode.ASYNC);
         }
+    }
+
+    @Override
+    public void setCommitMode(int commitMode) {
+        this.tableCommitMode = commitMode;
     }
 
     public RowCursor getCursor(int key) {

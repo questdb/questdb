@@ -209,6 +209,9 @@ public class WalUtils {
                 MemoryMARW metaMem = Vm.getCMARWInstance()
         ) {
             txWriter.ofRW(dstDir.concat(TableUtils.TXN_FILE_NAME).$());
+            // Structural one-shot write, outside any table writer and outside the adaptive epoch's coverage:
+            // take the SYNC grade under ADAPTIVE rather than TxWriter's (correct, but apply-path) lazy gate.
+            txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
             txWriter.resetLagValuesUnsafe();
             TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
             metaMem.putInt(TableUtils.META_OFFSET_TABLE_ID, newTableId);

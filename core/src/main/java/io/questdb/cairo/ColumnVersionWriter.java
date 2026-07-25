@@ -39,6 +39,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private final boolean partitioned;
     private boolean hasChanges;
     private long size;
+    // The owning table's PER-TABLE EFFECTIVE commit mode, pushed in by TableWriter via setCommitMode().
+    // CommitMode.UNSET (the default) means "defer to the instance-global cairo.commit.mode".
+    private int tableCommitMode = CommitMode.UNSET;
     private long version;
 
     // size should be read from the transaction file
@@ -72,6 +75,27 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
         doCommit();
         hasChanges = false;
+    }
+
+    /**
+     * Publishes the owning table's EFFECTIVE commit mode (already resolved against the instance-global mode
+     * via {@link CommitMode#effectiveCommitMode(int, int)}). Pass {@link CommitMode#UNSET} to revert to
+     * deferring to the global mode.
+     */
+    public void setCommitMode(int commitMode) {
+        this.tableCommitMode = commitMode;
+    }
+
+    /**
+     * The commit-mode gate for the per-commit {@code _cv} flush. Mirrors {@code TxWriter.resolveCommitMode()}
+     * exactly, and for the same two reasons: the decision must use the table's own EFFECTIVE mode (so a
+     * {@code WITH commit_mode='sync'} table on a {@code nosync} instance is not silently left non-durable, and
+     * vice versa), and ADAPTIVE must behave like the columns — lazy on the apply path, made crash-safe by the
+     * durable epoch's {@link #fsync()} plus recovery roll-forward from the {@code .epoch} copies — rather than
+     * paying a SYNC-grade msync on every apply.
+     */
+    private int resolveCommitMode() {
+        return CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
     }
 
     /**
@@ -422,8 +446,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         Unsafe.storeFence();
         storeNewVersion();
 
-        final int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
+        final int commitMode = resolveCommitMode();
+        // appliesColumnSync (SYNC/ASYNC only), NOT `!= NOSYNC` — see resolveCommitMode().
+        if (CommitMode.appliesColumnSync(commitMode)) {
             mem.sync(commitMode == CommitMode.ASYNC);
         }
     }

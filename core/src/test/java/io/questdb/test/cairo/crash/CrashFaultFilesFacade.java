@@ -767,6 +767,38 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
+     * Mark ONE file's current content as fully durable (device-written AND journaled), leaving every other
+     * file's durability state untouched. The per-file counterpart of {@link #markDurableBaseline}.
+     * <p>
+     * This models the KERNEL independently writing back a file's dirty mmap pages before the crash --
+     * something that can happen to any mapped file at any time, with no {@code msync} from QuestDB. It is
+     * the only way to construct the "commit pointer survived AHEAD of the column data it exposes" state now
+     * that {@code _txn}/{@code _cv} are correctly lazy under ADAPTIVE: their per-apply flush used to create
+     * that skew on every commit, which made it reachable by accident rather than by intent.
+     *
+     * @param absPath absolute path of the file to promote to durable; a no-op if it does not exist
+     */
+    public void markFileDurable(String absPath) {
+        final java.nio.file.Path p = Paths.get(absPath).toAbsolutePath();
+        if (!java.nio.file.Files.exists(p)) {
+            return;
+        }
+        final String key = p.toString();
+        try {
+            durableSize.put(key, java.nio.file.Files.size(p));
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        final byte[] now = readCurrent(key);
+        track(key);
+        deviceCacheContent.put(key, now);
+        durableContent.put(key, now);
+        writtenDataEnd.put(key, (long) now.length);
+        syncedDataEnd.put(key, (long) now.length);
+        journaledDataEnd.put(key, (long) now.length);
+    }
+
+    /**
      * Zero [offset, offset+len) of the given file when crash() runs (deterministic torn-write injection).
      */
     public void tornTail(LPSZ name, long offset, long len) {

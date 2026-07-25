@@ -57,6 +57,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private int readBaseOffset;
     private long readRecordSize;
     private long recordStructureVersion = 0;
+    // The owning table's PER-TABLE EFFECTIVE commit mode, pushed in by TableWriter via setCommitMode().
+    // CommitMode.UNSET (the default) means "defer to the instance-global cairo.commit.mode", so a TxWriter
+    // that is never threaded a mode behaves exactly as before. See resolveCommitMode() for why this must be
+    // the per-table mode and not configuration.getCommitMode().
+    private int tableCommitMode = CommitMode.UNSET;
     private MemoryCMARW txMemBase;
     private int txPartitionCount;
     private int writeAreaSize;
@@ -65,6 +70,40 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public TxWriter(FilesFacade ff, CairoConfiguration configuration) {
         super(ff);
         this.configuration = configuration;
+    }
+
+    /**
+     * Publishes the owning table's EFFECTIVE commit mode (already resolved against the instance-global mode
+     * via {@link CommitMode#effectiveCommitMode(int, int)}). Pass {@link CommitMode#UNSET} to revert to
+     * deferring to the global mode.
+     */
+    public void setCommitMode(int commitMode) {
+        this.tableCommitMode = commitMode;
+    }
+
+    /**
+     * The commit-mode gate for the per-commit {@code _txn} flush.
+     * <p>
+     * TWO things are load-bearing here:
+     * <ol>
+     *   <li><b>Per-table, not global.</b> Every other adaptive decision point (WAL-commit durability, the
+     *       apply lazy gate, the epoch trigger, the WAL-purge floor, recovery) resolves the table's own
+     *       {@code _meta} mode against the global one. Reading only {@code configuration.getCommitMode()}
+     *       here inverted the polarity: a {@code WITH commit_mode='sync'} table on a {@code nosync} instance
+     *       silently skipped its {@code _txn} flush (a real crash-loss window for a table that explicitly
+     *       asked for durability), while a {@code nosync} table on a {@code sync} instance paid for one it
+     *       had opted out of.</li>
+     *   <li><b>ADAPTIVE is lazy, like the columns.</b> {@link CommitMode#appliesColumnSync} is true only for
+     *       SYNC/ASYNC. Under ADAPTIVE the materialized table — {@code _txn} and {@code _cv} included — is a
+     *       rebuildable cache of the durable WAL: {@link RecoveryCoordinator} restores both files from the
+     *       epoch's immutable {@code .epoch} copies and replays {@code (epoch.seqTxn, frontier]} on top.
+     *       Flushing {@code _txn} on every apply is exactly the per-commit cost the lazy-apply gate exists to
+     *       avoid, and it is not what makes ADAPTIVE crash-safe. The epoch's own
+     *       {@link #fsync()} forces the flush regardless of mode.</li>
+     * </ol>
+     */
+    private int resolveCommitMode() {
+        return CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
     }
 
     public void append() {
@@ -211,13 +250,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             prevRecordBaseOffset = lastRecordBaseOffset;
             lastRecordBaseOffset = writeBaseOffset;
             prevPartitionTableVersion = partitionTableVersion;
-            int commitMode = configuration.getCommitMode();
-            if (commitMode != CommitMode.NOSYNC) {
+            final int commitMode = resolveCommitMode();
+            if (CommitMode.appliesColumnSync(commitMode)) {
                 txMemBase.sync(commitMode == CommitMode.ASYNC);
             }
         } else {
             // Slow path, record structure changed
-            commitFullRecord(configuration.getCommitMode(), symbolCountProviders);
+            commitFullRecord(resolveCommitMode(), symbolCountProviders);
         }
     }
 
@@ -749,7 +788,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         assert readBaseOffset + readRecordSize <= txMemBase.size();
         super.switchRecord(readBaseOffset, readRecordSize);
 
-        if (commitMode != CommitMode.NOSYNC) {
+        // appliesColumnSync (SYNC/ASYNC only), NOT `!= NOSYNC`: under ADAPTIVE the _txn pointer is lazily
+        // durable like the columns it exposes, and is made crash-safe by the durable epoch (fsync()) plus
+        // recovery roll-forward. See resolveCommitMode(). The bootstrap caller that passes NOSYNC explicitly
+        // is unaffected (both forms are false for NOSYNC).
+        if (CommitMode.appliesColumnSync(commitMode)) {
             txMemBase.sync(commitMode == CommitMode.ASYNC);
         }
     }

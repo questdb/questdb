@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -46,8 +47,11 @@ import java.util.List;
  *   <li>ADAPTIVE table; ingest+apply N txns; fire a durable epoch at seqTxn=K (columns + {@code _txn}
  *       forced durable, {@code _snapshot} + {@code _txn.epoch}/{@code _cv.epoch} recorded).</li>
  *   <li>Ingest+apply M MORE txns LAZILY. After Plan 3 Task C Part 1 the O3-applied columns are
- *       GENUINELY non-durable ({@code O3CopyJob}/PMAR-release column sync skipped under ADAPTIVE);
- *       only {@code _txn} is msync'd and the WAL is fdatasync-durable.</li>
+ *       GENUINELY non-durable ({@code O3CopyJob}/PMAR-release column sync skipped under ADAPTIVE), and
+ *       so are the {@code _txn}/{@code _cv} pointers that expose them (their commit sites are gated on
+ *       {@code CommitMode.appliesColumnSync} too). Only the WAL is fdatasync-durable. The negative
+ *       control therefore promotes {@code _txn}/{@code _cv} to durable EXPLICITLY, modelling a kernel
+ *       writeback -- see the comment at that call site.</li>
  *   <li>Record the rows a reader sees pre-crash (all N+M).</li>
  *   <li>{@code crash()} — drops the non-durable post-epoch column data; keeps the fsync/msync'd state
  *       (incl. the rewound-able epoch cut) and the durable WAL.</li>
@@ -116,6 +120,23 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
                 // Pre-crash: a reader sees ALL N+M rows.
                 final List<Long> pre = readVs(engine);
                 Assert.assertEquals("pre-crash must see all N+M rows", K + M, pre.size());
+
+                // Model the KERNEL writing back _txn's (and _cv's) dirty mmap pages before the crash, with no
+                // msync from QuestDB. This is what constructs the state recovery exists to repair: the commit
+                // POINTER survives at the post-epoch frontier while the column DATA it exposes does not.
+                //
+                // It has to be explicit now. It used to happen by accident, because TxWriter.commit /
+                // ColumnVersionWriter.commit read the GLOBAL commit mode and branched on `!= NOSYNC`, so they
+                // msync'd _txn/_cv on EVERY adaptive apply -- the very per-commit cost the lazy-apply gate
+                // exists to remove. With those sites correctly gated on appliesColumnSync, a crash rolls the
+                // pointer back with the data and ordinary WAL replay repairs the table on its own. That is a
+                // strictly better outcome, but it is INCIDENTAL: the kernel may write back a mapped page at
+                // any moment, so the skew is still reachable in production and RecoveryCoordinator is still
+                // what GUARANTEES the rewind. Forcing it here keeps this control testing recovery rather than
+                // a side effect of an unrelated flush.
+                final String tableDir = engine.getConfiguration().getDbRoot() + java.io.File.separator + tt.getDirName();
+                crashFf.markFileDurable(tableDir + java.io.File.separator + TableUtils.TXN_FILE_NAME);
+                crashFf.markFileDurable(tableDir + java.io.File.separator + TableUtils.COLUMN_VERSION_FILE_NAME);
 
                 // CRASH: drop non-durable column data; keep fsync/msync'd state + the durable WAL.
                 // crashAndReopen() releases all readers + writers (so the next open re-reads from disk).

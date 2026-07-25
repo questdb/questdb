@@ -369,6 +369,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean hasPostingIndexers;
     private int indexCount;
     private boolean isInCtorRecovery;
+    // False until the constructor's try block completes. doClose() is called from the constructor's own
+    // failure path, so every optional close-time action that walks writer state (columns, symbol maps,
+    // indexers) must check this first — on that path those lists are only PARTLY populated. See
+    // doClose()'s graceful-close epoch gate.
+    private boolean fullyConstructed;
     private int lastErrno;
     private boolean lastOpenPartitionIsReadOnly;
     private long lastOpenPartitionTs = Long.MIN_VALUE;
@@ -527,6 +532,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.effectiveCommitMode = legacyAdaptiveEnrollmentPending
                     ? CommitMode.SYNC
                     : CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode());
+            // Publish the table's mode to the _txn writer as soon as it is known, BEFORE any commit can run.
+            // TxWriter otherwise falls back to the instance-global mode (see TxWriter.resolveCommitMode).
+            this.txWriter.setCommitMode(this.effectiveCommitMode);
             this.metadata.setTxReader(txWriter);
             this.timestampType = metadata.getTimestampType();
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
@@ -536,6 +544,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
             this.columnVersionWriter = openColumnVersionFile(configuration, path, pathSize, partitionBy != PartitionBy.NONE);
+            // Same as txWriter above: publish the table's mode before the first commit (the rollback() below
+            // included). ColumnVersionWriter otherwise falls back to the instance-global mode.
+            this.columnVersionWriter.setCommitMode(this.effectiveCommitMode);
             if (columnVersionWriter.getVersion() != txWriter.getColumnVersion()) {
                 if (columnVersionWriter.getVersion() - 1 == txWriter.getColumnVersion()) {
                     // This is case when transaction was aborted during column version change
@@ -647,6 +658,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // table-local file because it could not reach the purge queue or the
             // shared purge-log writer. This is best-effort and never fails open.
             recoverSpilledPostingSealPurges();
+            // LAST statement of the try: from here on the writer's columns / symbol maps / indexers are
+            // fully populated, so close-time actions that walk them are safe. Anything that throws above
+            // reaches doClose(false) below with those lists only partly built.
+            this.fullyConstructed = true;
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -3541,10 +3556,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /** Re-applies all mode-dependent flags to already-open column memories. */
+    /**
+     * Re-applies all mode-dependent flags to already-open column memories, the commit-pointer writers
+     * ({@code _txn}, {@code _cv}) and the open indexers.
+     * <p>
+     * The pointer/index writers are included because they historically read the INSTANCE-GLOBAL
+     * {@code cairo.commit.mode} directly, which inverted the per-table polarity used everywhere else: a
+     * {@code WITH commit_mode='sync'} table on a {@code nosync} instance skipped its {@code _txn}/{@code _cv}
+     * flush entirely, and a {@code nosync} table on a {@code sync} instance paid for one it had opted out of.
+     * They now defer to whatever this method publishes, so EVERY path that CHANGES
+     * {@link #effectiveCommitMode} after construction must call it (legacy adaptive enrollment,
+     * {@code setMetaCommitMode}).
+     * <p>
+     * The CONSTRUCTOR deliberately does not route through here — it publishes to {@code txWriter} and
+     * {@code columnVersionWriter} inline, each at the point the object exists, because both must know the
+     * mode before the very first commit and neither is available when {@code effectiveCommitMode} is first
+     * resolved. Indexers are covered by {@link #populateDenseIndexerList()}, the single place
+     * {@code denseIndexers} is built.
+     */
     private void reapplyColumnCommitMode(int commitMode) {
         final boolean adaptive = commitMode == CommitMode.ADAPTIVE;
         final boolean applyLazy = !appliesColumnSync(commitMode);
+        txWriter.setCommitMode(commitMode);
+        if (columnVersionWriter != null) {
+            columnVersionWriter.setCommitMode(commitMode);
+        }
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            denseIndexers.getQuick(i).getWriter().setCommitMode(commitMode);
+        }
         for (int i = 0; i < columnCount; i++) {
             final MemoryMA data = columns.getQuick(i * 2);
             data.setCommitMode(commitMode);
@@ -6780,7 +6819,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // possibly-torn or about-to-be-deleted state; a negative epoch interval is the operator's
         // opt-out of epochs entirely (honor it here too, since this bypasses the cadence gate).
         // Best effort: a failure just leaves the tail for the next boot's idempotent WAL replay.
-        if (!distressed
+        //
+        // fullyConstructed keeps this block from ever ENTERING the epoch on a half-built writer. doClose()
+        // is called from the CONSTRUCTOR's own catch block, where the failure may have come from
+        // configureColumns() / configureSymbolTable() and left `columns` / `denseSymbolMapWriters` /
+        // `denseIndexers` only PARTLY populated -- while effectiveCommitMode was already resolved to
+        // ADAPTIVE far earlier, so every other condition here passes. advanceDurableEpoch() then walks
+        // those half-built lists and dies with "index out of bounds"; being an AssertionError it slipped
+        // past the CairoException | CairoError catch below, ESCAPED doClose(), and REPLACED the
+        // constructor's real exception. The WAL drop-table retry (ApplyWal2TableJob.purgeTableFiles)
+        // catches only CairoException, so the substituted AssertionError aborted the whole drop-retry
+        // chain and left the table's files — including _txn — on disk forever. Reproduced by
+        // WalTableSqlTest.testDropFailedWhileSymbolFileLocked and pinned directly by
+        // TableWriterCloseEpochGuardsTest.
+        //
+        // This guard and the widened catch below OVERLAP deliberately: measured by negative control,
+        // reverting either one ALONE still leaves testFailedOpenPropagatesRealErrorUnderAdaptive green,
+        // and only reverting BOTH reproduces the substituted AssertionError. So neither is individually
+        // pinned by that test, and neither should be removed on the grounds that "the test still passes".
+        // They answer different questions: the catch stops anything the epoch throws from escaping
+        // doClose(), while this guard stops the half-built walk from being attempted at all -- cheaper,
+        // and not dependent on every future failure mode inside advanceDurableEpoch() being throw-shaped
+        // rather than, say, a partial write.
+        // A FAILED FSYNC in the epoch below is fatal and must stay fatal, but it must not be raised until
+        // this method has finished releasing resources. Captured here, rethrown at the very end of
+        // doClose(). See the catch block for why both halves are required.
+        CairoError fatalEpochFailure = null;
+        if (fullyConstructed
+                && !distressed
                 && configuration.isAdaptiveEpochFlushOnClose()
                 && tableToken.isWal()
                 && getEffectiveCommitMode() == CommitMode.ADAPTIVE
@@ -6789,8 +6855,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (getSeqTxn() > engine.getTableSequencerAPI().getTxnTracker(tableToken).getDurableEpochSeqTxn()) {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 }
-            } catch (CairoException | CairoError e) {
-                handleBestEffortDurableEpochFailure(e, "writer close");
+            } catch (Throwable e) {
+                // Throwable, not CairoException | CairoError: this block is documented as BEST EFFORT, and a
+                // best-effort epoch must never be able to break close(). Anything it throws would otherwise
+                // escape doClose(), skip every free below and, on the constructor path, mask the real open
+                // failure. Mirrors the closeDeferredPostingSealPurges() guard immediately below, which
+                // widened its catch for exactly this reason.
+                try {
+                    handleBestEffortDurableEpochFailure(e, "writer close");
+                } catch (CairoError fatal) {
+                    // A genuine data-sync failure is INDETERMINATE — the device may or may not hold the
+                    // epoch's bytes — so handleBestEffortDurableEpochFailure deliberately re-raises after
+                    // poisoning the engine. That fail-stop must be preserved, but letting it unwind from
+                    // HERE skips every free() below: it leaks the writer's fds and native memory and
+                    // strands the table lock, on a path whose whole job is to release them. So DEFER it:
+                    // the poison and the operator callback have already happened (fail-stop is in force
+                    // from this instant, and getDurableAckRegistry now reports nothing durable), we finish
+                    // the cleanup, then rethrow so the caller still sees the fatal error.
+                    fatalEpochFailure = fatal;
+                }
             }
         }
         // Best-effort cleanup that now does I/O: a spill mmap, and a direct
@@ -6863,6 +6946,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 tempMem16b = Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
             }
             LOG.debug().$("closed [table=").$(tableToken).I$();
+        }
+        // Every resource is now released. Re-raise the deferred fatal data-sync failure so a failed fsync
+        // in the close epoch stays fail-stop for the caller (the engine was already poisoned at the point
+        // of failure). Last statement in the method: nothing after it could be skipped.
+        if (fatalEpochFailure != null) {
+            throw fatalEpochFailure;
         }
     }
 
@@ -9564,6 +9653,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ColumnIndexer indexer = indexers.getQuick(i);
             if (indexer != null) {
                 denseIndexers.add(indexer);
+                // denseIndexers is the ONLY list the commit/sync loops iterate, and this is the ONLY place it
+                // is populated -- so publishing the table's effective mode here guarantees every indexer that
+                // can ever be committed knows it, without threading the mode through the many
+                // configureFollowerAndWriter() call sites. See reapplyColumnCommitMode.
+                indexer.getWriter().setCommitMode(effectiveCommitMode);
                 if (IndexType.isPosting(indexer.getWriter().getIndexType())) {
                     hasPostingIndexers = true;
                 }
@@ -14477,7 +14571,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Always commit indexers: PostingIndexWriter buffers add() calls in native
         // memory and only publishes them to the memory-mapped files during commit().
         // Without this, readers see keyCount=0 until the writer is closed (seal).
-        // BitmapIndexWriter.commit() is a no-op in NOSYNC mode, so this is safe.
+        // commit()'s DURABILITY flush is itself mode-gated on the same appliesColumnSync
+        // predicate as the column block below (no-op under NOSYNC *and* ADAPTIVE), so
+        // calling it unconditionally here costs nothing in those modes.
         //
         // The publish-txn announced here is the one any in-process seal
         // should record as the visibility boundary of its new sealed files.
@@ -14815,6 +14911,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             indexer.getWriter().setNextTxnAtSeal(publishTxn);
             try {
                 indexer.getWriter().commit();
+                // FORCE the index flush, INDEPENDENT of commit mode — exactly as this method forces the
+                // column, _cv and _txn flushes below. commit() above only PUBLISHES buffered postings into
+                // the mapped .k/.pk/.v/.pv files; its durability flush is mode-gated and is deliberately a
+                // no-op under ADAPTIVE (IndexWriter.setCommitMode), which is precisely the mode this epoch
+                // runs in. Without this explicit msync(MS_SYNC) the epoch would depend on syncfs/fsync
+                // picking up mmap-dirty index pages, which holds on Linux but is not guaranteed on the
+                // non-syncfs fallback path (fsyncAttachedPartitionFiles). Cheap: epochs are per-cadence,
+                // not per-commit.
+                indexer.getWriter().sync(false);
             } catch (CairoException e) {
                 throwDistressException(e);
             }

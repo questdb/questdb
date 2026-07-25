@@ -4044,6 +4044,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // entry would be undroppable, surfacing stale rows.
                         // No-op on BitmapIndexWriter.
                         indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
+                        // Publish the table's EFFECTIVE commit mode before either commit path below. These
+                        // writers come from TableWriter's o3BasketPool, so they are POOLED and reused, and
+                        // setCommitMode is not reset by of(): without setting it here the flush grade would
+                        // depend on whether this particular instance had previously passed through
+                        // O3CopyJob (which does set it). The pool is per-TableWriter so a stale value is
+                        // always the SAME table's mode and never wrong, but a durability gate must not vary
+                        // with pool reuse order.
+                        indexWriter.setCommitMode(tableWriter.getEffectiveCommitMode());
                         if (IndexType.isPosting(indexType)) {
                             // commitDense may seal (spill-driven reseal), rotating the
                             // .pv and recording a purge for the superseded file. The
