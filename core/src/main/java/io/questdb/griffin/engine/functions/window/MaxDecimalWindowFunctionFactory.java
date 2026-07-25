@@ -1608,7 +1608,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue mv) {
             final long size = source.getRowCount();
             final long frameSize = source.getFrameSize();
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             ringRestore.of(newStartOffset);
             source.forEachRow(ringRestore);
@@ -1622,7 +1622,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             // same in-frame value sequence reproduces the deque values; the deque indexes
             // rebase to zero, which the frame-local contract permits, and the front - the
             // emitted max/min - matches exactly.
-            final long dequeCapacity = Math.max(frameSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(frameSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             long dequeEndIndex = 0;
             for (long i = 0; i < frameSize; i++) {
@@ -1657,7 +1657,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             offset += Long.BYTES;
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             final long dequeSize = source.getLong(offset);
             offset += Long.BYTES;
@@ -1669,7 +1669,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 memory.putDecimal128(rec + Long.BYTES, scratch.getHigh(), scratch.getLow());
                 offset += Decimal128.BYTES;
             }
-            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(dequeSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             for (long i = 0; i < dequeSize; i++) {
                 source.getDecimal128(offset, scratch);
@@ -3541,7 +3541,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue mv) {
             final long size = source.getRowCount();
             final long frameSize = source.getFrameSize();
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             ringRestore.of(newStartOffset);
             source.forEachRow(ringRestore);
@@ -3555,7 +3555,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             // same in-frame value sequence reproduces the deque values; the deque indexes
             // rebase to zero, which the frame-local contract permits, and the front - the
             // emitted max/min - matches exactly.
-            final long dequeCapacity = Math.max(frameSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(frameSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             long dequeEndIndex = 0;
             for (long i = 0; i < frameSize; i++) {
@@ -3587,7 +3587,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             offset += Long.BYTES;
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             final long dequeSize = source.getLong(offset);
             offset += Long.BYTES;
@@ -3598,7 +3598,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 memory.putShort(rec + Long.BYTES, source.getShort(offset));
                 offset += Short.BYTES;
             }
-            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(dequeSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             for (long i = 0; i < dequeSize; i++) {
                 dequeMemory.putShort(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getShort(offset));
@@ -5400,7 +5400,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue mv) {
             final long size = source.getRowCount();
             final long frameSize = source.getFrameSize();
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             ringRestore.of(newStartOffset);
             source.forEachRow(ringRestore);
@@ -5414,7 +5414,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             // same in-frame value sequence reproduces the deque values; the deque indexes
             // rebase to zero, which the frame-local contract permits, and the front - the
             // emitted max/min - matches exactly.
-            final long dequeCapacity = Math.max(frameSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(frameSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             long dequeEndIndex = 0;
             for (long i = 0; i < frameSize; i++) {
@@ -5452,7 +5452,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             offset += Long.BYTES;
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             final long dequeSize = source.getLong(offset);
             offset += Long.BYTES;
@@ -5464,7 +5464,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 memory.putDecimal256(rec + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                 offset += Decimal256.BYTES;
             }
-            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(dequeSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             for (long i = 0; i < dequeSize; i++) {
                 source.getDecimal256(offset, scratch);
@@ -7350,7 +7350,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue mv) {
             final long size = source.getRowCount();
             final long frameSize = source.getFrameSize();
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             ringRestore.of(newStartOffset);
             source.forEachRow(ringRestore);
@@ -7364,7 +7364,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             // same in-frame value sequence reproduces the deque values; the deque indexes
             // rebase to zero, which the frame-local contract permits, and the front - the
             // emitted max/min - matches exactly.
-            final long dequeCapacity = Math.max(frameSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(frameSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             long dequeEndIndex = 0;
             for (long i = 0; i < frameSize; i++) {
@@ -7396,7 +7396,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             offset += Long.BYTES;
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             final long dequeSize = source.getLong(offset);
             offset += Long.BYTES;
@@ -7407,7 +7407,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 memory.putInt(rec + Long.BYTES, source.getInt(offset));
                 offset += Integer.BYTES;
             }
-            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(dequeSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             for (long i = 0; i < dequeSize; i++) {
                 dequeMemory.putInt(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getInt(offset));
@@ -9170,7 +9170,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue mv) {
             final long size = source.getRowCount();
             final long frameSize = source.getFrameSize();
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             ringRestore.of(newStartOffset);
             source.forEachRow(ringRestore);
@@ -9184,7 +9184,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             // same in-frame value sequence reproduces the deque values; the deque indexes
             // rebase to zero, which the frame-local contract permits, and the front - the
             // emitted max/min - matches exactly.
-            final long dequeCapacity = Math.max(frameSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(frameSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             long dequeEndIndex = 0;
             for (long i = 0; i < frameSize; i++) {
@@ -9216,7 +9216,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             offset += Long.BYTES;
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             final long dequeSize = source.getLong(offset);
             offset += Long.BYTES;
@@ -9227,7 +9227,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 memory.putLong(rec + Long.BYTES, source.getLong(offset));
                 offset += Long.BYTES;
             }
-            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(dequeSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             for (long i = 0; i < dequeSize; i++) {
                 dequeMemory.putLong(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getLong(offset));
@@ -10994,7 +10994,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue mv) {
             final long size = source.getRowCount();
             final long frameSize = source.getFrameSize();
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             ringRestore.of(newStartOffset);
             source.forEachRow(ringRestore);
@@ -11008,7 +11008,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             // same in-frame value sequence reproduces the deque values; the deque indexes
             // rebase to zero, which the frame-local contract permits, and the front - the
             // emitted max/min - matches exactly.
-            final long dequeCapacity = Math.max(frameSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(frameSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             long dequeEndIndex = 0;
             for (long i = 0; i < frameSize; i++) {
@@ -11040,7 +11040,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             offset += Long.BYTES;
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             final long dequeSize = source.getLong(offset);
             offset += Long.BYTES;
@@ -11051,7 +11051,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 memory.putByte(rec + Long.BYTES, source.getByte(offset));
                 offset += Byte.BYTES;
             }
-            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(dequeSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             for (long i = 0; i < dequeSize; i++) {
                 dequeMemory.putByte(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getByte(offset));

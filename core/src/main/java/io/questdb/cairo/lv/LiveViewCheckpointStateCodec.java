@@ -226,34 +226,60 @@ public final class LiveViewCheckpointStateCodec {
         int offset = Long.BYTES;
         long previousTimestamp = Unsafe.getLong(sourceAddress);
         Unsafe.putLong(targetAddress, previousTimestamp);
-        if (rowCount > 1) {
-            final int firstDeltaBytes = readUnsignedLeb128(sourceAddress, offset, storedLength, targetAddress + Long.BYTES);
-            offset += firstDeltaBytes;
-            long previousDelta = Unsafe.getLong(targetAddress + Long.BYTES);
-            if (previousDelta < 0) {
-                throw invalid("timestamp delta exceeds signed range");
+        long previousDelta = 0;
+        for (int i = 1; i < rowCount; i++) {
+            // The varint scan runs inline and hands the value back in a register.
+            // Reading it out of the target buffer instead - which is where the
+            // decoded timestamp lands a few instructions later - costs a native
+            // store and the load that reads it straight back, once per row.
+            long encoded = 0;
+            int shift = 0;
+            int bytes = 0;
+            while (true) {
+                if (offset >= storedLength) {
+                    throw invalid("truncated LEB128 value");
+                }
+                final int b = Unsafe.getByte(sourceAddress + offset) & 0xff;
+                offset++;
+                bytes++;
+                // The last byte a 64-bit value may spend carries bit 63 and nothing
+                // else, so anything above it - a payload bit or another continuation
+                // marker - overflows. Rejecting the continuation here is also what
+                // bounds the loop.
+                if (bytes == MAX_VARINT_BYTES && (b & 0xfe) != 0) {
+                    throw invalid("LEB128 value overflows 64 bits");
+                }
+                encoded |= (long) (b & 0x7f) << shift;
+                if ((b & 0x80) == 0) {
+                    // A canonical encoding spends its last byte on at least one set
+                    // bit, so a zero terminator means the writer padded a shorter
+                    // value out.
+                    if (bytes > 1 && b == 0) {
+                        throw invalid("non-canonical LEB128 value");
+                    }
+                    break;
+                }
+                shift += 7;
             }
-            previousTimestamp = checkedTimestampAdd(previousTimestamp, previousDelta);
-            Unsafe.putLong(targetAddress + Long.BYTES, previousTimestamp);
-
-            for (int i = 2; i < rowCount; i++) {
-                final long targetOffset = targetAddress + (long) i * Long.BYTES;
-                final int encodedDeltaBytes = readUnsignedLeb128(sourceAddress, offset, storedLength, targetOffset);
-                offset += encodedDeltaBytes;
-                final long deltaOfDelta = zigZagDecode(Unsafe.getLong(targetOffset));
-                final long delta;
+            final long delta;
+            if (i == 1) {
+                delta = encoded;
+                if (delta < 0) {
+                    throw invalid("timestamp delta exceeds signed range");
+                }
+            } else {
                 try {
-                    delta = Math.addExact(previousDelta, deltaOfDelta);
+                    delta = Math.addExact(previousDelta, zigZagDecode(encoded));
                 } catch (ArithmeticException e) {
                     throw invalid("timestamp delta arithmetic overflow");
                 }
                 if (delta < 0) {
                     throw invalid("decoded timestamp sequence decreases");
                 }
-                previousTimestamp = checkedTimestampAdd(previousTimestamp, delta);
-                Unsafe.putLong(targetAddress + (long) i * Long.BYTES, previousTimestamp);
-                previousDelta = delta;
             }
+            previousTimestamp = checkedTimestampAdd(previousTimestamp, delta);
+            Unsafe.putLong(targetAddress + (long) i * Long.BYTES, previousTimestamp);
+            previousDelta = delta;
         }
         if (offset != storedLength) {
             throw invalid("timestamp stream has trailing bytes")
@@ -523,35 +549,6 @@ public final class LiveViewCheckpointStateCodec {
 
     private static int rawLength(int rowCount) {
         return rowCount * Long.BYTES;
-    }
-
-    private static int readUnsignedLeb128(long address, int offset, int limit, long valueAddress) {
-        long value = 0;
-        int shift = 0;
-        for (int i = 0; i < MAX_VARINT_BYTES; i++) {
-            if (offset + i >= limit) {
-                throw invalid("truncated LEB128 value");
-            }
-            final int b = Unsafe.getByte(address + offset + i) & 0xff;
-            if (i == MAX_VARINT_BYTES - 1 && (b & 0xfe) != 0) {
-                throw invalid("LEB128 value overflows 64 bits");
-            }
-            value |= (long) (b & 0x7f) << shift;
-            if ((b & 0x80) == 0) {
-                final int bytes = i + 1;
-                // A canonical encoding spends its last byte on at least one set bit,
-                // so a zero terminator means the writer padded a shorter value out.
-                // Equivalent to unsignedLeb128Length(value) == bytes, without the
-                // per-value shift loop this decodes 4096 timestamps a chunk through.
-                if (bytes > 1 && b == 0) {
-                    throw invalid("non-canonical LEB128 value");
-                }
-                Unsafe.putLong(valueAddress, value);
-                return bytes;
-            }
-            shift += 7;
-        }
-        throw invalid("LEB128 value overflows 64 bits");
     }
 
     private static boolean savesEnough(int rawLength, int encodedLength) {

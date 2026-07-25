@@ -2801,7 +2801,7 @@ public class LastValueWindowFunctionFactoryHelper {
         @Override
         public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
             final long size = source.getRowCount();
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             ringRestore.of(newStartOffset);
             source.forEachRow(ringRestore);
@@ -2823,7 +2823,7 @@ public class LastValueWindowFunctionFactoryHelper {
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             for (long i = 0; i < size; i++) {
                 memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));

@@ -31,19 +31,40 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.Arrays;
 
 /**
  * Logarithmic reader for a generation-pinned persistent partition map.
  */
 public class LiveViewCheckpointPartitionMapReader implements Closeable {
 
+    /**
+     * Decoded nodes one bound root memoises. A seal looks the same root up once per
+     * partition - both to find the previous boundary's entry and to carry the old
+     * root's entry into the new one - and every lookup used to re-walk the same
+     * root-to-leaf path, checksumming and decoding a metadata page per level and
+     * rebuilding the whole page's entry image, state page references included, to
+     * read one entry out of it.
+     * <p>
+     * Sized to hold a descent rather than a working set: the pages one path touches
+     * stay resident, and a lookup that leaves the path evicts in clock order. The
+     * memo covers one root at a time, so a page cached under a root cannot outlive
+     * it - {@link #find} drops the memo as soon as another root is asked for.
+     */
+    private static final int NODE_CACHE_SIZE = 4;
     private static final int SEGMENT_CACHE_SIZE = 8;
     private final Path checkpointsDir = new Path();
     private final CairoConfiguration configuration;
     private final LiveViewCheckpointPartitionMapNode navNode = new LiveViewCheckpointPartitionMapNode();
+    private final LiveViewCheckpointPartitionMapNode[] nodeCache = new LiveViewCheckpointPartitionMapNode[NODE_CACHE_SIZE];
+    private final long[] nodeCacheOffset = new long[NODE_CACHE_SIZE];
+    private final long[] nodeCacheSegmentId = new long[NODE_CACHE_SIZE];
     private final LiveViewCheckpointPartitionMapEntry scratchEntry = new LiveViewCheckpointPartitionMapEntry();
     private final long[] segmentIds = new long[SEGMENT_CACHE_SIZE];
     private final LiveViewCheckpointMetaSegmentReader[] segmentReaders = new LiveViewCheckpointMetaSegmentReader[SEGMENT_CACHE_SIZE];
+    private long boundRootOffset = -1;
+    private long boundRootSegmentId = -1;
+    private int nodeCacheClock;
     private LiveViewCheckpointPartitionMapNode[] nodePool = new LiveViewCheckpointPartitionMapNode[0];
     private int segmentClock;
 
@@ -52,6 +73,7 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         for (int i = 0; i < SEGMENT_CACHE_SIZE; i++) {
             segmentIds[i] = -1;
         }
+        clearNodeCache();
     }
 
     @Override
@@ -60,6 +82,8 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
             segmentReaders[i] = Misc.free(segmentReaders[i]);
             segmentIds[i] = -1;
         }
+        clearNodeCache();
+        Arrays.fill(nodeCache, null);
         Misc.free(checkpointsDir);
     }
 
@@ -76,6 +100,7 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
             segmentIds[i] = -1;
         }
         segmentClock = 0;
+        clearNodeCache();
     }
 
     public boolean find(
@@ -89,18 +114,27 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         long segmentId = rootRef.getSegmentId();
         long offset = rootRef.getOffset();
         int length = rootRef.getLength();
+        if (boundRootSegmentId != segmentId || boundRootOffset != offset) {
+            // A page is immutable and the map is copy-on-write, so what one root
+            // reaches cannot change under the memo. What a memo may not survive is
+            // a rebuilt timeline re-minting the ids it keyed on, so the memo starts
+            // over whenever another root is asked for.
+            clearNodeCache();
+            boundRootSegmentId = segmentId;
+            boundRootOffset = offset;
+        }
         while (true) {
-            openAndDecode(segmentId, offset, length, navNode);
-            if (navNode.isLeaf()) {
-                final int index = navNode.find(key);
+            final LiveViewCheckpointPartitionMapNode node = decodedNode(segmentId, offset, length);
+            if (node.isLeaf()) {
+                final int index = node.find(key);
                 if (index < 0) {
                     return false;
                 }
-                navNode.copyEntryTo(index, out);
+                node.copyEntryTo(index, out);
                 return true;
             }
-            final int child = navNode.childIndex(key);
-            final LiveViewCheckpointPageRef ref = navNode.childRefs[child];
+            final int child = node.childIndex(key);
+            final LiveViewCheckpointPageRef ref = node.childRefs[child];
             segmentId = ref.getSegmentId();
             offset = ref.getOffset();
             length = ref.getLength();
@@ -119,6 +153,7 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
             segmentIds[i] = -1;
         }
         segmentClock = 0;
+        clearNodeCache();
     }
 
     public int rootChildCount(@NotNull LiveViewCheckpointPageRef rootRef) {
@@ -146,6 +181,41 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         final LiveViewCheckpointMetaSegmentReader reader = readerFor(segmentId);
         reader.openPageAt(offset, length);
         node.decode(reader);
+    }
+
+    private void clearNodeCache() {
+        Arrays.fill(nodeCacheSegmentId, -1);
+        Arrays.fill(nodeCacheOffset, -1);
+        nodeCacheClock = 0;
+        boundRootSegmentId = -1;
+        boundRootOffset = -1;
+    }
+
+    /**
+     * @return the decoded image of the page at {@code segmentId}/{@code offset},
+     * out of the memo when the bound root already reached it. The caller must not
+     * hold the node across another lookup, which may recycle its slot.
+     */
+    private LiveViewCheckpointPartitionMapNode decodedNode(long segmentId, long offset, int length) {
+        for (int i = 0; i < NODE_CACHE_SIZE; i++) {
+            if (nodeCacheSegmentId[i] == segmentId && nodeCacheOffset[i] == offset) {
+                return nodeCache[i];
+            }
+        }
+        final int slot = nodeCacheClock;
+        nodeCacheClock = slot + 1 == NODE_CACHE_SIZE ? 0 : slot + 1;
+        if (nodeCache[slot] == null) {
+            nodeCache[slot] = new LiveViewCheckpointPartitionMapNode();
+        }
+        // A rejected page leaves the slot holding a half-decoded node, so drop the
+        // slot's identity before the decode rather than let a throw leave a memo
+        // entry claiming a page it does not hold.
+        nodeCacheSegmentId[slot] = -1;
+        nodeCacheOffset[slot] = -1;
+        openAndDecode(segmentId, offset, length, nodeCache[slot]);
+        nodeCacheSegmentId[slot] = segmentId;
+        nodeCacheOffset[slot] = offset;
+        return nodeCache[slot];
     }
 
     private void iterate(LiveViewCheckpointPageRef ref, Visitor visitor, int depth) {

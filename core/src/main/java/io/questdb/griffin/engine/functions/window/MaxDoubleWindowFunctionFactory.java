@@ -890,7 +890,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
             final long size = source.getRowCount();
             final long frameSize = source.getFrameSize();
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             ringRestore.of(newStartOffset);
             source.forEachRow(ringRestore);
@@ -904,7 +904,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             // same in-frame value sequence reproduces the deque values; the deque indexes
             // rebase to zero, which the frame-local contract permits, and the front - the
             // emitted max/min - matches exactly.
-            final long dequeCapacity = Math.max(frameSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(frameSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             long dequeEndIndex = 0;
             for (long i = 0; i < frameSize; i++) {
@@ -936,7 +936,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             offset += Long.BYTES;
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             final long dequeSize = source.getLong(offset);
             offset += Long.BYTES;
@@ -946,7 +946,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 memory.putDouble(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getDouble(offset));
                 offset += Double.BYTES;
             }
-            final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+            final long dequeCapacity = WindowFunction.restoredRingCapacity(dequeSize, dequeInitialBufferSize);
             final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
             for (long i = 0; i < dequeSize; i++) {
                 dequeMemory.putDouble(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getDouble(offset));

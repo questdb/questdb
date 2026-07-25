@@ -333,6 +333,21 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
                         2,
                         "overflows 64 bits"
                 );
+
+                // A value that keeps asking for another byte past the tenth is the
+                // same overflow, and rejecting it is what bounds the decoder's scan.
+                encoded.truncate();
+                encoded.putLong(0);
+                for (int i = 0; i < 12; i++) {
+                    encoded.putByte((byte) 0x80);
+                }
+                assertTimestampDecodeFails(
+                        encoded,
+                        target,
+                        LiveViewCheckpointStateCodec.TIMESTAMP_DELTA_OF_DELTA_VARINT,
+                        2,
+                        "overflows 64 bits"
+                );
             }
         });
     }

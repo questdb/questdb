@@ -204,6 +204,105 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebindingDropsPagesOfAReMintedSegment() throws Exception {
+        assertMemoryLeak(() -> {
+            // The reader memoises the pages a lookup decoded, keyed on the segment and
+            // offset they came from. A rebuilt timeline may mint a segment id a reader
+            // already read, so detaching - which is what drops the mappings a retire,
+            // repair or compaction is about to delete - has to drop the memo with them.
+            final LiveViewCheckpointPageRef first = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                final LiveViewCheckpointPartitionMapWriter.Mutation[] initial = {put(1, 11, 0)};
+                writer.apply(new LiveViewCheckpointPageRef(), initial, 1, 7, first);
+            }
+
+            final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+            try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir));
+                Assert.assertTrue(reader.find(first, key(1), entry));
+                Assert.assertEquals(11, scalar(entry));
+
+                // Unmap before the id is re-minted: a published segment is immutable,
+                // so the replacement arrives by rename, which a live mapping of the
+                // name it replaces would block on Windows.
+                reader.detach();
+
+                final LiveViewCheckpointPageRef second = new LiveViewCheckpointPageRef();
+                try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration)) {
+                    writer.of(checkpointsDir(dir));
+                    final LiveViewCheckpointPartitionMapWriter.Mutation[] replacement = {put(1, 22, 0)};
+                    writer.apply(new LiveViewCheckpointPageRef(), replacement, 1, 7, second);
+                }
+                // Guards the guard: the replacement has to land where the memo keyed
+                // the page it replaces, or a miss would hide a memo that never dropped.
+                assertRefEquals(first, second);
+
+                Assert.assertTrue(reader.find(second, key(1), entry));
+                Assert.assertEquals(22, scalar(entry));
+            }
+        });
+    }
+
+    @Test
+    public void testRepeatedLookupsDoNotOutliveTheirRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            // A seal looks one root up once per partition, so the reader memoises the
+            // pages a descent decoded rather than re-checksumming and re-decoding them
+            // per lookup. Each lookup must still answer out of the page it asked for.
+            final int keyCount = 64;
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            final LiveViewCheckpointPartitionMapWriter.Mutation[] initial =
+                    new LiveViewCheckpointPartitionMapWriter.Mutation[keyCount];
+            for (int i = 0; i < keyCount; i++) {
+                initial[i] = put(i, i, i % 5);
+            }
+            // Narrow nodes, so one descent touches more pages than the memo holds and a
+            // lookup that leaves the path evicts what it replaces.
+            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 2, 2);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                writer.apply(new LiveViewCheckpointPageRef(), initial, initial.length, 1, root);
+            }
+
+            final LiveViewCheckpointPageRef nextRoot = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 2, 2);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                final LiveViewCheckpointPartitionMapWriter.Mutation[] update = {put(0, 999, 9)};
+                writer.apply(root, update, 1, 2, nextRoot);
+            }
+
+            final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+            try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir));
+                for (int pass = 0; pass < 3; pass++) {
+                    for (int i = 0; i < keyCount; i++) {
+                        Assert.assertTrue(reader.find(root, key(i), entry));
+                        Assert.assertEquals(i, scalar(entry));
+                        Assert.assertEquals(i % 5, entry.getStatePageRef(0).getSegmentId());
+                    }
+                    Assert.assertFalse(reader.find(root, key(keyCount), entry));
+                }
+                // Two roots share every page the update left untouched, so a lookup
+                // must answer with the root it names rather than with the pages the
+                // lookup before it decoded.
+                for (int pass = 0; pass < 3; pass++) {
+                    Assert.assertTrue(reader.find(nextRoot, key(0), entry));
+                    Assert.assertEquals(999, scalar(entry));
+                    Assert.assertTrue(reader.find(root, key(0), entry));
+                    Assert.assertEquals(0, scalar(entry));
+                    Assert.assertTrue(reader.find(nextRoot, key(63), entry));
+                    Assert.assertEquals(63, scalar(entry));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStructurallyCorruptPagesRejected() throws Exception {
         assertMemoryLeak(() -> {
             assertRawPageRejected(300, LiveViewCheckpointPartitionMap.PAGE_KIND_LEAF, mem -> {

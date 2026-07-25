@@ -65,6 +65,20 @@ public interface WindowFunction extends Function {
     int ZERO_PASS = 0;
 
     /**
+     * @return the capacity {@link #restoreCheckpointRingState} and
+     * {@link #restoreCheckpointState} open a partition's ring at. Restoring at
+     * exactly the restored row count leaves the ring full, so the first row the
+     * replay appends behind it doubles the ring and copies all of it - once per
+     * partition, on every restore, and a live view restores several times a second.
+     * Half again of headroom absorbs a replay's worth of new rows instead, and holds
+     * less arena than the expansion it avoids: that allocates the doubled ring beside
+     * the one it copies out of, and only the free list may hand the old block back
+     */
+    static long restoredRingCapacity(long size, long initialBufferSize) {
+        return Math.max(size + (size >> 1), initialBufferSize);
+    }
+
+    /**
      * Returns the compiler-produced localized-repair dependency descriptor, or
      * {@code null} outside a live-view compile / for a function that does not
      * support checkpoint state.
