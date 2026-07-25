@@ -1190,16 +1190,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Completion predicate for a deferred role-change close: the registry's
-     * durable-upload watermark covers every committed seqTxn (replay window
-     * empty), or the bounded grace budget is exhausted (availability over the
+     * Completion predicate for a deferred role-change close: the frontier of the
+     * connection's NEGOTIATED durability tier (the replicated frontier for
+     * {@link io.questdb.cairo.wal.DurabilityTier#REPLICATED}, the local-fsync frontier
+     * otherwise -- the SAME selection {@code collectDurableProgress} uses to build the
+     * ack) covers every committed seqTxn (replay window empty), or the bounded grace
+     * budget is exhausted (availability over the
      * duplicate guard). Single source of truth shared by the deferral's two
      * re-entry polls -- gate-refused data frames and keepalive PINGs
      * ({@link #handlePing}) -- so the close path and its diagnostics cannot
      * drift between them.
      */
     private boolean isRoleChangeCloseCompletable(QwpIngressProcessorState state) {
-        return state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())
+        return state.isDurableWorkFullyCovered(engine.getDurableAckRegistry())
                 || state.isRoleChangeCloseGraceExpired();
     }
 
@@ -1255,7 +1258,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             return;
         }
         if (state.isRoleChangeCloseGraceExpired()
-                && !state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())) {
+                && !state.isDurableWorkFullyCovered(engine.getDurableAckRegistry())) {
             // Grace expired with genuinely un-acked durable work: the one
             // close the operator must see. A slow-but-clean close -- uploads
             // catching up after the deadline but before this re-entry --

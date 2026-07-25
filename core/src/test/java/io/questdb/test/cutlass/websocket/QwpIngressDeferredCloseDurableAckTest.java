@@ -426,7 +426,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     );
                     Assert.assertFalse(
                             "test setup: durable work must NOT be fully uploaded",
-                            state.isDurableWorkFullyUploaded(demotableEngine.getDurableAckRegistry())
+                            state.isDurableWorkFullyCovered(demotableEngine.getDurableAckRegistry())
                     );
 
                     // Phase D: the keepalive PING -- the designated deferral
@@ -470,7 +470,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
      * Grace-expiry diagnostics, false alarm: {@code roleChangeCloseWithUploadGrace}
      * raises "closing with un-acked durable work, client replay may duplicate"
      * purely on grace expiry, without consulting
-     * {@code isDurableWorkFullyUploaded}. A slow-but-clean close -- uploads
+     * {@code isDurableWorkFullyCovered}. A slow-but-clean close -- uploads
      * catching up AFTER the deadline but BEFORE the next re-entry -- leaves an
      * empty replay window (the final durable ack precedes the CLOSE, locked
      * below), yet still fires the duplicate-risk alarm.
@@ -527,7 +527,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     );
                     Assert.assertTrue(
                             "test setup: durable work must be fully uploaded",
-                            state.isDurableWorkFullyUploaded(demotableEngine.getDurableAckRegistry())
+                            state.isDurableWorkFullyCovered(demotableEngine.getDurableAckRegistry())
                     );
 
                     // Phase D: a data frame re-enters through the deferral
@@ -638,7 +638,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     );
                     Assert.assertTrue(
                             "test setup: durable work must be fully uploaded",
-                            state.isDurableWorkFullyUploaded(demotableEngine.getDurableAckRegistry())
+                            state.isDurableWorkFullyCovered(demotableEngine.getDurableAckRegistry())
                     );
 
                     // Phase D: the writer is NOT quiesced -- the next data

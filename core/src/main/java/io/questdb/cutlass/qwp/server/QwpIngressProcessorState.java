@@ -506,18 +506,37 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     /**
      * True when every seqTxn this connection has committed but not yet durably
-     * acked is covered by the registry's durable-upload watermark -- i.e. a
-     * durable ack flushed right now would advance the client's replay watermark
-     * past ALL of this connection's committed work, leaving no replay window.
+     * acked is covered by the durability frontier of THIS connection's
+     * negotiated {@link #durableAckTier} -- i.e. a durable ack flushed right now
+     * would advance the client's replay watermark past ALL of this connection's
+     * committed work, leaving no replay window.
      * Trivially true when nothing is pending (or durable ack is disabled:
      * {@code pendingDurableSeqTxns} is only populated when enabled).
+     * <p>
+     * <b>Must use the same frontier selection as {@link #collectDurableProgress}.</b>
+     * The question this predicate answers is "will the final durable ack we are about
+     * to flush actually cover everything?", and that ack is produced by
+     * {@code collectDurableProgress} from the negotiated tier's frontier -- so testing a
+     * DIFFERENT frontier here answers the wrong question. Reading the REPLICATED frontier
+     * unconditionally (as an earlier revision did) is always {@code -1} for a
+     * {@link DurabilityTier#LOCAL} connection in OSS, which made the predicate permanently
+     * false and forced every LOCAL-tier role-change close to burn the full
+     * {@link #ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS} grace budget and then log the
+     * "un-acked durable work" alarm, even when the local frontier had in fact covered
+     * everything and the exactly-once guard was satisfiable.
      */
-    public boolean isDurableWorkFullyUploaded(DurableAckRegistry registry) {
+    public boolean isDurableWorkFullyCovered(DurableAckRegistry registry) {
         ObjList<CharSequence> tableNames = pendingDurableSeqTxns.keys();
         for (int i = 0, n = tableNames.size(); i < n; i++) {
             CharSequence tableName = tableNames.getQuick(i);
             String dirName = pendingDurableDirNames.get(tableName);
-            if (dirName == null || registry.getReplicatedDurableSeqTxn(dirName) < pendingDurableSeqTxns.get(tableName)) {
+            if (dirName == null) {
+                return false;
+            }
+            final long durableSeqTxn = (durableAckTier == DurabilityTier.REPLICATED)
+                    ? registry.getReplicatedDurableSeqTxn(dirName)
+                    : registry.getLocalDurableSeqTxn(dirName);
+            if (durableSeqTxn < pendingDurableSeqTxns.get(tableName)) {
                 return false;
             }
         }
