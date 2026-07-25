@@ -1979,6 +1979,17 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.registerName(tableToken);
     }
 
+    /**
+     * Evict pooled {@link TableMetadata} for a table whose {@code _meta} adaptive recovery just replaced.
+     * Recovery itself reads metadata (the epoch freshness/validity guards), so the pool can hold entries
+     * loaded from the PRE-recovery schema; WAL replay must not see those.
+     * <p>
+     * Deliberately does NOT touch {@link #metadataCache}: that cache exists only to speed up SQL-side
+     * metadata queries and is not part of the write/recovery path. On the boot path this runs from
+     * {@link #completeInit()} BEFORE the cache is even constructed, and the cache is then hydrated from
+     * the post-recovery {@code _meta} on disk, so it cannot hold a stale generation. (Reaching into it
+     * here also NPE'd on every metadata-bound epoch recovery at startup.)
+     */
     void resetTableMetadataForRecovery(TableToken tableToken) {
         if (!tableMetadataPool.lock(tableToken)) {
             throw CairoException.critical(0)
@@ -1986,9 +1997,6 @@ public class CairoEngine implements Closeable, WriterSource {
                     .put(tableToken.getTableName()).put(']');
         }
         tableMetadataPool.unlock(tableToken);
-        try (MetadataCacheWriter writer = metadataCache.writeLock()) {
-            writer.clearCache();
-        }
     }
 
     @TestOnly
