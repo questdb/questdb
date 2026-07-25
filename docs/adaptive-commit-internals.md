@@ -40,12 +40,19 @@ frontiers live on `SeqTxnTracker` (per table).
 ### Effective vs global commit mode
 
 The effective mode of a table is its per‑table `_meta` override, else the global
-`cairo.commit.mode` (`CommitMode.effectiveCommitMode`). **Load‑bearing asymmetry:** the
-WAL‑commit path (`WalWriter.walCommitMode`), the WAL‑purge floor, and the epoch trigger use
-the **per‑table effective** mode; but `TxWriter.commit` (`_txn`), `ColumnVersionWriter.commit`
-(`_cv`), `BitmapIndexWriter.commit` (indexes), and the partition‑dir fsync in `openPartition`
-read the **global** `configuration.getCommitMode()` and have no `ADAPTIVE` branch (they treat
-`ADAPTIVE` as "not NOSYNC" ⇒ `msync`). See [Caveats](#8-caveats--gotchas).
+`cairo.commit.mode` (`CommitMode.effectiveCommitMode`). **Every apply‑path durability decision uses
+the effective mode**: the WAL‑commit path (`WalWriter.walCommitMode`), the WAL‑purge floor, the epoch
+trigger, the column memories, and the commit pointers / indexes (`TxWriter.commit`,
+`ColumnVersionWriter.commit`, `BitmapIndexWriter.commit`, `PostingIndexWriter.commit`). The last four
+are threaded the mode by `TableWriter` (`setCommitMode`, republished by `reapplyColumnCommitMode` and
+`populateDenseIndexerList`) and default to `CommitMode.UNSET` ⇒ "defer to the global mode" for any
+transient writer that is never threaded one.
+
+**The remaining global‑mode reads are deliberate:** structural sites that are outside the epoch's
+coverage — the partition‑dir fsync in `openPartition`, `_meta`/`_todo`, and the one‑shot
+`TableConverter` / `WalUtils` / `TableSnapshotRestore` writers — stay durable under
+`!= NOSYNC` (the last three via `CommitMode.structuralCommitMode`, which maps ADAPTIVE onto SYNC).
+See [Caveats](#8-caveats--gotchas).
 
 ---
 
@@ -229,14 +236,17 @@ and ASYNC**:
   are suppressed.
 
 `_cv` (`ColumnVersionWriter.commit`) and `_txn` (`TxWriter.commit`) are `msync`‑gated on the
-**global** commit mode (no `fdatasync`, no `ADAPTIVE` branch — see [Caveats](#8-caveats--gotchas)).
+**same** `appliesColumnSync(effective)` predicate (no `fdatasync` on the apply path), so under
+ADAPTIVE the commit pointers are lazy alongside the data they expose — a durable `_txn` pointing at
+non‑durable columns would be a strictly worse post‑crash state than rolling both back together.
+Recovery restores both from the epoch's `.epoch` copies and replays `(epoch.seqTxn, frontier]`.
 
 ### File creation on apply
 
 - **New partition** (append or o3): `openPartition()` → `ff.mkdirs(path)` →
   `openColumnFiles()` opens each `<col>.d` / `.i`. The partition **dir entry** fsync +
-  table‑root fsync are gated on the **global** mode `!= NOSYNC` (structural durability, not
-  `appliesColumnSync`).
+  table‑root fsync are gated on `effectiveCommitMode != NOSYNC` (structural durability, so `!= NOSYNC`
+  rather than `appliesColumnSync` — a directory entry is not re‑derivable from the WAL).
 - **o3 split / squash / attach**: partition dirs via `createDirsOrFail`; detached via
   `ff.mkdirs`.
 - **Column add**: `openColumnFiles` into the existing partition.
@@ -244,10 +254,13 @@ and ASYNC**:
 ### Index writes (`BitmapIndexWriter`, `.k` / `.v`)
 
 `.k` = keys, `.v` = values; `keyMem`/`valueMem` are random‑access MARW written incrementally
-during `add()`. `commit()` reads the **global** mode and `sync(async)`s **`valueMem` before
-`keyMem`** (value/data before key/pointer). Indexers are *always* published from
-`syncColumns` and `fsyncMaterializedState`; the *device flush* is global‑mode‑gated, but at
-an epoch the index files are made durable by the filesystem‑wide `syncfs` regardless.
+during `add()`. `commit()` gates on `appliesColumnSync(effective)` and `sync(async)`s **`valueMem`
+before `keyMem`** (value/data before key/pointer). Indexers are *always* published from
+`syncColumns` and `fsyncMaterializedState` — publishing is unconditional, only the *device flush* is
+mode‑gated. At an epoch `fsyncMaterializedState` calls `sync(false)` on every indexer EXPLICITLY
+(and the filesystem‑wide `syncfs` follows), so the index is durable at the cut without relying on
+`syncfs`/`fsync` to pick up mmap‑dirty pages — which holds on Linux but not on the non‑syncfs
+fallback path.
 
 ### Symbol writes (`SymbolMapWriter`, files at the table root)
 
@@ -372,27 +385,39 @@ flowchart TD
 ```
 
 **Per‑commit durability matrix** ("msync⊘" = `MS_ASYNC`, "msync!" = `MS_SYNC`, "—" =
-skipped; **(G)** = reads the *global* mode):
+skipped). Every column reads the table's **effective** mode.
 
-| Mode | WAL columns | WAL events | Sequencer | Table apply | Index `.k/.v` **(G)** | Durable epoch |
-|---|---|---|---|---|---|---|
-| **NOSYNC** | — | — | — | — | — | never |
-| **ASYNC** | msync⊘ | msync⊘ | msync⊘ | msync⊘ | msync⊘ | never |
-| **SYNC** | msync! | msync! | msync! | msync!→syncfs | msync! | never |
-| **ADAPTIVE W=0** | msync!+**fdatasync** | msync!+**fdatasync** | msync!+**fdatasync** | — (lazy) | per global | interval OR row‑cap |
-| **ADAPTIVE W>0** | msync⊘ + **fdatasync before seq** | msync⊘ + **fdatasync before seq** | msync⊘; fdatasync deferred ≤W | — (lazy) | per global | interval OR row‑cap |
+| Mode | WAL columns | WAL events | Sequencer | Table apply | `_txn` / `_cv` | Index `.k/.v` | Durable epoch |
+|---|---|---|---|---|---|---|---|
+| **NOSYNC** | — | — | — | — | — | — | never |
+| **ASYNC** | msync⊘ | msync⊘ | msync⊘ | msync⊘ | msync⊘ | msync⊘ | never |
+| **SYNC** | msync! | msync! | msync! | msync!→syncfs | msync! | msync! | never |
+| **ADAPTIVE W=0** | msync!+**fdatasync** | msync!+**fdatasync** | msync!+**fdatasync** | — (lazy) | — (lazy) | — (lazy) | interval OR row‑cap |
+| **ADAPTIVE W>0** | msync⊘ + **fdatasync before seq** | msync⊘ + **fdatasync before seq** | msync⊘; fdatasync deferred ≤W | — (lazy) | — (lazy) | — (lazy) | interval OR row‑cap |
+
+The `_txn` / `_cv` / index columns follow the **table apply** column exactly: all four are gated on
+`CommitMode.appliesColumnSync` (true only for SYNC/ASYNC). Under ADAPTIVE the commit pointers are as
+re‑derivable as the data they expose — recovery restores them from the epoch's `.epoch` copies and
+replays forward — so flushing them per apply would reintroduce the cost the lazy gate removes. The
+epoch forces all of them (`TxWriter.fsync`, `ColumnVersionWriter.fsync`, and an explicit
+`IndexWriter.sync(false)` per indexer) regardless of mode.
 
 ---
 
 ## 9. Caveats & gotchas
 
-1. **Global‑vs‑effective mode split (load‑bearing).** WAL‑commit, the WAL‑purge floor, and
-   the epoch trigger use the per‑table **effective** mode; but `TxWriter.commit`,
-   `ColumnVersionWriter.commit`, `BitmapIndexWriter.commit`, and the partition‑dir fsync read
-   the **global** `configuration.getCommitMode()` with no `ADAPTIVE` branch. Under a
-   per‑table‑adaptive / global‑NOSYNC deployment those no‑op on apply (durability comes from
-   the epoch); under global‑ADAPTIVE they `msync!` every apply. The epoch's own
-   `fsyncMaterializedState` makes them durable regardless.
+1. **Effective mode is used everywhere on the apply path** — WAL‑commit, the WAL‑purge floor, the
+   epoch trigger, the column memories, and (since the commit‑pointer gate fix) `TxWriter.commit`,
+   `ColumnVersionWriter.commit`, `BitmapIndexWriter.commit` and `PostingIndexWriter.commit`. Those
+   four used to read the **global** `configuration.getCommitMode()` and branch on `!= NOSYNC`, which
+   inverted the polarity (`WITH commit_mode='sync'` on a nosync instance silently skipped its `_txn`
+   flush) and made ADAPTIVE pay a SYNC‑grade msync on every apply. They now use
+   `CommitMode.appliesColumnSync(effective)`, the same predicate as the column data.
+   *Still global by design:* one‑shot **structural** writers that run outside a table writer and
+   outside the epoch's coverage — `TableConverter`, `WalUtils` staging, `TableSnapshotRestore` — take
+   `CommitMode.structuralCommitMode`, which maps ADAPTIVE onto SYNC so they keep their historical
+   `!= NOSYNC` grade. Ditto the `_meta`/`_todo`/partition‑dir fsyncs, which stay durable under
+   `effectiveCommitMode != NOSYNC`.
 2. **`_snapshot` name is reused** for two unrelated files: the table‑dir epoch marker
    (A/B + CRC binary, `SnapshotMarker`) vs the legacy checkpoint meta (checkpoint dir,
    different format). The epoch marker is the table‑dir one.
