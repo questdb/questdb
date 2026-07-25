@@ -279,6 +279,18 @@ public class LiveViewInstance implements QuietCloseable {
     // the refresh worker under the refresh latch; volatile for the catalogue
     // thread. Surfaced via live_views().checkpoint_last_restore_micros.
     private volatile long headCheckpointRestoreMicros = Numbers.LONG_NULL;
+    // The logical timeline root the current head mirrors: its {@code checkpointId},
+    // and the compiled window factory whose live maps and rings produced it. Both
+    // are refresh-worker-only (the catalogue never reads them), so neither is
+    // volatile. {@link #setHeadCheckpoint} clears the pair on every head
+    // transition and {@link #setHeadCheckpointRoot} re-stamps it, so a head that
+    // mirrors no root - a splice, which appends none, or the placeholder startup
+    // stamps from the superblock alone - carries LONG_NULL / null and proves
+    // nothing. Only the O3 resume's runtime-anchor reuse reads them: it needs the
+    // anchor it selected to BE this root, and the runtime that holds that root's
+    // state to still be the one that sealed it.
+    private long headCheckpointRootId = Numbers.LONG_NULL;
+    private RecordCursorFactory headCheckpointRootWindowFactory;
     // Elapsed wall-clock (micros) of the most recent head-checkpoint write
     // (maybeWriteHeadCheckpoint: freeze the function state, append a logical
     // root, publish the timeline generation). Numbers.LONG_NULL until the first
@@ -995,6 +1007,24 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long getHeadCheckpointRestoreMicros() {
         return headCheckpointRestoreMicros;
+    }
+
+    /**
+     * @return the {@code checkpointId} of the timeline root the current head
+     * mirrors, or {@link Numbers#LONG_NULL} when the head mirrors none. See
+     * {@link #headCheckpointRootId}.
+     */
+    public long getHeadCheckpointRootId() {
+        return headCheckpointRootId;
+    }
+
+    /**
+     * @return the compiled window factory whose runtime state the current head's
+     * root was frozen from, or {@code null} when the head mirrors no root. See
+     * {@link #headCheckpointRootId}.
+     */
+    public RecordCursorFactory getHeadCheckpointRootWindowFactory() {
+        return headCheckpointRootWindowFactory;
     }
 
     /**
@@ -1775,6 +1805,25 @@ public class LiveViewInstance implements QuietCloseable {
         this.rowsSinceLastCheckpointWritten = 0;
         this.minSeenTsSinceCheckpoint = Long.MAX_VALUE;
         this.lastCheckpointWrittenUs = writtenUs;
+        // Every head transition invalidates the root identity by default: the
+        // caller re-stamps it through setHeadCheckpointRoot only when it actually
+        // published (or restored) the root this head mirrors. A caller that seals
+        // no root - the repair splice, the startup superblock placeholder, every
+        // clear - therefore leaves the pair unset and denies runtime-anchor reuse
+        // rather than inheriting the previous root's identity.
+        this.headCheckpointRootId = Numbers.LONG_NULL;
+        this.headCheckpointRootWindowFactory = null;
+    }
+
+    /**
+     * Stamps which logical timeline root the head just recorded mirrors, and
+     * which compiled window factory's live state that root was frozen from.
+     * Must follow {@link #setHeadCheckpoint} - which clears the pair - and only
+     * on a caller that published or restored that exact root.
+     */
+    public void setHeadCheckpointRoot(long checkpointId, RecordCursorFactory windowFactory) {
+        this.headCheckpointRootId = checkpointId;
+        this.headCheckpointRootWindowFactory = windowFactory;
     }
 
     /**
@@ -2152,6 +2201,13 @@ public class LiveViewInstance implements QuietCloseable {
         compiledFactory = Misc.free(compiledFactory);
         anchorWindow = Misc.free(anchorWindow);
         anchorFunction = Misc.free(anchorFunction);
+        // The head's root was frozen from the window state those artifacts own, and
+        // that state dies with them. A head still claiming a root over state nothing
+        // holds must not outlive them: whoever rebuilds re-seals, and only that seal
+        // may re-stamp. Clearing here rather than at each caller covers the full
+        // teardown as well as the base-schema recompile, whose rebuild can fail.
+        headCheckpointRootId = Numbers.LONG_NULL;
+        headCheckpointRootWindowFactory = null;
     }
 
     /**

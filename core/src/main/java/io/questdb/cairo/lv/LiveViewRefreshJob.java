@@ -246,6 +246,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // pinned reader. Both are idle outside a repair, which never nests.
     private final LiveViewCheckpointRowsBounds rowsBounds;
     private final RowsBoundDiscovery rowsBoundDiscovery = new RowsBoundDiscovery();
+    // Test-only observability for the O3 resume's runtime-anchor reuse. Counts the
+    // replays this worker served from the live window state instead of restoring
+    // the same root off disk. Kept on the worker rather than the view because it
+    // is not a production metric; a test reads it to prove which branch ran.
+    private long runtimeAnchorReuseCount;
     // Prices a repair's two candidate scan intervals off the pinned reader's partition
     // metadata, so the plan chooses between an anchor resume and a localized rebuild on
     // what each would read. One per worker, bound to the repair's reader per plan.
@@ -439,6 +444,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Test-only: number of O3 resume replays this worker served from the live
+     * window state instead of restoring the same logical root from disk. See
+     * {@link #canReuseRuntimeAnchor}.
+     */
+    @TestOnly
+    public long runtimeAnchorReuseCountForTest() {
+        return runtimeAnchorReuseCount;
+    }
+
+    /**
      * Test-only failure injection for crash-ordering coverage of timeline publication.
      */
     @TestOnly
@@ -518,10 +533,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the sweep from the root this publishes; a steady seal passes
      * {@link Numbers#LONG_NULL}.
      *
-     * @return the logical state byte size attributed to the appended root, which
-     * the caller mirrors onto the head metadata
+     * @return the append's result, carrying the appended root's
+     * {@code checkpointId} and the logical state byte size attributed to it,
+     * both of which a steady seal mirrors onto the head metadata
      */
-    private long appendCheckpointTimelineRoot(
+    private LiveViewCheckpointTimelineStoreWriter.Result appendCheckpointTimelineRoot(
             LiveViewInstance instance,
             ObjList<WindowFunction> functions,
             @Nullable LiveViewWindow anchorWindow,
@@ -578,7 +594,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     timelineResult.getObsoleteSegmentBytes()
             );
         }
-        return timelineResult.getLogicalStateBytes();
+        return timelineResult;
     }
 
     /**
@@ -3751,26 +3767,39 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         source = anchorDispatchingCursor;
                     }
                     try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
-                        // Drop pre-O3 drift before restoring the anchor root:
-                        // clear each function's partition map so accumulator
-                        // state that outran the root's snapshot moment is
-                        // discarded. The anchor map gets the same treatment
-                        // inside LiveViewWindow.restore() (it clears before
-                        // reinserting), so no explicit wipe is needed here.
-                        // Order matters: function maps clear -> restore root.
-                        final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
-                        for (int i = 0, n = functions.size(); i < n; i++) {
-                            Map m = functions.getQuick(i).getPartitionMap();
-                            if (m != null) {
-                                m.clear();
+                        final long anchorLvRowPosition;
+                        if (canReuseRuntimeAnchor(instance, windowFactory, plan)) {
+                            // The selected anchor is the root the current head
+                            // mirrors, this runtime is the one that froze it, and no
+                            // row has entered the window pipeline since. The live
+                            // maps and arenas therefore already are the anchor's
+                            // state, and the lifetime row counter is still the
+                            // position the root recorded. Avoid decoding the same
+                            // immutable pages to write that state back over itself.
+                            anchorLvRowPosition = instance.getLvRowsTotal();
+                            runtimeAnchorReuseCount++;
+                        } else {
+                            // Drop pre-O3 drift before restoring the anchor root:
+                            // clear each function's partition map so accumulator
+                            // state that outran the root's snapshot moment is
+                            // discarded. The anchor map gets the same treatment
+                            // inside LiveViewWindow.restore() (it clears before
+                            // reinserting), so no explicit wipe is needed here.
+                            // Order matters: function maps clear -> restore root.
+                            final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+                            for (int i = 0, n = functions.size(); i < n; i++) {
+                                Map m = functions.getQuick(i).getPartitionMap();
+                                if (m != null) {
+                                    m.clear();
+                                }
                             }
+                            anchorLvRowPosition = restoreAnchorRoot(
+                                    instance,
+                                    windowFactory,
+                                    anchorMaxTs,
+                                    anchorCheckpointId
+                            );
                         }
-                        final long anchorLvRowPosition = restoreAnchorRoot(
-                                instance,
-                                windowFactory,
-                                anchorMaxTs,
-                                anchorCheckpointId
-                        );
                         if (anchorLvRowPosition == Numbers.LONG_NULL) {
                             // The root could not be read, or its format is one this
                             // build cannot restore (which stashed a pending
@@ -5628,8 +5657,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // seal (or by a restart, from the root it restores). The column is
             // diagnostic, so a transient 0 there costs nothing.
             long stateBytes = 0L;
+            long rootCheckpointId = Numbers.LONG_NULL;
             if (appendTimelineRoot) {
-                stateBytes = appendCheckpointTimelineRoot(
+                final LiveViewCheckpointTimelineStoreWriter.Result appended = appendCheckpointTimelineRoot(
                         instance,
                         functions,
                         anchorWindow,
@@ -5637,6 +5667,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         batchMaxTs,
                         Numbers.LONG_NULL
                 );
+                stateBytes = appended.getLogicalStateBytes();
+                rootCheckpointId = appended.getCheckpointId();
             }
             // Advance the head only after the generation carrying this root is
             // durable. WalPurgeJob min-combines getHeadCheckpointBaseSeqTxn(), so
@@ -5645,6 +5677,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // seqTxn: a head that ran ahead of the published generation would
             // release WAL a restart still needs.
             instance.setHeadCheckpoint(lvSeqTxn, baseSeqTxn, batchMaxTs, stateBytes, nowUs);
+            if (rootCheckpointId != Numbers.LONG_NULL) {
+                // This head mirrors the root just appended, frozen from the state
+                // windowFactory's functions hold right now. A splice appends none
+                // and leaves the identity cleared, which denies the O3 resume's
+                // runtime-anchor reuse rather than letting it match on maxTs alone.
+                instance.setHeadCheckpointRoot(rootCheckpointId, windowFactory);
+            }
             // Baseline observability: elapsed micros of this head-checkpoint write
             // (state freeze + root append + generation publish), measured from the
             // cadence-gate clock read above. Surfaced via
@@ -6063,6 +6102,65 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Whether the runtime already holds the exact state {@link #restoreAnchorRoot}
+     * would reconstruct for the anchor a resume replay selected.
+     * <p>
+     * The measured workload makes this the common case rather than a corner: the
+     * load generator groups each ingest slice by symbol, so a commit is internally
+     * out of order while sitting wholly above the sealed head. O3 detection fires
+     * before either row reaches the incremental cursor, which leaves the maps,
+     * ring arenas, anchor window and lifetime row position exactly where the head
+     * seal left them - and the restore then decodes the same immutable pages to
+     * write that identical state back.
+     * <p>
+     * Three independent facts have to hold, and the plan takes the original
+     * restore whenever any of them cannot be established:
+     * <ul>
+     *     <li><b>The anchor IS the head's root.</b> {@code headCheckpointRootId}
+     *     is stamped only by the caller that published (or restored) the root the
+     *     head mirrors, and {@link LiveViewInstance#setHeadCheckpoint} clears it
+     *     on every head transition, so matching it against
+     *     {@code plan.anchorCheckpointId} identifies the root outright instead of
+     *     inferring identity from {@code maxTimestamp} alone. The
+     *     {@code maxTimestamp} comparison stays alongside it: the composite key is
+     *     the pair, and the head's own {@code maxTs} is what the frontier test
+     *     below is written against.</li>
+     *     <li><b>The runtime still belongs to that root.</b> The stamp carries the
+     *     compiled factory whose functions were frozen into it. A base-metadata
+     *     recompile drops the window state (and clears the stamp with it), so the
+     *     identity check refuses a runtime whose maps are a different, possibly
+     *     empty, generation of the same view.</li>
+     *     <li><b>Nothing has entered the window pipeline since.</b>
+     *     {@code minSeenTsSinceCheckpoint == Long.MAX_VALUE} is the load-bearing
+     *     one - the seal resets it, and every row the runtime consumes lowers it,
+     *     including a row at the head's own timestamp, which would not advance
+     *     {@code latestSeenTs}. {@code latestSeenTs == headMaxTs} pins the frontier
+     *     to the boundary, and {@code windowStateDirty} covers the current drain
+     *     explicitly.</li>
+     * </ul>
+     * With all three, the live maps, rings, arenas and
+     * {@link LiveViewInstance#getLvRowsTotal()} are that root's state, because the
+     * seal froze them from it and nothing has touched them since.
+     */
+    private boolean canReuseRuntimeAnchor(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            LiveViewCheckpointRepairPlan plan
+    ) {
+        final long headMaxTs = instance.getHeadCheckpointMaxTs();
+        final long headRootId = instance.getHeadCheckpointRootId();
+        return !windowStateDirty
+                && headMaxTs != Numbers.LONG_NULL
+                && headRootId != Numbers.LONG_NULL
+                && instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL
+                && instance.getHeadCheckpointRootWindowFactory() == windowFactory
+                && plan.getAnchorCheckpointId() == headRootId
+                && plan.getAnchorMaxTs() == headMaxTs
+                && instance.getMinSeenTsSinceCheckpoint() == Long.MAX_VALUE
+                && instance.getLatestSeenTs() == headMaxTs;
+    }
+
+    /**
      * Restores the newest logical root the timeline holds and rehydrates the
      * LV's mid-sweep window state (anchor map + per-function maps) from it,
      * surfacing the generation's seed cursor in {@code out.resumeDataOffset}
@@ -6359,6 +6457,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     restored.logicalStateBytes,
                     Numbers.LONG_NULL
             );
+            // The head mirrors the root this restore rehydrated windowFactory's
+            // functions from. replayToApplied above may have fed rows past it, but
+            // that shows up as a runtime frontier beyond the head's maxTs, which is
+            // what canReuseRuntimeAnchor tests separately.
+            instance.setHeadCheckpointRoot(restored.checkpointId, windowFactory);
             instance.setCheckpointRestoreSucceeded();
             LOG.info().$("restored live view from checkpoint timeline [view=")
                     .$(instance.getDefinition().getViewName())

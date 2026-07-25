@@ -17767,6 +17767,183 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testO3ResumeReusesUnchangedRuntimeHead() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-11-01T00:00:10.000000Z', 10, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertNotEquals(
+                        "a cadence seal must stamp the root its head mirrors",
+                        Numbers.LONG_NULL,
+                        instance.getHeadCheckpointRootId()
+                );
+                Assert.assertNotNull(instance.getHeadCheckpointRootWindowFactory());
+
+                // Intra-commit O3, but wholly above the sealed head at ts=10.
+                // Detection happens before either row enters the window cursor,
+                // so the runtime is already the exact predecessor state.
+                setCurrentMicros(1_000_000L);
+                execute("INSERT INTO base VALUES " +
+                        "('2026-11-01T00:00:20.000000Z', 20, 'a'), " +
+                        "('2026-11-01T00:00:15.000000Z', 15, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(1L, job.runtimeAnchorReuseCountForTest());
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                        .noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                                "2026-11-01T00:00:15.000000Z\t15\t2\n" +
+                                "2026-11-01T00:00:20.000000Z\t20\t3\n");
+
+                // The forced post-replay seal re-stamps the identity off its own
+                // fresh root, so a second O3 above the new head reuses again. The
+                // steady-state workload the optimization targets is exactly this
+                // loop, so a stamp that survived only the first replay would leave
+                // it on the restore path from the second one on.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base VALUES " +
+                        "('2026-11-01T00:00:40.000000Z', 40, 'a'), " +
+                        "('2026-11-01T00:00:30.000000Z', 30, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(2L, job.runtimeAnchorReuseCountForTest());
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                        .noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                                "2026-11-01T00:00:15.000000Z\t15\t2\n" +
+                                "2026-11-01T00:00:20.000000Z\t20\t3\n" +
+                                "2026-11-01T00:00:30.000000Z\t30\t4\n" +
+                                "2026-11-01T00:00:40.000000Z\t40\t5\n");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ResumeReusesRuntimeHeadRestoredOnRestart() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-11-01T00:00:10.000000Z', 10, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Restart: a fresh instance over a fresh compiled factory, with the
+            // window state rehydrated from the timeline's newest root. The restore
+            // stamps that root onto the head - it is the one it just restored into
+            // this factory's functions - so the resume below can prove the runtime
+            // IS it rather than reading the same pages a second time.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+                Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+                Assert.assertNotEquals(
+                        "a restart restore must stamp the root it rehydrated from",
+                        Numbers.LONG_NULL,
+                        reloaded.getHeadCheckpointRootId()
+                );
+
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base VALUES " +
+                        "('2026-11-01T00:00:20.000000Z', 20, 'a'), " +
+                        "('2026-11-01T00:00:15.000000Z', 15, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(1L, job.runtimeAnchorReuseCountForTest());
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                        .noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                                "2026-11-01T00:00:15.000000Z\t15\t2\n" +
+                                "2026-11-01T00:00:20.000000Z\t20\t3\n");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ResumeRestoresRootWhenRowLandsOnHeadTimestamp() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-11-01T00:00:10.000000Z', 10, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // In order, but ON the head boundary: a root only ever extends the
+                // timeline upwards, so the seal is skipped and the head stays at
+                // ts=10 while the runtime - and the lifetime row counter - move
+                // past the root it mirrors. This is the case latestSeenTs cannot
+                // see, which is why minSeenTsSinceCheckpoint carries the proof.
+                setCurrentMicros(1_000_000L);
+                execute("INSERT INTO base VALUES ('2026-11-01T00:00:10.000000Z', 11, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base VALUES " +
+                        "('2026-11-01T00:00:20.000000Z', 20, 'a'), " +
+                        "('2026-11-01T00:00:15.000000Z', 15, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Reuse would hand the replay a runtime holding BOTH ts=10 rows and
+                // a lifetime position of 2, while the root the head mirrors froze
+                // one row at position 1. The two are not the same state, so the
+                // replay takes the restore. Only the branch is asserted here: what
+                // the restore then produces for a root whose timestamp group grew
+                // under it is a separate, pre-existing question this optimization
+                // neither creates nor changes.
+                Assert.assertEquals(
+                        "a row on the head's own timestamp must deny reuse",
+                        0L,
+                        job.runtimeAnchorReuseCountForTest()
+                );
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
 
     @Test
     public void testO3BoundedMissUnderApplyAheadReanchorsBelowAheadMinimum() throws Exception {
@@ -18076,6 +18253,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows FROM live_views()")
                         .noLeakCheck().noRandomAccess()
                         .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n3\t0\n");
+                Assert.assertEquals("an older anchor must still be restored", 0L, job.runtimeAnchorReuseCountForTest());
 
                 // Cross-commit O3 at ts=05: below every surviving ring entry (the
                 // maxTs=10 anchor and the fresh post-resume head), so no anchor
