@@ -176,18 +176,25 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
      * differing ONLY in whether the pooled scoreboard is evicted before the post-recovery read, exactly
      * as a real booted engine (fresh, empty scoreboard) would.
      * <ul>
-     *   <li>WITHOUT eviction — the live-engine artifact the throwaway scan hit: the scoreboard's stale
-     *       pre-crash {@code max} high-water mark (anonymous native memory {@code crash()} cannot roll
-     *       back) sits above the rewound {@code _txn}, so a reader can NEVER satisfy
-     *       {@code TxnScoreboardV2.acquireTxn} ({@code updateMax} fails on {@code txn < max}) — a
-     *       spurious {@code Transaction read timeout}, or (when the crash landed in apply) a lingering
-     *       {@code SUSPENDED}. Either is a post-recovery artifact the isolated sweep NEVER shows.</li>
-     *   <li>WITH eviction — the fresh-restart model the driver now applies: the read comes back a clean
+     *   <li>WITH eviction — the fresh-restart model the driver applies: the read comes back a clean
      *       identity prefix, table not suspended.</li>
+     *   <li>WITHOUT eviction — historically the live-engine artifact the throwaway scan hit: the
+     *       scoreboard's stale pre-crash {@code max} high-water mark (anonymous native memory
+     *       {@code crash()} cannot roll back) sat above the rewound {@code _txn}, so a reader could never
+     *       satisfy {@code TxnScoreboardV2.acquireTxn} ({@code updateMax} fails on {@code txn < max}) —
+     *       a spurious {@code Transaction read timeout}, or a lingering {@code SUSPENDED}.</li>
      * </ul>
-     * Artifact present ONLY when the isolation is removed, and gone when it is restored, is proof the W1
-     * report's flagged suspension/{@code [0,0,..]} observation was a HARNESS ARTIFACT of the non-isolated
-     * scan — not an adaptive O3 lazy-gap recovery bug.
+     *
+     * <p><b>Both arms now recover cleanly.</b> The rewind itself is unchanged — each arm logs
+     * {@code adaptive epoch roll-forward restored durable cut [epochSeqTxn=4]} — but a stale pooled
+     * scoreboard no longer strands the post-recovery reader, so the artifact does not reproduce and the
+     * arms agree. The A/B therefore no longer PROVES the W1 report's flagged suspension/{@code [0,0,..]}
+     * observation was a harness artifact; that classification stands on the isolated sweep
+     * ({@link #testO3LazyGapSweepRecoversCleanlyAtEveryCrashPoint}), which shows it at no crash point.
+     *
+     * <p>What this test pins NOW is the stronger property: adaptive O3 lazy-gap recovery is INDEPENDENT
+     * of scoreboard eviction. A regression that reintroduced the stranded-reader artifact — making
+     * correctness depend on a fresh scoreboard — trips the WITHOUT-eviction assertion below.
      */
     @Test
     public void testStaleScoreboardArtifactPresentOnlyWithoutEviction() throws Exception {
@@ -206,19 +213,20 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
                 withEviction.startsWith("IDENTITY")
         );
 
-        // WITHOUT eviction: the stale pooled scoreboard reintroduces a spurious post-recovery artifact
-        // (read timeout or suspend) that the isolated sweep never shows -> proves it is a harness artifact.
-        final boolean artifactWithout = withoutEviction.startsWith("READ_TIMEOUT")
-                || withoutEviction.equals("SUSPENDED")
-                || withoutEviction.startsWith("NON_IDENTITY");
+        // WITHOUT eviction: recovery is no longer sensitive to the stale pooled scoreboard either. Both
+        // arms perform the SAME epoch rewind (the run log shows "adaptive epoch roll-forward restored
+        // durable cut [epochSeqTxn=4]" in each), so the rewind this scenario exists to exercise still
+        // happens — what changed is that a reader opening at the rewound txn is no longer stranded by the
+        // surviving pre-crash `max`. Eviction is therefore a harness nicety, not a correctness requirement.
         Assert.assertTrue(
-                "WITHOUT scoreboard eviction the stale live scoreboard must reintroduce a spurious "
-                        + "post-recovery artifact absent from the isolated sweep, got: " + withoutEviction,
-                artifactWithout
+                "WITHOUT scoreboard eviction the O3 lazy-gap table must ALSO recover to a clean identity "
+                        + "prefix — recovery must not depend on the pooled scoreboard being evicted, got: "
+                        + withoutEviction,
+                withoutEviction.startsWith("IDENTITY")
         );
-        // And the two arms must DIFFER — same scenario, same crash point, isolation the only variable.
-        Assert.assertNotEquals(
-                "the scoreboard-eviction isolation must be the discriminating variable (arms must differ)",
+        // Same scenario, same crash point, isolation the only variable -> the arms must now AGREE.
+        Assert.assertEquals(
+                "scoreboard eviction must not change the recovered outcome (arms must agree)",
                 withEviction, withoutEviction
         );
     }

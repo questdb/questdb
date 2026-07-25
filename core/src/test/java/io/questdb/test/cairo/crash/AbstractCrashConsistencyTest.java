@@ -22,6 +22,9 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
      */
     protected void runWithCrashFacade(TestUtils.LeakProneCode body) throws Exception {
         crashFf = new CrashFaultFilesFacade();
+        // Scope process-death fd reclamation to per-table files; engine-root files (tables.d, the table-id
+        // generator, config) are owned by long-lived singletons that outlive releaseEngineHandles().
+        crashFf.setDbRoot(root);
         assertMemoryLeak(crashFf, body);
     }
 

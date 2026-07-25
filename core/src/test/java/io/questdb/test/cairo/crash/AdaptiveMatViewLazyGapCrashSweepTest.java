@@ -117,6 +117,13 @@ import java.util.Set;
 public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
     /**
+     * Crash-point cap for this sweep. The base+view commit phase runs a little past the shared
+     * {@link #DEFAULT_ADAPTIVE_CRASH_POINT_CAP} of 200, so this test raises its own ceiling to keep the
+     * sweep EXHAUSTIVE (the assertions demand no truncation). Sized with headroom so a small future
+     * change in the durability-op tail does not silently truncate the sweep again.
+     */
+    private static final int MAT_VIEW_CRASH_POINT_CAP = 256;
+    /**
      * Pre-epoch base rows: a durable epoch is taken after these (interval=0), for base AND mv.
      */
     private static final int LAZY_K = 4;
@@ -148,7 +155,11 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
             crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
 
             final MatViewLazyGapWorkload workload = new MatViewLazyGapWorkload();
-            final SweepResult r = forEachAdaptiveCrashPoint(workload);
+            // The base+view commit phase performs N=205 durability ops — just past the 200 default cap
+            // since metadata-bound epochs added a third epoch copy (_meta.epoch) per epoch. Sweeping
+            // EXHAUSTIVELY is the point of this test (the assertions below demand no truncation), so
+            // raise the cap for this workload rather than let the tail crash points go unswept.
+            final SweepResult r = forEachAdaptiveCrashPoint(workload, MAT_VIEW_CRASH_POINT_CAP);
 
             LOG.info().$("[mat-view lazy-gap sweep] N=").$(r.n).$(", sweptPoints=").$(r.sweptPoints)
                     .$(", validViewPoints=").$(workload.validViewPoints)
@@ -167,7 +178,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
             );
 
             Assert.assertTrue("N must be > 0", r.n > 0);
-            Assert.assertEquals("default cap must not truncate this small workload", r.n, r.sweptPoints);
+            Assert.assertEquals("the cap must not truncate this small workload", r.n, r.sweptPoints);
             Assert.assertFalse("small workload must not be truncated", r.truncated);
 
             // Oracle clause 7 (Bar-2 durable-survival FLOOR): recovered base counts non-decreasing in k.

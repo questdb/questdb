@@ -537,11 +537,16 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
         @Override
         public int atomicCommitDurabilityOpCount(int countedOps) {
-            // Both W=0 and the safe W>0 fallback have N=26. Production convert semantics establish the
-            // durable transaction through op 12; op 13 starts the explicitly best-effort epoch/purge tail.
-            // A fault there is allowed to be consumed because the conversion transaction and logical rows
-            // are already durable; the oracle still verifies no suspension or data change after reboot.
-            Assert.assertEquals("unexpected convert durability-op count", 26, countedOps);
+            // Both W=0 and the safe W>0 fallback have N=27: ops 1-6 the WAL event msync/fdatasync pairs,
+            // 7-8 the sequencer txn-log entry, 9-11 parquet production, 12 the _txn commit, then 13-27 the
+            // epoch/purge tail. Production convert semantics establish the durable transaction through
+            // op 12; op 13 starts the explicitly best-effort tail. A fault there is allowed to be consumed
+            // because the conversion transaction and logical rows are already durable; the oracle still
+            // verifies no suspension or data change after reboot.
+            // N was 26 until metadata-bound epochs (_meta.epoch alongside _txn.epoch/_cv.epoch) added a
+            // third writeEpochCopy inside the best-effort tail, leaving the boundary below unchanged.
+            // This equality is a drift tripwire, not the load-bearing bound.
+            Assert.assertEquals("unexpected convert durability-op count", 27, countedOps);
             return 12;
         }
 

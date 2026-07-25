@@ -194,6 +194,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private int durabilityOps = 0;
     private int crashAtOp = -1; // -1 = disarmed
     private int syncfsCount = 0; // number of syncfs(2) calls observed (filesystem-wide flushes)
+    private String dbRootPrefix; // set via setDbRoot(); scopes cached-fd reclamation to per-table files
 
     /**
      * Ordered list of file paths as they were fsync'd/fsyncAndClose'd (for sync-order assertions).
@@ -865,11 +866,38 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      */
     public java.util.List<Long> noCacheOpenFdsSnapshot() {
         // Files.openRW/openRO wrappers are currently non-cached at the Files layer even when they arrive
-        // through the ordinary facade methods. Include every still-tracked facade FD, not only calls made
-        // through the explicitly named *NoCache methods, so process-death simulation can reclaim both kinds.
+        // through the ordinary facade methods, so process-death simulation must be able to reclaim those
+        // too — but ONLY the ones a per-table durability op could have leaked. SCOPE the union to files
+        // living UNDER a table directory: engine-root files (the tables.d name registry, the table-id
+        // generator, config) sit directly in the db root and are owned by long-lived engine singletons
+        // that legitimately hold them open across the whole sweep and are NOT released by
+        // releaseEngineHandles(). Force-closing one of those is not process-death modelling — it leaves
+        // the live owner holding a dead fd, and the owner's next reopen double-closes it
+        // ("fd <n> is already closed!"). This mirrors the scoping invariant that
+        // {@link #reclaimCachedFdsUnder(String)} already documents.
         final LinkedHashSet<Long> snapshot = new LinkedHashSet<>(noCacheOpenFds);
-        snapshot.addAll(fdToPath.keySet());
+        if (dbRootPrefix != null) {
+            for (Map.Entry<Long, String> e : fdToPath.entrySet()) {
+                final String p = e.getValue();
+                if (p != null
+                        && p.startsWith(dbRootPrefix)
+                        && p.indexOf(File.separatorChar, dbRootPrefix.length()) >= 0) {
+                    snapshot.add(e.getKey());
+                }
+            }
+        }
         return new ArrayList<>(snapshot);
+    }
+
+    /**
+     * Tell the facade which directory is the engine's db root, so {@link #noCacheOpenFdsSnapshot()} can
+     * tell a per-table fd (reclaimable) from an engine-root fd owned by a long-lived singleton (not).
+     * Until this is set the snapshot reports only the explicitly non-cached fds — the conservative
+     * direction: under-reclaiming can at worst leave a tracked fd behind, whereas over-reclaiming
+     * corrupts a live owner's state.
+     */
+    public void setDbRoot(CharSequence dbRoot) {
+        this.dbRootPrefix = Paths.get(dbRoot.toString()).toAbsolutePath() + File.separator;
     }
 
     /**
