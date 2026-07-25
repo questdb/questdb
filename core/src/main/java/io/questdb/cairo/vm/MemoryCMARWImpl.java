@@ -208,6 +208,21 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public void jumpTo(long offset) {
         checkAndExtend(pageAddress + offset);
+        // APPEND-ONLY SKIP CORRECTNESS (must stay here). sync()'s fast path skips the msync when the
+        // append offset and size are unchanged since the last sync, on the reasoning "nothing appended =>
+        // nothing dirty". A BACKWARDS jump breaks that reasoning: WalWriter.rollback0() ->
+        // setAppendPosition() -> jumpTo(lower) rewinds the cursor, and the next commit re-appends
+        // DIFFERENT bytes over the same range. For a fixed-width column the cursor lands on exactly the
+        // old offset again, so both watermarks match at the next sync() and the rewritten bytes would
+        // never be msync'd.
+        //
+        // Lowering the watermark to the rewind point makes any subsequent re-append strictly above it,
+        // so the next sync() cannot skip. The watermark stays stale-LOW (an extra harmless msync), never
+        // stale-HIGH (a missed one). Guarded by appendOnly so non-append-only memories, whose sync()
+        // never skips, keep an unconditional plain jumpTo.
+        if (appendOnly && offset < lastSyncedAppendOffset) {
+            lastSyncedAppendOffset = offset;
+        }
         appendAddress = pageAddress + offset;
         assert appendAddress <= lim;
     }
@@ -349,7 +364,19 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             // range, and skip entirely when nothing new was appended since the last sync.
             final long ao = getAppendOffset();
             if (ao == lastSyncedAppendOffset && size == lastSyncedSize) {
-                // C: nothing appended and no extend since last sync -> no dirty data to flush.
+                // C: the append cursor has not passed the last-synced watermark and there was no extend,
+                // so no byte above the watermark has been written since the last msync.
+                //
+                // This is NOT simply "the offset is unchanged": a rewind (rollback / failed truncate)
+                // followed by a re-append can return the cursor to its old value with DIFFERENT bytes in
+                // between. jumpTo() closes that hole by LOWERING lastSyncedAppendOffset on any backwards
+                // move, so a rewound-and-refilled range always leaves ao > lastSyncedAppendOffset here and
+                // falls through to the msync below. The watermark is therefore only ever stale-LOW (one
+                // extra harmless msync), never stale-HIGH (a missed one).
+                //
+                // The remaining precondition is the caller's: appendOnly must only be set on memories that
+                // never do in-place put*(offset, ..) below the cursor, since such a write dirties bytes
+                // without moving the cursor at all. See MemoryMA.setAppendOnly.
                 return;
             }
             if (ao > 0) {
@@ -447,6 +474,11 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                 );
             } catch (Throwable e) {
                 appendAddress = pageAddress;
+                // Same rewind hazard as jumpTo(): the cursor just went back to 0 while the watermark may
+                // sit above it. Drop the watermark so a reused memory cannot skip the msync of rewritten
+                // bytes. (Belt-and-braces: this path rethrows and the caller normally discards the
+                // memory, but the reset costs nothing and keeps the invariant unconditional.)
+                lastSyncedAppendOffset = 0;
                 long truncatedToSize = Vm.bestEffortTruncate(ff, LOG, fd, 0);
                 if (truncatedToSize != 0) {
                     if (truncatedToSize > 0) {

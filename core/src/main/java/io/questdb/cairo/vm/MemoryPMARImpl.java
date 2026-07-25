@@ -60,7 +60,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private int commitMode = CommitMode.UNSET;
     private long fd = -1;
     private FilesFacade ff;
-    private long lastSyncedSize = 0;
     private int madviseOpts = -1;
     private int mappedPage;
     private long pageAddress = 0;
@@ -145,7 +144,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         mappedPage = -1;
         setExtendSegmentSize(extendSegmentSize);
         fd = TableUtils.openFileRWOrFail(ff, name, opts);
-        this.lastSyncedSize = 0;
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
     }
 
@@ -170,7 +168,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         setExtendSegmentSize(extendSegmentSize);
         close(truncate, truncateMode);
         this.fd = fd;
-        this.lastSyncedSize = 0;
         jumpTo(offset);
     }
 
@@ -200,7 +197,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         // Batched SYNC stage 1: msync(MS_ASYNC) the dirty bytes of the currently mapped page into the page
         // cache so the following sync_file_range can see them. Mirrors sync()'s range selection (append-only
         // narrows to the in-page written length; else the full page) but is always ASYNC and issues NO
-        // fdatasync, and NEVER advances lastSyncedSize.
+        // fdatasync.
         if (pageAddress != 0) {
             if (appendOnly) {
                 final long inPageWritten = inPageWritten();
@@ -230,19 +227,18 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     public void syncFlushFinishIfExtended() {
-        // Batched SYNC stage 3: WATERMARK BOOKKEEPING ONLY — no per-file flush. The caller
-        // (TableWriter.syncColumnsBatchedSync) has already issued ONE syncfs(fd) over this table's
-        // filesystem, journaling the new i_size + extent conversions and flushing the device once; a
-        // per-file fdatasync here would be a redundant second flush. The on-disk size after mapping page
-        // `mappedPage` is (mappedPage+1)*segment (mapPage posix_fallocates that length); we only advance
-        // lastSyncedSize to it so a subsequent sync()/finish sees no further extend. Matches sync()'s extend
-        // bookkeeping.
-        if (pageAddress != 0) {
-            final long currentFileSize = (long) (mappedPage + 1) * getExtendSegmentSize();
-            if (currentFileSize > lastSyncedSize) {
-                lastSyncedSize = currentFileSize;
-            }
-        }
+        // Batched SYNC stage 3: a genuine NO-OP for PMAR. The caller (TableWriter.syncColumnsBatchedSync)
+        // has already issued ONE syncfs(fd) over this table's filesystem, journaling the new i_size +
+        // extent conversions and flushing the device once, so a per-file fdatasync here would be a
+        // redundant second flush.
+        //
+        // Unlike MemoryCMARWImpl there is deliberately NO watermark to advance: PMAR's sync() is
+        // NARROW-ONLY (it recomputes the dirty range from the live append offset on every call and never
+        // SKIPS), so it has no extend/skip check that a watermark could feed. An earlier revision kept a
+        // `lastSyncedSize` field here; it was written by of()/switchTo()/truncate()/this method and read
+        // by nothing that affected durability, so it was removed rather than left as misleading state.
+        // If PMAR ever gains a skip fast path, reintroduce the watermark HERE (never in syncFlushKick /
+        // syncFlushDrain — advancing it there would let this method wrongly conclude "no extend").
     }
 
     @Override
@@ -256,7 +252,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
             throw CairoException.critical(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getExtendSegmentSize()).put(" bytes");
         }
         updateLimits(0, pageAddress = mapPage(0));
-        lastSyncedSize = getExtendSegmentSize();
         LOG.debug().$("truncated [fd=").$(fd).$(']').$();
     }
 

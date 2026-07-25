@@ -187,6 +187,114 @@ public class AppendOnlySyncNarrowingTest {
     }
 
     /**
+     * The append-only SKIP must NOT survive a REWIND of the append cursor.
+     *
+     * <p>{@code MemoryCMARWImpl.sync()} skips the msync when {@code appendOffset} and {@code size} are both
+     * unchanged since the last sync. The naive reading of that condition ("nothing appended => nothing
+     * dirty") is FALSE across a rollback: {@code WalWriter.rollback0()} -&gt; {@code setAppendPosition()} -&gt;
+     * {@code jumpTo(lower)} rewinds the cursor and the next commit re-appends DIFFERENT bytes over the same
+     * range. For a fixed-width column the cursor lands on exactly its old value, so both watermarks match
+     * again and the rewritten bytes would never be msync'd.
+     *
+     * <p>{@code jumpTo()} closes the hole by lowering {@code lastSyncedAppendOffset} on any backwards move.
+     * This test drives that exact sequence and asserts the msync happens; the FORWARD control below pins
+     * that the fix does not over-invalidate and destroy the skip optimisation itself.
+     */
+    @Test
+    public void testAppendOnlySkipInvalidatedByRewind() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = Files.PAGE_SIZE;
+            final RecordingFilesFacade ff = new RecordingFilesFacade();
+
+            try (Path path = new Path().of(temp.newFile("rewind.d").getAbsolutePath())) {
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
+                    mem.setAppendOnly(true);
+                    mem.jumpTo(0);
+
+                    // Commit 1: append 100 bytes and sync them.
+                    for (int i = 0; i < 100; i++) {
+                        mem.putByte((byte) 0xA);
+                    }
+                    Assert.assertEquals(100, mem.getAppendOffset());
+                    ff.clear();
+                    mem.sync(false);
+                    Assert.assertEquals("baseline: first sync must msync", 1, ff.msyncCount);
+
+                    // Baseline: with no write at all, the skip is in force.
+                    ff.clear();
+                    mem.sync(false);
+                    Assert.assertEquals("baseline: idle sync must skip", 0, ff.msyncCount);
+
+                    // FORWARD control: a jumpTo to the CURRENT offset must not disturb the watermark, so
+                    // the skip must still hold. Guards against over-invalidating and killing the
+                    // optimisation this fix is meant to preserve.
+                    mem.jumpTo(100);
+                    ff.clear();
+                    mem.sync(false);
+                    Assert.assertEquals("forward/no-op jumpTo must not defeat the skip", 0, ff.msyncCount);
+
+                    // ROLLBACK: rewind to 80 and re-append 20 DIFFERENT bytes. The cursor returns to
+                    // exactly 100 and `size` is unchanged -- the precise shape that used to skip.
+                    mem.jumpTo(80);
+                    for (int i = 0; i < 20; i++) {
+                        mem.putByte((byte) 0xB);
+                    }
+                    Assert.assertEquals("test setup: cursor must land back on the pre-rollback offset",
+                            100, mem.getAppendOffset());
+
+                    ff.clear();
+                    mem.sync(false);
+                    Assert.assertEquals(
+                            "rewound-and-refilled range MUST be msync'd, not skipped",
+                            1, ff.msyncCount);
+                    Assert.assertTrue(
+                            "the msync must cover the rewritten range [80, 100)",
+                            ff.lastMsyncLen >= 100);
+
+                    // And once that sync has landed, the skip is available again.
+                    ff.clear();
+                    mem.sync(false);
+                    Assert.assertEquals("skip must be restored after the post-rollback sync",
+                            0, ff.msyncCount);
+
+                    // A deeper rewind that is only PARTLY refilled must also msync (watermark dropped to
+                    // 40, cursor ends at 60 > 40).
+                    mem.jumpTo(40);
+                    for (int i = 0; i < 20; i++) {
+                        mem.putByte((byte) 0xC);
+                    }
+                    Assert.assertEquals(60, mem.getAppendOffset());
+                    ff.clear();
+                    mem.sync(false);
+                    Assert.assertEquals("partial refill after a rewind must also msync", 1, ff.msyncCount);
+                    Assert.assertEquals("msync must cover [0, appendOffset)", 60, ff.lastMsyncLen);
+                }
+            }
+
+            // Control: a NON-appendOnly memory never skips, so the rewind hook must not change it.
+            try (Path path = new Path().of(temp.newFile("rewind_ctrl.d").getAbsolutePath())) {
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
+                    mem.jumpTo(0);
+                    for (int i = 0; i < 100; i++) {
+                        mem.putByte((byte) 0xA);
+                    }
+                    ff.clear();
+                    mem.sync(false);
+                    Assert.assertEquals(1, ff.msyncCount);
+                    mem.jumpTo(80);
+                    ff.clear();
+                    mem.sync(false);
+                    Assert.assertEquals("non-appendOnly path must be unaffected by the rewind hook",
+                            1, ff.msyncCount);
+                    Assert.assertEquals(pageSize, ff.lastMsyncLen);
+                }
+            }
+        });
+    }
+
+    /**
      * FilesFacade that records every msync's (addr, len) and counts them.
      */
     private static final class RecordingFilesFacade extends TestFilesFacadeImpl {
