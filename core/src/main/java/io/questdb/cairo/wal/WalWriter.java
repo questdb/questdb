@@ -2447,6 +2447,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
         checkDistressed();
         try {
+            // Take the orphan-sweep mark BEFORE the barrier: only pins registered by now are provably
+            // covered by the fdatasync below, so only those may be reaped. See
+            // SeqTxnTracker.snapshotOrphanSweepMark.
+            final long orphanSweepMark = seqTxnTracker.snapshotOrphanSweepMark();
             // Private WAL dependencies were fdatasync'd before sequencing. Only the shared sequencer
             // barrier remains deferred/batched, so it can never expose a peer's volatile dependency.
             sequencer.fdatasyncTxnLog(tableToken);
@@ -2456,7 +2460,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // lower seqTxn (CRITICAL 2). markWriterDurable recomputes the prefix; flushTo above only gates the
             // nothing-pending early return. Re-check process poison after the barriers and before publication.
             checkDistressed();
-            seqTxnTracker.markWriterDurable(walId);
+            seqTxnTracker.markWriterDurable(walId, orphanSweepMark);
             pendingDurableSeqTxn = -1L;
             pendingSinceMicros = -1L;
             pendingLoSeqTxn = -1L;
@@ -2464,10 +2468,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         } catch (CairoException e) {
             if (e.isDataSyncFailure()) {
                 distressed = true;
-                // Leave the shared contiguous-prefix pin in place: this batch was not proven durable.
+                // The fdatasync FAILED, so this batch was not proven durable and its floor must stand. Orphan
+                // (do not remove) the pin: this writer is now distressed and will never flush again, so only a
+                // later SUCCESSFUL peer flush of the shared sequencer log may reap it.
                 pendingDurableSeqTxn = -1L;
                 pendingSinceMicros = -1L;
                 pendingLoSeqTxn = -1L;
+                seqTxnTracker.orphanWriterPending(walId);
                 sequencer.getWalGroupCommitFlushQueue().unregister(this);
                 sequencer.handleDataSyncFailure(e);
             }
@@ -2524,10 +2531,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         pendingDurableSeqTxn = -1L;
         pendingSinceMicros = -1L;
         pendingLoSeqTxn = -1L;
-        // DELIBERATELY leave this writer's contiguous-prefix pin on the shared tracker: this teardown did NOT
-        // device-flush the batch, so its data is non-durable. Removing the pin here would let the shared
-        // durable-ack frontier advance past our un-flushed seqTxn (CRITICAL 2 over-claim). The pin is cleared
-        // only by a real fdatasync (markWriterDurable) or by the recovery/reboot resetDurableFrontier().
+        // Do NOT remove this writer's contiguous-prefix pin: this teardown did NOT device-flush the batch, so
+        // right now its shared sequencer records are still page-cache-only and removing the pin would let the
+        // durable-ack frontier advance over them (the CRITICAL-2 over-claim).
+        //
+        // Instead ORPHAN it. Nothing will ever call markWriterDurable(walId) for a torn-down writer, so a bare
+        // "leave the pin" froze the frontier at min(pending)-1 for the rest of the process lifetime. An orphan
+        // keeps the honest floor NOW but is reaped by the next peer flush, which fdatasyncs the whole shared
+        // sequencer log and therefore makes our already-sequenced txns durable too (private WAL dependencies
+        // were fdatasync'd before sequencing). See SeqTxnTracker.orphanWriterPending.
+        //
+        // NULL GUARD (load-bearing): this method runs on PARTIALLY-CONSTRUCTED writers. The constructor's
+        // catch block calls dropPendingDurable() then doClose(false), and `seqTxnTracker` is assigned INSIDE
+        // that same try — so any failure before that assignment (lockWal / mkWalDir / getTableMetadata, all
+        // reachable when a test or a real fault makes file operations fail) reaches here with a null tracker.
+        // An NPE here would REPLACE the constructor's real exception and skip doClose(false), leaking the
+        // writer. Such a writer never committed, so it holds no pin and there is nothing to orphan.
+        if (seqTxnTracker != null) {
+            seqTxnTracker.orphanWriterPending(walId);
+        }
         sequencer.getWalGroupCommitFlushQueue().unregister(this);
     }
 
@@ -2546,8 +2568,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         pendingDurableSeqTxn = -1L;
         pendingSinceMicros = -1L;
         pendingLoSeqTxn = -1L;
-        // Leave the shared tracker pin (see dropPendingDurable): a power loss did NOT flush the batch, so the
-        // durable-ack frontier must stay honestly behind our un-flushed seqTxn.
+        // Orphan (do not remove) the shared tracker pin, exactly as dropPendingDurable does: a power loss did
+        // NOT flush the batch, so the durable-ack frontier must stay honestly behind our un-flushed seqTxn
+        // until some writer's real fdatasync of the shared sequencer log covers it.
+        seqTxnTracker.orphanWriterPending(walId);
         sequencer.getWalGroupCommitFlushQueue().unregister(this);
     }
 

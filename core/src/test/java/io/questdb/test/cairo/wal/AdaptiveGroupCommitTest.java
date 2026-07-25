@@ -676,6 +676,94 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     }
 
     /**
+     * A writer torn down WITHOUT a device flush must ORPHAN its contiguous-prefix pin, not hold it forever.
+     *
+     * <p>The pin exists so a peer's flush cannot over-claim this writer's still-page-cache-only sequencer
+     * records as durable (CRITICAL-2). Removing it at teardown would be exactly that over-claim, so teardown
+     * must keep the floor. But nothing ever calls {@code markWriterDurable(walId)} for a DEAD writer, so
+     * simply keeping it froze the shared frontier at {@code min(pending) - 1} for the rest of the process
+     * lifetime: every later QWP durable-ack for the table stalled, rescued only incidentally (and up to a
+     * full epoch interval later) by the apply-side epoch jumping the frontier -- and never at all for a table
+     * that received no further applies.
+     *
+     * <p>The orphan mechanism keeps the honest floor at teardown and reaps it on the next PEER flush. That is
+     * sound because a W&gt;0 batch defers ONLY the shared sequencer barrier: every writer fdatasyncs its
+     * private segment columns and events file BEFORE sequencing, so one
+     * {@code sequencer.fdatasyncTxnLog()} by any writer makes the dead writer's already-sequenced txns
+     * device-durable too.
+     *
+     * <p>Both halves are asserted, in order: the floor HOLDS immediately after the simulated power loss
+     * (a test that only checked the release would also pass on a naive "just drop the pin at teardown"
+     * implementation, which reintroduces the over-claim), and it is RELEASED by the peer flush.
+     */
+    @Test
+    public void testTornDownWriterOrphansPinAndPeerFlushReapsIt() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+        // Keep the apply-side epoch out of the way: it advances localDurableSeqTxn by a DIFFERENT route
+        // (setLocalDurableSeqTxn bypasses the pin map), which would mask whether the pin itself was reaped.
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "1h");
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            // ---- writer A commits inside the window, then "loses power" before its batch fdatasync ----
+            final long deadSeqTxn;
+            try (WalWriter a = engine.getWalWriter(tt)) {
+                commitRow(a, 0L, 0);
+                deadSeqTxn = tracker.getSeqTxn();
+                Assert.assertEquals("test setup: A's commit must be pending, holding exactly one pin",
+                        1, tracker.getPendingWriterPinCount());
+                Assert.assertTrue("test setup: A's tail must not be durable yet",
+                        tracker.getLocalDurableSeqTxn() < deadSeqTxn);
+
+                a.simulatePowerLossDropPending();
+            }
+
+            // HALF 1 -- the floor must HOLD. A's sequencer record was never device-flushed, so the frontier
+            // must still be honestly behind it; the pin survives teardown, merely marked orphaned.
+            Assert.assertEquals("a torn-down writer's pin must be ORPHANED, not removed",
+                    1, tracker.getOrphanedWriterPinCount());
+            Assert.assertEquals("the orphaned pin must still be held",
+                    1, tracker.getPendingWriterPinCount());
+            Assert.assertTrue(
+                    "the durable frontier must NOT advance over a batch that was never device-flushed",
+                    tracker.getLocalDurableSeqTxn() < deadSeqTxn
+            );
+
+            // ---- writer B commits and its batch flush lands ----
+            try (WalWriter b = engine.getWalWriter(tt)) {
+                setCurrentMicros(2_000_000L);
+                commitRow(b, 60_000_000L, 1);
+                final long liveSeqTxn = tracker.getSeqTxn();
+
+                // Push the clock past W and drive the background flusher: B's fdatasyncTxnLog covers the
+                // whole shared sequencer log, A's orphaned records included.
+                setCurrentMicros(2_000_000L + WINDOW_US + 1000L);
+                try (ExposedWalPurgeJob flusher = new ExposedWalPurgeJob(engine)) {
+                    flusher.flushNow();
+                }
+
+                // HALF 2 -- the orphan must be REAPED and the frontier freed.
+                Assert.assertEquals("a peer's device flush must reap the orphaned pin",
+                        0, tracker.getOrphanedWriterPinCount());
+                Assert.assertEquals("no pin may remain once every live writer has flushed",
+                        0, tracker.getPendingWriterPinCount());
+                Assert.assertTrue(
+                        "the durable frontier must be freed past the dead writer's floor: localDurableSeqTxn ("
+                                + tracker.getLocalDurableSeqTxn() + ") must reach the committed seqTxn ("
+                                + liveSeqTxn + ")",
+                        tracker.getLocalDurableSeqTxn() >= liveSeqTxn
+                );
+            }
+        });
+    }
+
+    /**
      * Append one (ts, v) row to a HELD WalWriter and commit it (one WAL txn, writer NOT released).
      */
     private static void commitRow(WalWriter w, long ts, long v) {

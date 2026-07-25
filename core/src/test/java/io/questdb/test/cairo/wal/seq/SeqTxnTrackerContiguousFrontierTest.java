@@ -51,6 +51,107 @@ import static org.junit.Assert.assertTrue;
  */
 public class SeqTxnTrackerContiguousFrontierTest {
 
+    /**
+     * THE ORPHAN-SWEEP RACE. A flusher may only reap orphan pins that its own fdatasync provably covered.
+     *
+     * <p>{@code fdatasyncTxnLog} releases the sequencer WRITE lock before the flusher reaches
+     * {@code markWriterDurable}, so inside that window a peer can sequence a fresh txn AND be torn down —
+     * producing a brand-new orphan pin whose record the fdatasync never touched. Reaping it would advance
+     * the frontier over a still-page-cache-only txn: the CRITICAL-2 over-claim, i.e. a QWP durable-ack for
+     * data a crash would lose.
+     *
+     * <p>The mark taken BEFORE the fdatasync bounds the sweep: an orphan stamped at or before it was already
+     * DEAD by then, so every txn it covers was appended first and the fdatasync covered them all. Anything
+     * orphaned later is left pinned for the next flush.
+     */
+    @Test
+    public void testOrphanSweepIgnoresWriterTornDownAfterTheSweepMark() {
+        final SeqTxnTracker tracker = newTracker();
+        tracker.initTxns(0, 30, false);
+
+        tracker.registerWriterPending(1, 10);           // the flusher's own pin
+
+        // The flusher snapshots the mark, then its fdatasync runs.
+        final long mark = tracker.snapshotOrphanSweepMark();
+
+        // RACE: after the barrier but before markWriterDurable, a peer sequences txn 20 and is torn down.
+        tracker.registerWriterPending(2, 20);
+        tracker.orphanWriterPending(2);
+
+        tracker.markWriterDurable(1, mark);
+
+        assertEquals("an orphan finalised AFTER the sweep mark must NOT be reaped -- the flusher's "
+                + "fdatasync did not cover its sequencer record", 1, tracker.getOrphanedWriterPinCount());
+        assertEquals("the late orphan's pin must still hold the frontier", 1, tracker.getPendingWriterPinCount());
+        assertEquals("the frontier must stop below the un-covered txn 20", 19, tracker.getLocalDurableSeqTxn());
+    }
+
+    /**
+     * THE PUT-IF-ABSENT TRAP. A pin's txn range keeps GROWING after registration — {@code
+     * registerWriterPending} is putIfAbsent, so a writer's later commits in the same batch reuse the pin and
+     * create no new registration. Bounding the sweep by REGISTRATION order is therefore unsound:
+     *
+     * <ol>
+     *   <li>flusher snapshots the mark (peer's pin already registered, so below the mark);</li>
+     *   <li>flusher's fdatasync runs;</li>
+     *   <li>the peer commits ONE MORE txn — the sequencer write lock is free again, and this txn is NOT
+     *       covered by the fdatasync;</li>
+     *   <li>the peer is torn down;</li>
+     *   <li>the sweep reaps it on its stale registration stamp and the frontier advances over that
+     *       uncovered txn.</li>
+     * </ol>
+     *
+     * <p>Stamping at ORPHAN time closes it: orphaning is what finalises the range, so a stamp taken then is
+     * only ever below the mark if every txn the pin covers was already appended.
+     */
+    @Test
+    public void testOrphanSweepIgnoresWriterThatCommittedAfterTheSweepMark() {
+        final SeqTxnTracker tracker = newTracker();
+        tracker.initTxns(0, 30, false);
+
+        tracker.registerWriterPending(2, 20);           // peer's batch starts (registered EARLY)
+        tracker.registerWriterPending(1, 25);           // the flusher's own pin
+
+        // 1) flusher snapshots the mark, 2) its fdatasync runs.
+        final long mark = tracker.snapshotOrphanSweepMark();
+
+        // 3) the peer appends one more txn to its still-open batch. putIfAbsent -> no new registration, so
+        //    a registration-based stamp would still read as "old" and look reapable.
+        tracker.registerWriterPending(2, 28);
+        // 4) only NOW is the peer torn down.
+        tracker.orphanWriterPending(2);
+
+        // 5) the sweep must NOT reap it: the peer's latest txn postdates the flusher's fdatasync.
+        tracker.markWriterDurable(1, mark);
+
+        assertEquals("an orphan finalised AFTER the sweep mark must NOT be reaped, even though its pin was "
+                + "REGISTERED before it", 1, tracker.getOrphanedWriterPinCount());
+        assertEquals("its pin must still hold the frontier", 1, tracker.getPendingWriterPinCount());
+        assertEquals("the frontier must stop below the peer's oldest un-flushed txn",
+                19, tracker.getLocalDurableSeqTxn());
+    }
+
+    /**
+     * The converse: an orphan finalised BEFORE the mark WAS covered by the flusher's fdatasync, so it must
+     * be reaped — otherwise a torn-down writer freezes the frontier for the rest of the process lifetime.
+     */
+    @Test
+    public void testOrphanSweepReapsWriterTornDownBeforeTheSweepMark() {
+        final SeqTxnTracker tracker = newTracker();
+        tracker.initTxns(0, 30, false);
+
+        tracker.registerWriterPending(2, 20);
+        tracker.orphanWriterPending(2);                 // torn down BEFORE the flusher snapshots
+        tracker.registerWriterPending(1, 25);           // the flusher's own pin
+
+        final long mark = tracker.snapshotOrphanSweepMark();
+        tracker.markWriterDurable(1, mark);
+
+        assertEquals("an orphan finalised before the mark must be reaped", 0, tracker.getOrphanedWriterPinCount());
+        assertEquals("no pin may remain", 0, tracker.getPendingWriterPinCount());
+        assertEquals("the frontier is freed to the committed seqTxn", 30, tracker.getLocalDurableSeqTxn());
+    }
+
     @Test
     public void testCommitModePublicationRejectsOlderAppliedAlter() {
         final SeqTxnTracker tracker = newTracker();
@@ -76,15 +177,15 @@ public class SeqTxnTrackerContiguousFrontierTest {
         tracker.registerWriterPending(3, 30); // writer 3
 
         // Writers 2 and 3 flush (in any order); writer 1 is dropped WITHOUT a flush (its pin is left in place).
-        tracker.markWriterDurable(3);
+        tracker.markWriterDurable(3, tracker.snapshotOrphanSweepMark());
         assertEquals("writer 1's hole at 10 bounds the prefix to 9", 9, tracker.getLocalDurableSeqTxn());
-        tracker.markWriterDurable(2);
+        tracker.markWriterDurable(2, tracker.snapshotOrphanSweepMark());
         assertEquals("writer 1 still un-flushed: frontier stuck at 9", 9, tracker.getLocalDurableSeqTxn());
 
         // Even a brand-new writer flushing a still-higher txn cannot lift the frontier past writer 1's hole.
         tracker.notifyOnCommit(40);
         tracker.registerWriterPending(4, 40);
-        tracker.markWriterDurable(4);
+        tracker.markWriterDurable(4, tracker.snapshotOrphanSweepMark());
         assertEquals("a dropped writer's un-flushed pin holds the durable frontier behind it",
                 9, tracker.getLocalDurableSeqTxn());
     }
@@ -100,14 +201,14 @@ public class SeqTxnTrackerContiguousFrontierTest {
         tracker.registerWriterPending(1, 5);
 
         // No such walId: must not throw and must not advance past the pending writer 1.
-        tracker.markWriterDurable(999);
+        tracker.markWriterDurable(999, tracker.snapshotOrphanSweepMark());
         assertEquals("unknown walId must not advance past the pending writer", 4, tracker.getLocalDurableSeqTxn());
 
-        tracker.markWriterDurable(1);
+        tracker.markWriterDurable(1, tracker.snapshotOrphanSweepMark());
         assertEquals("after the real writer flushes the frontier reaches getSeqTxn()",
                 tracker.getSeqTxn(), tracker.getLocalDurableSeqTxn());
         // Removing an already-removed walId is a clean no-op.
-        tracker.markWriterDurable(1);
+        tracker.markWriterDurable(1, tracker.snapshotOrphanSweepMark());
         assertEquals(tracker.getSeqTxn(), tracker.getLocalDurableSeqTxn());
     }
 
@@ -122,14 +223,14 @@ public class SeqTxnTrackerContiguousFrontierTest {
 
         // Writer 1 flushes a contiguous batch first -> frontier reaches getSeqTxn().
         tracker.registerWriterPending(1, 5);
-        tracker.markWriterDurable(1);
+        tracker.markWriterDurable(1, tracker.snapshotOrphanSweepMark());
         final long high = tracker.getLocalDurableSeqTxn();
         assertEquals(10, high);
 
         // A NEW pending writer appears at a lower oldest-un-flushed; a stray recompute must not drop the
         // already-published frontier (durable data stays durable).
         tracker.registerWriterPending(2, 8);
-        tracker.markWriterDurable(999); // recompute with pin {2->8} present: min-1 = 7 < 10
+        tracker.markWriterDurable(999, tracker.snapshotOrphanSweepMark()); // recompute with pin {2->8} present: min-1 = 7 < 10
         assertTrue("frontier must never regress below a previously published value",
                 tracker.getLocalDurableSeqTxn() >= high);
     }
@@ -148,12 +249,12 @@ public class SeqTxnTrackerContiguousFrontierTest {
         tracker.registerWriterPending(2, 11); // writer 2: oldest un-flushed = 11
 
         // Writer 2 flushes FIRST (out of order). Its own txn 11 is durable, but 10 is still a hole.
-        tracker.markWriterDurable(2);
+        tracker.markWriterDurable(2, tracker.snapshotOrphanSweepMark());
         assertEquals("out-of-order flush must NOT over-claim: frontier = oldest hole (10) - 1",
                 9, tracker.getLocalDurableSeqTxn());
 
         // Writer 1 flushes -> the prefix is now contiguous up to getSeqTxn().
-        tracker.markWriterDurable(1);
+        tracker.markWriterDurable(1, tracker.snapshotOrphanSweepMark());
         assertEquals("with nothing pending the frontier reaches the max committed seqTxn",
                 tracker.getSeqTxn(), tracker.getLocalDurableSeqTxn());
         assertEquals(11, tracker.getLocalDurableSeqTxn());
@@ -173,7 +274,7 @@ public class SeqTxnTrackerContiguousFrontierTest {
         tracker.registerWriterPending(1, 15);
         tracker.registerWriterPending(2, 11);
 
-        tracker.markWriterDurable(2);
+        tracker.markWriterDurable(2, tracker.snapshotOrphanSweepMark());
         assertEquals("writer 1's floor stays at its batch start (10), so prefix is 9",
                 9, tracker.getLocalDurableSeqTxn());
     }
@@ -189,7 +290,7 @@ public class SeqTxnTrackerContiguousFrontierTest {
 
         tracker.registerWriterPending(1, 10);
         tracker.registerWriterPending(2, 11);
-        tracker.markWriterDurable(2);
+        tracker.markWriterDurable(2, tracker.snapshotOrphanSweepMark());
         assertEquals(9, tracker.getLocalDurableSeqTxn());
 
         tracker.resetDurableFrontier();
@@ -199,7 +300,7 @@ public class SeqTxnTrackerContiguousFrontierTest {
         // (the stale writer-1 pin must be gone, otherwise this would be stuck at 9).
         tracker.notifyOnCommit(20);
         tracker.registerWriterPending(5, 20);
-        tracker.markWriterDurable(5);
+        tracker.markWriterDurable(5, tracker.snapshotOrphanSweepMark());
         assertEquals("after reset the stale pins are gone; the frontier tracks getSeqTxn() again",
                 tracker.getSeqTxn(), tracker.getLocalDurableSeqTxn());
     }
@@ -215,7 +316,7 @@ public class SeqTxnTrackerContiguousFrontierTest {
 
         tracker.registerWriterPending(1, 3);
         assertEquals("while pending the frontier lags", -1, tracker.getLocalDurableSeqTxn());
-        tracker.markWriterDurable(1);
+        tracker.markWriterDurable(1, tracker.snapshotOrphanSweepMark());
         assertEquals(tracker.getSeqTxn(), tracker.getLocalDurableSeqTxn());
         assertEquals(7, tracker.getLocalDurableSeqTxn());
     }

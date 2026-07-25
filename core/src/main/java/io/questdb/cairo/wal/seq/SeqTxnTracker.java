@@ -104,6 +104,18 @@ public class SeqTxnTracker {
     private final Object durableFrontierLock = new Object();
     private final IntList pendingWalIds = new IntList();
     private final LongList pendingLoSeqTxns = new LongList();
+    // Parallel 0/1 flag list: 1 => this pin belongs to a writer that was TORN DOWN (distressed / crashed /
+    // closed) WITHOUT flushing its batch, so nothing will ever call markWriterDurable(itsWalId) again. See
+    // orphanWriterPending / markWriterDurable for why an orphan is releasable by ANY peer's device flush.
+    private final IntList pendingOrphaned = new IntList();
+    // Parallel list: the value of orphanSeq at the moment each pin was ORPHANED, or Long.MAX_VALUE while the
+    // pin is live (a live pin is never reapable, so it can never satisfy the sweep bound). A flusher may reap
+    // an orphan ONLY if this stamp precedes the snapshot it took before its fdatasync — see
+    // snapshotOrphanSweepMark() for why stamping at ORPHAN time (not registration time) is what makes the
+    // reap sound.
+    private final LongList pendingOrphanSeqs = new LongList();
+    // Monotonic counter, bumped under durableFrontierLock by orphanWriterPending.
+    private long orphanSeq;
     private volatile long dirtyWriterTxn;
     // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;
@@ -384,11 +396,11 @@ public class SeqTxnTracker {
     /**
      * Advances the device-durable frontier to {@code seqTxn} (ADAPTIVE mode). MONOTONE: a value below the
      * current frontier is silently ignored (durable data never becomes non-durable), which also makes an
-     * out-of-order contiguous-prefix recompute in {@link #markWriterDurable(int)} safe.
+     * out-of-order contiguous-prefix recompute in {@link #markWriterDurable(int, long)} safe.
      *
      * <p>Used directly on the ADAPTIVE {@code W=0} path (the commit fdatasync completed BEFORE the seqTxn was
      * even assigned, so the commit is durable when this is called; concurrent writers are safe because a txn
-     * is durable before it is sequenced), and internally by {@link #markWriterDurable(int)} under
+     * is durable before it is sequenced), and internally by {@link #markWriterDurable(int, long)} under
      * {@code durableFrontierLock} for the {@code W>0} contiguous prefix. A table is exclusively W=0 OR W>0
      * (config-fixed), so these two callers never race for the same tracker.
      */
@@ -402,15 +414,92 @@ public class SeqTxnTracker {
      * Adaptive group-commit (W&gt;0): record the OLDEST un-flushed {@code loSeqTxn} of {@code walId}'s current
      * batch so the shared durable-ack frontier can be held at the contiguous durable prefix across concurrent
      * writers. putIfAbsent — a writer's later commits in the SAME batch (walId already pinned) must NOT lower
-     * its recorded floor; the pin is dropped only by {@link #markWriterDurable(int)} (after that writer's
+     * its recorded floor; the pin is dropped only by {@link #markWriterDurable(int, long)} (after that writer's
      * fdatasync) or {@link #resetDurableFrontier()} (recovery/reboot). A distressed/crash teardown WITHOUT a
      * flush deliberately LEAVES the pin, so the frontier stays honestly behind the writer's non-durable data.
      */
     public void registerWriterPending(int walId, long loSeqTxn) {
         synchronized (durableFrontierLock) {
-            if (indexOfPendingWalId(walId) < 0) {
+            final int idx = indexOfPendingWalId(walId);
+            if (idx < 0) {
                 pendingWalIds.add(walId);
                 pendingLoSeqTxns.add(loSeqTxn);
+                pendingOrphaned.add(0);
+                pendingOrphanSeqs.add(Long.MAX_VALUE);
+            } else {
+                // Defensive: walIds are allocated monotonically per table by WalIdGenerator and are never
+                // recycled within a process, so re-registering an ORPHANED walId should be unreachable. If a
+                // future change ever recycles them, un-orphan the entry (a live writer owns it again and WILL
+                // call markWriterDurable) while KEEPING the older, lower floor -- putIfAbsent semantics, so a
+                // later commit in the same batch can never raise the pin above its oldest un-flushed txn.
+                pendingOrphaned.setQuick(idx, 0);
+                pendingOrphanSeqs.setQuick(idx, Long.MAX_VALUE);
+            }
+        }
+    }
+
+    /**
+     * Adaptive group-commit (W&gt;0): take the orphan-sweep mark to pass to a later
+     * {@link #markWriterDurable(int, long)}. MUST be called BEFORE the caller's
+     * {@code sequencer.fdatasyncTxnLog()}, and the returned value passed unchanged to the
+     * {@code markWriterDurable} that follows it.
+     *
+     * <p><b>Why the ordering is the whole safety argument.</b> Orphaning is what FINALISES a pin's txn range:
+     * the writer is dead from that instant, so it can append no further records. Hence for any orphan whose
+     * stamp is {@code <=} this mark, EVERY txn it covers was appended before the mark, which precedes the
+     * fdatasync — so that fdatasync covered all of them and reaping cannot over-claim.
+     *
+     * <p><b>Why the stamp must be taken at ORPHAN time, not registration time.</b>
+     * {@code registerWriterPending} is putIfAbsent: a writer's later commits in the SAME batch reuse the
+     * pin and create no new registration. A registration stamp therefore records only when the batch
+     * STARTED, while the pin's range keeps growing. That admitted a real over-claim: flusher snapshots the
+     * mark -> its fdatasync runs -> the peer commits one more txn (the sequencer write lock is free again)
+     * -> the peer is torn down -> the sweep sees the peer's OLD registration stamp below the mark and reaps
+     * it, advancing the frontier over a txn the fdatasync never touched.
+     *
+     * <p>Without any mark at all the sweep was racier still: {@code fdatasyncTxnLog} releases the sequencer
+     * write lock before {@code markWriterDurable} runs, so a peer could sequence a whole batch AND die
+     * inside that window and be reaped wholesale. Orphans stamped after the mark simply stay pinned until
+     * the next flush — the conservative direction.
+     */
+    public long snapshotOrphanSweepMark() {
+        synchronized (durableFrontierLock) {
+            return orphanSeq;
+        }
+    }
+
+    /**
+     * Adaptive group-commit (W&gt;0): mark {@code walId}'s pin as ORPHANED because its writer was torn down
+     * (distressed / crashed / closed) WITHOUT a device flush, so no {@link #markWriterDurable(int, long)} will ever
+     * arrive for it. The pin is deliberately NOT removed here: at this instant the writer's batch really is
+     * non-durable (its shared sequencer records are still only in the page cache), and dropping the pin would
+     * let the durable-ack frontier advance over them -- the CRITICAL-2 over-claim.
+     *
+     * <p><b>Why an orphan is releasable by a PEER's flush.</b> Under ADAPTIVE + W&gt;0 every writer makes its
+     * PRIVATE dependencies device-durable BEFORE sequencing ({@code WalWriter.syncIfRequired0} fdatasyncs each
+     * segment column fd and the events file, then {@code getSequencerTxn()} assigns the seqTxn). The ONLY thing
+     * a W&gt;0 batch defers is the shared sequencer barrier. So the orphan's txns become fully durable the moment
+     * ANY writer of this table completes {@code sequencer.fdatasyncTxnLog()} -- that one fdatasync covers the
+     * whole shared log, including records written by the dead writer. {@link #markWriterDurable(int, long)} runs
+     * immediately after exactly that fdatasync, which is why it is safe (and necessary) to sweep orphans there.
+     *
+     * <p>Without this, a single distressed writer froze the contiguous-prefix frontier at
+     * {@code min(pending) - 1} for the rest of the process lifetime: nothing else clears a dead writer's pin
+     * ({@link #resetDurableFrontier()} only runs on table drop / tracker purge), so every subsequent QWP
+     * durable-ack for the table stalled until the next apply-side durable epoch happened to jump the frontier
+     * via {@link #setLocalDurableSeqTxn(long)} -- up to a full epoch interval later, and never at all for a
+     * table that received no further applies.
+     *
+     * <p>Idempotent; an unknown/already-removed walId is a no-op.
+     */
+    public void orphanWriterPending(int walId) {
+        synchronized (durableFrontierLock) {
+            final int idx = indexOfPendingWalId(walId);
+            if (idx > -1) {
+                pendingOrphaned.setQuick(idx, 1);
+                // Stamp at ORPHAN time, and re-stamp on a repeat call: the writer is dead as of NOW, so its
+                // txn range is final as of NOW. A later stamp is strictly more conservative.
+                pendingOrphanSeqs.setQuick(idx, ++orphanSeq);
             }
         }
     }
@@ -422,13 +511,29 @@ public class SeqTxnTracker {
      * {@code getSeqTxn()} (every committed txn is now durable) when nothing is pending. Never advances to the
      * flushing writer's own seqTxn — that is the CRITICAL-2 over-claim. Idempotent: an unknown/already-removed
      * walId is a harmless no-op that still recomputes the prefix from the remaining pins.
+     *
+     * <p>Also sweeps every ORPHANED pin (see {@link #orphanWriterPending(int)}). The caller has just completed
+     * {@code sequencer.fdatasyncTxnLog()}, one device flush of the WHOLE shared sequencer log; combined with the
+     * invariant that private WAL dependencies are fdatasync'd BEFORE sequencing, that makes every already-
+     * sequenced txn of a dead writer device-durable too. So the orphans' floors are genuinely satisfied at this
+     * point and holding them any longer would stall the frontier for no durability benefit. Orphans are cleared
+     * ONLY here (and by {@link #resetDurableFrontier()}) — never on the teardown path itself, where the batch is
+     * still volatile.
      */
-    public void markWriterDurable(int walId) {
+    public void markWriterDurable(int walId, long orphanSweepMark) {
         synchronized (durableFrontierLock) {
             final int idx = indexOfPendingWalId(walId);
             if (idx > -1) {
-                pendingWalIds.removeIndex(idx);
-                pendingLoSeqTxns.removeIndex(idx);
+                removePendingIndex(idx);
+            }
+            // Sweep orphans back-to-front so removals cannot shift an index we have not visited yet, and
+            // ONLY those registered at or before the caller's pre-fdatasync snapshot (see
+            // snapshotOrphanSweepMark). An orphan registered AFTER the snapshot may hold a sequencer record
+            // the caller's fdatasync did not cover; it stays pinned and the next flush reaps it.
+            for (int i = pendingOrphaned.size() - 1; i >= 0; i--) {
+                if (pendingOrphaned.getQuick(i) == 1 && pendingOrphanSeqs.getQuick(i) <= orphanSweepMark) {
+                    removePendingIndex(i);
+                }
             }
             final long target = pendingWalIds.size() == 0 ? seqTxn : minPendingLoSeqTxn() - 1;
             setLocalDurableSeqTxnLocked(target);
@@ -446,6 +551,8 @@ public class SeqTxnTracker {
         synchronized (durableFrontierLock) {
             pendingWalIds.clear();
             pendingLoSeqTxns.clear();
+            pendingOrphaned.clear();
+            pendingOrphanSeqs.clear();
             final long current = localDurableSeqTxn;
             if (current > 0) {
                 metrics.walMetrics().addLocalDurableSeqTxn(-current);
@@ -459,6 +566,42 @@ public class SeqTxnTracker {
             final long previous = localDurableSeqTxn;
             metrics.walMetrics().addLocalDurableSeqTxn(seqTxn - Math.max(0, previous));
             localDurableSeqTxn = seqTxn;
+        }
+    }
+
+    // Removes entry `idx` from all three parallel pending lists. Callers hold durableFrontierLock.
+    private void removePendingIndex(int idx) {
+        pendingWalIds.removeIndex(idx);
+        pendingLoSeqTxns.removeIndex(idx);
+        pendingOrphaned.removeIndex(idx);
+        pendingOrphanSeqs.removeIndex(idx);
+    }
+
+    /**
+     * TEST-ONLY: number of contiguous-prefix pins currently held (live + orphaned). Lets the group-commit
+     * tests assert that a torn-down writer's pin is actually reaped rather than merely masked by a later
+     * epoch jumping {@link #localDurableSeqTxn}.
+     */
+    @TestOnly
+    public int getPendingWriterPinCount() {
+        synchronized (durableFrontierLock) {
+            return pendingWalIds.size();
+        }
+    }
+
+    /**
+     * TEST-ONLY: number of pins currently marked ORPHANED (writer torn down without a device flush).
+     */
+    @TestOnly
+    public int getOrphanedWriterPinCount() {
+        synchronized (durableFrontierLock) {
+            int n = 0;
+            for (int i = 0, k = pendingOrphaned.size(); i < k; i++) {
+                if (pendingOrphaned.getQuick(i) == 1) {
+                    n++;
+                }
+            }
+            return n;
         }
     }
 
