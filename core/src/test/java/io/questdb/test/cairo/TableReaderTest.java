@@ -2615,6 +2615,42 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHasAnyDeltaCacheInvalidatedOnReload() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp) timestamp(ts) partition by day");
+            try (
+                    TableWriter writer = newOffPoolWriter(configuration, "x");
+                    TableReader reader = newOffPoolReader(configuration, "x")
+            ) {
+                final TableWriter.Row row = writer.newRow(0);
+                row.append();
+                writer.commit();
+                Assert.assertTrue(reader.reload());
+
+                Assert.assertFalse(reader.hasAnyDelta());
+                Assert.assertFalse(reader.hasAnyDelta());
+
+                final int partitionIndex = 0;
+                final long partitionTimestamp = writer.getPartitionTimestamp(partitionIndex);
+                writer.getTxWriter().setPartitionDeltaActiveByTimestamp(partitionTimestamp);
+                writer.getTxWriter().setPartitionHasDelta(partitionIndex, true);
+                writer.bumpPartitionTableVersion();
+
+                Assert.assertTrue(reader.reload());
+                Assert.assertTrue(reader.hasAnyDelta());
+                Assert.assertTrue(reader.hasAnyDelta());
+
+                writer.getTxWriter().setPartitionHasDelta(partitionIndex, false);
+                writer.bumpPartitionTableVersion();
+
+                Assert.assertTrue(reader.reload());
+                Assert.assertFalse(reader.hasAnyDelta());
+                Assert.assertFalse(reader.hasAnyDelta());
+            }
+        });
+    }
+
+    @Test
     public void testReloadByDaySwitch() throws Exception {
         testReload(PartitionBy.DAY, 15, 60L * 60000, MUST_SWITCH);
     }
