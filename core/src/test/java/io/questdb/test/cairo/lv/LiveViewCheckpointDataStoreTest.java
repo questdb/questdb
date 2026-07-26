@@ -30,7 +30,6 @@ import io.questdb.cairo.lv.LiveViewCheckpointDataSegmentWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointDataStore;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
-import io.questdb.cairo.lv.LiveViewCheckpointMetaSegmentWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;

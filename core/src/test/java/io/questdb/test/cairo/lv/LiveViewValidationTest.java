@@ -35,7 +35,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -1297,24 +1296,6 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "position " + pos + " must point at '" + offendingToken + "' in: " + fullSql,
                     pos >= 0 && fullSql.startsWith(offendingToken, pos)
-            );
-        }
-    }
-
-    private void assertOrderByDescRejected(String selectSql) throws Exception {
-        try {
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + selectSql);
-            // Should not reach here; drop defensively so a spurious success does not
-            // leave a view that trips the next assertion on the same name.
-            execute("DROP LIVE VIEW lv");
-            Assert.fail("expected ORDER BY DESC reject for: " + selectSql);
-        } catch (SqlException e) {
-            Assert.assertTrue(
-                    "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + selectSql,
-                    Chars.contains(
-                            e.getFlyweightMessage(),
-                            "live view select cannot ORDER BY the designated timestamp in descending order"
-                    )
             );
         }
     }

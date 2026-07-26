@@ -1669,17 +1669,6 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Clears the single-shot restart-restore flag so the refresh worker re-runs the
-     * first-cycle recovery. Used only on an in-process promote whose applied floor lags
-     * the LV table (a swallowed replica {@code _lv.s} persist): the recovery reconciles
-     * the floor to disk truth and rebuilds the window state from the applied tier.
-     * Mutated under the refresh latch only.
-     */
-    public void resetCheckpointRestoreAttempted() {
-        checkpointRestoreAttempted = false;
-    }
-
-    /**
      * Restarts the {@link #getMinSeenTsSinceCheckpoint()} window. Called once a
      * checkpoint root has been published, so the next seal measures only the
      * rows fed after it. {@link #setHeadCheckpoint} does the same for a cadence
