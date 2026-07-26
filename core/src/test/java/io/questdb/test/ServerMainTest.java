@@ -773,7 +773,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.writer.fo_opts\tQDB_CAIRO_WRITER_FO_OPTS\to_none\tdefault\tfalse\tfalse\n" +
                                     "cairo.writer.tick.rows.count\tQDB_CAIRO_WRITER_TICK_ROWS_COUNT\t1024\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.mid.partition.max.splits\tQDB_CAIRO_O3_MID_PARTITION_MAX_SPLITS\t1\tdefault\tfalse\tfalse\n" +
-                                    "circuit.breaker.buffer.size\tQDB_CIRCUIT_BREAKER_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "circuit.breaker.throttle\tQDB_CIRCUIT_BREAKER_THROTTLE\t2000000\tdefault\tfalse\tfalse\n" +
                                     "config.reload.enabled\tQDB_CONFIG_RELOAD_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "config.validation.strict\tQDB_CONFIG_VALIDATION_STRICT\tfalse\tdefault\tfalse\tfalse\n" +
@@ -963,7 +962,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "view.compiler.worker.sleep.timeout\tQDB_VIEW_COMPILER_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "view.compiler.worker.affinity\tQDB_VIEW_COMPILER_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "view.compiler.worker.nap.threshold\tQDB_VIEW_COMPILER_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
-                                    "net.test.connection.buffer.size\tQDB_NET_TEST_CONNECTION_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "pg.binary.param.count.capacity\tQDB_PG_BINARY_PARAM_COUNT_CAPACITY\t2\tdefault\tfalse\tfalse\n" +
                                     "pg.character.store.capacity\tQDB_PG_CHARACTER_STORE_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
                                     "pg.character.store.pool.capacity\tQDB_PG_CHARACTER_STORE_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +

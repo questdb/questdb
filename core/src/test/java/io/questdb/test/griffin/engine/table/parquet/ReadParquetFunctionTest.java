@@ -117,6 +117,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         0.0,
                         false, // failOnInvalidUtf16
                         -1,
+                        -1L,
                         -1L
                 );
                 Assert.assertTrue(Files.exists(path.$()));

@@ -120,6 +120,7 @@ public class PartitionEncoder {
                 minCompressionRatio,
                 false, // failOnInvalidUtf16: test-only — production calls the 15-arg overload
                 -1,
+                -1L,
                 -1L
         );
     }
@@ -139,7 +140,8 @@ public class PartitionEncoder {
             double minCompressionRatio,
             boolean failOnInvalidUtf16,
             int parquetMetaFd,
-            long squashTracker
+            long squashTracker,
+            long seqTxn
     ) {
         assert bloomFilterColumnCount >= 0;
         assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
@@ -174,7 +176,8 @@ public class PartitionEncoder {
                     minCompressionRatio,
                     failOnInvalidUtf16,
                     parquetMetaFd,
-                    squashTracker
+                    squashTracker,
+                    seqTxn
             );
         } finally {
             descriptor.clear();
@@ -308,6 +311,14 @@ public class PartitionEncoder {
             int rowGroupHi
     ) throws CairoException;
 
+    public static native long writeStreamingParquetChunkFromRowGroupBuffers(
+            long writerPtr,
+            long allocatorPtr,
+            long symbolDataPtr,
+            long rowGroupBuffersPtr,
+            int rowCount
+    ) throws CairoException;
+
     private static native long encodePartition(
             long tableNamePtr,
             int tableNameSize,
@@ -332,7 +343,8 @@ public class PartitionEncoder {
             double minCompressionRatio,
             boolean failOnInvalidUtf16,
             int parquetMetaFd,
-            long squashTracker
+            long squashTracker,
+            long seqTxn
     ) throws CairoException;
 
     static {

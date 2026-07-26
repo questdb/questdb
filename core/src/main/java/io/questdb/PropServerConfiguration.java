@@ -728,7 +728,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpPort;
     private MimeTypesCache mimeTypesCache;
     private long minIdleMsBeforeWriterRelease;
-    private int netTestConnectionBufferSize;
     private int pgBinaryParamsCapacity;
     private int pgCharacterStoreCapacity;
     private int pgCharacterStorePoolCapacity;
@@ -1434,9 +1433,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpExportTimeout = getMillis(properties, env, PropertyKey.HTTP_EXPORT_TIMEOUT, Math.max(queryTimeout, 300_000));
 
             this.queryWithinLatestByOptimisationEnabled = getBoolean(properties, env, PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, false);
-            this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
-            this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, netTestConnectionBufferSize);
-
             this.pgEnabled = getBoolean(properties, env, PropertyKey.PG_ENABLED, true);
             if (pgEnabled) {
                 this.pgForceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_PG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, forceSendFragmentationChunkSize);
@@ -3469,10 +3465,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_REPLACE_BUFFER_MAX_SIZE,
                     PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE
             );
-            registerDeprecated(
-                    PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE,
-                    PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE
-            );
+            registerObsolete("circuit.breaker.buffer.size");
+            registerObsolete("net.test.connection.buffer.size");
             registerDeprecated(
                     PropertyKey.QUERY_TIMEOUT_SEC,
                     PropertyKey.QUERY_TIMEOUT
@@ -5682,11 +5676,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getTestConnectionBufferSize() {
-            return netTestConnectionBufferSize;
-        }
-
-        @Override
         public long getTimeout() {
             return httpMinNetConnectionTimeout;
         }
@@ -5947,11 +5936,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
             return staticContentProcessorConfiguration;
-        }
-
-        @Override
-        public int getTestConnectionBufferSize() {
-            return netTestConnectionBufferSize;
         }
 
         @Override
@@ -6426,11 +6410,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSymbolCacheWaitBeforeReload() {
             return symbolCacheWaitBeforeReload;
-        }
-
-        @Override
-        public int getTestConnectionBufferSize() {
-            return netTestConnectionBufferSize;
         }
 
         @Override
@@ -6921,11 +6900,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getTestConnectionBufferSize() {
-            return netTestConnectionBufferSize;
-        }
-
-        @Override
         public long getTimeout() {
             return pgNetIdleConnectionTimeout;
         }
@@ -7130,11 +7104,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean checkConnection() {
             return true;
-        }
-
-        @Override
-        public int getBufferSize() {
-            return netTestConnectionBufferSize;
         }
 
         @Override

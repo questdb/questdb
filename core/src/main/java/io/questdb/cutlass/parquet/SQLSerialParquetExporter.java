@@ -280,6 +280,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                                     0.0,
                                     task.isFailOnInvalidUtf16(),
                                     -1,
+                                    -1L,
                                     -1L
                             );
                             long parquetFileSize = ff.length(tempPath.$());

@@ -31,9 +31,53 @@ use crate::header::{ColumnDescriptorRaw, FileHeader};
 use crate::parquet_meta_err;
 use crate::row_group::RowGroupBlockReader;
 use crate::types::{
-    FooterFeatureFlags, HeaderFeatureFlags, FOOTER_CHECKSUM_SIZE, FOOTER_FIXED_SIZE,
+    FooterFeatureFlags, HeaderFeatureFlags, SeqTxn, FOOTER_CHECKSUM_SIZE, FOOTER_FIXED_SIZE,
     FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF, ROW_GROUP_ENTRY_SIZE,
 };
+
+/// Bloom section size in bytes, derived from header info + the footer's
+/// row_group_count (peeked at offset 12 of `footer_data`). Returns 0 when
+/// the BLOOM_FILTERS bit isn't set. The caller passes this into
+/// `Footer::new` so the footer-flag walker knows where bloom ends.
+fn compute_bloom_section_size(header: &FileHeader, footer_data: &[u8]) -> ParquetMetaResult<usize> {
+    if !header.feature_flags().has_bloom_filters() {
+        return Ok(0);
+    }
+    if footer_data.len() < 16 {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::Truncated,
+            "footer too small to read row_group_count"
+        ));
+    }
+    let rg_count = u32::from_le_bytes(footer_data[12..16].try_into().unwrap()) as usize;
+    let bloom_col_count = header.bloom_filter_column_count() as usize;
+    let entry_size = if header.feature_flags().has_bloom_filters_external() {
+        16
+    } else {
+        4
+    };
+    rg_count
+        .checked_mul(bloom_col_count)
+        .and_then(|n| n.checked_mul(entry_size))
+        .ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "bloom filter footer section size overflow"
+            )
+        })
+}
+
+fn validate_footer_feature_flags(feature_flags: FooterFeatureFlags) -> ParquetMetaResult<()> {
+    let unknown_required = feature_flags.unknown_required(0);
+    if unknown_required != 0 {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "unsupported required footer feature flags [flags=0x{:X}]",
+            unknown_required
+        ));
+    }
+    Ok(())
+}
 
 /// Main reader for a `_pm` metadata file.
 ///
@@ -154,56 +198,24 @@ impl<'a> ParquetMetaReader<'a> {
                 .expect("slice is 4 bytes"),
         );
 
-        let footer = Footer::new(footer_data, footer_length)?;
+        let bloom_section_size = compute_bloom_section_size(&header, footer_data)?;
+        let footer = Footer::new(footer_data, footer_length, bloom_section_size)?;
 
-        // Reject footers that carry unknown required flag bits. The currently
-        // selected footer may be newer than this reader understands, in which
-        // case reading it would silently miss a required per-footer section.
-        let unknown_required = footer.feature_flags().unknown_required(0);
-        if unknown_required != 0 {
-            return Err(parquet_meta_err!(
-                ParquetMetaErrorKind::InvalidValue,
-                "unsupported required footer feature flags [flags=0x{:X}]",
-                unknown_required
-            ));
-        }
+        // The selected footer may be newer than this reader understands, in
+        // which case reading it would silently miss a required per-footer section.
+        validate_footer_feature_flags(footer.feature_flags())?;
 
-        // Parse bloom filter footer section if the feature flag is set.
-        let bloom_filter_section = if header.feature_flags().has_bloom_filters() {
-            let bloom_col_count = header.bloom_filter_column_count() as usize;
-            let is_external = header.feature_flags().has_bloom_filters_external();
-            let entry_size = if is_external { 16 } else { 4 };
-            let rg_count = footer.row_group_count() as usize;
-            let section_size = rg_count
-                .checked_mul(bloom_col_count)
-                .and_then(|n| n.checked_mul(entry_size))
-                .ok_or_else(|| {
-                    parquet_meta_err!(
-                        ParquetMetaErrorKind::Truncated,
-                        "bloom filter footer section size overflow"
-                    )
-                })?;
-            let section_start = FOOTER_FIXED_SIZE + rg_count * ROW_GROUP_ENTRY_SIZE;
-            let section_end = section_start.checked_add(section_size).ok_or_else(|| {
-                parquet_meta_err!(
-                    ParquetMetaErrorKind::Truncated,
-                    "bloom filter footer section_end overflow: {} + {}",
-                    section_start,
-                    section_size
-                )
-            })?;
+        // Bloom section: [entries_end, entries_end + bloom_section_size).
+        let bloom_filter_section = if bloom_section_size > 0 {
+            let section_start =
+                FOOTER_FIXED_SIZE + (footer.row_group_count() as usize) * ROW_GROUP_ENTRY_SIZE;
+            let section_end = section_start + bloom_section_size;
             if section_end > footer.crc_offset() {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::Truncated,
                     "bloom filter footer section exceeds CRC offset: {} > {}",
                     section_end,
                     footer.crc_offset()
-                ));
-            }
-            if section_end > footer_data.len() {
-                return Err(parquet_meta_err!(
-                    ParquetMetaErrorKind::Truncated,
-                    "bloom filter footer section exceeds footer data"
                 ));
             }
             Some(&footer_data[section_start..section_end])
@@ -315,6 +327,14 @@ impl<'a> ParquetMetaReader<'a> {
         self.header.feature_flags()
     }
 
+    /// Returns the parsed footer (already constructed with bloom info).
+    /// Use this instead of calling `Footer::new` again — the section
+    /// offsets the footer stamps depend on `bloom_section_size`, which
+    /// requires header info.
+    pub fn footer(&self) -> &Footer<'a> {
+        &self.footer
+    }
+
     /// Returns the feature flags stored in the currently selected footer.
     pub fn footer_feature_flags(&self) -> FooterFeatureFlags {
         self.footer.feature_flags()
@@ -324,6 +344,19 @@ impl<'a> ParquetMetaReader<'a> {
     /// set. Consumed by the enterprise build; OSS does not read it today.
     pub fn squash_tracker(&self) -> Option<i64> {
         self.header.squash_tracker()
+    }
+
+    /// Latest footer's `seqTxn`, or `None` when `SEQ_TXN_BIT` is unset.
+    /// Consumed by the enterprise build; OSS does not read it.
+    pub fn seq_txn(&self) -> Option<SeqTxn> {
+        self.footer.seq_txn()
+    }
+
+    /// First scratchpad entry matching `code` on the latest footer, or
+    /// `None`. Opaque to OSS; enterprise consumers pick `code` values
+    /// privately.
+    pub fn scratchpad_entry(&self, code: u32) -> Option<&'a [u8]> {
+        self.footer.scratchpad_entry(code)
     }
 
     /// Returns the raw file data slice.
@@ -358,12 +391,17 @@ impl<'a> ParquetMetaReader<'a> {
     /// Parquet file size is derived from each footer as:
     /// `parquet_footer_offset + parquet_footer_length + 8`.
     ///
-    /// Returns `(footer_offset, Footer)` for the matching footer.
+    /// Returns `(footer_offset, Footer)` for the matching footer after validating
+    /// its required feature flags. Unsupported flags on nonmatching newer footers
+    /// do not prevent resolving an older compatible snapshot.
     pub fn find_footer_for_parquet_size(
         data: &'a [u8],
         parquet_meta_file_size: u64,
         target_parquet_size: u64,
     ) -> ParquetMetaResult<(u64, Footer<'a>)> {
+        // Header read once for the whole walk; bloom_section_size is derived
+        // per-step since older footers may have a different row_group_count.
+        let header = FileHeader::new(data)?;
         // Cap MVCC chain walk to bound DoS impact on a crafted _pm. 1M
         // snapshots is several orders of magnitude beyond any real workload
         // (one snapshot per legitimate update), and at 64 B per footer
@@ -429,11 +467,24 @@ impl<'a> ParquetMetaReader<'a> {
                         current_size
                     )
                 })?;
-            let footer = Footer::new(footer_data, footer_length)?;
+            let bloom_section_size = compute_bloom_section_size(&header, footer_data)?;
+            let footer = Footer::new(footer_data, footer_length, bloom_section_size)?;
 
-            let pq_size =
-                footer.parquet_footer_offset() + footer.parquet_footer_length() as u64 + 8;
+            let parquet_footer_offset = footer.parquet_footer_offset();
+            let parquet_footer_length = footer.parquet_footer_length();
+            let pq_size = parquet_footer_offset
+                .checked_add(parquet_footer_length as u64)
+                .and_then(|size| size.checked_add(8))
+                .ok_or_else(|| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "parquet file size overflow [footer_offset={}, footer_length={}]",
+                        parquet_footer_offset,
+                        parquet_footer_length
+                    )
+                })?;
             if pq_size == target_parquet_size {
+                validate_footer_feature_flags(footer.feature_flags())?;
                 return Ok((current_offset, footer));
             }
 
@@ -539,7 +590,7 @@ mod tests {
     use crate::column_chunk::ColumnChunkRaw;
     use crate::row_group::RowGroupBlockBuilder;
     use crate::types::{encode_stat_sizes, ColumnFlags, FieldRepetition, StatFlags};
-    use crate::writer::ParquetMetaWriter;
+    use crate::writer::{ParquetMetaUpdateWriter, ParquetMetaWriter};
 
     #[test]
     fn round_trip_all_column_types() {
@@ -583,6 +634,28 @@ mod tests {
         let footer_length =
             u32::from_le_bytes(trailer.try_into().expect("slice is 4 bytes")) as u64;
         parquet_meta_file_size - FOOTER_TRAILER_SIZE as u64 - footer_length
+    }
+
+    #[test]
+    fn find_footer_rejects_parquet_size_overflow() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.parquet_footer(u64::MAX, 0);
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        let err = match ParquetMetaReader::find_footer_for_parquet_size(
+            &bytes,
+            parquet_meta_file_size,
+            7,
+        ) {
+            Ok(_) => panic!("overflowing parquet size must not select a corrupt footer"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
+        assert_eq!(
+            err.msg,
+            "parquet file size overflow [footer_offset=18446744073709551615, footer_length=0]"
+        );
     }
 
     #[test]
@@ -662,8 +735,9 @@ mod tests {
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        // Patch footer feature flags to set an unknown optional bit (bit 5).
-        // Readers must accept the file and ignore the unknown bit.
+        // Set an unknown optional bit (bit 5). The forward-compat contract is
+        // accept-and-ignore for the optional range (bits 0-31); the negative
+        // mirror is `unknown_required_footer_flags_rejected`.
         let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
         let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
         let optional_bit: u64 = 1 << 5;
@@ -671,6 +745,122 @@ mod tests {
 
         let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.footer_feature_flags().0, optional_bit);
+    }
+
+    #[test]
+    fn find_footer_accepts_unknown_optional_flags_on_selected_footer() {
+        use crate::types::FOOTER_FEATURE_FLAGS_OFF;
+
+        let parquet_footer_offset = 4096;
+        let parquet_footer_length = 256;
+        let target_parquet_size = parquet_footer_offset + parquet_footer_length as u64 + 8;
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.parquet_footer(parquet_footer_offset, parquet_footer_length);
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
+        let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
+        let optional_bit: u64 = 1 << 5;
+        bytes[flags_off..flags_off + 8].copy_from_slice(&optional_bit.to_le_bytes());
+
+        let (found_offset, footer) = ParquetMetaReader::find_footer_for_parquet_size(
+            &bytes,
+            parquet_meta_file_size,
+            target_parquet_size,
+        )
+        .unwrap();
+        assert_eq!(found_offset, footer_offset);
+        assert_eq!(footer.feature_flags().0, optional_bit);
+    }
+
+    #[test]
+    fn find_footer_validates_required_flags_only_on_selected_footer() {
+        use crate::types::FOOTER_FEATURE_FLAGS_OFF;
+
+        let original_parquet_footer_offset = 4096;
+        let original_parquet_footer_length = 256;
+        let original_parquet_size =
+            original_parquet_footer_offset + original_parquet_footer_length as u64 + 8;
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.parquet_footer(
+            original_parquet_footer_offset,
+            original_parquet_footer_length,
+        );
+        let (original, original_meta_size) = w.finish().unwrap();
+        let original_footer_offset = footer_offset_of(&original, original_meta_size);
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, original_meta_size).unwrap();
+        updater.parquet_footer(8192, 512);
+        let (append, updated_meta_size) = updater.finish().unwrap();
+        let mut updated = original;
+        updated.extend_from_slice(&append);
+        updated[crate::types::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..crate::types::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&updated_meta_size.to_le_bytes());
+
+        let latest_footer_offset = footer_offset_of(&updated, updated_meta_size);
+        let latest_flags_off = latest_footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
+        let required_bit: u64 = 1 << 32;
+        updated[latest_flags_off..latest_flags_off + 8]
+            .copy_from_slice(&required_bit.to_le_bytes());
+
+        let (found_offset, footer) = ParquetMetaReader::find_footer_for_parquet_size(
+            &updated,
+            updated_meta_size,
+            original_parquet_size,
+        )
+        .unwrap();
+        assert_eq!(found_offset, original_footer_offset);
+        assert_eq!(footer.feature_flags(), FooterFeatureFlags::new());
+
+        let selected_flags_off = original_footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
+        updated[selected_flags_off..selected_flags_off + 8]
+            .copy_from_slice(&required_bit.to_le_bytes());
+        let err = match ParquetMetaReader::find_footer_for_parquet_size(
+            &updated,
+            updated_meta_size,
+            original_parquet_size,
+        ) {
+            Ok(_) => panic!("expected error for selected historical footer flag"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
+        assert_eq!(
+            err.msg,
+            "unsupported required footer feature flags [flags=0x100000000]"
+        );
+    }
+
+    #[test]
+    fn find_footer_rejects_unknown_required_flags_on_selected_footer() {
+        use crate::types::FOOTER_FEATURE_FLAGS_OFF;
+
+        let parquet_footer_offset = 4096;
+        let parquet_footer_length = 256;
+        let target_parquet_size = parquet_footer_offset + parquet_footer_length as u64 + 8;
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.parquet_footer(parquet_footer_offset, parquet_footer_length);
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
+        let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
+        let required_bit: u64 = 1 << 32;
+        bytes[flags_off..flags_off + 8].copy_from_slice(&required_bit.to_le_bytes());
+
+        let err = match ParquetMetaReader::find_footer_for_parquet_size(
+            &bytes,
+            parquet_meta_file_size,
+            target_parquet_size,
+        ) {
+            Ok(_) => panic!("expected error for selected required footer flag"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
+        assert_eq!(
+            err.msg,
+            "unsupported required footer feature flags [flags=0x100000000]"
+        );
     }
 
     #[test]

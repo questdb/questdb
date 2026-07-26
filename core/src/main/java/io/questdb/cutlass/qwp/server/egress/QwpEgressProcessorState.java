@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.server.egress;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -77,6 +78,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public static volatile int defaultMaxDictHeapBytesOverrideForTest = -1;
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
+    private final CairoConfiguration cairoConfiguration;
     private final ObjList<QwpEgressColumnDef> columnDefsPool = new ObjList<>();
     // Connection-scoped SYMBOL dictionary shared across all queries on this connection.
     // Holds the concatenated UTF-8 bytes of every unique symbol value and a parallel
@@ -136,8 +138,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private byte negotiatedVersion = QwpConstants.VERSION;
     // Page-frame iteration scaffolding. Allocated lazily on first page-frame query and
     // reused across queries on the same connection; per-query binding happens in
-    // beginStreamingPageFrame. None of these are freed on endStreaming -- only the
-    // per-query streamingPageFrameCursor is.
+    // beginStreamingPageFrame. endStreaming abandons every per-query binding and releases
+    // decoded resources, but keeps these reusable wrapper objects alive.
     private PageFrameAddressCache pageFrameAddressCache;
     private PageFrameMemoryPool pageFrameMemoryPool;
     private PageFrameMemoryRecord pageFrameMemoryRecord;
@@ -283,7 +285,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private long zstdCompressScratchAddr;
     private int zstdCompressScratchCapacity;
 
-    public QwpEgressProcessorState(io.questdb.cairo.CairoConfiguration cairoConfiguration) {
+    public QwpEgressProcessorState(CairoConfiguration cairoConfiguration) {
+        this.cairoConfiguration = cairoConfiguration;
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
         // Pick up any test-only default overrides active at construction time
         // so tests that need tiny soft caps don't have to reach into every
@@ -426,7 +429,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         }
         if (pageFrameAddressCache == null) {
             pageFrameAddressCache = new PageFrameAddressCache();
-            pageFrameMemoryPool = new PageFrameMemoryPool(0L);
+            pageFrameMemoryPool = new PageFrameMemoryPool(cairoConfiguration, 0L);
             pageFrameMemoryRecord = new PageFrameMemoryRecord();
         }
         pageFrameAddressCache.of(
@@ -606,10 +609,30 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     /**
      * Releases the in-flight cursor + factory and marks streaming inactive.
+     * A page-frame query may have transferred opaque decode resources (for
+     * example, an enterprise cold-storage chunk lease) into the memory pool's
+     * final cached frame. Abandon the record and current-frame aliases first,
+     * then release the pool-local decoders and clear the address cache while
+     * their cursor-owned metadata mappings are still valid. Only after that is
+     * it safe to close the page-frame cursor. The wrapper objects themselves
+     * remain connection-scoped and are rebound by the next query.
+     * <p>
      * Idempotent -- safe to call from completion, error, or disconnect paths.
      */
     public void endStreaming() {
         streamingActive = false;
+        streamingCurrentPageFrame = null;
+        if (pageFrameMemoryRecord != null) {
+            // of(null) also drops the record's borrowed SymbolTableSource; clear()
+            // alone only abandons its page-address aliases.
+            pageFrameMemoryRecord.of(null);
+        }
+        if (pageFrameMemoryPool != null) {
+            pageFrameMemoryPool.releaseQueryResources();
+        }
+        if (pageFrameAddressCache != null) {
+            pageFrameAddressCache.clear();
+        }
         streamingCursor = Misc.free(streamingCursor);
         streamingPageFrameCursor = Misc.free(streamingPageFrameCursor);
         streamingFactory = Misc.free(streamingFactory);
@@ -623,7 +646,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingPageFrameIndex = 0;
         streamingPageFrameRow = 0;
         streamingPageFrameRowHi = 0;
-        streamingCurrentPageFrame = null;
         streamingSqlText = null;
     }
 

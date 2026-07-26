@@ -283,6 +283,7 @@ public class ParquetTest extends AbstractTest {
                         0.0,
                         false, // failOnInvalidUtf16
                         -1,
+                        -1L,
                         -1L
                 );
                 final InputFile inputFile = new LocalInputFile(java.nio.file.Path.of(parquetPathStr));
@@ -560,6 +561,7 @@ public class ParquetTest extends AbstractTest {
                         0.0,
                         false, // failOnInvalidUtf16
                         -1,
+                        -1L,
                         -1L
                 );
 
@@ -657,6 +659,7 @@ public class ParquetTest extends AbstractTest {
                         0.0,
                         false, // failOnInvalidUtf16
                         -1,
+                        -1L,
                         -1L
                 );
 
@@ -745,6 +748,7 @@ public class ParquetTest extends AbstractTest {
                         0.0,
                         false, // failOnInvalidUtf16
                         -1,
+                        -1L,
                         -1L
                 );
 
