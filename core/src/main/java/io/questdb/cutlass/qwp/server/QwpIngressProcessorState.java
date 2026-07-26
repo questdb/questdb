@@ -227,17 +227,19 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // events (gate-rejected frames, keepalive PINGs) until the durable-upload
     // registry covers pendingDurableSeqTxns or the grace budget expires.
     private long roleChangeCloseDeferredDeadline = -1;
-    // Set the moment a role-change close is initiated (the first gate-rejected
-    // frame enters roleChangeCloseWithUploadGrace), whether or not the deferral
-    // ever arms. Close-echo eligibility must depend on WHAT the close delivers
-    // (the final durable ack flushed immediately before the CLOSE frame), not on
-    // WHETHER uploads happened to still lag at the first rejected frame: when the
-    // uploader catches up in the gap between the last committed batch and the
-    // demote's first rejection, the deferral is never armed yet sendFatalClose
-    // still emits the client's FIRST durable ack right before the CLOSE -- the
-    // same delivery contract the echo wait exists to confirm. Like the deferral
-    // deadline this survives per-message clear()/clearMessageState() and
-    // parked-close resumes; reset only on onDisconnected().
+    // Set immediately before the ROLE_CHANGE CLOSE frame is emitted, whether or
+    // not the close deferred first. Close-echo eligibility must depend on WHAT
+    // the close delivers (the final durable ack flushed immediately before the
+    // CLOSE frame), not on WHETHER uploads happened to still lag at the first
+    // rejected frame: when the uploader catches up in the gap between the last
+    // committed batch and the demote's first rejection, the deferral is never
+    // armed yet sendFatalClose still emits the client's FIRST durable ack right
+    // before the CLOSE -- the same delivery contract the echo wait exists to
+    // confirm. It must NOT be set while a deferral is merely armed: the mark
+    // survives per-message clear()/clearMessageState() and parked-close resumes
+    // (reset only on onDisconnected()), so an early set would keep it true for
+    // the whole upload grace budget with no CLOSE on the wire, and any
+    // unrelated fatal close in that window would inherit role-change semantics.
     private boolean roleChangeCloseInitiated;
     // Lowest sequence number consumed from the wire but neither committed nor
     // answered with an error response. Only the role-change close path can
@@ -634,11 +636,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * True once a role-change close has been initiated on this connection,
-     * whether it deferred awaiting upload coverage or completed on the first
-     * attempt (coverage already in place). This -- not
-     * {@link #isRoleChangeCloseDeferred()} -- is the close-echo eligibility
-     * predicate: the CLOSE frame carries the final durable ack in both cases.
+     * True once this connection has emitted (or is in the act of emitting) its
+     * role-change CLOSE, whether that close deferred awaiting upload coverage
+     * or completed on the first attempt (coverage already in place). This --
+     * not {@link #isRoleChangeCloseDeferred()} -- is the close-echo
+     * eligibility predicate: the CLOSE frame carries the final durable ack in
+     * both cases. False for the whole deferral window: until the ROLE_CHANGE
+     * frame is actually on its way, no other fatal close may be treated as a
+     * role-change close.
      */
     public boolean isRoleChangeCloseInitiated() {
         return roleChangeCloseInitiated;
@@ -646,8 +651,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     /**
      * Marks this connection as closing due to a role change (in-place
-     * PRIMARY-&gt;REPLICA demote). Idempotent; survives per-message state
-     * clears and parked-close resumes, reset only on {@code onDisconnected()}.
+     * PRIMARY-&gt;REPLICA demote). Called immediately before the ROLE_CHANGE
+     * CLOSE is handed to {@code sendFatalClose} -- never while the close is
+     * only deferred -- so the mark cannot outlive a window in which no CLOSE
+     * exists. Idempotent; survives per-message state clears and parked-close
+     * resumes, reset only on {@code onDisconnected()}.
      */
     public void initiateRoleChangeClose() {
         roleChangeCloseInitiated = true;

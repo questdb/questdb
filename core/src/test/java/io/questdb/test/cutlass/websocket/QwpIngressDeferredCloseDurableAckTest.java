@@ -1024,6 +1024,167 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * Mirror of
+     * {@link #testCloseEchoWaitDiscardsProtocolViolatingFramesWithoutSecondClose},
+     * for the window BEFORE the CLOSE rather than after it: a protocol
+     * violation that lands while the role-change close is merely DEFERRED must
+     * close as its own protocol error, with none of the role-change close's
+     * semantics.
+     * <p>
+     * The deferral gate ({@code handleBinaryMessage}) only guards BINARY data
+     * frames. A TEXT, CONTINUATION, fragmented or oversized frame arriving in
+     * the up-to-10s upload grace window routes straight to
+     * {@code sendFatalClose} with its own code -- here PROTOCOL_ERROR from a
+     * fragmenting intermediary, the case {@code rejectFragmentedFrame}'s own
+     * diagnostic anticipates. If the role-change mark were set when the
+     * deferral armed rather than when the ROLE_CHANGE frame is emitted, it
+     * would still be true here (it survives every per-message clear, resetting
+     * only on disconnect) and this unrelated close would inherit the
+     * exactly-once machinery it never earned:
+     * <ul>
+     *   <li>{@code beginCloseEchoWaitIfEligible} would arm the five-second
+     *       echo wait on a 1002 close, and no client echo can ever satisfy it
+     *       -- the echo carries 1002, not ROLE_CHANGE -- so
+     *       {@code handleClose} fires the
+     *       "client replay may duplicate" operator alarm on a connection with
+     *       no data-loss risk whatsoever, devaluing the exact signal this
+     *       change introduces for the real one;</li>
+     *   <li>with pending durable work instead, {@code finishServerFatalClose}
+     *       would take the role-change prompt-teardown branch and skip the
+     *       fatal-close drain that keeps the fd close from turning abortive.</li>
+     * </ul>
+     * Pins the boundary fix-shape-agnostically: during the deferral the
+     * connection is NOT yet a role-change close, and an unrelated fatal close
+     * must take the ordinary drain path with its own close code.
+     */
+    @Test
+    public void testDeferralWindowFatalCloseMustNotInheritRoleChangeSemantics() throws Exception {
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final long[] nowMicros = {0L};
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabg (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabg", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabg", 200L, 2_000_000L));
+                // One data frame as a fragmenting proxy delivers it: a FIN=0
+                // BINARY leader. It never reaches the deferral gate -- the FIN
+                // check precedes it -- so it routes to rejectFragmentedFrame.
+                byte[] fragLeader = createMaskedFragmentFrame(WebSocketOpcode.BINARY, new byte[]{1, 2, 3});
+                byte[] wire = concat(frame0, frame1, fragLeader);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                // Unsafe.malloc is fallible: guard the paired allocations so a failed
+                // second malloc (or scaffolding construction) cannot strand the first --
+                // assertMemoryLeak can detect but not free an address lost by setup.
+                NativeSocketBuffers buffers = new NativeSocketBuffers();
+                long recvBuf = buffers.recvBuffer;
+                BlockingRecordingRawSocket rawSocket = buffers.socket;
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupClockedState(httpConfig, context, demotableEngine, nowMicros);
+
+                    // Phase A: PRIMARY. seq=0 commits; cumulative ACK drains.
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+
+                    // Phase B: in-place demote. seq=1 is gate-rejected; the
+                    // role-change close defers awaiting upload coverage.
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "test setup: role-change close must be deferred awaiting durable upload coverage",
+                            state.isRoleChangeCloseDeferred()
+                    );
+                    Assert.assertEquals(
+                            "test setup: the deferral must not have put a CLOSE on the wire",
+                            -1, indexOfCloseFrame(rawSocket.sentFrames)
+                    );
+
+                    // A deferral is a PROMISE of a role-change close, not one:
+                    // no ROLE_CHANGE frame exists yet, and the clock never
+                    // moves off zero, so this window stays open for the whole
+                    // grace budget. Nothing in it may be treated as a
+                    // role-change close.
+                    Assert.assertFalse(
+                            "the role-change close mark must not be set while the close is only deferred:"
+                                    + " it survives every per-message clear (reset only on disconnect), so an early"
+                                    + " set leaks role-change semantics across the whole upload grace window --"
+                                    + " onto any unrelated fatal close that lands in it",
+                            state.isRoleChangeCloseInitiated()
+                    );
+
+                    // Phase C: the uploader catches up inside the grace
+                    // window, so durable coverage is complete -- exactly the
+                    // condition that makes the echo wait eligible IF the
+                    // connection is a role-change close. It is not.
+                    durableWatermark.set(Long.MAX_VALUE);
+                    Assert.assertFalse(
+                            "test setup: grace budget must NOT be exhausted -- the deferral is still live",
+                            state.isRoleChangeCloseGraceExpired()
+                    );
+
+                    // Phase D: a fragmenting intermediary splits the next data
+                    // frame. This is a protocol error, not a role change: it
+                    // must close with PROTOCOL_ERROR and take the ordinary
+                    // fatal-close teardown.
+                    capture.start();
+                    try {
+                        nf.release(fragLeader.length);
+                        try {
+                            processor.resumeRecv(context);
+                            Assert.fail(
+                                    "the protocol-error close must tear the connection down, not linger in a"
+                                            + " close-echo wait it can never complete"
+                            );
+                        } catch (ServerDisconnectException expected) {
+                            // the general fatal-close path: half-close, then drain
+                        }
+                        drainLogQueue(capture, "sentinel: deferral-window protocol error closed");
+
+                        capture.assertNotLogged("role-change CLOSE sent, awaiting client close echo");
+                        capture.assertNotLogged("client CLOSE crossed role-change CLOSE");
+                    } finally {
+                        capture.stop();
+                    }
+
+                    int closeIdx = indexOfCloseFrame(rawSocket.sentFrames);
+                    Assert.assertTrue("the protocol violation must emit a CLOSE", closeIdx >= 0);
+                    Assert.assertEquals(
+                            "the CLOSE must carry the protocol error's own code, not the role-change code",
+                            WebSocketCloseCode.PROTOCOL_ERROR /* 1002 */,
+                            closeCode(rawSocket.sentFrames.getQuick(closeIdx))
+                    );
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
+                    Assert.assertFalse(
+                            "a protocol-error close must not enter the role-change close-echo wait: its echo"
+                                    + " carries 1002, never ROLE_CHANGE, so the wait can only end in the"
+                                    + " duplicate-risk alarm or a five-second linger on a dead connection",
+                            state.isAwaitingCloseEcho()
+                    );
+
+                    // INVARIANT B still holds: nothing after seq=0 committed.
+                    readOnly.set(false);
+                    drainWalQueue(demotableEngine);
+                    try (TableReader reader = demotableEngine.getReader("tabg")) {
+                        Assert.assertEquals(
+                                "frames refused during the deferral must not commit",
+                                1, reader.size()
+                        );
+                    }
+                } finally {
+                    buffers.close();
+                }
+            }
+        });
+    }
+
+    /**
      * Echo-eligibility gap: the exactly-once guard must depend on WHAT the
      * close delivers, not on WHETHER the close was ever deferred. Here the
      * uploader catches up in the gap between the last committed batch and

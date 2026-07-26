@@ -963,10 +963,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * Enters the RFC 6455 close-handshake wait after a fatal CLOSE frame has
      * been fully sent, when that CLOSE carries the exactly-once contract of a
      * role-change close: durable-ack mode, a role-change close initiated
-     * (whether it deferred awaiting upload coverage or completed on the first
-     * attempt because the uploader had already caught up), and the final
-     * durable ack (flushed immediately before the CLOSE) covering every
-     * committed seqTxn. Eligibility keys on WHAT the close delivers, not on
+     * (marked immediately before the ROLE_CHANGE frame is emitted, whether it
+     * deferred awaiting upload coverage or completed on the first attempt
+     * because the uploader had already caught up), and the final durable ack
+     * (flushed immediately before the CLOSE) covering every committed seqTxn.
+     * The mark is never set while a deferral is merely armed, so an unrelated
+     * fatal close (protocol-violating or oversized frame) landing inside the
+     * upload grace window cannot inherit this wait.</p> Eligibility keys on WHAT the close delivers, not on
      * whether a deferral was ever armed: when the registry advances in the gap
      * between the last committed batch and the demote's first rejected frame,
      * sendFatalClose still emits the client's FIRST durable ack immediately
@@ -1869,14 +1872,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             checkCloseEchoWaitExpiry(context, state);
             return;
         }
-        // Mark the role-change close BEFORE checking upload completeness: the
-        // close-echo eligibility (beginCloseEchoWaitIfEligible) keys on this
-        // mark, not on the deferral, because a close that completes on the
-        // first attempt -- the uploader caught up between the last committed
-        // batch and this rejection -- still flushes the client's FIRST durable
-        // ack immediately before the CLOSE and needs the same echo-confirmed
-        // teardown as a close that deferred.
-        state.initiateRoleChangeClose();
         if (state.isDurableAckEnabled() && !isDurableWorkFullyUploaded && !isGraceExpired) {
             boolean firstDeferral = !state.isRoleChangeCloseDeferred();
             state.deferRoleChangeClose(reason);
@@ -1904,6 +1899,26 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             LOG.error().$("role-change close upload grace expired; closing with un-acked durable work, client replay may duplicate [fd=")
                     .$(context.getFd()).I$();
         }
+        // Mark the role-change close HERE -- immediately before the CLOSE
+        // goes out -- and not before the deferral return above. The mark is
+        // the close-echo eligibility key (beginCloseEchoWaitIfEligible) and it
+        // survives every per-message clear, so setting it while the deferral
+        // is merely armed would leave it true for the whole grace budget with
+        // no CLOSE frame on the wire. The deferral gate only covers BINARY
+        // data frames (handleBinaryMessage): a TEXT, CONTINUATION, fragmented
+        // or oversized frame arriving in that window routes straight to
+        // sendFatalClose with its own protocol-error code, and would inherit
+        // role-change semantics it never earned -- arming the echo wait on a
+        // 1002/1003 close (whose echo can never match ROLE_CHANGE, firing the
+        // false "client replay may duplicate" alarm) or taking the prompt
+        // role-change teardown instead of the fatal-close drain.
+        // <p>
+        // Setting it here loses nothing: both consumers run only after a CLOSE
+        // has actually been written (finishServerFatalClose), this is the sole
+        // emission site for ROLE_CHANGE, and the mark still precedes the
+        // throwing send -- so it is in place for the onFatalCloseBlocked unwind
+        // and the sendDeferredFatalClose resume path.
+        state.initiateRoleChangeClose();
         // ROLE_CHANGE (private-use 4001), not NORMAL_CLOSURE: the client
         // echoes the received code (RFC 6455 s5.5.1), and only a code the
         // client could not have known before reading our CLOSE lets
