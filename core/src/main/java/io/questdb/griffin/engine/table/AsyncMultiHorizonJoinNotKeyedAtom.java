@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
@@ -54,10 +54,7 @@ public class AsyncMultiHorizonJoinNotKeyedAtom extends BaseAsyncMultiHorizonJoin
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
-            @NotNull ObjList<RecordSink> masterAsOfJoinMapOwnerSinks,
-            @NotNull ObjList<RecordSink> slaveAsOfJoinMapOwnerSinks,
-            @NotNull ObjList<ObjList<RecordSink>> masterAsOfJoinMapPerWorkerSinks,
-            @NotNull ObjList<ObjList<RecordSink>> slaveAsOfJoinMapPerWorkerSinks,
+            @NotNull RecordMetadata horizonJoinMasterMetadata,
             int masterTimestampColumnIndex,
             long @NotNull [] offsets,
             int valueCount,
@@ -72,10 +69,7 @@ public class AsyncMultiHorizonJoinNotKeyedAtom extends BaseAsyncMultiHorizonJoin
                 configuration,
                 slaveStates,
                 perSlaveAsOfJoinKeyTypes,
-                masterAsOfJoinMapOwnerSinks,
-                slaveAsOfJoinMapOwnerSinks,
-                masterAsOfJoinMapPerWorkerSinks,
-                slaveAsOfJoinMapPerWorkerSinks,
+                horizonJoinMasterMetadata,
                 masterTimestampColumnIndex,
                 offsets,
                 columnSources,

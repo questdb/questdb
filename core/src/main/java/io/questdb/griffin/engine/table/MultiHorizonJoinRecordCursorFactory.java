@@ -89,8 +89,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
-            @NotNull ObjList<RecordSink> masterAsOfJoinMapSinks,
-            @NotNull ObjList<RecordSink> slaveAsOfJoinMapSinks,
+            @NotNull RecordMetadata masterMetadata,
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -121,8 +120,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     groupByFunctions,
                     recordFunctions,
                     keyFunctions,
-                    masterAsOfJoinMapSinks,
-                    slaveAsOfJoinMapSinks,
+                    masterMetadata,
                     keyTypes,
                     valueTypes,
                     groupByColumnFilter,
@@ -247,8 +245,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 ObjList<GroupByFunction> groupByFunctions,
                 ObjList<Function> recordFunctions,
                 ObjList<Function> keyFunctions,
-                ObjList<RecordSink> masterAsOfJoinMapSinks,
-                ObjList<RecordSink> slaveAsOfJoinMapSinks,
+                RecordMetadata masterMetadata,
                 @Transient ArrayColumnTypes keyTypes,
                 @Transient ArrayColumnTypes valueTypes,
                 @Transient ListColumnFilter groupByColumnFilter,
@@ -266,8 +263,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             this.slaveSymbolSources.setPos(slaveCount);
             this.matchedSlaveRecords = new ObjList<>(slaveCount);
             this.matchedSlaveRecords.setPos(slaveCount);
-            this.masterAsOfJoinMapSinks = masterAsOfJoinMapSinks;
-            this.slaveAsOfJoinMapSinks = slaveAsOfJoinMapSinks;
+            this.masterAsOfJoinMapSinks = new ObjList<>(slaveCount);
+            this.slaveAsOfJoinMapSinks = new ObjList<>(slaveCount);
 
             this.recordA = new VirtualRecord(recordFunctions);
             this.recordB = new VirtualRecord(recordFunctions);
@@ -336,6 +333,27 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                             bwdScanMinGap,
                             bwdScanSwitchFactor
                     ));
+                    // ASOF join-key sinks are built here, lazily, only for the slaves of the
+                    // cursor actually chosen by the query plan -- ss.getMasterAsOfJoinMapSinkClass()
+                    // may legitimately be null (bytecode generation fell back to signal "use
+                    // LoopingRecordSink"); RecordSinkFactory.getInstance(Class, ...) already builds a
+                    // correct fallback sink in that case, so the branch is on ss.isKeyed(), not on
+                    // whether class generation happened to succeed.
+                    if (ss.isKeyed()) {
+                        masterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
+                                ss.getMasterAsOfJoinMapSinkClass(), masterMetadata, ss.getMasterColumnFilter(), null, null,
+                                ss.getWriteSymbolAsString(), ss.getWriteStringAsVarcharB(), ss.getWriteTimestampAsNanosB(),
+                                ss.getAsOfJoinKeyTypes()
+                        ));
+                        slaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
+                                ss.getSlaveAsOfJoinMapSinkClass(), ss.getSlaveMetadata(), ss.getSlaveColumnFilter(), null, null,
+                                ss.getWriteSymbolAsString(), ss.getWriteStringAsVarcharA(), ss.getWriteTimestampAsNanosA(),
+                                ss.getAsOfJoinKeyTypes()
+                        ));
+                    } else {
+                        masterAsOfJoinMapSinks.add(null);
+                        slaveAsOfJoinMapSinks.add(null);
+                    }
                 }
                 this.isOpen = false;
             } catch (Throwable th) {

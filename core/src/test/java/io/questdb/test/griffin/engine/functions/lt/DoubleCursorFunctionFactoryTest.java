@@ -2135,8 +2135,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         try {
             if (isMulti) {
                 final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-                slaveStates.add(new HorizonJoinSlaveState(firstSlaveFactory, 1, 1, null, 1, null, null));
-                slaveStates.add(new HorizonJoinSlaveState(secondSlaveFactory, 1, 1, null, 1, null, null));
+                slaveStates.add(new HorizonJoinSlaveState(firstSlaveFactory, 1, 1, null, 1, null, null, null, null, null, null, null, null, null, null, null, null));
+                slaveStates.add(new HorizonJoinSlaveState(secondSlaveFactory, 1, 1, null, 1, null, null, null, null, null, null, null, null, null, null, null, null));
                 new AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(
                         configuration,
                         new BytecodeAssembler(),
@@ -2147,10 +2147,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         masterFactory,
                         slaveStates,
                         null,
-                        unkeyedSinks(2),
-                        unkeyedSinks(2),
-                        unkeyedPerWorkerSinks(2, 2),
-                        unkeyedPerWorkerSinks(2, 2),
+                        masterFactory.getMetadata(),
                         new long[]{0},
                         0,
                         groupByFunctions,
@@ -2359,10 +2356,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     masterFactory,
                     states,
                     null,
-                    unkeyedSinks(3),
-                    unkeyedSinks(3),
-                    unkeyedPerWorkerSinks(3, 2),
-                    unkeyedPerWorkerSinks(3, 2),
+                    masterFactory.getMetadata(),
                     new long[]{0},
                     0,
                     groups,
@@ -2433,26 +2427,6 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
         metadata.setTimestampIndex(0);
         return metadata;
-    }
-
-    private static ObjList<ObjList<RecordSink>> unkeyedPerWorkerSinks(int slaveCount, int workerCount) {
-        final ObjList<ObjList<RecordSink>> perWorkerSinks = new ObjList<>();
-        for (int s = 0; s < slaveCount; s++) {
-            final ObjList<RecordSink> perWorker = new ObjList<>();
-            for (int w = 0; w < workerCount; w++) {
-                perWorker.add(null);
-            }
-            perWorkerSinks.add(perWorker);
-        }
-        return perWorkerSinks;
-    }
-
-    private static ObjList<RecordSink> unkeyedSinks(int slaveCount) {
-        final ObjList<RecordSink> sinks = new ObjList<>();
-        for (int s = 0; s < slaveCount; s++) {
-            sinks.add(null);
-        }
-        return sinks;
     }
 
     private static class CountingBooleanFunction extends BooleanFunction {
@@ -2599,7 +2573,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         private int getFactoryCalls;
 
         private CountingSlaveState(RecordCursorFactory factory, RuntimeException failure, int failureCall) {
-            super(factory, 1, 1, null, 1, null, null);
+            super(factory, 1, 1, null, 1, null, null, null, null, null, null, null, null, null, null, null, null);
             this.failure = failure;
             this.failureCall = failureCall;
         }
