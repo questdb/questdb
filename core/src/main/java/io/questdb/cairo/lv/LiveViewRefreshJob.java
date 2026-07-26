@@ -320,6 +320,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private int turnCommitsProcessed;
     private long turnStartUs;
     private final ObjList<LiveViewInstance> viewInstanceSink = new ObjList<>();
+    // Reader for the base's per-segment WAL-E event file (commit metadata). Held as a
+    // field so one walk reuses it across the commits it visits, but every walk binds it
+    // inside a try-with-resources: WalEventReader.close() is idempotent and leaves the
+    // instance re-usable, and closing unmaps the event file. Without that a worker parks
+    // the last segment it read mapped until the job closes, which on Windows keeps an
+    // open handle on the segment directory and makes WalPurgeJob's rmdir fail with
+    // ACCESS_DENIED for as long as the view stays idle - the segment is then never
+    // reaped, even though the view has long consumed past it. Mirrors how
+    // ApplyWal2TableJob and WalTxnDetails scope the same reader.
     private final WalEventReader walEventReader;
     // Reusable WAL-segment cursors hoisted out of incrementalRefresh — each
     // refresh cycle rebinds them via of() instead of allocating fresh
@@ -1637,9 +1646,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Overlap trigger. The min-ts source is the base WAL-E event file, not
             // TransactionLogCursor.getTxnMinTimestamp() (V2-sequencer-only; throws on
             // the default V1). Reading WAL-E opens the per-segment event file (commit
-            // metadata) but never the pre-dedup data columns.
+            // metadata) but never the pre-dedup data columns. The reader joins the
+            // resource list so the walk unmaps the last segment's event file when it
+            // ends - see the note on walEventReader.
             long batchMinTs = Numbers.LONG_NULL;
-            try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn)) {
+            try (
+                    TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn);
+                    WalEventReader eventReader = walEventReader
+            ) {
                 while (txnCursor.hasNext()) {
                     final long txn = txnCursor.getTxn();
                     if (txn > effectiveSeqTxn) {
@@ -1656,7 +1670,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     walPath.of(engine.getConfiguration().getDbRoot())
                             .concat(baseToken)
                             .concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                    final WalEventCursor eventCursor = WalTxnDetails.openWalEFile(walPath, walEventReader, segmentTxn, txn);
+                    final WalEventCursor eventCursor = WalTxnDetails.openWalEFile(walPath, eventReader, segmentTxn, txn);
                     if (!WalTxnType.isDataType(eventCursor.getType())) {
                         // TRUNCATE / DROP PARTITION / UPDATE commit with walId>0 and a
                         // min ts, but no dedup-replaceable rows. Excluding them keeps a
@@ -1988,7 +2002,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final boolean internSymbols = symbolCache != null && stagingSymbolColumnIndexes.size() > 0;
         try (
                 TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn);
-                TableReader committedSymbolReader = internSymbols ? engine.getReader(instance.getLiveViewToken()) : null
+                TableReader committedSymbolReader = internSymbols ? engine.getReader(instance.getLiveViewToken()) : null;
+                // Closed with the drain so the turn does not park the last segment's
+                // event file mapped between turns - see the note on walEventReader.
+                WalEventReader eventReader = walEventReader
         ) {
             if (internSymbols) {
                 // Re-anchor each SYMBOL column's next-new-id to the committed symbol
@@ -2033,7 +2050,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 walPath.of(engine.getConfiguration().getDbRoot())
                         .concat(baseToken)
                         .concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                WalEventCursor eventCursor = WalTxnDetails.openWalEFile(walPath, walEventReader, segmentTxn, txn);
+                WalEventCursor eventCursor = WalTxnDetails.openWalEFile(walPath, eventReader, segmentTxn, txn);
 
                 if (!WalTxnType.isDataType(eventCursor.getType())) {
                     if (eventCursor.getType() == WalTxnType.TRUNCATE && baseToken.isMatView()) {
@@ -3084,7 +3101,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long minTs = Numbers.LONG_NULL;
         long maxTs = Numbers.LONG_NULL;
         boolean insertOnly = true;
-        try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn)) {
+        try (
+                TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn);
+                // Every arm out of this walk is a return, and each closes the reader with
+                // the cursor - see the note on walEventReader.
+                WalEventReader eventReader = walEventReader
+        ) {
             while (txnCursor.hasNext()) {
                 final long txn = txnCursor.getTxn();
                 if (txn > toSeqTxn) {
@@ -3101,7 +3123,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 walPath.of(engine.getConfiguration().getDbRoot())
                         .concat(baseToken)
                         .concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                final WalEventCursor eventCursor = WalTxnDetails.openWalEFile(walPath, walEventReader, segmentTxn, txn);
+                final WalEventCursor eventCursor = WalTxnDetails.openWalEFile(walPath, eventReader, segmentTxn, txn);
                 if (!WalTxnType.isDataType(eventCursor.getType())) {
                     // TRUNCATE / DROP PARTITION / UPDATE: a non-DATA change whose
                     // effect a bounded resume cannot reproduce - force the rebuild.
