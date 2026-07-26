@@ -1246,16 +1246,32 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         gracefulCloseAndDisconnect(context);
     }
 
+    /**
+     * Teardown after a server-initiated fatal CLOSE frame has been fully sent.
+     * Either enters the role-change close-echo handshake, or hands the
+     * connection to the post-CLOSE read-drain.
+     * <p>
+     * A role-change close that is NOT echo-eligible -- the connection never
+     * opted into durable acks, or the upload grace expired with work still
+     * un-acked -- takes the SAME drain as every other fatal close. It must not
+     * short-circuit to {@link #gracefulCloseAndDisconnect}: that path is for
+     * peers who have already sent their own CLOSE (nothing more is coming) or
+     * whose echo wait already expired after a full drain. A demoted primary's
+     * producer is, by definition, still streaming -- the base javadoc calls
+     * this the demote-time norm -- so its in-flight frames sit unread in our
+     * receive queue and the fd close turns abortive (RST), destroying the
+     * client's unread [ack][CLOSE] tail. Losing that tail is strictly worse for
+     * the very connections a prompt teardown would supposedly favour: the
+     * grace-expired close still carries a PARTIAL durable ack that trims part
+     * of the replay window, and the non-durable-ack close carries the
+     * cumulative ack that is the client's only trim signal. Neither can afford
+     * an RST, and the drain costs no availability -- it is dispatcher-parked,
+     * bounded by {@link QwpIngressProcessorState#CLOSE_DRAIN_TIMEOUT_MICROS},
+     * and ends as soon as the client closes.
+     */
     private void finishServerFatalClose(HttpConnectionContext context, QwpIngressProcessorState state)
             throws ServerDisconnectException {
         if (beginCloseEchoWaitIfEligible(context, state)) {
-            return;
-        }
-        if (state.isRoleChangeCloseInitiated()) {
-            // Role-change closes that do not carry a fully covered durable ack
-            // favor prompt teardown over the duplicate guard. Preserve that
-            // contract instead of entering the general fatal-close linger.
-            gracefulCloseAndDisconnect(context);
             return;
         }
         gracefulCloseAndDrain(context, state);
@@ -1307,8 +1323,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * Half-closes the write side of the socket so the kernel emits FIN instead
      * of an abortive RST, performs a bounded best-effort inbound drain, then
      * signals the framework to tear the connection down. This prompt path is
-     * reserved for role-change closes whose upload or echo grace expired and
-     * for completed client-initiated close handshakes.
+     * reserved for connections that can have nothing further in flight: a
+     * completed client-initiated close handshake (the peer's CLOSE is already
+     * consumed and RFC 6455 s5.5.1 has the server close the TCP connection
+     * first) and an expired close-echo wait (which has been draining inbound
+     * for its whole grace budget). A server-initiated fatal close against a
+     * still-streaming peer must use {@link #gracefulCloseAndDrain} instead --
+     * see {@link #finishServerFatalClose}.
      * <p>
      * The pre-close inbound drain is bounded by both
      * {@link #GRACEFUL_CLOSE_DRAIN_READ_BUDGET} and

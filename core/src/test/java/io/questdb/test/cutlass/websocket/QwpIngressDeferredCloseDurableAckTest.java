@@ -1024,6 +1024,156 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * Every role-change close that does NOT enter the close-echo wait must
+     * still take the post-CLOSE read-drain, exactly like any other fatal
+     * close. Two disjoint populations reach this teardown, and both are
+     * covered here:
+     * <ul>
+     *   <li>{@code durableAck=false} -- the connection never opted in. In OSS
+     *       that is EVERY connection ({@code DefaultDurableAckRegistry
+     *       .isEnabled()} is false); in Enterprise, every producer that did not
+     *       send the opt-in header. Its CLOSE carries the cumulative ack, the
+     *       client's only store-and-forward trim signal.</li>
+     *   <li>{@code durableAck=true} with the upload grace expired -- the
+     *       connection that already logged "client replay may duplicate". Its
+     *       CLOSE still carries a PARTIAL durable ack that trims part of the
+     *       replay window, so it has the most to lose from an RST, not the
+     *       least.</li>
+     * </ul>
+     * Skipping the drain closes the fd while a demoted primary's producer is
+     * still streaming -- the demote-time norm -- so its in-flight frames sit
+     * unread in our receive queue and the close turns abortive (RST),
+     * destroying the client's unread [ack][CLOSE] tail. The client's trim
+     * watermark then never advances and it replays its whole corpus to the
+     * promoted replica: duplicates on tables without DEDUP UPSERT KEYS.
+     * <p>
+     * NOTE: this test needs {@link ShutdownableNetworkFacade}. With the plain
+     * facade both teardowns raise {@code ServerDisconnectException} on the
+     * synthetic fd and the assertion below cannot fail.
+     */
+    @Test
+    public void testNonDurableAckRoleChangeCloseMustStillDrain() throws Exception {
+        assertRoleChangeCloseEntersReadDrain(false);
+    }
+
+    /**
+     * The grace-expired half of
+     * {@link #testNonDurableAckRoleChangeCloseMustStillDrain}: the close that
+     * already logged "client replay may duplicate" still carries a partial
+     * durable ack, so it has the most to lose from an abortive close.
+     */
+    @Test
+    public void testGraceExpiredRoleChangeCloseMustStillDrain() throws Exception {
+        assertRoleChangeCloseEntersReadDrain(true);
+    }
+
+    /**
+     * @param durableAck when true, drives the grace-expired durable-ack close;
+     *                   when false, the never-opted-in close
+     */
+    private void assertRoleChangeCloseEntersReadDrain(boolean durableAck) throws Exception {
+        final String table = durableAck ? "tabdr1" : "tabdr0";
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final long[] nowMicros = {0L};
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table " + table + " (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(table, 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(table, 200L, 2_000_000L));
+                // Deferral completion is recv-driven: the durable-ack variant
+                // needs one more inbound event after the grace expires.
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(table, 300L, 3_000_000L));
+                byte[] wire = concat(frame0, frame1, frame2);
+
+                PhasedNetworkFacade nf = new ShutdownableNetworkFacade(wire);
+                // Unsafe.malloc is fallible: guard the paired allocations so a failed
+                // second malloc (or scaffolding construction) cannot strand the first --
+                // assertMemoryLeak can detect but not free an address lost by setup.
+                NativeSocketBuffers buffers = new NativeSocketBuffers();
+                long recvBuf = buffers.recvBuffer;
+                BlockingRecordingRawSocket rawSocket = buffers.socket;
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupClockedState(httpConfig, context, demotableEngine, nowMicros);
+                    state.setDurableAckEnabled(durableAck);
+
+                    // Phase A: PRIMARY. seq=0 commits.
+                    drive(processor, context, nf, frame0.length);
+
+                    // Phase B: in-place demote. For the durable-ack variant the
+                    // registry watermark lags, so the close defers; jumping the
+                    // clock past the grace budget makes the next re-entry take
+                    // the grace-expired exit. For the non-durable-ack variant
+                    // the close completes on the first rejected frame.
+                    readOnly.set(true);
+                    boolean disconnected = false;
+                    nf.release(frame1.length);
+                    try {
+                        processor.resumeRecv(context);
+                    } catch (ServerDisconnectException e) {
+                        disconnected = true;
+                    } catch (PeerIsSlowToWriteException e) {
+                        // all released bytes consumed; dispatcher would re-arm for read
+                    }
+
+                    if (durableAck) {
+                        Assert.assertTrue(
+                                "test setup: the durable-ack close must defer awaiting upload coverage",
+                                state.isRoleChangeCloseDeferred()
+                        );
+                        Assert.assertFalse("test setup: no CLOSE before the deferral completes", disconnected);
+                        // Grace expires with the registry still lagging: the
+                        // "client replay may duplicate" exit.
+                        nowMicros[0] += QwpIngressProcessorState.ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS + 1;
+                        Assert.assertTrue("test setup: grace must be expired", state.isRoleChangeCloseGraceExpired());
+                        nf.release(frame2.length);
+                        try {
+                            processor.resumeRecv(context);
+                        } catch (ServerDisconnectException e) {
+                            disconnected = true;
+                        } catch (PeerIsSlowToWriteException e) {
+                            // parked for read
+                        }
+                    }
+
+                    int closeIdx = indexOfCloseFrame(rawSocket.sentFrames);
+                    Assert.assertTrue("test setup: a role-change CLOSE must be on the wire", closeIdx >= 0);
+                    Assert.assertEquals(
+                            "test setup: the close must be the reconnect-eligible role-change close",
+                            WebSocketCloseCode.ROLE_CHANGE /* 4001 */,
+                            closeCode(rawSocket.sentFrames.getQuick(closeIdx))
+                    );
+                    Assert.assertFalse(
+                            "test setup: this close must not be echo-eligible",
+                            state.isAwaitingCloseEcho()
+                    );
+
+                    Assert.assertTrue(
+                            "ABORTIVE CLOSE: the role-change CLOSE was sent but the connection did not enter the"
+                                    + " post-CLOSE read-drain (durableAck=" + durableAck + "). A demoted primary's"
+                                    + " producer is still streaming, so its in-flight frames stay unread in our"
+                                    + " receive queue and the fd close emits RST, destroying the client's unread"
+                                    + " [ack][CLOSE] tail -- its trim watermark never advances and it replays its"
+                                    + " whole corpus to the promoted replica",
+                            state.isCloseDraining()
+                    );
+                    Assert.assertFalse(
+                            "the drain must park the connection, not disconnect it on the spot",
+                            disconnected
+                    );
+                } finally {
+                    buffers.close();
+                }
+            }
+        });
+    }
+
+    /**
      * Mirror of
      * {@link #testCloseEchoWaitDiscardsProtocolViolatingFramesWithoutSecondClose},
      * for the window BEFORE the CLOSE rather than after it: a protocol
@@ -4104,6 +4254,28 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
      * flipped between frames — the demote/backpressure race distilled to its
      * deterministic core.
      */
+    /**
+     * {@link PhasedNetworkFacade} whose {@code shutdown(SHUT_WR)} succeeds.
+     * <p>
+     * The plain facade inherits {@link NetworkFacadeImpl#shutdown}, which fails
+     * on the fixtures' synthetic {@code fd=-1}. That failure makes
+     * {@code gracefulCloseAndDrain} throw {@code ServerDisconnectException}
+     * before it can arm the drain -- rendering it INDISTINGUISHABLE from
+     * {@code gracefulCloseAndDisconnect}, which throws unconditionally. Any
+     * test asserting which teardown a close takes must use this facade, or it
+     * silently passes for both.
+     */
+    private static class ShutdownableNetworkFacade extends PhasedNetworkFacade {
+        ShutdownableNetworkFacade(byte[] data) {
+            super(data);
+        }
+
+        @Override
+        public int shutdown(long fd, int how) {
+            return 0;
+        }
+    }
+
     private static class PhasedNetworkFacade extends NetworkFacadeImpl {
         private final byte[] data;
         private long advanceClockPerFloodRead;
