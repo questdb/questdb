@@ -864,7 +864,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 lastCommittedRows = 0;
                 return 1;
             default:
-                throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
+                try (WalEventReader eventReader = walEventReader) {
+                    final WalEventCursor walEventCursor = eventReader.of(walPath, segmentTxn);
+                    walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp, Numbers.LONG_NULL, Numbers.LONG_NULL);
+                    final long txnBeforeApply = writer.getTxn();
+                    int rows = engine.getWalTxnTypeHandler().applyUnknownWalTxn(walTxnType, writer, walEventCursor, seqTxn);
+                    if (writer.getTxn() == txnBeforeApply) {
+                        // The handler did not commit (e.g. an idempotent no-op event): force-mark this
+                        // seqTxn as applied. A handler that commits must stamp seqTxn itself, so when it
+                        // did commit we skip this redundant second _txn write.
+                        writer.markSeqTxnCommitted(seqTxn);
+                    }
+                    lastCommittedRows = 0;
+                    return Math.max(rows, 1);
+                }
         }
     }
 
@@ -943,14 +956,17 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             if (e.isTableDropped()) {
                 throw e;
             }
-            LogRecord log = !e.isWALTolerable() ? LOG.error() : LOG.info();
+            // UPDATE is acknowledged when sequenced. Even if its underlying error is normally
+            // WAL-tolerable, advancing the apply watermark would silently lose acknowledged DML.
+            final boolean tolerable = e.isWALTolerable() && cmdType != CMD_UPDATE_TABLE;
+            final LogRecord log = tolerable ? LOG.info() : LOG.error();
             log.$("error applying SQL to wal table [table=").$(tableWriter.getTableToken())
                     .$(", sql=").$(sql)
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
 
-            if (!e.isWALTolerable()) {
+            if (!tolerable) {
                 throw e;
             } else {
                 // Mark as applied.

@@ -36,6 +36,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -46,25 +47,29 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.LongAdder;
 
-public class AsyncFilterAtom implements StatefulAtom, Plannable {
+public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
     private final IntList columnTypes;
     private final Function filter;
     private final IntHashSet filterUsedColumnIndexes;
+    // Shared by the owner, every reducing worker and every work-stealing thread: a thread-safe
+    // filter hands out no slots, so there is no per-thread identity to key stats on. Concurrent
+    // updates are safe, see SelectivityStats.
     private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
+    private IntHashSet lateMatSkipColumnIndexes;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
     private MemoryTracker memoryTracker;
-    private IntHashSet lateMatSkipColumnIndexes;
 
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
@@ -118,13 +123,19 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         return filterUsedColumnIndexes;
     }
 
+    public @Nullable IntHashSet getLateMaterializationSkipColumnIndexes() {
+        final IntHashSet skipSet = lateMatSkipColumnIndexes;
+        return skipSet != null ? skipSet : filterUsedColumnIndexes;
+    }
+
     public MemoryTracker getMemoryTracker() {
         return memoryTracker;
     }
 
-    public @Nullable IntHashSet getLateMaterializationSkipColumnIndexes() {
-        final IntHashSet skipSet = lateMatSkipColumnIndexes;
-        return skipSet != null ? skipSet : filterUsedColumnIndexes;
+    @Override
+    @TestOnly
+    public PerWorkerLocks getPerWorkerLocks() {
+        return perWorkerLocks;
     }
 
     public SelectivityStats getSelectivityStats(int slotId) {
