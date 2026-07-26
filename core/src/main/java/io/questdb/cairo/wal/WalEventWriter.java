@@ -307,11 +307,12 @@ class WalEventWriter implements Closeable {
         eventMem.putLong(txn);
         eventMem.putByte(txnType);
         payload.write(eventMem);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        // Close the record through the SHARED epilogue, exactly like every other appender. Writing the
+        // length, terminator, index entry and max-txn by hand here would skip the mandatory _event.c
+        // checksum entry, and the reader treats a record with no sidecar entry as TORN (see
+        // WalEventCursor.verifyRecordChecksum) — so every custom event would be unreadable the moment it
+        // was written.
+        finishRecord();
         return txn++;
     }
 
