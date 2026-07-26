@@ -53,7 +53,6 @@ import io.questdb.preferences.SettingsStore;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -444,7 +443,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         if (freezeLvInstance == null) {
                                             final LiveViewInstance lvInstance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
                                             if (lvInstance != null) {
-                                                if (lvInstance.startCheckpoint(lvInstance.getStateReader().getAppliedWatermark())) {
+                                                if (lvInstance.startCheckpoint()) {
                                                     freezeLvInstance = lvInstance;
                                                 } else {
                                                     // Checkpoint/drop handshake, agent side: a concurrent

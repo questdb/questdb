@@ -737,7 +737,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // reach it. Applied per root because repeated references inside one
             // root count once per side.
             final LongList removedSegmentIds = new LongList();
-            final long[] droppedAccumulators = new long[2]; // {rootCount, logicalStateBytes}
+            final long[] droppedAccumulators = new long[1]; // {logicalStateBytes}
             timelineReader.range(oldTimelineRoot, floorTimestamp, Long.MAX_VALUE, entry -> {
                 oldCheckpointRoot.of(checkpointsDir, entry.rootRef);
                 if (oldCheckpointRoot.getCheckpointId() != entry.checkpointId
@@ -752,8 +752,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     removedSegmentIds.add(oldCheckpointRoot.getSegmentId(s));
                 }
                 directoryWriter.applyRootReferenceChanges(removedSegmentIds, emptySegmentIds, generation);
-                droppedAccumulators[0]++;
-                droppedAccumulators[1] = checkedAdd(droppedAccumulators[1], entry.logicalStateBytes);
+                droppedAccumulators[0] = checkedAdd(droppedAccumulators[0], entry.logicalStateBytes);
             });
 
             long nextSegmentId = skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId);
@@ -779,7 +778,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // post-replay seal advances it.
             superblock.nextSegmentId = nextSegmentId;
             superblock.metadataBytes = checkedAdd(superblock.metadataBytes, metadataBytesAdded);
-            superblock.logicalStateBytes = checkedAdd(superblock.logicalStateBytes, -droppedAccumulators[1]);
+            superblock.logicalStateBytes = checkedAdd(superblock.logicalStateBytes, -droppedAccumulators[0]);
             // A truncate leaves no mid-sweep resume point behind.
             superblock.seedCursorOffset = Numbers.LONG_NULL;
             copy(newTimelineRoot, superblock.timelineRootRef);
@@ -790,7 +789,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
             return new TruncateResult(
                     generation,
-                    (int) droppedAccumulators[0],
                     metadataBytesAdded,
                     metaStore.getWalPurgeFloor(),
                     new LiveViewCheckpointTimelineStats().of(superblock, metadataBytesAdded)
@@ -1620,24 +1618,21 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * nothing was published; every other field is unset.
      */
     public static final class TruncateResult {
-        static final TruncateResult NOT_PUBLISHED = new TruncateResult(-1, 0, 0, -1, null, false);
+        static final TruncateResult NOT_PUBLISHED = new TruncateResult(-1, 0, -1, null, false);
         private final long generation;
         private final long metadataBytesAdded;
         private final boolean published;
-        private final int rootsDropped;
         private final LiveViewCheckpointTimelineStats stats;
         private final long walPurgeFloor;
 
         private TruncateResult(
                 long generation,
-                int rootsDropped,
                 long metadataBytesAdded,
                 long walPurgeFloor,
                 LiveViewCheckpointTimelineStats stats,
                 boolean published
         ) {
             this.generation = generation;
-            this.rootsDropped = rootsDropped;
             this.metadataBytesAdded = metadataBytesAdded;
             this.walPurgeFloor = walPurgeFloor;
             this.stats = stats;
@@ -1646,12 +1641,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         private TruncateResult(
                 long generation,
-                int rootsDropped,
                 long metadataBytesAdded,
                 long walPurgeFloor,
                 LiveViewCheckpointTimelineStats stats
         ) {
-            this(generation, rootsDropped, metadataBytesAdded, walPurgeFloor, stats, true);
+            this(generation, metadataBytesAdded, walPurgeFloor, stats, true);
         }
 
         public long getGeneration() {
@@ -1660,10 +1654,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         public long getMetadataBytesAdded() {
             return metadataBytesAdded;
-        }
-
-        public int getRootsDropped() {
-            return rootsDropped;
         }
 
         /**

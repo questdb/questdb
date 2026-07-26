@@ -19579,7 +19579,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             final AtomicBoolean returned = new AtomicBoolean(false);
             final Thread agent = new Thread(() -> {
-                lv.startCheckpoint(lv.getStateReader().getAppliedWatermark());
+                lv.startCheckpoint();
                 returned.set(true);
             }, "lv-freeze-handshake-test");
             try {
@@ -19636,7 +19636,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             Assert.assertNotNull(lv);
 
             // Take the freeze. Now an out-of-band invalidate must wait.
-            lv.startCheckpoint(lv.getStateReader().getAppliedWatermark());
+            lv.startCheckpoint();
             Assert.assertTrue(lv.isFreezeInProgress());
             Assert.assertFalse("LV must still be valid pre-freeze", lv.isInvalid());
 
@@ -19721,7 +19721,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 // Freeze the LV. The refresh worker's next turn must see the
                 // flag, skip, and leave lastProcessedSeqTxn unchanged.
-                lv.startCheckpoint(lv.getStateReader().getAppliedWatermark());
+                lv.startCheckpoint();
                 Assert.assertTrue("freeze in progress after startCheckpoint", lv.isFreezeInProgress());
                 drainJob(job);
                 Assert.assertEquals(

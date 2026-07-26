@@ -155,14 +155,6 @@ public class LiveViewCheckpointMetaSegmentReader implements Closeable {
     }
 
     /**
-     * @return absolute address of the currently open page's payload
-     */
-    public long getPagePayloadAddress() {
-        ensureOpen();
-        return mem.addressOf(pagePayloadFileOffset);
-    }
-
-    /**
      * @return the currently open page's payload length in bytes
      */
     public int getPagePayloadLength() {

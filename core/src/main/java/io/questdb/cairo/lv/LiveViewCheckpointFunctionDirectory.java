@@ -83,10 +83,6 @@ public class LiveViewCheckpointFunctionDirectory implements Closeable {
         return true;
     }
 
-    public byte[] getIdentity(int index) {
-        return identities[index];
-    }
-
     public void getRootRef(int index, @NotNull LiveViewCheckpointPageRef out) {
         final LiveViewCheckpointPageRef ref = rootRefs[index];
         out.of(ref.getSegmentId(), ref.getOffset(), ref.getLength());

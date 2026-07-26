@@ -443,7 +443,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // A DROP marked the instance dropped first; the agent looks it up and only now
             // calls startCheckpoint. It must observe the drop and refuse the freeze.
             instance.markAsDropped();
-            instance.startCheckpoint(instance.getStateReader().getAppliedWatermark());
+            instance.startCheckpoint();
             Assert.assertFalse(
                     "startCheckpoint on a dropped instance must not set freezeInProgress",
                     instance.isFreezeInProgress()
@@ -481,7 +481,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
             // Publish a checkpoint freeze on the main thread exactly as the agent does:
             // startCheckpoint sets freezeInProgress and fences the refresh latch.
-            instance.startCheckpoint(instance.getStateReader().getAppliedWatermark());
+            instance.startCheckpoint();
             Assert.assertTrue(instance.isFreezeInProgress());
 
             final Thread dropper = new Thread(() -> {
@@ -1290,7 +1290,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         // Mirror DatabaseCheckpointAgent: freeze, (the per-LV file
                         // copy would run here), unfreeze. The finally guarantees
                         // endCheckpoint regardless of how the freeze interleaves.
-                        instance.startCheckpoint(instance.getStateReader().getAppliedWatermark());
+                        instance.startCheckpoint();
                         try {
                             Thread.yield();
                         } finally {
@@ -1410,7 +1410,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final Thread agent = new Thread(() -> {
             try {
                 latchHeld.await();
-                instance.startCheckpoint(instance.getStateReader().getAppliedWatermark());
+                instance.startCheckpoint();
                 instance.endCheckpoint();
             } catch (Throwable th) {
                 errors.add(th);

@@ -49,10 +49,6 @@ public final class LiveViewStatePageWriter {
         return pageStart;
     }
 
-    public boolean isOpen() {
-        return sink != null;
-    }
-
     /**
      * Opens a page at the sink's current append offset.
      */

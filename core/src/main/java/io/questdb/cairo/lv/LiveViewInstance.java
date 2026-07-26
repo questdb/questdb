@@ -166,10 +166,7 @@ public class LiveViewInstance implements QuietCloseable {
     // Snapshot-freeze gate. DatabaseCheckpointAgent sets this true before
     // copying an LV's file set and clears it afterwards; the refresh worker
     // observes the flag at the top of refreshInstance (after the latch +
-    // dropped/invalid checks) and skips the cycle. The frozen appliedWatermark
-    // at the time of freeze is captured so post-restore consistency can be
-    // asserted; the field is informational for tests and diagnostics.
-    private volatile long freezeFrozenAppliedWatermark = Numbers.LONG_NULL;
+    // dropped/invalid checks) and skips the cycle.
     private volatile boolean freezeInProgress;
     // One-shot latch for the advisory log the refresh worker emits the first time
     // a view drops in-order rows below viewLowerBoundTimestamp. Keeps the "dropping
@@ -332,8 +329,6 @@ public class LiveViewInstance implements QuietCloseable {
     // ingestion produces batched commits at FLUSH EVERY cadence rather than one
     // commit per base notification.
     private volatile long lastFlushTimeUs = Numbers.LONG_NULL;
-    // Last refresh-worker tick wall-clock (micros). Used by catalogue / lag metrics.
-    private volatile long lastRefreshTimeUs = Numbers.LONG_NULL;
     // Maximum base-row timestamp the refresh worker has observed so far, across
     // every cycle since startup or the last restore. Updated row-by-row by the
     // anchor-dispatch cursor. The refresh worker compares each incoming WAL
@@ -735,21 +730,20 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Companion to {@link #startCheckpoint(long)}. Clears the freeze gate so
+     * Companion to {@link #startCheckpoint()}. Clears the freeze gate so
      * the refresh worker resumes on its next turn and wakes any thread blocked
      * in {@link #waitForUnfrozen()}. Idempotent.
      */
     public void endCheckpoint() {
         synchronized (this) {
             freezeInProgress = false;
-            freezeFrozenAppliedWatermark = Numbers.LONG_NULL;
             notifyAll();
         }
     }
 
     /**
      * Spin-acquires and releases the refresh latch, mirroring
-     * {@link #startCheckpoint(long)} without the freeze gate: it waits out any
+     * {@link #startCheckpoint()} without the freeze gate: it waits out any
      * in-flight refresh turn and, via the CAS barrier, publishes state the caller
      * set beforehand to the worker's next {@link #tryLockForRefresh()}. DROP pairs
      * it with a prior {@link #markAsDropped()} so no worker is mid-commit and the
@@ -896,15 +890,6 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getFlushRetryStartUs() {
         return flushRetryStartUs;
-    }
-
-    /**
-     * @return the {@code appliedWatermark} captured at {@link #startCheckpoint(long)},
-     * or {@link Numbers#LONG_NULL} when no freeze is in progress. Useful for tests
-     * and post-restore consistency assertions.
-     */
-    public long getFreezeFrozenAppliedWatermark() {
-        return freezeFrozenAppliedWatermark;
     }
 
     public long getCheckpointDataSegmentCount() {
@@ -1069,10 +1054,6 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getLastProcessedSeqTxn() {
         return stateReader.getLastProcessedSeqTxn();
-    }
-
-    public long getLastRefreshTimeUs() {
-        return lastRefreshTimeUs;
     }
 
     /**
@@ -1431,11 +1412,11 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * DROP side of the checkpoint/drop handshake, the counterpart to
-     * {@link #startCheckpoint(long)}. Marks the view dropped and then waits out any
+     * {@link #startCheckpoint()}. Marks the view dropped and then waits out any
      * in-progress {@code DatabaseCheckpointAgent} freeze, both under the instance
      * monitor so the two interlock:
      * <ul>
-     *     <li>if this runs first, a later {@link #startCheckpoint(long)} observes
+     *     <li>if this runs first, a later {@link #startCheckpoint()} observes
      *     {@code dropped} under the same monitor and refuses the freeze (returns
      *     {@code false}), so the agent skips the view;</li>
      *     <li>if a freeze is already published, this parks in {@link #waitForUnfrozen()}
@@ -1847,10 +1828,6 @@ public class LiveViewInstance implements QuietCloseable {
         stateReader.setLastProcessedSeqTxn(seqTxn);
     }
 
-    public void setLastRefreshTimeUs(long lastRefreshTimeUs) {
-        this.lastRefreshTimeUs = lastRefreshTimeUs;
-    }
-
     /**
      * Monotonic update of {@link #getLatestSeenTs()}. Skips the store if
      * {@code ts <= latestSeenTs} so an O3 row (the very thing we want to
@@ -2023,11 +2000,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Marks the view frozen for the duration of a {@code DatabaseCheckpointAgent}
-     * file copy. {@code frozenAppliedWatermark} is the {@code appliedWatermark}
-     * at the time of freeze; recorded for diagnostics. Refresh-worker turns
-     * that observe {@link #isFreezeInProgress()} short-circuit before mutating
-     * {@code _lv.s} or advancing any LV watermark. The caller is responsible
-     * for pairing this with a {@link #endCheckpoint()} after the copy completes.
+     * file copy. Refresh-worker turns that observe {@link #isFreezeInProgress()}
+     * short-circuit before mutating {@code _lv.s} or advancing any LV watermark.
+     * The caller is responsible for pairing this with a {@link #endCheckpoint()}
+     * after the copy completes.
      * <p>
      * After setting the flag the call takes and releases the refresh latch.
      * The CAS spins until any in-flight refresh turn releases the latch in
@@ -2044,7 +2020,7 @@ public class LiveViewInstance implements QuietCloseable {
      * {@link #endCheckpoint()}); {@code false} if the view is being dropped and the
      * caller must skip it (no {@code endCheckpoint()} is owed).
      */
-    public boolean startCheckpoint(long frozenAppliedWatermark) {
+    public boolean startCheckpoint() {
         // Synchronize on the instance monitor while publishing the flag so any
         // invalidator inside synchronized(instance) on another thread either
         // (a) commits its rewrite before the agent's file copy begins, or
@@ -2060,7 +2036,6 @@ public class LiveViewInstance implements QuietCloseable {
                 // never issue for a view it skipped.
                 return false;
             }
-            freezeFrozenAppliedWatermark = frozenAppliedWatermark;
             freezeInProgress = true;
         }
         while (!refreshLatch.compareAndSet(false, true)) {

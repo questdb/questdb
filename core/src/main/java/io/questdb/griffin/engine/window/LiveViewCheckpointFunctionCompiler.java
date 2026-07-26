@@ -38,7 +38,6 @@ import io.questdb.cairo.lv.LiveViewCheckpointDependency.NumericConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.StructuralConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
-import io.questdb.cairo.lv.LiveViewCheckpointRowsBounds;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.sql.Function;

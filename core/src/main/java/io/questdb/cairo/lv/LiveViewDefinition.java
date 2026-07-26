@@ -600,19 +600,6 @@ public class LiveViewDefinition {
     }
 
     /**
-     * Validates that {@code timestampType} is a TIMESTAMP variant supported as the
-     * base-table designated timestamp.
-     */
-    public static int requireTimestampType(int timestampType, int position) {
-        if (ColumnType.tagOf(timestampType) != ColumnType.TIMESTAMP) {
-            throw CairoException.nonCritical()
-                    .position(position)
-                    .put("base table designated timestamp must be a TIMESTAMP column");
-        }
-        return timestampType;
-    }
-
-    /**
      * Persisted shape of a single anchored named WINDOW. At most one is captured
      * per LV (multi-anchored-window LVs are rejected at CREATE). The runtime side
      * — {@link LiveViewWindow} — uses this to compile the anchor expression and

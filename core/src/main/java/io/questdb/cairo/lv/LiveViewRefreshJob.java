@@ -39,7 +39,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.file.BlockFileWriter;
@@ -83,9 +82,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
-import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -99,7 +96,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -289,7 +285,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // so the un-flushed lead resolves from RAM and agrees with disk after flush.
     // Empty for a SYMBOL-free schema. Recomputed each cycle in ensureStagingAndTier.
     private final IntList stagingSymbolColumnIndexes = new IntList();
-    private int stagingTimestampColumnIndex = -1;
     private final LiveViewStateStore stateStore;
     // Views whose localized out-of-order repair this worker parked on its turn
     // budget. Only the worker that suspended a repair can continue it - it holds
@@ -6636,7 +6631,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 stagingColumnTypes.add(tierColumnTypes.getQuick(i));
             }
             stagingBuffer = new LiveViewInMemoryBuffer(stagingColumnTypes, tsColIdx, pageSize, viewTracker);
-            stagingTimestampColumnIndex = tsColIdx;
         }
         stagingBuffer.reset();
         // Allocate the per-LV in-mem tier on first use; subsequent cycles reuse
@@ -8083,7 +8077,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                     attempted = true;
                     resumeSuspendedRepair(instance, suspendedRepair);
-                    instance.setLastRefreshTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
                     instance.recordRefreshSuccess();
                     return attempted;
                 }
@@ -8138,7 +8131,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
                     attempted = true;
                     runSeedSweep(instance);
-                    instance.setLastRefreshTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
                     instance.recordRefreshSuccess();
                     return attempted;
                 }
@@ -8237,7 +8229,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
                     }
                 }
-                instance.setLastRefreshTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
                 if (attempted) {
                     instance.recordRefreshSuccess();
                 }

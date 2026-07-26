@@ -96,10 +96,6 @@ public final class LiveViewStatePageReader {
         return source.getShort(pageStart + offset);
     }
 
-    public boolean isOpen() {
-        return source != null;
-    }
-
     /**
      * Opens an exact page slice after overflow-safe source bounds checks.
      */

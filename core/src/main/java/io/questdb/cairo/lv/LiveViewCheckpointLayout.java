@@ -26,7 +26,6 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Transient;
-import io.questdb.std.Zip;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
@@ -173,14 +172,6 @@ public final class LiveViewCheckpointLayout {
     public static final String TMP_SUFFIX = ".tmp";
 
     private LiveViewCheckpointLayout() {
-    }
-
-    /**
-     * CRC32 (seed zero) over {@code size} bytes at {@code address}. Metadata
-     * pages and superblock slots are far below 2 GiB, so a single call suffices.
-     */
-    public static int checksum(long address, int size) {
-        return Zip.crc32(0, address, size);
     }
 
     /**
