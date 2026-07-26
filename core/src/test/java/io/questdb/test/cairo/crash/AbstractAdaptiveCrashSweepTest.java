@@ -24,9 +24,13 @@
 
 package io.questdb.test.cairo.crash;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.std.Files;
+import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -196,6 +200,28 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
             }
         }
         return false;
+    }
+
+    /**
+     * The on-disk {@code _txn}'s committed {@code seqTxn}, read straight from the file with a private
+     * {@link TxReader}: no pool, no engine state, no recovery. Returns -1 if {@code _txn} will not load.
+     * <p>
+     * This exists to pin the load-bearing adaptive invariant that the lazy-gap sweeps' negative controls
+     * used to reach indirectly: the commit POINTER is never published ahead of the data it exposes. After a
+     * crash and BEFORE any recovery, an adaptive table's {@code _txn} must sit at or below its durable epoch
+     * cut. When it does not, a reader sees rows whose column data was never flushed -- the zero-filled shape
+     * ({@code [0, 0, 1, 2, 3]} instead of {@code [0, 1, 2, 3, 4]}) that only recovery could then repair.
+     * <p>
+     * Assumes a micro-timestamp designated column, which every sweep workload here uses.
+     */
+    protected long readOnDiskTxnSeqTxn(TableToken token, int partitionBy) {
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
+            try (TxReader reader = new TxReader(engine.getConfiguration().getFilesFacade())) {
+                reader.ofRO(path.$(), ColumnType.TIMESTAMP_MICRO, partitionBy);
+                return reader.unsafeLoadAll() ? reader.getSeqTxn() : -1;
+            }
+        }
     }
 
     /**

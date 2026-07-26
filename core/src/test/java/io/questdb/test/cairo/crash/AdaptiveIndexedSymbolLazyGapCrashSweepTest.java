@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
@@ -165,21 +166,34 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
     private static final int REPRESENTATIVE_REWIND_CRASH_K = 30;
 
     /**
-     * NEGATIVE CONTROL: does {@code RecoveryCoordinator.recover()} (the {@code _txn}/{@code _cv}
-     * epoch-rewind + WAL roll-forward) do real work for an indexed-symbol lazy gap, or — as W1 found for
-     * O3's copy-on-write merge path — is the outcome identical with recovery disabled? Symbol columns are
-     * IN-PLACE appends (no copy-on-write partition versioning), so the a-priori expectation is that
-     * disabling recovery genuinely loses/torns the lazily-applied rows here, unlike O3.
+     * DATA BEFORE POINTER, for an indexed-symbol lazy gap.
      *
-     * <p>Mirrors {@link AdaptiveRecoveryRollForwardCrashTest}'s tolerance model exactly (its javadoc:
-     * "Acceptable torn outcomes: ... MISSING/WRONG (e.g. read back as zeros), a loud read error, fewer
-     * rows, or a suspended table" for the recovery-DISABLED arm — the strict identity+symbol-prefix bar
-     * applies ONLY to the recovery-ENABLED arm, the supported/default configuration). The ONLY unacceptable
-     * outcome for the disabled arm is the FULL correct result (which would mean recovery did not matter
-     * here, mirroring the O3 finding instead).
+     * <p>This test used to be a negative control asserting that disabling {@code
+     * RecoveryCoordinator.recover()} could NOT reproduce the correct result — i.e. that recovery was the
+     * only thing standing between a crash and lost/zero-filled rows. That was true, and it stopped being
+     * true, for a good reason. {@code _txn} (like {@code _cv} and the index files) used to make its
+     * per-commit flush decision on the INSTANCE-GLOBAL {@code cairo.commit.mode} with a {@code != NOSYNC}
+     * branch, so under ADAPTIVE every apply eagerly msync'd the commit pointer — publishing rows whose
+     * column data was still only lazily durable. Recovery's epoch rewind was what repaired that. Gating
+     * those writes on the table's EFFECTIVE mode made the pointer as lazy as the data it describes, and
+     * with it the torn-forward window disappeared.
+     *
+     * <p>Measured by flipping that one predicate back, nothing else: with the old global gate the
+     * post-crash {@code _txn} claims a seqTxn past the LAZY_K=4 durable cut (5 and 6, depending on where
+     * in the batch the crash lands — 6 at this test's crash point), and the recovery-disabled arm reads
+     * back the zero-fill shape, {@code [0, 0, 1, 2, 3]} where {@code [0, 1, 2, 3, 4]} was committed. With
+     * the effective-mode gate {@code _txn} sits exactly at the durable cut and BOTH arms read back the same
+     * correct prefix — at every one of the sweep's crash points, not just this one, which is what rules out
+     * "the pinned k drifted off a rewinding op".
+     *
+     * <p>So the comparison the old assertion made can no longer distinguish anything, and re-pinning it
+     * would only pin the absence of a fixed defect. What is asserted instead is the invariant that replaced
+     * it, and which fails loudly if that gate ever regresses: <b>after the crash and before any recovery,
+     * {@code _txn} must not claim a seqTxn beyond the durable epoch cut.</b> Roll-forward's own value is
+     * still proved directly by {@link AdaptiveRecoveryRollForwardCrashTest}.
      */
     @Test
-    public void testRecoveryVsNoRecoveryForIndexedSymbolLazyGapCrash() throws Exception {
+    public void testCommitPointerNeverPublishedAheadOfDataForIndexedSymbolLazyGap() throws Exception {
         final VsAndSyms withRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, true);
         final VsAndSyms withoutRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, false);
 
@@ -210,23 +224,25 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 withoutRecovery.vs.size() <= withRecovery.vs.size()
         );
 
-        // THE FINDING: measured directly (see the report) — disabling recovery does NOT reproduce the full
-        // correct result; the lazily-applied rows are lost/WRONG (a zero-fill shape: rows read back with a
-        // v of 0 instead of their real committed value), exactly the "expected negative-control shape" the
-        // task anticipated for in-place symbol appends (unlike O3's copy-on-write self-heal). If this
-        // assertion ever starts FAILING (the two arms become identical), that would mean recovery has
-        // stopped demonstrably mattering here — mirroring the O3 finding instead — and this test should be
-        // re-documented accordingly (good news, not a regression) rather than "fixed" back.
-        final boolean fullCorrect = withoutRecovery.vs.equals(withRecovery.vs)
-                && withoutRecovery.syms.equals(withRecovery.syms);
-        Assert.assertFalse(
-                "NEGATIVE CONTROL: recovery-disabled must NOT reproduce the FULL correct recovery-enabled "
-                        + "result at a rewinding crash point (withoutRecovery.vs=" + withoutRecovery.vs
-                        + ", syms=" + withoutRecovery.syms + ") — if this fails, recovery is not doing "
-                        + "demonstrable work for indexed-symbol lazy-gap at this crash point (would mirror "
-                        + "the O3 finding; re-classify as a scope gap, not a bug, per spd-w1-report.md §3)",
-                fullCorrect
-        );
+        // THE INVARIANT (data before pointer), asserted BEFORE the row check below so that a regression
+        // reports its CAUSE rather than its symptom. The crash left _txn at or below the durable epoch cut
+        // in both arms: no reader can be shown a row whose column data was never flushed, recovery or not.
+        // Reverting the TxWriter gate to the old global `!= NOSYNC` branch takes this seqTxn to 5 and 6
+        // against a cut of LAZY_K=4.
+        for (VsAndSyms arm : new VsAndSyms[]{withRecovery, withoutRecovery}) {
+            Assert.assertTrue(
+                    "the crash must not leave _txn claiming past the durable epoch cut: the commit pointer "
+                            + "is lazily durable like the data it exposes (preRecoverySeqTxn="
+                            + arm.preRecoverySeqTxn + ", durable cut=" + LAZY_K + ")",
+                    arm.preRecoverySeqTxn >= 0 && arm.preRecoverySeqTxn <= LAZY_K
+            );
+        }
+
+        // And the consequence: because the pointer is never ahead of its data, the recovery-DISABLED arm is
+        // not merely "tolerable" here -- it is correct. Held to the same bar. This is where the corruption
+        // surfaces (`row 1 silently WRONG v expected:<1> but was:<0>`) at crash points whose torn-forward
+        // pointer slips past the assertion above.
+        assertValidIdentityAndSymbolPrefix("withoutRecovery", withoutRecovery);
     }
 
     /**
@@ -238,6 +254,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
      */
     private VsAndSyms runLazyGapCrashScenario(int k, boolean recoveryOn) throws Exception {
         final VsAndSyms[] resultBox = new VsAndSyms[1];
+        final long[] preRecoverySeqTxn = {-1};
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
@@ -286,6 +303,8 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                     engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
                 }
                 engine.getTxnScoreboardPool().remove(tt); // fresh-restart model (see the driver's javadoc)
+                // The commit pointer as the crash left it, BEFORE anything gets a chance to repair it.
+                preRecoverySeqTxn[0] = readOnDiskTxnSeqTxn(tt, PartitionBy.DAY);
                 if (recoveryOn) {
                     new RecoveryCoordinator(engine).recover();
                 }
@@ -293,6 +312,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 drainWalQueue();
 
                 resultBox[0] = readVAndSOrderedByVAllowTorn(table);
+                resultBox[0].preRecoverySeqTxn = preRecoverySeqTxn[0];
 
                 // Leak-safe cleanup.
                 if (engine.getTableSequencerAPI().isSuspended(tt)) {
@@ -381,6 +401,10 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
     private static final class VsAndSyms {
         final List<Long> vs;
         final List<String> syms;
+        /**
+         * The on-disk {@code _txn} seqTxn as the crash left it, sampled before any recovery ran.
+         */
+        long preRecoverySeqTxn = -1;
 
         VsAndSyms(List<Long> vs, List<String> syms) {
             this.vs = vs;

@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
@@ -261,21 +262,24 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     private static final int REPRESENTATIVE_REWIND_CRASH_K = 40;
 
     /**
-     * NEGATIVE CONTROL: does {@code RecoveryCoordinator.recover()} (the {@code _txn}/{@code _cv}
-     * epoch-rewind spanning 2 partitions + WAL roll-forward re-deriving the new per-partition directories)
-     * do real work for a multi-partition lazy gap, or is the outcome identical with recovery disabled?
-     * Rows here are PLAIN in-place/new-partition appends (no copy-on-write, unlike O3), so — mirroring
-     * W2/W3's finding — the a-priori expectation is that disabling recovery genuinely loses/torns the
-     * rolled-over-partition rows.
+     * DATA BEFORE POINTER, across a partition rollover.
      *
-     * <p>Mirrors the sibling lazy-gap negative controls' tolerance model exactly: the strict
-     * identity-prefix + partition-layout bar applies ONLY to the recovery-ENABLED arm (the
-     * supported/default configuration). The ONLY unacceptable outcome for the recovery-DISABLED arm is
-     * reproducing the FULL correct result (rows AND partition layout both) — which would mean recovery did
-     * not matter here.
+     * <p>This was a negative control asserting that disabling {@code RecoveryCoordinator.recover()} could
+     * not reproduce the correct result. It could not, until {@code _txn}/{@code _cv}/the index files
+     * stopped making their per-commit flush decision on the INSTANCE-GLOBAL {@code cairo.commit.mode}
+     * ({@code != NOSYNC}) and started using the table's EFFECTIVE mode. Under ADAPTIVE that eager msync was
+     * publishing a commit pointer over column data that was still only lazily durable, and recovery's epoch
+     * rewind was what repaired it. With the pointer as lazy as the data it describes the torn-forward
+     * window is gone, and both arms land on the same correct result — at every crash point, not just this
+     * one. See {@link AdaptiveIndexedSymbolLazyGapCrashSweepTest} for the measured single-variable A/B.
+     *
+     * <p>What is asserted instead is the invariant that replaced it, and that fails loudly if the gate ever
+     * regresses: <b>after the crash and before any recovery, {@code _txn} must not claim a seqTxn beyond
+     * the durable epoch cut.</b> Roll-forward's own value is proved by {@link
+     * AdaptiveRecoveryRollForwardCrashTest}.
      */
     @Test
-    public void testNegativeControlRecoveryDisabledLosesRolledOverPartitionRows() throws Exception {
+    public void testCommitPointerNeverPublishedAheadOfDataAcrossPartitionRollover() throws Exception {
         final PartitionRows withRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, true);
         final PartitionRows withoutRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, false);
 
@@ -303,17 +307,24 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                 withoutRecovery.rows.size() <= withRecovery.rows.size()
         );
 
-        // THE FINDING: with in-place/new-partition appends (unlike O3's copy-on-write self-heal), recovery
-        // should earn its keep for a multi-partition lazy gap — disabling it must NOT reproduce the full
-        // correct result (rows AND partition layout together) at a rewinding crash point.
-        final boolean fullCorrect = withoutRecovery.rows.equals(withRecovery.rows)
-                && withoutRecovery.days.equals(withRecovery.days);
-        Assert.assertFalse(
-                "NEGATIVE CONTROL: recovery-disabled must NOT reproduce the FULL correct recovery-enabled "
-                        + "result (rows AND partition layout) at a rewinding crash point (withoutRecovery="
-                        + withoutRecovery + ") — if this fails, recovery is not doing demonstrable work for "
-                        + "the multi-partition lazy gap here",
-                fullCorrect
+        // THE INVARIANT (data before pointer), asserted BEFORE the row check below so a regression reports
+        // its CAUSE rather than its symptom. The crash left _txn at or below the durable epoch cut in both
+        // arms, so no reader can be shown a row -- or a partition directory -- whose data was never flushed.
+        for (PartitionRows arm : new PartitionRows[]{withRecovery, withoutRecovery}) {
+            Assert.assertTrue(
+                    "the crash must not leave _txn claiming past the durable epoch cut: the commit pointer "
+                            + "is lazily durable like the data it exposes (preRecoverySeqTxn="
+                            + arm.preRecoverySeqTxn + ", durable cut=" + LAZY_K + ")",
+                    arm.preRecoverySeqTxn >= 0 && arm.preRecoverySeqTxn <= LAZY_K
+            );
+        }
+
+        // And the consequence: the recovery-DISABLED arm is not merely "tolerable" here, it is correct --
+        // rows AND partition layout. Held to the same bar.
+        assertValidIdentityPrefix("withoutRecovery", withoutRecovery.rows);
+        Assert.assertEquals(
+                "recovery-disabled must land on the same partition layout as recovery-enabled",
+                withRecovery.days, withoutRecovery.days
         );
     }
 
@@ -333,6 +344,10 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     private static final class PartitionRows {
         final List<Long> rows;
         final Set<Integer> days;
+        /**
+         * The on-disk {@code _txn} seqTxn as the crash left it, sampled before any recovery ran.
+         */
+        long preRecoverySeqTxn = -1;
 
         PartitionRows(List<Long> rows, Set<Integer> days) {
             this.rows = rows;
@@ -356,6 +371,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
      */
     private PartitionRows runLazyGapCrashScenario(int k, boolean recoveryOn) throws Exception {
         final PartitionRows[] resultBox = new PartitionRows[1];
+        final long[] preRecoverySeqTxn = {-1};
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
@@ -401,6 +417,8 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                     engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
                 }
                 engine.getTxnScoreboardPool().remove(tt); // fresh-restart model (see the driver's javadoc)
+                // The commit pointer as the crash left it, BEFORE anything gets a chance to repair it.
+                preRecoverySeqTxn[0] = readOnDiskTxnSeqTxn(tt, PartitionBy.DAY);
                 if (recoveryOn) {
                     new RecoveryCoordinator(engine).recover();
                 }
@@ -410,6 +428,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                 final ReadResult rr = readVOrderedByVTracked(table);
                 final PartitionScan scan = readPartitionDays(table);
                 resultBox[0] = new PartitionRows(rr.rows, scan.torn ? new TreeSet<>() : scan.days);
+                resultBox[0].preRecoverySeqTxn = preRecoverySeqTxn[0];
 
                 // Leak-safe cleanup.
                 if (engine.getTableSequencerAPI().isSuspended(tt)) {

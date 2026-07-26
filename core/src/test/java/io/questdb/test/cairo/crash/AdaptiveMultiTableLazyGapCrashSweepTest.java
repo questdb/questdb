@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
@@ -222,20 +223,24 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
     private static final int REPRESENTATIVE_REWIND_CRASH_K = 50;
 
     /**
-     * NEGATIVE CONTROL: does {@code RecoveryCoordinator.recover()} (the {@code _txn}/{@code _cv}
-     * epoch-rewind + WAL roll-forward, run ONCE covering BOTH tables) do real work for a SIMULTANEOUS
-     * multi-table lazy gap, or is the outcome identical with recovery disabled? Both tables here are
-     * PLAIN in-place appends (no copy-on-write partition versioning, unlike O3's self-heal), so the
-     * a-priori expectation — mirroring W2's indexed-symbol finding — is that disabling recovery genuinely
-     * loses/wrongs the lazily-applied rows in AT LEAST ONE table.
+     * DATA BEFORE POINTER, for two tables crashing in the same lazy gap.
      *
-     * <p>Mirrors {@code AdaptiveIndexedSymbolLazyGapCrashSweepTest}'s tolerance model: the strict
-     * identity-prefix bar applies ONLY to the recovery-ENABLED arm (the supported/default configuration)
-     * for BOTH tables. The ONLY unacceptable outcome for the recovery-DISABLED arm is reproducing the
-     * FULL correct result in BOTH tables (which would mean recovery did not matter here for either one).
+     * <p>This was a negative control asserting that disabling {@code RecoveryCoordinator.recover()} could
+     * not reproduce the correct result in BOTH tables. It could not, until {@code _txn}/{@code _cv}/the
+     * index files stopped making their per-commit flush decision on the INSTANCE-GLOBAL {@code
+     * cairo.commit.mode} ({@code != NOSYNC}) and started using each table's EFFECTIVE mode. Under ADAPTIVE
+     * that eager msync published a commit pointer over column data that was still only lazily durable, and
+     * recovery's epoch rewind was what repaired it. With the pointer as lazy as the data it describes the
+     * torn-forward window is gone, and both arms land on the same correct result — at every crash point.
+     * See {@link AdaptiveIndexedSymbolLazyGapCrashSweepTest} for the measured single-variable A/B.
+     *
+     * <p>What is asserted instead is the invariant that replaced it, and that fails loudly if the gate ever
+     * regresses, now per table so a partial regression cannot hide behind its sibling: <b>after the crash
+     * and before any recovery, neither table's {@code _txn} may claim a seqTxn beyond its durable epoch
+     * cut.</b> Roll-forward's own value is proved by {@link AdaptiveRecoveryRollForwardCrashTest}.
      */
     @Test
-    public void testNegativeControlRecoveryDisabledLosesLazyRowsInAtLeastOneTable() throws Exception {
+    public void testCommitPointerNeverPublishedAheadOfDataInEitherTable() throws Exception {
         final TwoTableRows withRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, true);
         final TwoTableRows withoutRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, false);
 
@@ -270,16 +275,27 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
                 withoutRecovery.t2.size() <= withRecovery.t2.size()
         );
 
-        // THE FINDING: with plain in-place appends (unlike O3's copy-on-write self-heal), recovery should
-        // earn its keep for a simultaneous multi-table lazy gap — disabling it must NOT reproduce the full
-        // correct recovery-enabled result in BOTH tables at once.
-        final boolean fullCorrect = withoutRecovery.equals(withRecovery);
-        Assert.assertFalse(
-                "NEGATIVE CONTROL: recovery-disabled must NOT reproduce the FULL correct recovery-enabled "
-                        + "result in BOTH tables at a rewinding crash point (withoutRecovery: " + withoutRecovery
-                        + ") — if this fails, recovery is not doing demonstrable work here for either table",
-                fullCorrect
-        );
+        // THE INVARIANT (data before pointer), asserted per table and BEFORE the row checks below, so a
+        // regression reports its CAUSE rather than its symptom, and in WHICH table.
+        for (TwoTableRows arm : new TwoTableRows[]{withRecovery, withoutRecovery}) {
+            Assert.assertTrue(
+                    "t1: the crash must not leave _txn claiming past the durable epoch cut: the commit "
+                            + "pointer is lazily durable like the data it exposes (preRecoverySeqTxn="
+                            + arm.preRecoverySeqTxnT1 + ", durable cut=" + LAZY_K + ")",
+                    arm.preRecoverySeqTxnT1 >= 0 && arm.preRecoverySeqTxnT1 <= LAZY_K
+            );
+            Assert.assertTrue(
+                    "t2: the crash must not leave _txn claiming past the durable epoch cut: the commit "
+                            + "pointer is lazily durable like the data it exposes (preRecoverySeqTxn="
+                            + arm.preRecoverySeqTxnT2 + ", durable cut=" + LAZY_K + ")",
+                    arm.preRecoverySeqTxnT2 >= 0 && arm.preRecoverySeqTxnT2 <= LAZY_K
+            );
+        }
+
+        // And the consequence: the recovery-DISABLED arm is not merely "tolerable" here, it is correct in
+        // BOTH tables. Held to the same bar.
+        assertValidIdentityPrefix("t1 withoutRecovery", withoutRecovery.t1);
+        assertValidIdentityPrefix("t2 withoutRecovery", withoutRecovery.t2);
     }
 
     private void assertValidIdentityPrefix(String label, List<Long> rows) {
@@ -298,6 +314,11 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
     private static final class TwoTableRows {
         final List<Long> t1;
         final List<Long> t2;
+        /**
+         * Each table's on-disk {@code _txn} seqTxn as the crash left it, sampled before any recovery ran.
+         */
+        long preRecoverySeqTxnT1 = -1;
+        long preRecoverySeqTxnT2 = -1;
 
         TwoTableRows(List<Long> t1, List<Long> t2) {
             this.t1 = t1;
@@ -338,6 +359,7 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
      */
     private TwoTableRows runLazyGapCrashScenario(int k, boolean recoveryOn) throws Exception {
         final TwoTableRows[] resultBox = new TwoTableRows[1];
+        final long[] preRecoverySeqTxn = {-1, -1};
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
@@ -400,6 +422,9 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
                     }
                     engine.getTxnScoreboardPool().remove(tt); // fresh-restart model (see the driver's javadoc)
                 }
+                // The commit pointers as the crash left them, BEFORE anything can repair them.
+                preRecoverySeqTxn[0] = readOnDiskTxnSeqTxn(tt1, PartitionBy.DAY);
+                preRecoverySeqTxn[1] = readOnDiskTxnSeqTxn(tt2, PartitionBy.DAY);
                 if (recoveryOn) {
                     new RecoveryCoordinator(engine).recover();
                 }
@@ -408,6 +433,8 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
                 drainWalQueue();
 
                 resultBox[0] = new TwoTableRows(readVOrderedByVAllowTorn(t1), readVOrderedByVAllowTorn(t2));
+                resultBox[0].preRecoverySeqTxnT1 = preRecoverySeqTxn[0];
+                resultBox[0].preRecoverySeqTxnT2 = preRecoverySeqTxn[1];
 
                 // Leak-safe cleanup.
                 for (TableToken tt : new TableToken[]{tt1, tt2}) {

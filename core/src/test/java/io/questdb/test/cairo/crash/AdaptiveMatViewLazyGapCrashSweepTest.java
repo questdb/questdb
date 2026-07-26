@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewState;
@@ -168,13 +169,21 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
 
             // NON-VACUITY self-check: the sharp "no phantom in a VALID view" clause is the load-bearing
             // detector for the flagged bug, so it must actually FIRE — a GREEN sweep where the view came
-            // back INVALID at every point (phantom check always skipped) would be a hollow pass. Assert a
-            // meaningful number of crash points left the view VALID post-recovery and thus ran the phantom
-            // check against the recovered base.
+            // back INVALID at every point (phantom check always skipped) would be a hollow pass.
+            //
+            // An ABSOLUTE floor, not a fraction of sweptPoints, because the fraction was a knife edge.
+            // Gating commit pointers on the table's EFFECTIVE mode removed 15 per-apply msyncs (N 205 ->
+            // 190). The INVALID count did not move (100 in both nightly runs on record), so the whole loss
+            // came off the VALID side (100 -> 90) and the old `>= sweptPoints / 2` tipped over — a threshold
+            // failure that says nothing about whether the detector fired. 90 firings is emphatically
+            // meaningful; the floor below keeps ~3.5x headroom for ordinary op-count drift while still
+            // failing loudly if the view starts coming back INVALID nearly everywhere.
             Assert.assertTrue(
                     "the phantom check must run on a meaningful number of VALID post-recovery views (else the "
-                            + "GREEN sweep is vacuous); validViewPoints=" + workload.validViewPoints,
-                    workload.validViewPoints >= r.sweptPoints / 2
+                            + "GREEN sweep is vacuous); validViewPoints=" + workload.validViewPoints
+                            + ", invalidViewPoints=" + workload.invalidViewPoints
+                            + ", sweptPoints=" + r.sweptPoints,
+                    workload.validViewPoints >= 25
             );
 
             Assert.assertTrue("N must be > 0", r.n > 0);
@@ -208,8 +217,8 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * NEGATIVE CONTROL — GREEN arm: the full lazy gap (all M rows applied lazily) crashed and reopened WITH
-     * recovery enabled restores every base row AND leaves the mv exactly consistent with the restored base.
+     * The full lazy gap (all M rows applied lazily), crashed and reopened WITH recovery enabled: restores
+     * every base row AND leaves the mv exactly consistent with the restored base.
      */
     @Test
     public void testRollForwardRebuildsMatViewMutuallyConsistentAfterCrash() throws Exception {
@@ -217,14 +226,24 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * NEGATIVE CONTROL — RED arm: the identical crash with recovery DISABLED
-     * ({@code CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED=false}). The post-epoch base columns were never
-     * made durable, so the crash drops them; without the epoch rewind + WAL roll-forward the base is torn
-     * past the epoch and the mv cannot be reconciled to the full, correct, mutually-consistent result —
-     * proving adaptive recovery does real work for the mat-view schema, not just for plain tables.
+     * DATA BEFORE POINTER, for a base table and the mat-view reading through it.
+     *
+     * <p>This arm used to assert that the identical crash with recovery DISABLED could NOT be reconciled to
+     * the full, correct, mutually-consistent result. That was true while {@code _txn}/{@code _cv}/the index
+     * files made their per-commit flush decision on the INSTANCE-GLOBAL {@code cairo.commit.mode} ({@code
+     * != NOSYNC}): under ADAPTIVE the eager msync published a commit pointer over base columns that were
+     * still only lazily durable, so a crash left the base torn past its epoch and the mv aggregating rows
+     * that no longer existed. Gating those writes on the table's EFFECTIVE mode made the pointer as lazy as
+     * the data it describes, and the torn-forward window went with it. See {@link
+     * AdaptiveIndexedSymbolLazyGapCrashSweepTest} for the measured single-variable A/B.
+     *
+     * <p>Both arms are therefore held to the SAME bar now, and what distinguishes a healthy branch from a
+     * regressed one is the invariant in {@link #assertMatViewRollForward}: after the crash and before any
+     * recovery, the base's {@code _txn} must not claim a seqTxn beyond the durable epoch cut. Roll-forward's
+     * own value is proved by {@link AdaptiveRecoveryRollForwardCrashTest}.
      */
     @Test
-    public void testNegativeControlWithoutRecoveryBreaksMatViewConsistency() throws Exception {
+    public void testWithoutRecoveryMatViewStillReconcilesFromTheDurableWal() throws Exception {
         assertMatViewRollForward(false);
     }
 
@@ -462,6 +481,8 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 }
                 engine.getTxnScoreboardPool().remove(baseTt);
                 engine.getTxnScoreboardPool().remove(mvTt);
+                // The base's commit pointer as the crash left it, BEFORE anything can repair it.
+                final long preRecoveryBaseSeqTxn = readOnDiskTxnSeqTxn(baseTt, PartitionBy.DAY);
                 if (recoveryEnabled) {
                     new RecoveryCoordinator(engine).recover();
                 }
@@ -473,42 +494,36 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 engine.hydrateMatViewStateStore();
                 drainWalAndMatViewQueues();
 
-                if (recoveryEnabled) {
-                    if (viewInvalid(mvTt)) {
-                        execute("refresh materialized view mv full");
-                        drainWalAndMatViewQueues();
-                    }
-                    Assert.assertFalse("base must NOT be suspended after recovery",
-                            engine.getTableSequencerAPI().isSuspended(baseTt));
-                    Assert.assertFalse("mv must NOT be suspended after recovery",
-                            engine.getTableSequencerAPI().isSuspended(mvTt));
-                    Assert.assertFalse("mv must reconcile to VALID after recovery", viewInvalid(mvTt));
-                    Assert.assertEquals("recovery must rebuild ALL base rows from the WAL", ROWS, rowCount("base"));
-                    assertMvEqualsBaseAggregation(-1, "GREEN control after recovery");
-                } else {
-                    // Without recovery: the post-epoch base columns the crash dropped are never re-applied,
-                    // so the full, correct, mutually-consistent result must NOT come back. Acceptable
-                    // broken outcomes: a torn base read, a base short of ROWS, a suspended base/mv, an mv
-                    // stuck invalid, or an mv that cannot be made to equal the (torn) base aggregation.
-                    boolean fullCorrect;
-                    try {
-                        final boolean baseOk = !engine.getTableSequencerAPI().isSuspended(baseTt)
-                                && rowCount("base") == ROWS
-                                && isIdentityPrefix(readVOrderedByVAllowTorn())
-                                && readVOrderedByVAllowTorn().size() == ROWS;
-                        final boolean mvOk = !engine.getTableSequencerAPI().isSuspended(mvTt) && !viewInvalid(mvTt);
-                        final List<String> mvRows = readAggAllowTorn("select cast(ts as long) t, cnt from mv order by 1");
-                        final List<String> baseAgg = readAggAllowTorn("select cast(ts as long) t, count() cnt from base sample by 1h order by 1");
-                        fullCorrect = baseOk && mvOk && mvRows.equals(baseAgg) && mvRows.size() == ROWS;
-                    } catch (CairoException | CairoError | InternalError torn) {
-                        fullCorrect = false; // a loud torn read is a broken outcome — recovery did real work
-                    }
-                    Assert.assertFalse(
-                            "NEGATIVE CONTROL: without recovery the full correct mutually-consistent result "
-                                    + "must NOT come back (else recovery does no real work / columns not lazy)",
-                            fullCorrect
-                    );
+                final String arm = recoveryEnabled ? "recovery-enabled" : "recovery-disabled";
+
+                // THE INVARIANT (data before pointer), asserted first so a regression reports its CAUSE.
+                // The crash left the base's _txn at or below its durable epoch cut in BOTH arms, so no
+                // reader -- and no mv refresh reading through it -- can see a row whose column data was
+                // never flushed. Reverting the TxWriter/ColumnVersionWriter gate to the old global
+                // `!= NOSYNC` branch puts this seqTxn past the cut and the mv then aggregates rows the
+                // crash dropped.
+                Assert.assertTrue(
+                        arm + ": the crash must not leave the base _txn claiming past the durable epoch cut: "
+                                + "the commit pointer is lazily durable like the data it exposes "
+                                + "(preRecoveryBaseSeqTxn=" + preRecoveryBaseSeqTxn + ", durable cut=" + LAZY_K + ")",
+                        preRecoveryBaseSeqTxn >= 0 && preRecoveryBaseSeqTxn <= LAZY_K
+                );
+
+                // And the consequence, now held identically for BOTH arms: replaying the durable WAL lands
+                // on the full, mutually-consistent result whether or not the epoch rewind ran first.
+                if (viewInvalid(mvTt)) {
+                    execute("refresh materialized view mv full");
+                    drainWalAndMatViewQueues();
                 }
+                Assert.assertFalse(arm + ": base must NOT be suspended",
+                        engine.getTableSequencerAPI().isSuspended(baseTt));
+                Assert.assertFalse(arm + ": mv must NOT be suspended",
+                        engine.getTableSequencerAPI().isSuspended(mvTt));
+                Assert.assertFalse(arm + ": mv must reconcile to VALID", viewInvalid(mvTt));
+                Assert.assertEquals(arm + ": ALL base rows must be rebuilt from the WAL", ROWS, rowCount("base"));
+                Assert.assertTrue(arm + ": the rebuilt base must be a clean identity prefix",
+                        isIdentityPrefix(readVOrderedByVAllowTorn()));
+                assertMvEqualsBaseAggregation(-1, arm);
 
                 // Cleanup.
                 if (engine.getTableSequencerAPI().isSuspended(mvTt)) {
