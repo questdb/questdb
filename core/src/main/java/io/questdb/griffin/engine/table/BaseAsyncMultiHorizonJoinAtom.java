@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
@@ -118,8 +117,10 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
+            @NotNull ObjList<RecordSink> masterAsOfJoinMapOwnerSinks,
+            @NotNull ObjList<RecordSink> slaveAsOfJoinMapOwnerSinks,
+            @NotNull ObjList<ObjList<RecordSink>> masterAsOfJoinMapPerWorkerSinks,
+            @NotNull ObjList<ObjList<RecordSink>> slaveAsOfJoinMapPerWorkerSinks,
             int masterTimestampColumnIndex,
             long @NotNull [] offsets,
             int @NotNull [] columnSources,
@@ -165,30 +166,23 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             for (int s = 0; s < slaveCount; s++) {
                 perSlaveMasterTsScales[s] = slaveStates.getQuick(s).getMasterTsScale();
             }
-            this.ownerMasterAsOfJoinSinks = new ObjList<>(slaveCount);
-            this.ownerSlaveAsOfJoinSinks = new ObjList<>(slaveCount);
+            // Sinks are pre-built by SqlCodeGenerator (owner + one instance per worker per slave,
+            // since RecordSink instances have mutable state and must not be shared across workers).
+            // The incoming per-worker lists are slave-major (outer=slave, inner=worker); this atom's
+            // fields are worker-major (outer=worker, inner=slave), so transpose on adoption.
+            this.ownerMasterAsOfJoinSinks = masterAsOfJoinMapOwnerSinks;
+            this.ownerSlaveAsOfJoinSinks = slaveAsOfJoinMapOwnerSinks;
             this.perWorkerMasterAsOfJoinSinks = new ObjList<>(workerCount);
             this.perWorkerSlaveAsOfJoinSinks = new ObjList<>(workerCount);
             for (int w = 0; w < workerCount; w++) {
-                perWorkerMasterAsOfJoinSinks.add(new ObjList<>(slaveCount));
-                perWorkerSlaveAsOfJoinSinks.add(new ObjList<>(slaveCount));
-            }
-            for (int s = 0; s < slaveCount; s++) {
-                if (masterAsOfJoinMapSinkClasses[s] != null) {
-                    ownerMasterAsOfJoinSinks.add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                    ownerSlaveAsOfJoinSinks.add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                    for (int w = 0; w < workerCount; w++) {
-                        perWorkerMasterAsOfJoinSinks.getQuick(w).add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                        perWorkerSlaveAsOfJoinSinks.getQuick(w).add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                    }
-                } else {
-                    ownerMasterAsOfJoinSinks.add(null);
-                    ownerSlaveAsOfJoinSinks.add(null);
-                    for (int w = 0; w < workerCount; w++) {
-                        perWorkerMasterAsOfJoinSinks.getQuick(w).add(null);
-                        perWorkerSlaveAsOfJoinSinks.getQuick(w).add(null);
-                    }
+                final ObjList<RecordSink> masterForWorker = new ObjList<>(slaveCount);
+                final ObjList<RecordSink> slaveForWorker = new ObjList<>(slaveCount);
+                for (int s = 0; s < slaveCount; s++) {
+                    masterForWorker.add(masterAsOfJoinMapPerWorkerSinks.getQuick(s).getQuick(w));
+                    slaveForWorker.add(slaveAsOfJoinMapPerWorkerSinks.getQuick(s).getQuick(w));
                 }
+                perWorkerMasterAsOfJoinSinks.add(masterForWorker);
+                perWorkerSlaveAsOfJoinSinks.add(slaveForWorker);
             }
 
             // Create time frame cursors from slave factories - one per worker + owner per slave

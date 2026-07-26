@@ -85,8 +85,8 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
+            @NotNull ObjList<RecordSink> masterAsOfJoinMapSinks,
+            @NotNull ObjList<RecordSink> slaveAsOfJoinMapSinks,
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -102,13 +102,6 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             this.offsets = offsets;
             this.groupByFunctions = groupByFunctions;
             this.value = new SimpleMapValue(valueCount);
-
-            ObjList<RecordSink> masterAsOfJoinMapSinks = new ObjList<>(slaveStates.size());
-            ObjList<RecordSink> slaveAsOfJoinMapSinks = new ObjList<>(slaveStates.size());
-            for (int i = 0; i < slaveStates.size(); i++) {
-                masterAsOfJoinMapSinks.add(masterAsOfJoinMapSinkClasses[i] != null ? RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[i], null, null, null, null, null, null, null) : null);
-                slaveAsOfJoinMapSinks.add(slaveAsOfJoinMapSinkClasses[i] != null ? RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[i], null, null, null, null, null, null, null) : null);
-            }
 
             this.cursor = new MultiHorizonJoinNotKeyedRecordCursor(
                     configuration,

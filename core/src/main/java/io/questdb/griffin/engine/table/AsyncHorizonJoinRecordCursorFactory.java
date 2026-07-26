@@ -59,6 +59,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.jit.CompiledFilter;
+import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
@@ -110,6 +111,14 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
             @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Nullable RecordMetadata horizonJoinMasterMetadata,
+            @Nullable ListColumnFilter asOfMasterColumnFilter,
+            @Nullable ListColumnFilter asOfSlaveColumnFilter,
+            @Nullable BitSet asOfWriteSymbolAsString,
+            @Nullable BitSet asOfWriteStringAsVarcharA,
+            @Nullable BitSet asOfWriteStringAsVarcharB,
+            @Nullable BitSet writeTimestampAsNanosA,
+            @Nullable BitSet writeTimestampAsNanosB,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -152,6 +161,14 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     asOfJoinKeyTypes,
                     masterAsOfJoinMapSinkClass,
                     slaveAsOfJoinMapSinkClass,
+                    horizonJoinMasterMetadata,
+                    asOfMasterColumnFilter,
+                    asOfSlaveColumnFilter,
+                    asOfWriteSymbolAsString,
+                    asOfWriteStringAsVarcharA,
+                    asOfWriteStringAsVarcharB,
+                    writeTimestampAsNanosA,
+                    writeTimestampAsNanosB,
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,

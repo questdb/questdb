@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
@@ -37,6 +38,7 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -51,6 +53,7 @@ import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -120,6 +123,14 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
             @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Nullable RecordMetadata horizonJoinMasterMetadata,
+            @Nullable ListColumnFilter asOfMasterColumnFilter,
+            @Nullable ListColumnFilter asOfSlaveColumnFilter,
+            @Nullable BitSet asOfWriteSymbolAsString,
+            @Nullable BitSet asOfWriteStringAsVarcharA,
+            @Nullable BitSet asOfWriteStringAsVarcharB,
+            @Nullable BitSet writeTimestampAsNanosA,
+            @Nullable BitSet writeTimestampAsNanosB,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -158,15 +169,36 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                     0L, // owner memory pool budget (single-buffer effective behavior)
                     0L  // per-worker memory pool budget
             );
-            // Per-worker ASOF join map sinks (each worker needs its own sink for thread safety with DECIMAL types)
-            if (masterAsOfJoinMapSinkClass != null || slaveAsOfJoinMapSinkClass != null) {
-                this.ownerMasterAsOfJoinMapSink = RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClass, null, null, null, null, null, null, null);
-                this.ownerSlaveAsOfJoinMapSink = RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClass, null, null, null, null, null, null, null);
+            // Per-worker ASOF join map sinks (each worker needs its own sink for thread safety with
+            // DECIMAL types). masterAsOfJoinMapSinkClass/slaveAsOfJoinMapSinkClass may legitimately
+            // be null (bytecode generation fell back to signal "use LoopingRecordSink") --
+            // RecordSinkFactory.getInstance(Class, ...) already handles that correctly, building a
+            // working fallback sink with the widening/target-type info baked in via asOfJoinKeyTypes.
+            // The branch must be on "does this join have keys at all" (asOfJoinKeyTypes != null),
+            // not on "did class generation succeed for either side" -- otherwise a null class either
+            // silently drops the join key (both classes null) or crashes building a LoopingRecordSink
+            // from null metadata/columnFilter (exactly one class null, an inconsistent state that
+            // shouldn't occur, but the previous condition and args made both failure modes reachable).
+            if (asOfJoinKeyTypes != null) {
+                this.ownerMasterAsOfJoinMapSink = RecordSinkFactory.getInstance(
+                        masterAsOfJoinMapSinkClass, horizonJoinMasterMetadata, asOfMasterColumnFilter, null, null,
+                        asOfWriteSymbolAsString, asOfWriteStringAsVarcharB, writeTimestampAsNanosB, asOfJoinKeyTypes
+                );
+                this.ownerSlaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
+                        slaveAsOfJoinMapSinkClass, slaveFactory.getMetadata(), asOfSlaveColumnFilter, null, null,
+                        asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA, asOfJoinKeyTypes
+                );
                 this.perWorkerMasterAsOfJoinMapSinks = new ObjList<>(workerCount);
                 this.perWorkerSlaveAsOfJoinMapSinks = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClass, null, null, null, null, null, null, null));
-                    perWorkerSlaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClass, null, null, null, null, null, null, null));
+                    perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
+                            masterAsOfJoinMapSinkClass, horizonJoinMasterMetadata, asOfMasterColumnFilter, null, null,
+                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharB, writeTimestampAsNanosB, asOfJoinKeyTypes
+                    ));
+                    perWorkerSlaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
+                            slaveAsOfJoinMapSinkClass, slaveFactory.getMetadata(), asOfSlaveColumnFilter, null, null,
+                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA, asOfJoinKeyTypes
+                    ));
                 }
             } else {
                 this.ownerMasterAsOfJoinMapSink = null;

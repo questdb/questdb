@@ -25,10 +25,16 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -710,6 +716,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinIntDoubleKeyWidens() throws Exception {
+        // INT and DOUBLE are numerically widening-compatible (see
+        // ColumnType.commonNumericWideningType), so the ON clause implicitly widens the
+        // INT key to DOUBLE instead of throwing "join column type mismatch".
+        assertHorizonJoinWithTypedKey("INT", "DOUBLE", "1", "2");
+    }
+
+    @Test
     public void testHorizonJoinKeyedAdaptiveScanSwitch() throws Exception {
         // Tests that the adaptive backward-to-forward scan switch produces correct results.
         // Slave has a rare key ("RARE") that appears only once at the beginning.
@@ -900,6 +914,59 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             B\t0\t1\tnull
                             B\t5\t1\tnull
                             """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinKeyedMatchWithLoopingRecordSink() throws Exception {
+        // A keyed HORIZON JOIN's key-copier bytecode class can legitimately come back null
+        // (forced SINK_TYPE_LOOPING, forced-chunked failure, an oversized schema), which is
+        // supposed to fall back to LoopingRecordSink. The single-threaded call site
+        // (generateHorizonJoinFactory) doesn't call the fallback correctly -- it silently
+        // drops the join key and matches purely by nearest timestamp (wrong results, no
+        // error); the async/parallel call site (BaseAsyncHorizonJoinAtom) NPEs. This test
+        // forces SINK_TYPE_LOOPING and asserts the CORRECT keyed match in both the
+        // single-threaded and parallel execution plans.
+        //
+        // Table data is deliberately constructed so the keyed match and the (buggy) unkeyed
+        // nearest-timestamp match disagree: slave row 'B' at 4s is closer in time to the
+        // master row (5s) than the correct-key slave row 'A' at 1s, so a silently-unkeyed
+        // join would wrongly return 999 instead of 100.
+        assertMemoryLeak(() -> {
+            final CairoConfiguration loopingConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCopierType() {
+                    return RecordSinkFactory.SINK_TYPE_LOOPING;
+                }
+            };
+            try (
+                    CairoEngine loopingEngine = new CairoEngine(loopingConfig);
+                    SqlCompiler compiler = loopingEngine.getSqlCompiler();
+                    SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(loopingEngine)
+            ) {
+                execute(compiler, "create table master (ts timestamp, k symbol, mval int) timestamp(ts)", ctx);
+                execute(compiler, "create table slave (ts timestamp, k symbol, sval int) timestamp(ts)", ctx);
+                execute(compiler, "insert into master values ('2024-01-01T00:00:05.000000Z', 'A', 1)", ctx);
+                execute(
+                        compiler,
+                        "insert into slave values " +
+                                "('2024-01-01T00:00:01.000000Z', 'A', 100), " +
+                                "('2024-01-01T00:00:04.000000Z', 'B', 999)",
+                        ctx
+                );
+
+                final String sql = "select m.mval, s.sval from master m " +
+                        "horizon join slave s on (m.k = s.k) range from 0s to 0s step 1s as h";
+                final StringSink sink = new StringSink();
+
+                ctx.setParallelHorizonJoinEnabled(false);
+                TestUtils.printSql(compiler, ctx, sql, sink);
+                TestUtils.assertEquals("mval\tsval\n1\t100\n", sink);
+
+                ctx.setParallelHorizonJoinEnabled(true);
+                TestUtils.printSql(compiler, ctx, sql, sink);
+                TestUtils.assertEquals("mval\tsval\n1\t100\n", sink);
+            }
         });
     }
 
@@ -2138,20 +2205,17 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHorizonJoinTypeMismatchIntVsDouble() throws Exception {
-        assertHorizonJoinTypeMismatch("INT", "DOUBLE");
-    }
-
-    @Test
-    public void testHorizonJoinTypeMismatchIntVsDoubleWithFilter() throws Exception {
-        // Type mismatch after filter stealing — verifies no resource leak
+    public void testHorizonJoinTypeMismatchIntVsStringWithFilter() throws Exception {
+        // Type mismatch after filter stealing -- verifies no resource leak. INT and STRING are
+        // not numerically widening-compatible (unlike INT/DOUBLE, see
+        // testHorizonJoinIntDoubleKeyWidens), so this combination still must fail.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "CREATE TABLE orders (ts #TIMESTAMP, k INT, qty LONG) TIMESTAMP(ts)",
                     leftTableTimestampType.getTypeName()
             );
             executeWithRewriteTimestamp(
-                    "CREATE TABLE prices (ts #TIMESTAMP, k DOUBLE, price DOUBLE) TIMESTAMP(ts)",
+                    "CREATE TABLE prices (ts #TIMESTAMP, k STRING, price DOUBLE) TIMESTAMP(ts)",
                     rightTableTimestampType.getTypeName()
             );
 
@@ -5188,6 +5252,63 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             A\t3\t1.0\t10.0
                             RARE\t3\t100.0\t500.0
                             """);
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinKeyedMatchWithLoopingRecordSink() throws Exception {
+        // Multi-slave counterpart to testHorizonJoinKeyedMatchWithLoopingRecordSink -- exercises
+        // generateMultiHorizonJoinFactory's single-threaded path (MultiHorizonJoinRecordCursorFactory)
+        // and its async/parallel path (BaseAsyncMultiHorizonJoinAtom), both of which have the same
+        // null-sink-fallback gap as the single-slave paths when bytecode generation for the join
+        // key falls back to LoopingRecordSink. See that test's comment for the general bug
+        // description; this one additionally regression-tests the single-threaded multi-slave path,
+        // which was found (during the same investigation) to NPE rather than silently degrade.
+        assertMemoryLeak(() -> {
+            final CairoConfiguration loopingConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCopierType() {
+                    return RecordSinkFactory.SINK_TYPE_LOOPING;
+                }
+            };
+            try (
+                    CairoEngine loopingEngine = new CairoEngine(loopingConfig);
+                    SqlCompiler compiler = loopingEngine.getSqlCompiler();
+                    SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(loopingEngine)
+            ) {
+                execute(compiler, "create table master (ts timestamp, k symbol, mval int) timestamp(ts)", ctx);
+                execute(compiler, "create table slave1 (ts timestamp, k symbol, sval1 int) timestamp(ts)", ctx);
+                execute(compiler, "create table slave2 (ts timestamp, k symbol, sval2 int) timestamp(ts)", ctx);
+                execute(compiler, "insert into master values ('2024-01-01T00:00:05.000000Z', 'A', 1)", ctx);
+                execute(
+                        compiler,
+                        "insert into slave1 values " +
+                                "('2024-01-01T00:00:01.000000Z', 'A', 100), " +
+                                "('2024-01-01T00:00:04.000000Z', 'B', 999)",
+                        ctx
+                );
+                execute(
+                        compiler,
+                        "insert into slave2 values " +
+                                "('2024-01-01T00:00:01.000000Z', 'A', 200), " +
+                                "('2024-01-01T00:00:04.000000Z', 'B', 888)",
+                        ctx
+                );
+
+                final String sql = "select m.mval, s1.sval1, s2.sval2 from master m " +
+                        "horizon join slave1 s1 on (m.k = s1.k) " +
+                        "horizon join slave2 s2 on (m.k = s2.k) " +
+                        "list (0) as h";
+                final StringSink sink = new StringSink();
+
+                ctx.setParallelHorizonJoinEnabled(false);
+                TestUtils.printSql(compiler, ctx, sql, sink);
+                TestUtils.assertEquals("mval\tsval1\tsval2\n1\t100\t200\n", sink);
+
+                ctx.setParallelHorizonJoinEnabled(true);
+                TestUtils.printSql(compiler, ctx, sql, sink);
+                TestUtils.assertEquals("mval\tsval1\tsval2\n1\t100\t200\n", sink);
+            }
         });
     }
 

@@ -4192,10 +4192,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testJoinOnIntLongKeySanity() throws Exception {
         // Control test: identical shape to testJoinOnIntLongKey, but both join keys are LONG.
-        // This must pass today, unmodified, proving the query/table shape used by the other
-        // testJoinOnIntLongKey* tests is correct on its own -- isolating their failures purely to
-        // the type-mismatch check. Safe to delete once the #1679 fix lands and those tests are
-        // trusted to fail/pass for the right reason.
+        // Confirms the query/table shape used by the other testJoinOnIntLongKey* tests is
+        // correct on its own, isolating those tests' pass/fail purely to the type-widening
+        // behavior rather than an unrelated defect in the shared test shape.
         assertMemoryLeak(() -> {
             final String expected = """
                     key\tlong_val\tother_val
@@ -4266,6 +4265,30 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table double_tbl as (select x::double key, x*100.0 val from long_sequence(5))");
 
             assertQuery("select long_tbl.key, long_tbl.val long_val, double_tbl.val double_val from long_tbl join double_tbl on (key) order by long_tbl.key")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testJoinOnLongFloatKey() throws Exception {
+        // https://github.com/questdb/questdb/issues/1679
+        // LONG->FLOAT is the one integer-to-floating-point widening pair not already covered by
+        // testJoinOnLongDoubleKey or the INT/LONG-only tests above.
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    key\tlong_val\tfloat_val
+                    1\t10\t100.0
+                    2\t20\t200.0
+                    3\t30\t300.0
+                    4\t40\t400.0
+                    5\t50\t500.0
+                    """;
+
+            execute("create table long_tbl as (select x key, x*10 val from long_sequence(5))");
+            execute("create table float_tbl as (select x::float key, x*100.0f val from long_sequence(5))");
+
+            assertQuery("select long_tbl.key, long_tbl.val long_val, float_tbl.val float_val from long_tbl join float_tbl on (key) order by long_tbl.key")
                     .noLeakCheck()
                     .returns(expected);
         });

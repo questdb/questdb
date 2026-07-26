@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
@@ -2146,8 +2147,10 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         masterFactory,
                         slaveStates,
                         null,
-                        new Class[2],
-                        new Class[2],
+                        unkeyedSinks(2),
+                        unkeyedSinks(2),
+                        unkeyedPerWorkerSinks(2, 2),
+                        unkeyedPerWorkerSinks(2, 2),
                         new long[]{0},
                         0,
                         groupByFunctions,
@@ -2171,6 +2174,14 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         0,
                         groupByFunctions,
                         1,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
                         null,
                         null,
                         null,
@@ -2268,6 +2279,14 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     null,
                     null,
                     null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
                     1,
                     null,
                     null,
@@ -2340,8 +2359,10 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     masterFactory,
                     states,
                     null,
-                    new Class[3],
-                    new Class[3],
+                    unkeyedSinks(3),
+                    unkeyedSinks(3),
+                    unkeyedPerWorkerSinks(3, 2),
+                    unkeyedPerWorkerSinks(3, 2),
                     new long[]{0},
                     0,
                     groups,
@@ -2412,6 +2433,26 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
         metadata.setTimestampIndex(0);
         return metadata;
+    }
+
+    private static ObjList<ObjList<RecordSink>> unkeyedPerWorkerSinks(int slaveCount, int workerCount) {
+        final ObjList<ObjList<RecordSink>> perWorkerSinks = new ObjList<>();
+        for (int s = 0; s < slaveCount; s++) {
+            final ObjList<RecordSink> perWorker = new ObjList<>();
+            for (int w = 0; w < workerCount; w++) {
+                perWorker.add(null);
+            }
+            perWorkerSinks.add(perWorker);
+        }
+        return perWorkerSinks;
+    }
+
+    private static ObjList<RecordSink> unkeyedSinks(int slaveCount) {
+        final ObjList<RecordSink> sinks = new ObjList<>();
+        for (int s = 0; s < slaveCount; s++) {
+            sinks.add(null);
+        }
+        return sinks;
     }
 
     private static class CountingBooleanFunction extends BooleanFunction {

@@ -4675,6 +4675,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             BitSet asOfWriteStringAsVarcharB = null;
             int[] masterSymbolKeyColumnIndices = null;
             int[] slaveSymbolKeyColumnIndices = null;
+            // Snapshots of the reused listColumnFilterA/B and writeTimestampAsNanosA/B scratch
+            // fields, taken right after they're populated below and before
+            // compileWorkerFiltersConditionally() can reentrantly clobber them. Needed so the
+            // async atom (constructed further down, after that call) can build a correct
+            // LoopingRecordSink fallback if bytecode generation for the key sink returns null.
+            ListColumnFilter asyncMasterColumnFilter = null;
+            ListColumnFilter asyncSlaveColumnFilter = null;
+            BitSet asyncWriteTimestampAsNanosA = null;
+            BitSet asyncWriteTimestampAsNanosB = null;
 
             JoinContext asOfJoinContext = slaveModel.getJoinContext();
             if (asOfJoinContext != null && !asOfJoinContext.isEmpty()) {
@@ -4785,6 +4794,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         writeTimestampAsNanosA,
                         asOfJoinKeyTypes
                 );
+
+                // Snapshot before compileWorkerFiltersConditionally() (further below) can
+                // reentrantly clear/repopulate these shared scratch fields.
+                asyncMasterColumnFilter = listColumnFilterB.copy();
+                asyncSlaveColumnFilter = listColumnFilterA.copy();
+                asyncWriteTimestampAsNanosA = new BitSet(writeTimestampAsNanosA);
+                asyncWriteTimestampAsNanosB = new BitSet(writeTimestampAsNanosB);
             }
 
             if (!supportsParallelism) {
@@ -4794,10 +4810,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             .put("left-hand side of HORIZON JOIN can only be a table with an optional filter");
                 }
 
-                // Create sink instances from generated classes for single-threaded path
+                // Create sink instances for the single-threaded path. Note: masterAsOfJoinMapSinkClass
+                // may legitimately be null (bytecode generation fell back to signal "use
+                // LoopingRecordSink") -- RecordSinkFactory.getInstance(Class, ...) already handles
+                // that correctly, building a working fallback sink with the widening/target-type info
+                // baked in via asOfJoinKeyTypes. The branch must be on "does this join have keys at
+                // all" (asOfJoinKeyTypes != null), not on "did class generation succeed" -- otherwise
+                // a null class silently degrades this into an unkeyed, nearest-timestamp-only join.
                 final RecordSink masterAsOfJoinMapSink;
                 final RecordSink slaveAsOfJoinMapSink;
-                if (masterAsOfJoinMapSinkClass != null) {
+                if (asOfJoinKeyTypes != null) {
                     masterAsOfJoinMapSink = RecordSinkFactory.getInstance(
                             masterAsOfJoinMapSinkClass,
                             masterMetadata,
@@ -4805,7 +4827,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             null, null,
                             asOfWriteSymbolAsString,
                             asOfWriteStringAsVarcharB,
-                            writeTimestampAsNanosB
+                            writeTimestampAsNanosB,
+                            asOfJoinKeyTypes
                     );
                     slaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
                             slaveAsOfJoinMapSinkClass,
@@ -4815,7 +4838,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             null,
                             asOfWriteSymbolAsString,
                             asOfWriteStringAsVarcharA,
-                            writeTimestampAsNanosA
+                            writeTimestampAsNanosA,
+                            asOfJoinKeyTypes
                     );
                 } else {
                     masterAsOfJoinMapSink = null;
@@ -4939,6 +4963,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         asOfJoinKeyTypes,
                         masterAsOfJoinMapSinkClass,
                         slaveAsOfJoinMapSinkClass,
+                        masterMetadata,
+                        asyncMasterColumnFilter,
+                        asyncSlaveColumnFilter,
+                        asOfWriteSymbolAsString,
+                        asOfWriteStringAsVarcharA,
+                        asOfWriteStringAsVarcharB,
+                        asyncWriteTimestampAsNanosA,
+                        asyncWriteTimestampAsNanosB,
                         masterMetadata.getColumnCount(),
                         masterSymbolKeyColumnIndices,
                         slaveSymbolKeyColumnIndices,
@@ -4971,6 +5003,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     asOfJoinKeyTypes,
                     masterAsOfJoinMapSinkClass,
                     slaveAsOfJoinMapSinkClass,
+                    masterMetadata,
+                    asyncMasterColumnFilter,
+                    asyncSlaveColumnFilter,
+                    asOfWriteSymbolAsString,
+                    asOfWriteStringAsVarcharA,
+                    asOfWriteStringAsVarcharB,
+                    asyncWriteTimestampAsNanosA,
+                    asyncWriteTimestampAsNanosB,
                     masterMetadata.getColumnCount(),
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
@@ -7138,6 +7178,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Class<RecordSink>[] masterAsOfJoinMapSinkClasses = new Class[slaveCount];
             @SuppressWarnings("unchecked")
             Class<RecordSink>[] slaveAsOfJoinMapSinkClasses = new Class[slaveCount];
+            // Pre-built sinks for the single-threaded path only (built directly here, not from
+            // the classes above, so a null class -- bytecode generation fell back to signal "use
+            // LoopingRecordSink" -- still yields a correctly-widening working sink instead of
+            // silently dropping the join key or crashing). The async path still needs the Class
+            // objects above to build its own per-worker instances lazily -- see
+            // BaseAsyncMultiHorizonJoinAtom.
+            final ObjList<RecordSink> masterAsOfJoinMapSinksSt = new ObjList<>(slaveCount);
+            final ObjList<RecordSink> slaveAsOfJoinMapSinksSt = new ObjList<>(slaveCount);
+            // Same idea, pre-built for the async/parallel path: one "owner" instance per slave,
+            // plus workerCount independent instances per slave (each worker needs its own sink
+            // for thread safety with mutable-state types like DECIMAL). Built entirely upfront
+            // here (workerCount is already known) so BaseAsyncMultiHorizonJoinAtom never needs
+            // to see the classes/metadata/filters itself -- it just adopts finished sinks.
+            final ObjList<RecordSink> masterAsOfJoinMapOwnerSinksAsync = new ObjList<>(slaveCount);
+            final ObjList<RecordSink> slaveAsOfJoinMapOwnerSinksAsync = new ObjList<>(slaveCount);
+            final ObjList<ObjList<RecordSink>> masterAsOfJoinMapPerWorkerSinksAsync = new ObjList<>(slaveCount);
+            final ObjList<ObjList<RecordSink>> slaveAsOfJoinMapPerWorkerSinksAsync = new ObjList<>(slaveCount);
             for (int s = 0; s < slaveCount; s++) {
                 RecordMetadata slaveMeta = slaveMetadatas[s];
                 IQueryModel slaveModel = slaveModels.getQuick(s);
@@ -7246,6 +7303,55 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA,
                             asOfJoinKeyTypes
                     );
+                    masterAsOfJoinMapSinksSt.add(RecordSinkFactory.getInstance(
+                            masterAsOfJoinMapSinkClasses[s], masterMetadata, listColumnFilterB, null, null,
+                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharB, writeTimestampAsNanosB,
+                            asOfJoinKeyTypes
+                    ));
+                    slaveAsOfJoinMapSinksSt.add(RecordSinkFactory.getInstance(
+                            slaveAsOfJoinMapSinkClasses[s], slaveMeta, listColumnFilterA, null, null,
+                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA,
+                            asOfJoinKeyTypes
+                    ));
+                    masterAsOfJoinMapOwnerSinksAsync.add(RecordSinkFactory.getInstance(
+                            masterAsOfJoinMapSinkClasses[s], masterMetadata, listColumnFilterB, null, null,
+                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharB, writeTimestampAsNanosB,
+                            asOfJoinKeyTypes
+                    ));
+                    slaveAsOfJoinMapOwnerSinksAsync.add(RecordSinkFactory.getInstance(
+                            slaveAsOfJoinMapSinkClasses[s], slaveMeta, listColumnFilterA, null, null,
+                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA,
+                            asOfJoinKeyTypes
+                    ));
+                    final ObjList<RecordSink> masterPerWorkerForSlave = new ObjList<>(workerCount);
+                    final ObjList<RecordSink> slavePerWorkerForSlave = new ObjList<>(workerCount);
+                    for (int w = 0; w < workerCount; w++) {
+                        masterPerWorkerForSlave.add(RecordSinkFactory.getInstance(
+                                masterAsOfJoinMapSinkClasses[s], masterMetadata, listColumnFilterB, null, null,
+                                asOfWriteSymbolAsString, asOfWriteStringAsVarcharB, writeTimestampAsNanosB,
+                                asOfJoinKeyTypes
+                        ));
+                        slavePerWorkerForSlave.add(RecordSinkFactory.getInstance(
+                                slaveAsOfJoinMapSinkClasses[s], slaveMeta, listColumnFilterA, null, null,
+                                asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA,
+                                asOfJoinKeyTypes
+                        ));
+                    }
+                    masterAsOfJoinMapPerWorkerSinksAsync.add(masterPerWorkerForSlave);
+                    slaveAsOfJoinMapPerWorkerSinksAsync.add(slavePerWorkerForSlave);
+                } else {
+                    masterAsOfJoinMapSinksSt.add(null);
+                    slaveAsOfJoinMapSinksSt.add(null);
+                    masterAsOfJoinMapOwnerSinksAsync.add(null);
+                    slaveAsOfJoinMapOwnerSinksAsync.add(null);
+                    final ObjList<RecordSink> masterNullPerWorker = new ObjList<>(workerCount);
+                    final ObjList<RecordSink> slaveNullPerWorker = new ObjList<>(workerCount);
+                    for (int w = 0; w < workerCount; w++) {
+                        masterNullPerWorker.add(null);
+                        slaveNullPerWorker.add(null);
+                    }
+                    masterAsOfJoinMapPerWorkerSinksAsync.add(masterNullPerWorker);
+                    slaveAsOfJoinMapPerWorkerSinksAsync.add(slaveNullPerWorker);
                 }
                 perSlaveAsOfJoinKeyTypes[s] = asOfJoinKeyTypes;
 
@@ -7290,8 +7396,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             innerMetadata0,
                             masterFactory,
                             slaveStates0,
-                            masterAsOfJoinMapSinkClasses,
-                            slaveAsOfJoinMapSinkClasses,
+                            masterAsOfJoinMapSinksSt,
+                            slaveAsOfJoinMapSinksSt,
                             offsets,
                             masterTimestampColumnIndex,
                             groupByFunctions0,
@@ -7309,8 +7415,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         innerMetadata0,
                         masterFactory,
                         slaveStates0,
-                        masterAsOfJoinMapSinkClasses,
-                        slaveAsOfJoinMapSinkClasses,
+                        masterAsOfJoinMapSinksSt,
+                        slaveAsOfJoinMapSinksSt,
                         offsets,
                         masterTimestampColumnIndex,
                         groupByFunctions0,
@@ -7375,8 +7481,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterFactory,
                         slaveStates0,
                         perSlaveAsOfJoinKeyTypes,
-                        masterAsOfJoinMapSinkClasses,
-                        slaveAsOfJoinMapSinkClasses,
+                        masterAsOfJoinMapOwnerSinksAsync,
+                        slaveAsOfJoinMapOwnerSinksAsync,
+                        masterAsOfJoinMapPerWorkerSinksAsync,
+                        slaveAsOfJoinMapPerWorkerSinksAsync,
                         offsets,
                         masterTimestampColumnIndex,
                         groupByFunctions0,
@@ -7442,8 +7550,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterFactory,
                     slaveStates0,
                     perSlaveAsOfJoinKeyTypes,
-                    masterAsOfJoinMapSinkClasses,
-                    slaveAsOfJoinMapSinkClasses,
+                    masterAsOfJoinMapOwnerSinksAsync,
+                    slaveAsOfJoinMapOwnerSinksAsync,
+                    masterAsOfJoinMapPerWorkerSinksAsync,
+                    slaveAsOfJoinMapPerWorkerSinksAsync,
                     offsets,
                     masterTimestampColumnIndex,
                     groupByFunctions0,

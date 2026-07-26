@@ -89,8 +89,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
+            @NotNull ObjList<RecordSink> masterAsOfJoinMapSinks,
+            @NotNull ObjList<RecordSink> slaveAsOfJoinMapSinks,
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -110,13 +110,6 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             this.slaveStates = slaveStates;
             this.offsets = offsets;
             this.recordFunctions = recordFunctions;
-
-            ObjList<RecordSink> masterAsOfJoinMapSinks = new ObjList<>(slaveStates.size());
-            ObjList<RecordSink> slaveAsOfJoinMapSinks = new ObjList<>(slaveStates.size());
-            for (int i = 0; i < slaveStates.size(); i++) {
-                masterAsOfJoinMapSinks.add(masterAsOfJoinMapSinkClasses[i] != null ? RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[i], null, null, null, null, null, null, null) : null);
-                slaveAsOfJoinMapSinks.add(slaveAsOfJoinMapSinkClasses[i] != null ? RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[i], null, null, null, null, null, null, null) : null);
-            }
 
             this.cursor = new MultiHorizonJoinRecordCursor(
                     configuration,
@@ -463,6 +456,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
                     long matchRowId;
                     if (ss.isKeyed()) {
+                        assert masterAsOfJoinMapSinks.getQuick(s) != null && slaveAsOfJoinMapSinks.getQuick(s) != null
+                                : "keyed HORIZON JOIN slave with a null key sink -- SqlCodeGenerator must always build a real (possibly LoopingRecordSink-backed) sink when a slave has join keys";
                         Record masterKeyRecord = masterRecord;
                         if (symbolTranslatingRecords.getQuick(s) != null) {
                             symbolTranslatingRecords.getQuick(s).of(masterRecord);
