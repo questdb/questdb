@@ -885,6 +885,52 @@ public class TxReader implements Closeable, Mutable {
         return stored == computed;
     }
 
+    /**
+     * Diagnosis for a reader that has already given up: is the version-selected (live) A/B area of {@code _txn}
+     * torn? True when that area fails its internal txn guard or its body checksum <i>under a version that does
+     * not move across the check</i> — the same standard {@link #unsafeLoadAll()} uses to tell genuine tearing
+     * from a concurrent commit. A moving version means contention, and this returns false.
+     * <p>
+     * A torn live area is not a dead end for {@code unsafeLoadAll()}: it falls back to the intact previous area
+     * and returns that. But the previous area carries the previous txn, which a live scoreboard refuses, so the
+     * caller's retry loop cannot make progress and times out looking like contention. Callers use this on their
+     * deadline path to name the corruption instead.
+     * <p>
+     * Reads only; touches none of the load state, so a caller may use it on an in-use reader. Costs nothing on
+     * the healthy path — it is never called from one.
+     */
+    public boolean unsafeIsLiveAreaTorn() {
+        final long selectedVersion = unsafeReadVersion();
+        Unsafe.loadFence();
+
+        final boolean isA = (selectedVersion & 1) == 0;
+        final long areaBaseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
+        final int areaSymbolsSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+        final int areaPartitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+        final long areaSize = calculateTxRecordSize(areaSymbolsSize, areaPartitionSegmentSize);
+
+        final boolean intact;
+        if (areaBaseOffset < TX_BASE_HEADER_SIZE || areaBaseOffset + areaSize > roTxMemBase.size()) {
+            // The header's own geometry does not fit the file: torn, and not something to read further.
+            intact = false;
+        } else if (roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_TXN_64) != selectedVersion) {
+            intact = false;
+        } else {
+            final long stored = roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_64);
+            // 0 is the "absent" sentinel (old-format or freshly-reset record) and is not evidence of tearing.
+            intact = stored == 0 || stored == calculateTxnBodyChecksum(
+                    roTxMemBase.addressOf(areaBaseOffset),
+                    areaSize,
+                    getPartitionTableSizeOffset(areaSymbolsSize / Long.BYTES)
+            );
+        }
+
+        Unsafe.loadFence();
+        // Only a mismatch under a STABLE version is tearing; if the version moved, a writer was mid-commit
+        // and the caller was simply unlucky. Never report corruption on the strength of a raced sample.
+        return !intact && selectedVersion == unsafeReadVersion();
+    }
+
     public boolean unsafeLoadBaseOffset() {
         version = unsafeReadVersion();
         Unsafe.loadFence();

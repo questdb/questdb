@@ -1649,6 +1649,17 @@ public class TableReader implements Closeable, SymbolTableSource {
             // We must discard and try again
             count++;
             if (clock.getTicks() > deadline) {
+                // A reader that cannot advance is normally contention. It is not when the live _txn area is
+                // torn: TxReader detects the bad checksum and correctly falls back to the intact previous
+                // A/B area, but that area carries the previous txn, which a live scoreboard refuses — so
+                // this loop spins out. Reporting a timeout then sends an operator hunting for reader
+                // contention when what they have is a corrupt _txn. Name it. Diagnosis runs only here, on
+                // a read that has already failed, so the healthy path pays nothing.
+                if (txFile.unsafeIsLiveAreaTorn()) {
+                    throw CairoException.critical(0)
+                            .put("_txn live area is torn, reader cannot advance past the previous transaction [src=reader, table=")
+                            .put(tableToken).put(", txn=").put(txFile.getTxn()).put(']');
+                }
                 throw CairoException.critical(0).put("Transaction read timeout [src=reader, table=").put(tableToken).put(", timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
             }
             Os.pause();

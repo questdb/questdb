@@ -209,6 +209,14 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
             // We must discard and try again
             count++;
             if (clock.getTicks() > deadline) {
+                // Same diagnosis as TableReader.readTxnSlow: a torn live _txn area leaves this loop spinning
+                // on the intact-but-older fallback record, which from here is indistinguishable from
+                // contention. Name the corruption rather than blaming the load.
+                if (txFile.unsafeIsLiveAreaTorn()) {
+                    throw CairoException.critical(0)
+                            .put("_txn live area is torn, metadata reader cannot advance past the previous transaction [src=metadata, table=")
+                            .put(getTableToken()).put(", txn=").put(txFile.getTxn()).put(']');
+                }
                 throw CairoException.critical(0).put("Transaction read timeout [src=metadata, timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
             }
             Os.pause();
