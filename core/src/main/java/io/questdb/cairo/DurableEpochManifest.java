@@ -21,6 +21,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 /** Binds the metadata, transaction, and column-version epoch payloads to one table and marker generation. */
 public final class DurableEpochManifest {
@@ -43,7 +44,27 @@ public final class DurableEpochManifest {
             int partitionBy,
             long nowMs
     ) {
-        publishBaseline(configuration, tableToken, timestampType, partitionBy, nowMs, true);
+        publishBaseline(configuration, tableToken, null, timestampType, partitionBy, nowMs, true);
+    }
+
+    /**
+     * {@link #publishInitial} for a table that is not at its final path yet: publishes the generation-zero
+     * baseline into {@code tableDirPath} — an {@code ALTER TABLE ... REBASE WAL} staging clone. The clone is a
+     * NEW table (its {@code _txn}/{@code _meta} are reset), so it needs its OWN anchor; publishing it into the
+     * staging dir means the atomic rename carries a table whose durable epoch is self-consistent from the
+     * first instant it is visible. Publishing after the rename instead would leave a window in which a boot
+     * can find, and adopt, a dir whose anchors it cannot validate — and an adaptive table with no trustworthy
+     * generation aborts startup rather than falling back to unverified live state.
+     */
+    public static void publishInitialAt(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            Path tableDirPath,
+            int timestampType,
+            int partitionBy,
+            long nowMs
+    ) {
+        publishBaseline(configuration, tableToken, tableDirPath, timestampType, partitionBy, nowMs, true);
     }
 
     public static void publishCheckpointRestored(
@@ -53,12 +74,13 @@ public final class DurableEpochManifest {
             int partitionBy,
             long nowMs
     ) {
-        publishBaseline(configuration, tableToken, timestampType, partitionBy, nowMs, false);
+        publishBaseline(configuration, tableToken, null, timestampType, partitionBy, nowMs, false);
     }
 
     private static void publishBaseline(
             CairoConfiguration configuration,
             TableToken tableToken,
+            @Nullable Path tableDirPath,
             int timestampType,
             int partitionBy,
             long nowMs,
@@ -66,7 +88,12 @@ public final class DurableEpochManifest {
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path tablePath = new Path(); Path src = new Path(); Path dst = new Path()) {
-            tablePath.of(configuration.getDbRoot()).concat(tableToken);
+            // A staging clone publishes into its own (not yet renamed) dir; everything else into the live one.
+            if (tableDirPath != null) {
+                tablePath.of(tableDirPath);
+            } else {
+                tablePath.of(configuration.getDbRoot()).concat(tableToken);
+            }
             final int rootLen = tablePath.size();
             fsyncFile(configuration, tablePath, rootLen, TableUtils.META_FILE_NAME);
             fsyncFile(configuration, tablePath, rootLen, TableUtils.COLUMN_VERSION_FILE_NAME);
@@ -213,15 +240,18 @@ public final class DurableEpochManifest {
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path payload = new Path()) {
-            payload.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME)
+            // Payloads live beside the manifest, so address them through the CALLER's table dir rather than
+            // re-deriving dbRoot/<token>: a REBASE WAL staging clone publishes its baseline before the rename
+            // that puts it at that final path. Identical for every live-table caller.
+            payload.of(tablePath).trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME)
                     .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
             final long txnSize = ff.length(payload.$());
             final long txnChecksum = checksum(ff, payload, txnSize);
-            payload.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.COLUMN_VERSION_FILE_NAME)
+            payload.of(tablePath).trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME)
                     .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
             final long cvSize = ff.length(payload.$());
             final long cvChecksum = checksum(ff, payload, cvSize);
-            payload.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME)
+            payload.of(tablePath).trimTo(rootLen).concat(TableUtils.META_FILE_NAME)
                     .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
             final long metaSize = ff.length(payload.$());
             final long metaChecksum = checksum(ff, payload, metaSize);

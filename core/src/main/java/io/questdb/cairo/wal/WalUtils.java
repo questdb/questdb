@@ -26,7 +26,9 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetadata;
@@ -204,6 +206,9 @@ public class WalUtils {
         // Reset _txn (seqTxn=0, lag, structure version=0) and _meta (new tableId, metadataVersion=0) in
         // the staging dir - exactly as WAL conversion does (TableConverter) - then create the sequencer
         // files so the rename carries a complete table into place.
+        final int effectiveCommitMode;
+        final int timestampType;
+        final int partitionBy;
         try (
                 TxWriter txWriter = new TxWriter(ff, configuration);
                 MemoryMARW metaMem = Vm.getCMARWInstance()
@@ -222,9 +227,33 @@ public class WalUtils {
             try (TableWriterMetadata metadata = new TableWriterMetadata(newToken)) {
                 metadata.reload(dstDir.trimTo(dstLen), metaMem);
                 TableSequencerImpl.createSequencerFiles(configuration, walDirectoryPolicy, dstDir.trimTo(dstLen), metadata, newToken, newTableId);
+                effectiveCommitMode = CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode());
+                timestampType = metadata.getTimestampIndex() < 0
+                        ? ColumnType.TIMESTAMP
+                        : metadata.getColumnType(metadata.getTimestampIndex());
+                partitionBy = metadata.getPartitionBy();
             }
         }
         dstDir.trimTo(dstLen);
+
+        // The clone is a NEW table - its _txn/_meta were just reset - so it needs its OWN adaptive epoch
+        // anchor; the source's was excluded from the copy (see isRebaseClonedRootFile) because it binds to
+        // metadata this table no longer has. Publish generation zero HERE, in the staging dir, so the atomic
+        // rename below carries a table that is self-consistent from the first instant it is visible: a boot
+        // that finds the published dir - as the live table after the registry swap, or as a crash-orphan the
+        // root-directory scan adopts - can always validate its epoch instead of refusing to start. Uses the
+        // NEW table's effective mode, not the global one, so a table-level override decides.
+        if (effectiveCommitMode == CommitMode.ADAPTIVE) {
+            DurableEpochManifest.publishInitialAt(
+                    configuration,
+                    newToken,
+                    dstDir.trimTo(dstLen),
+                    timestampType,
+                    partitionBy,
+                    configuration.getMicrosecondClock().getTicks() / 1000L
+            );
+            dstDir.trimTo(dstLen);
+        }
 
         // Mark the new table rebased while it is still invisible in the staging dir, so the permanent
         // _rebase_new marker is in place before the rename makes the table observable to the uploader.
@@ -238,11 +267,14 @@ public class WalUtils {
 
         // ADAPTIVE: durably publish the staging table. ff.copy / MemoryMARW.close's munmap / createSequencerFiles
         // all leave the freshly built _meta/_txn/sequencer file contents in the page cache only, and the caller's
-        // atomic rename makes only the directory entry durable, not the contents. Recursively MS_SYNC + fdatasync
+        // atomic rename makes NEITHER those contents NOR the published dentry durable -- the dentry needs an
+        // fsync of the DESTINATION parent, which the caller issues right after the rename. Recursively MS_SYNC + fdatasync
         // every file so a power loss cannot publish a table with a size-0 _meta (which recovery would suspend on).
         // Sync-BEFORE-rename is required: startup adopts the new dir by its presence at the final path, so it must
-        // already be durable when the rename makes it adoptable.
-        if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+        // already be durable when the rename makes it adoptable. Gated on the NEW table's EFFECTIVE mode, the same
+        // one that decided the epoch baseline above: an adaptive table on a nosync instance would otherwise publish
+        // a baseline that a crash can lose, which is the state recovery refuses to start on.
+        if (effectiveCommitMode == CommitMode.ADAPTIVE) {
             dstDir.trimTo(dstLen);
             syncStagingTreeDurable(ff, dstDir, configuration.getWriterFileOpenOpts());
             dstDir.trimTo(dstLen);
@@ -534,13 +566,21 @@ public class WalUtils {
         }
     }
 
-    // Whether a top-level file should be COPIED into a rebase clone (everything except transient markers).
+    // Whether a top-level file should be COPIED into a rebase clone (everything except transient markers and
+    // the SOURCE table's adaptive epoch anchors). The anchors are deliberately excluded: the clone resets
+    // _txn/_meta to a brand-new table, so every copied .epoch payload/manifest would be bound to metadata this
+    // table no longer has and could never validate - leaving a published dir that recovery reads as "no
+    // trustworthy adaptive epoch generation" and refuses to start on. The clone publishes its OWN
+    // generation-zero baseline instead (see cloneTableDirForRebase).
     private static boolean isRebaseClonedRootFile(CharSequence name) {
         if (Chars.equals(name, TableUtils.TODO_FILE_NAME)
                 || Chars.equals(name, CONVERT_FILE_NAME)
                 || Chars.equals(name, REBASE_NEW_FILE_NAME)
                 || Chars.equals(name, REBASE_SOURCE_FILE_NAME)
-                || Chars.equals(name, TableUtils.TXN_SCOREBOARD_FILE_NAME)) {
+                || Chars.equals(name, TableUtils.TXN_SCOREBOARD_FILE_NAME)
+                || Chars.equals(name, TableUtils.SNAPSHOT_FILE_NAME)
+                || Chars.startsWith(name, DurableEpochManifest.FILE_NAME)
+                || Chars.contains(name, TableUtils.EPOCH_COPY_SUFFIX)) {
             return false;
         }
         return !Chars.endsWith(name, WAL_PENDING_FS_MARKER);

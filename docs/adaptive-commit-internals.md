@@ -330,7 +330,12 @@ sizes and checksums → mandatory table-directory fsync → publish `_snapshot` 
 `storeFence` + version bump + `msync` + `ff.fsync`. Adaptive WAL-table creation publishes a
 fully validated generation-0 baseline before sequencer/name registration, including a second
 directory fsync after creating `_snapshot`, so recovery always has a proven replay floor even before
-the first periodic epoch.
+the first periodic epoch. `ALTER TABLE … REBASE WAL` does the same for its clone, and does it in the
+**staging** dir: the clone resets `_txn`/`_meta` to a brand-new table, so the source's `.epoch`
+payloads/manifests are excluded from the copy (they bind to metadata the clone no longer has) and a
+fresh generation-0 baseline is published before the atomic rename. The published dir is therefore
+self-consistent from the first instant it is visible — as the live table after the registry swap, or
+as a crash-orphan the startup root-directory scan adopts.
 
 > **Note on cost:** the epoch's dominant cost is the `syncfs` — whole‑filesystem, so its
 > latency scales with *system‑wide* dirty pages, not just this table's. On busy shared
@@ -427,6 +432,13 @@ epoch forces all of them (`TxWriter.fsync`, `ColumnVersionWriter.fsync`, and an 
    `.fsync()` method names.
 5. **The sequencer default is V2** (`_txn_parts/`). V1 (`_txnlog.meta.i/.d`) still exists;
    check the instance's format before reading diagrams that show record files.
+6. **A rename does not publish a dentry** — `ALTER TABLE … REBASE WAL` moves its staging clone into
+   the db root and then makes the registry swap durable (`logSwapTable` syncs `tables.d`
+   unconditionally, in *every* commit mode). On POSIX the new directory entry survives a power loss
+   only after its **parent** is fsynced, so `rebaseWalTable0` fsyncs the db root between the two:
+   otherwise a crash in that window leaves a durable registry entry naming a directory that is gone —
+   the table vanishes (the pre-rebase dir survives unregistered) and an adaptive boot aborts on the
+   unreadable `_meta`. Proved by `RebaseWalPublishDurabilityCrashTest`.
 
 ---
 
