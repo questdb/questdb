@@ -167,6 +167,31 @@ still pays per-commit private-file `fdatasync`; it must not be expected to appro
 workload- and filesystem-dependent. Prior measurements taken before this safe fallback
 are not representative and are intentionally omitted.
 
+Measured **after** the safe fallback, on one desktop NVMe: 20 000 single-row commits, one
+writer, 6-column table (`WalWriterTest#apply1RowCommits1Writer` with the row count reduced so
+every arm finishes inside the test timeout):
+
+| mode | `W` | duration | vs `nosync` |
+|---|---|---|---|
+| `nosync` | – | 0.4 s | 1× |
+| `sync` | – | 34.7 s | 84× |
+| `adaptive` | 0 | 48.8 s | 118× |
+| `adaptive` | 50 ms | 31.7 s | 76× |
+
+Read it this way:
+
+- `W` earns its keep: 48.8 s → 31.7 s, a **1.54×** win, and `adaptive` at `W`=50 ms lands
+  slightly under `sync` while giving a strictly stronger guarantee.
+- What costs ~2 orders of magnitude is **durability itself, not `adaptive`** — `sync` pays it
+  too. Since `adaptive` is now the default, a small-commit workload that used to run at `nosync`
+  speed feels this unless it batches rows or opts out per table (`WITH commit_mode='nosync'`).
+- **Batch your rows.** The cost is per commit, so it amortises as rows-per-commit grows. One row
+  per commit is the pathological floor, not typical ingestion.
+
+At the full 1 000 000 commits this test uses by default, `sync` and `adaptive` both exceed the
+20-minute test timeout on that machine while `nosync` finishes in 4.7 s — worth knowing before
+attributing such a timeout to a hang.
+
 Gains **saturate**: a larger `W` eventually buys little more throughput while imposing
 a strictly larger RPO. Bigger is not better past the knee.
 
