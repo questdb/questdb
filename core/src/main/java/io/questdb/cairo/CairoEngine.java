@@ -2750,22 +2750,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    /**
-     * fsync the db root DIRECTORY so dentries created in it (a table dir renamed into place) are durable.
-     * A directory fsync is the only way to persist a new dentry on POSIX; fsyncing the file contents inside
-     * it does not. Fail-stop: an unopenable directory or a failed fsync propagates
-     * ({@link TableUtils#openRONoCache} and {@link FilesFacade#fsyncAndClose} both throw), because a silently
-     * skipped barrier is indistinguishable from one that never existed. Skipped on a restricted (Windows)
-     * file system, which cannot open a directory for fsync - mirroring
-     * {@link TableUtils#createTableOrMatViewFiles} and {@code WalUtils.syncStagingTreeDurable}.
-     */
-    private void fsyncDbRoot(FilesFacade ff, Path dbRootDir) {
-        if (ff.isRestrictedFileSystem()) {
-            return;
-        }
-        ff.fsyncAndClose(TableUtils.openRONoCache(ff, dbRootDir.$(), LOG));
-    }
-
     private @NotNull ViewMetadata getViewMetadata(TableToken tableToken) {
         final ViewState state = viewStateStore.getViewState(tableToken);
         if (state == null) {
@@ -3080,7 +3064,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 // that swap; it is unconditional because the swap's own durability is, and it costs one
                 // directory fsync on an admin-only path. A crash BEFORE it still leaves the old table live,
                 // with the new dir as the accepted (dir-only) duplicate-name orphan.
-                fsyncDbRoot(ff, dst.of(root));
+                TableUtils.fsyncDirDurable(ff, dst.of(root).$());
 
                 // Commit the swap in the registry as ONE crash-atomic durable step: drop the old table and
                 // register the rebuilt dir together (a single tables.d sync via logSwapTable), so a power

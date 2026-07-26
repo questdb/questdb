@@ -426,8 +426,9 @@ epoch forces all of them (`TxWriter.fsync`, `ColumnVersionWriter.fsync`, and an 
 2. **`_snapshot` name is reused** for two unrelated files: the table‑dir epoch marker
    (A/B + CRC binary, `SnapshotMarker`) vs the legacy checkpoint meta (checkpoint dir,
    different format). The epoch marker is the table‑dir one.
-3. **`SnapshotMarker` javadoc prose is out of date** — trust the *constants*
-   (`SLOT_SIZE=48`, `FILE_SIZE=104`), not the prose.
+3. **`SnapshotMarker` prose and constants now agree** (`SLOT_BODY_SIZE=32`, `SLOT_TRAILER_SIZE=16`,
+   `SLOT_SIZE=48`, `OFFSET_SLOT_B=56`, `FILE_SIZE=104`). The layout is A/B slots with a
+   MAGIC + xxh3 trailer per slot; if you touch either, keep both in step.
 4. **Epoch `_cv`/`_txn` durability is real `ff.fsync`**, not just `msync`, despite the
    `.fsync()` method names.
 5. **The sequencer default is V2** (`_txn_parts/`). V1 (`_txnlog.meta.i/.d`) still exists;
@@ -439,6 +440,11 @@ epoch forces all of them (`TxWriter.fsync`, `ColumnVersionWriter.fsync`, and an 
    otherwise a crash in that window leaves a durable registry entry naming a directory that is gone —
    the table vanishes (the pre-rebase dir survives unregistered) and an adaptive boot aborts on the
    unreadable `_meta`. Proved by `RebaseWalPublishDurabilityCrashTest`.
+   The registry's own file has the same shape: compaction renames `tables.d.tmp` → `tables.d.<N+1>` and
+   then unlinks `tables.d.<N>`, so `TableNameRegistryStore` fsyncs the db root between the two — otherwise
+   a crash there can keep the unlink and lose the new dentry, leaving no registry file at all. Both call
+   `TableUtils.fsyncDirDurable` (fail-stop; Windows-guarded). Proved by
+   `TableRegistryCompactionCrashTest`.
 
 ---
 

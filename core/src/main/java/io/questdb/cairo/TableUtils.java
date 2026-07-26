@@ -1885,6 +1885,26 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * fsync a DIRECTORY so the dentries created or removed in it are durable.
+     * <p>
+     * A rename or unlink publishes a NAME, not durability: on POSIX the change to the directory survives a
+     * power loss only after the directory itself is fsynced, and fsyncing the file contents inside it does
+     * not do that. Call this between publishing a new name and anything that makes a pointer to it durable
+     * (or that removes the name it replaced).
+     * <p>
+     * Fail-stop: an unopenable directory or a failed fsync propagates ({@link #openRONoCache} and
+     * {@link FilesFacade#fsyncAndClose} both throw), because a silently skipped barrier is indistinguishable
+     * from one that never existed. Skipped on a restricted (Windows) file system, which cannot open a
+     * directory for fsync.
+     */
+    public static void fsyncDirDurable(FilesFacade ff, LPSZ dirPath) {
+        if (ff.isRestrictedFileSystem()) {
+            return;
+        }
+        ff.fsyncAndClose(openRONoCache(ff, dirPath, LOG));
+    }
+
     public static long openRONoCache(FilesFacade ff, LPSZ path, Log log) {
         final long fd = ff.openRONoCache(path);
         if (fd > -1) {
