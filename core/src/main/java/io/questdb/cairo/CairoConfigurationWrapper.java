@@ -1900,6 +1900,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
         return getDelegate().newPartitionFrameStateFactory(tableToken);
     }
 
+    @Override
+    public AbstractTimestampFinder newTimestampFinder() {
+        return getDelegate().newTimestampFinder();
+    }
+
     public void setDelegate(CairoConfiguration delegate) {
         this.delegate.set(delegate);
     }

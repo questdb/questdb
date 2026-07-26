@@ -1397,5 +1397,10 @@ public interface CairoConfiguration {
         return null;
     }
 
+    @Nullable
+    default AbstractTimestampFinder newTimestampFinder() {
+        return null;
+    }
+
     boolean useWithinLatestByOptimisation();
 }
