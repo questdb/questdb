@@ -97,6 +97,9 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
      */
     protected static final int DEFAULT_ADAPTIVE_CRASH_POINT_CAP = 200;
 
+    private int phaseFirstOp = -1; // 1-based index of the count pass's first commit-phase durability op
+    private int phaseOpCount;      // how many ops that phase performed (N)
+
     /**
      * A deterministic, replayable adaptive crash workload. The SAME iteration must reproduce the SAME
      * durability-op sequence across the count pass and every sweep pass — that determinism is what makes
@@ -212,6 +215,24 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
      * </ol>
      * If {@code N > cap} the truncation is LOGGED (never silent) and flagged on the result.
      */
+    /**
+     * The commit phase's durability ops, one line each ({@code <n> <kind> <path>}), from the count pass.
+     * <p>
+     * A pinned op count is a drift tripwire, and a bare "expected 27 but was 26" says nothing about whether
+     * a barrier moved, was added, or was REMOVED — the last of which is a durability regression. Attach this
+     * to the assertion message so the diff is readable at the point of failure. Valid only after the count
+     * pass has run.
+     */
+    protected String phaseDurabilityOps() {
+        if (phaseFirstOp < 1) {
+            return "<count pass has not run>";
+        }
+        final java.util.List<String> log = crashFf.durabilityOpLog();
+        final int from = Math.min(phaseFirstOp - 1, log.size());
+        final int to = Math.min(from + phaseOpCount, log.size());
+        return String.join("\n", log.subList(from, to));
+    }
+
     protected SweepResult forEachAdaptiveCrashPoint(AdaptiveCrashWorkload workload, int cap) throws Exception {
         if (crashFf == null) {
             throw new IllegalStateException("call runWithCrashFacade(...) first");
@@ -226,6 +247,10 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
         final int opsBeforeCommit = crashFf.durabilityOpCount();
         workload.commit();
         final int n = crashFf.durabilityOpCount() - opsBeforeCommit;
+        // Remember the count pass's window so a workload's pinned-op-count assertion can name the ops it
+        // actually saw. Recorded BEFORE teardown, whose own ops would otherwise be mistaken for the phase's.
+        phaseFirstOp = opsBeforeCommit + 1; // the facade numbers ops from 1
+        phaseOpCount = n;
         workload.teardown();
         releaseEngineHandles();
         reclaimLingeringNonCacheFds(nonCacheFdBaseline);

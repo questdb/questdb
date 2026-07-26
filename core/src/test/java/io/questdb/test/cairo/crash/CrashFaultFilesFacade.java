@@ -145,6 +145,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private final Set<Long> noCacheOpenFds = new LinkedHashSet<>();
     private final Map<String, Long> durableSize = new HashMap<>();
     private final Map<String, List<long[]>> tornTails = new HashMap<>();
+    private final java.util.List<String> durabilityOpLog = new java.util.ArrayList<>();
     private final java.util.List<String> syncOrder = new java.util.ArrayList<>();
 
     // --- content + device-flush-batching model ---
@@ -370,7 +371,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             doFlush();
         }
         recordDurable(fd);
-        bumpDurabilityOp();
+        bumpDurabilityOp("fdatasync", p);
     }
 
     @Override
@@ -402,7 +403,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
         doFlush();
         recordDurable(fd);
-        bumpDurabilityOp();
+        bumpDurabilityOp("syncfs", fdToPath.get(fd));
     }
 
     @Override
@@ -428,7 +429,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (!directory) {
             recordDurable(fd);
         }
-        bumpDurabilityOp();
+        bumpDurabilityOp(directory ? "fsync-dir" : "fsync", p);
     }
 
     @Override
@@ -457,7 +458,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 doFlush();
             }
         }
-        bumpDurabilityOp();
+        bumpDurabilityOp(directory ? "fsyncAndClose-dir" : "fsyncAndClose", p);
     }
 
     @Override
@@ -684,7 +685,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             // MS_ASYNC: only dirties the page cache toward writeback. NOT data-at-device, NOT a journal
             // commit -> neither syncedDataEnd nor journaledDataEnd advances here.
         }
-        bumpDurabilityOp();
+        bumpDurabilityOp(async ? "msync-async" : "msync", p);
     }
 
     @Override
@@ -721,6 +722,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         durableSize.clear();
         tornTails.clear();
         syncOrder.clear();
+        durabilityOpLog.clear();
         mmapAddrRange.clear();
         mmapAddrToPath.clear();
         trackedFiles.clear();
@@ -890,6 +892,16 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
+     * One line per counted durability op — {@code <n> <kind> <db-root-relative path>} — in the order they
+     * were observed. A pinned op count that drifts is otherwise a bare number with no story: this says WHICH
+     * op appeared or vanished, so the reviewer can decide whether the change moved a barrier or removed one.
+     * Cleared by {@link #reset()}; index 0 is the first op of the process, not of any one commit phase.
+     */
+    public java.util.List<String> durabilityOpLog() {
+        return durabilityOpLog;
+    }
+
+    /**
      * Snapshot of the NON-cached fds ({@code openRWNoCache}/{@code openRONoCache}) currently open. These
      * bypass the path-keyed durability tracking (so they are recorded here, NOT in {@code fdToPath}); the
      * sweep driver uses this to model process-death fd reclamation — a simulated crash on a live JVM cannot
@@ -1022,8 +1034,20 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         return journaledDataEnd.getOrDefault(Paths.get(absPath.toString()).toAbsolutePath().toString(), 0L);
     }
 
-    private void bumpDurabilityOp() {
+    /** db-root-relative path for the op log, so lines stay readable and stable across temp dirs. */
+    private String relativePath(String path) {
+        if (path == null) {
+            return "<unattributed>";
+        }
+        if (dbRootPrefix != null && path.startsWith(dbRootPrefix)) {
+            return path.substring(dbRootPrefix.length());
+        }
+        return path;
+    }
+
+    private void bumpDurabilityOp(String kind, String path) {
         durabilityOps++;
+        durabilityOpLog.add(durabilityOps + " " + kind + " " + relativePath(path));
         if (crashAtOp > 0 && durabilityOps >= crashAtOp) {
             crashAtOp = -1; // one-shot
             throw new CrashSimulationError(durabilityOps);
