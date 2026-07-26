@@ -23,7 +23,9 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
-/** Binds the metadata, transaction, and column-version epoch payloads to one table and marker generation. */
+/**
+ * Binds the metadata, transaction, and column-version epoch payloads to one table and marker generation.
+ */
 public final class DurableEpochManifest {
     public static final String FILE_NAME = "_epoch.manifest";
     public static final int FILE_SIZE = 120;

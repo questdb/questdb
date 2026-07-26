@@ -872,7 +872,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
 
     private void assertEpochCopyExists(io.questdb.cairo.TableToken tt, String baseFileName) {
         try (io.questdb.std.str.Path p = new io.questdb.std.str.Path();
-                SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
+             SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
             p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
             marker.of(p);
             Assert.assertTrue("durable epoch marker must load", marker.tryLoad());

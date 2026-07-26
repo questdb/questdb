@@ -584,7 +584,9 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
         return new int[]{walDirs, totalSegs, maxSegsPerWal};
     }
 
-    /** Count bounded generation payloads ({@code _meta/_txn/_cv.epoch.{0,1}}). */
+    /**
+     * Count bounded generation payloads ({@code _meta/_txn/_cv.epoch.{0,1}}).
+     */
     private int countEpochCopies(TableToken tt) {
         final File[] files = tableDir(tt).listFiles();
         int n = 0;

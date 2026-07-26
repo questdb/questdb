@@ -3767,16 +3767,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (candidate.epochSeqTxn == expectedSeqTxn
                             && candidate.epochTxn == expectedTxn
                             && DurableEpochManifest.validate(
-                                    configuration,
-                                    tableToken,
-                                    path.trimTo(pathSize),
-                                    pathSize,
-                                    candidate.generation,
-                                    candidate.epochSeqTxn,
-                                    candidate.epochTxn,
-                                    txWriter.getColumnVersion(),
-                                    txWriter.getMetadataVersion()
-                            )) {
+                            configuration,
+                            tableToken,
+                            path.trimTo(pathSize),
+                            pathSize,
+                            candidate.generation,
+                            candidate.epochSeqTxn,
+                            candidate.epochTxn,
+                            txWriter.getColumnVersion(),
+                            txWriter.getMetadataVersion()
+                    )) {
                         valid = true;
                         break;
                     }

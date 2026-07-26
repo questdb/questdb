@@ -88,45 +88,45 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         try {
             assertMemoryLeak(ff, () -> {
                 setCurrentMicros(1_000_000L);
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
-            final TableToken tt = engine.verifyTableName("x");
-            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
-            final AtomicInteger fatalCalls = new AtomicInteger();
-            engine.setDurabilityFailureHandler(failure -> fatalCalls.incrementAndGet());
+                execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("x");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+                final AtomicInteger fatalCalls = new AtomicInteger();
+                engine.setDurabilityFailureHandler(failure -> fatalCalls.incrementAndGet());
 
-            try (WalWriter writer = engine.getWalWriter(tt); ExposedWalPurgeJob purgeJob = new ExposedWalPurgeJob(engine)) {
-                commitRow(writer, 0, 1);
-                final long durableBefore = tracker.getLocalDurableSeqTxn();
-                ff.failNext();
-                setCurrentMicros(1_000_000L + WINDOW_US + 1);
+                try (WalWriter writer = engine.getWalWriter(tt); ExposedWalPurgeJob purgeJob = new ExposedWalPurgeJob(engine)) {
+                    commitRow(writer, 0, 1);
+                    final long durableBefore = tracker.getLocalDurableSeqTxn();
+                    ff.failNext();
+                    setCurrentMicros(1_000_000L + WINDOW_US + 1);
 
-                try {
-                    purgeJob.flushNow();
-                    Assert.fail("background fdatasync failure must remain fatal");
-                } catch (CairoError expected) {
-                    Assert.assertTrue(CairoException.isDataSyncFailure(expected));
+                    try {
+                        purgeJob.flushNow();
+                        Assert.fail("background fdatasync failure must remain fatal");
+                    } catch (CairoError expected) {
+                        Assert.assertTrue(CairoException.isDataSyncFailure(expected));
+                    }
+
+                    Assert.assertEquals(1, fatalCalls.get());
+                    Assert.assertEquals(1, ff.failureAttempts);
+                    Assert.assertTrue(engine.isDurabilityFailed());
+                    Assert.assertEquals(durableBefore, tracker.getLocalDurableSeqTxn());
+
+                    try {
+                        commitRow(writer, 60_000_000L, 2);
+                        Assert.fail("distressed writer must not be reusable");
+                    } catch (CairoException | CairoError expected) {
+                        // no second fdatasync is allowed after the first indeterminate failure
+                    }
+                    Assert.assertEquals(1, ff.failureAttempts);
+
+                    try {
+                        engine.getWalWriter(tt);
+                        Assert.fail("poisoned engine must reject new WAL writers");
+                    } catch (CairoError expected) {
+                        TestUtils.assertContains(expected.getMessage(), "engine is poisoned");
+                    }
                 }
-
-                Assert.assertEquals(1, fatalCalls.get());
-                Assert.assertEquals(1, ff.failureAttempts);
-                Assert.assertTrue(engine.isDurabilityFailed());
-                Assert.assertEquals(durableBefore, tracker.getLocalDurableSeqTxn());
-
-                try {
-                    commitRow(writer, 60_000_000L, 2);
-                    Assert.fail("distressed writer must not be reusable");
-                } catch (CairoException | CairoError expected) {
-                    // no second fdatasync is allowed after the first indeterminate failure
-                }
-                Assert.assertEquals(1, ff.failureAttempts);
-
-                try {
-                    engine.getWalWriter(tt);
-                    Assert.fail("poisoned engine must reject new WAL writers");
-                } catch (CairoError expected) {
-                    TestUtils.assertContains(expected.getMessage(), "engine is poisoned");
-                }
-            }
             });
         } finally {
             resetDurabilityPoisonForTest();

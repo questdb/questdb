@@ -1034,7 +1034,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         return journaledDataEnd.getOrDefault(Paths.get(absPath.toString()).toAbsolutePath().toString(), 0L);
     }
 
-    /** db-root-relative path for the op log, so lines stay readable and stable across temp dirs. */
+    /**
+     * db-root-relative path for the op log, so lines stay readable and stable across temp dirs.
+     */
     private String relativePath(String path) {
         if (path == null) {
             return "<unattributed>";

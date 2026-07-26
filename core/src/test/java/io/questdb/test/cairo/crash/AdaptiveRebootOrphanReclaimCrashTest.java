@@ -145,7 +145,7 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
                 final List<String> aAfterIngest = listWalDirs(ta);
                 logState("A2 in-process +ingest+epoch+purge", ta, aAfterIngest);
                 Assert.assertTrue("A2: resumed ingest keeps the orphan reclaimed — the floor only ever moves "
-                        + "forward, so a post-reboot epoch cannot resurrect WAL the purge already freed",
+                                + "forward, so a post-reboot epoch cannot resurrect WAL the purge already freed",
                         aAfterIngest.isEmpty());
 
                 // ============ MODEL B: a REAL fresh-process restart on the SAME db-root ============

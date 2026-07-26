@@ -309,7 +309,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
     }
 
-    /** Missing the creation baseline selector is an untrusted startup state and must fail closed. */
+    /**
+     * Missing the creation baseline selector is an untrusted startup state and must fail closed.
+     */
     @Test
     public void testRecoverWithNoSnapshotFailsClosed() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");

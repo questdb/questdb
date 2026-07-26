@@ -518,55 +518,55 @@ public class TableWriterTest extends AbstractCairoTest {
         try {
             assertMemoryLeak(() -> {
                 populateTable();
-            final class TableDirSyncFailureFacade extends TestFilesFacadeImpl {
-                private boolean isArmed;
-                private boolean isCounting;
-                private int syncFailureCount;
-                private long tableDirFd = -1;
+                final class TableDirSyncFailureFacade extends TestFilesFacadeImpl {
+                    private boolean isArmed;
+                    private boolean isCounting;
+                    private int syncFailureCount;
+                    private long tableDirFd = -1;
 
-                @Override
-                public void fsyncAndClose(long fd) {
-                    if (isCounting && fd == tableDirFd) {
-                        syncFailureCount++;
-                        if (isArmed) {
-                            isArmed = false;
-                            super.close(fd);
-                            throw CairoException.dataSyncFailure(5, "fsyncAndClose")
-                                    .put("injected metadata directory fsync failure");
+                    @Override
+                    public void fsyncAndClose(long fd) {
+                        if (isCounting && fd == tableDirFd) {
+                            syncFailureCount++;
+                            if (isArmed) {
+                                isArmed = false;
+                                super.close(fd);
+                                throw CairoException.dataSyncFailure(5, "fsyncAndClose")
+                                        .put("injected metadata directory fsync failure");
+                            }
                         }
+                        super.fsyncAndClose(fd);
                     }
-                    super.fsyncAndClose(fd);
-                }
 
-                @Override
-                public long openRONoCache(LPSZ name) {
-                    final long fd = super.openRONoCache(name);
-                    if (isCounting && Utf8s.endsWithAscii(name, PRODUCT_FS)) {
-                        tableDirFd = fd;
+                    @Override
+                    public long openRONoCache(LPSZ name) {
+                        final long fd = super.openRONoCache(name);
+                        if (isCounting && Utf8s.endsWithAscii(name, PRODUCT_FS)) {
+                            tableDirFd = fd;
+                        }
+                        return fd;
                     }
-                    return fd;
                 }
-            }
-            final TableDirSyncFailureFacade ff = new TableDirSyncFailureFacade();
-            final CairoConfiguration testConfiguration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
+                final TableDirSyncFailureFacade ff = new TableDirSyncFailureFacade();
+                final CairoConfiguration testConfiguration = new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public @NotNull FilesFacade getFilesFacade() {
+                        return ff;
+                    }
+                };
 
-            try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
-                ff.isCounting = true;
-                ff.isArmed = true;
-                try {
-                    writer.addColumn("fatal_col", ColumnType.BINARY, AllowAllSecurityContext.INSTANCE);
-                    Assert.fail("actual directory fsync failure must be fatal");
-                } catch (CairoError expected) {
-                    Assert.assertTrue(CairoException.isDataSyncFailure(expected));
+                try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
+                    ff.isCounting = true;
+                    ff.isArmed = true;
+                    try {
+                        writer.addColumn("fatal_col", ColumnType.BINARY, AllowAllSecurityContext.INSTANCE);
+                        Assert.fail("actual directory fsync failure must be fatal");
+                    } catch (CairoError expected) {
+                        Assert.assertTrue(CairoException.isDataSyncFailure(expected));
+                    }
+                    Assert.assertEquals(1, ff.syncFailureCount);
+                    Assert.assertTrue(engine.isDurabilityPoisoned());
                 }
-                Assert.assertEquals(1, ff.syncFailureCount);
-                Assert.assertTrue(engine.isDurabilityPoisoned());
-            }
             });
         } finally {
             resetDurabilityPoisonForTest();
