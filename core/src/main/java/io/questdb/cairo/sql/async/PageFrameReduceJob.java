@@ -45,19 +45,24 @@ import org.jetbrains.annotations.TestOnly;
 
 public class PageFrameReduceJob implements Job, QuietCloseable {
     private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);
+    private final CairoEngine engine;
     private final MessageBus messageBus;
     private final int shardCount;
     private final int[] shards;
     private SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private PageFrameMemoryRecord record;
 
-    // Each thread should be assigned own instance of this job, making the code effectively
-    // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
+    // Each WorkerContinuation snapshot holds at most one PageFrameReduceJob
+    // instance per slot, so the instance is effectively single-threaded for the
+    // lifetime of the snapshot. The continuation rotation framework mints fresh
+    // instances on suspend via cloneInstance() and recycles them via
+    // recycleInstance() when the parent cont completes.
     public PageFrameReduceJob(
             CairoEngine engine,
             MessageBus bus,
             Rnd rnd
     ) {
+        this.engine = engine;
         this.messageBus = bus;
         this.shardCount = messageBus.getPageFrameReduceShardCount();
         this.shards = new int[shardCount];
@@ -131,9 +136,29 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
     }
 
     @Override
+    public Job cloneInstance() {
+        return new PageFrameReduceJob(
+                engine,
+                messageBus,
+                new Rnd(
+                        engine.getConfiguration().getMicrosecondClock().getTicks(),
+                        engine.getConfiguration().getNanosecondClock().getTicks()
+                )
+        );
+    }
+
+    @Override
     public void close() {
         circuitBreaker = Misc.free(circuitBreaker);
         record = Misc.free(record);
+    }
+
+    @Override
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native resources through this hook at halt. Misc.free
+        // nulls the fields, keeping the call idempotent.
+        close();
     }
 
     @TestOnly
@@ -142,13 +167,22 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
-        // there is job instance per thread, the worker id must never change for this job
+    public void recycleInstance() {
+        // record.of(...) is called per task inside consumeQueue and circuitBreaker
+        // is init'd per task, so per-iteration scratch is reset on entry to the
+        // next consume. Clearing record here is defensive against a stale frame
+        // reference surviving into the snapshot's next reuse.
+        record.clear();
+    }
+
+    @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
+        final int carrierId = workerContext.carrierId();
         boolean useful = false;
         for (int i = 0; i < shardCount; i++) {
             final int shard = shards[i];
             useful = !consumeQueue(
-                    workerId,
+                    carrierId,
                     messageBus.getPageFrameReduceQueue(shard),
                     messageBus.getPageFrameReduceSubSeq(shard),
                     record,

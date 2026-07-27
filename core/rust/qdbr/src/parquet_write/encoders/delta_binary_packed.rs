@@ -22,19 +22,24 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
+use parquet2::bloom_filter::hash_native;
+use parquet2::encoding::delta_bitpacked;
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
+use parquet2::schema::Repetition;
 use parquet2::types::NativeType;
 
-use crate::parquet::error::ParquetResult;
+use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::encoders::helpers::{
     lock_bloom_set, partition_slice_range, rows_per_primitive_page, ChunkSlice, PartitionPageSlices,
 };
-use crate::parquet_write::encoders::numeric::{self, SimdEncodable, StatsUpdater};
+use crate::parquet_write::encoders::numeric::{
+    self, build_statistics, SimdEncodable, StatsUpdater,
+};
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::schema::Column;
-use crate::parquet_write::util::{transmute_slice, MaxMin};
+use crate::parquet_write::schema::{Column, TimestampValues};
+use crate::parquet_write::util::{build_plain_page, transmute_slice, MaxMin};
 use crate::parquet_write::Nullable;
 
 /// Encode SIMD-encodable integer types (Int, Long, Date, Timestamp) as
@@ -72,6 +77,119 @@ where
             )
         },
     )
+}
+
+/// Delta-binary-packed encode a designated-timestamp column whose primary
+/// data is a 16-byte-strided merge index: `[(i64 ts, i64 rowId); N]`. Used by
+/// the QuestDB O3 commit paths to hand the merge index directly to the
+/// encoder without an intermediate scatter to a flat `[i64]` vector.
+///
+/// Invariants (debug-asserted): single column per call, no column top, full
+/// row range. Designated timestamps are Required and never have tops.
+///
+/// The inner page writer is monomorphized over the iterator type, so the
+/// per-row loop sees a concrete `slice::Iter<[i64; 2]>::map(...)` and the
+/// delta encoder a concrete `Clone`-able iterator with no enum dispatch.
+pub fn encode_designated_timestamp_strided(
+    columns: &[Column],
+    primitive_type: &PrimitiveType,
+    options: WriteOptions,
+    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+) -> ParquetResult<Vec<Page>> {
+    debug_assert_eq!(columns.len(), 1);
+    let column = &columns[0];
+    debug_assert!(column.strided_timestamp_16);
+    debug_assert_eq!(column.column_top, 0);
+
+    let slice: &[[i64; 2]] = match column.timestamp_values() {
+        TimestampValues::Strided16(s) => s,
+        TimestampValues::Contiguous(_) => {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "encode_designated_timestamp_strided called on contiguous column"
+            ));
+        }
+    };
+
+    let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type).max(1);
+    let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
+    let mut bloom = bloom_guard.as_deref_mut();
+    let mut pages = Vec::with_capacity(column.row_count.div_ceil(rows_per_page));
+
+    for chunk in slice.chunks(rows_per_page) {
+        pages.push(write_delta_i64_page(
+            chunk.iter().map(|pair| pair[0]),
+            options,
+            primitive_type.clone(),
+            bloom.as_deref_mut(),
+        )?);
+    }
+
+    Ok(pages)
+}
+
+/// Encode one DeltaBinaryPacked page of Required i64 values. The iterator is
+/// consumed twice — once for stats/bloom, once for the delta encoder — so
+/// callers pass a `Clone`-able iterator. Both `slice::Iter<i64>::copied` and
+/// `slice::Iter<[i64; 2]>::map(non-capturing fn)` satisfy that bound.
+#[inline]
+fn write_delta_i64_page<I>(
+    values: I,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page>
+where
+    I: Clone + ExactSizeIterator<Item = i64>,
+{
+    if primitive_type.field_info.repetition != Repetition::Required {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "write_delta_i64_page expected Required repetition type"
+        ));
+    }
+    let num_rows = values.len();
+
+    let write_stats = options.write_statistics;
+    let need_stats_pass = write_stats || bloom_hashes.is_some();
+    let stats = if need_stats_pass {
+        let mut statistics = MaxMin::<i64>::new();
+        for v in values.clone() {
+            if write_stats {
+                statistics.update(v);
+            }
+            if let Some(ref mut h) = bloom_hashes {
+                h.insert(hash_native(v));
+            }
+        }
+        if write_stats {
+            Some(build_statistics(
+                Some(0),
+                statistics,
+                primitive_type.clone(),
+            ))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut buffer = Vec::new();
+    delta_bitpacked::encode(values, &mut buffer);
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        0,
+        0,
+        stats,
+        primitive_type,
+        options,
+        Encoding::DeltaBinaryPacked,
+        true,
+    )
+    .map(Page::Data)
 }
 
 /// Encode notnull integer (Byte, Short, Char) as DeltaBinaryPacked pages.
@@ -289,16 +407,26 @@ mod tests {
         }
     }
 
-    // ----- encode_int_notnull: Byte / Short / Char (currently uncovered) -----
+    // ----- encode_int_nullable: Byte / Short / Char -----
+    // Byte/Short/Char carry no in-band null sentinel but use Optional repetition
+    // so column-top rows can be marked NULL via def-level=0. Production dispatch
+    // routes these tags to encode_int_nullable; the data values themselves never
+    // report null. See parquet_write/schema.rs and parquet_write/encode.rs.
 
     #[test]
     fn encode_int_notnull_byte_delta() {
         let data: Vec<i8> = (-50..50i8).collect();
         let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 0, 0);
         let pt = primitive_type_for(ColumnTypeTag::Byte);
-        let pages =
-            encode_int_notnull::<i8, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-                .expect("encode");
+        let pages = encode_int_nullable::<i8, i32, false>(
+            &[col],
+            0,
+            data.len(),
+            &pt,
+            write_options(),
+            None,
+        )
+        .expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, enc) = v2_header(&pages[0]);
         assert_eq!(num_values, 100);
@@ -311,9 +439,15 @@ mod tests {
         let data: Vec<i16> = (0..100i16).collect();
         let col = make_column_with_top("col", ColumnTypeTag::Short, &data, 0, 0);
         let pt = primitive_type_for(ColumnTypeTag::Short);
-        let pages =
-            encode_int_notnull::<i16, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-                .expect("encode");
+        let pages = encode_int_nullable::<i16, i32, false>(
+            &[col],
+            0,
+            data.len(),
+            &pt,
+            write_options(),
+            None,
+        )
+        .expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, _, enc) = v2_header(&pages[0]);
         assert_eq!(num_values, 100);
@@ -325,9 +459,15 @@ mod tests {
         let data: Vec<u16> = (0..100u16).collect();
         let col = make_column_with_top("col", ColumnTypeTag::Char, &data, 0, 0);
         let pt = primitive_type_for(ColumnTypeTag::Char);
-        let pages =
-            encode_int_notnull::<u16, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-                .expect("encode");
+        let pages = encode_int_nullable::<u16, i32, true>(
+            &[col],
+            0,
+            data.len(),
+            &pt,
+            write_options(),
+            None,
+        )
+        .expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, _, enc) = v2_header(&pages[0]);
         assert_eq!(num_values, 100);
@@ -588,13 +728,13 @@ mod tests {
         let data: Vec<i8> = vec![5, 6, 7];
         let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 4, 0);
         let pt = primitive_type_for(ColumnTypeTag::Byte);
-        let pages = encode_int_notnull::<i8, i32>(&[col], 0, 7, &pt, write_options(), None)
+        let pages = encode_int_nullable::<i8, i32, false>(&[col], 0, 7, &pt, write_options(), None)
             .expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, enc) = v2_header(&pages[0]);
         assert_eq!(num_values, 7);
-        // The notnull delta encoder fills column-top rows with default values
-        // but still reports column_top as null_count in the page header.
+        // Column-top rows are encoded as parquet NULL (def-level=0) under the
+        // nullable path; data values never report null for Byte.
         assert_eq!(num_nulls, 4);
         assert_eq!(enc, 5);
     }
@@ -607,8 +747,9 @@ mod tests {
             .map(|d| make_column_with_top("col", ColumnTypeTag::Short, d, 0, 0))
             .collect();
         let pt = primitive_type_for(ColumnTypeTag::Short);
-        let pages = encode_int_notnull::<i16, i32>(&columns, 0, 3, &pt, write_options(), None)
-            .expect("encode");
+        let pages =
+            encode_int_nullable::<i16, i32, false>(&columns, 0, 3, &pt, write_options(), None)
+                .expect("encode");
         assert_eq!(pages.len(), 2);
         for page in &pages {
             let (num_values, num_nulls, enc) = v2_header(page);

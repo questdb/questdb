@@ -130,7 +130,8 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
     public void testNonPartitioned() throws Exception {
         testBusyPoll(
                 10000,
-                3_000_000,
+                // smaller workload on slow CI runners (Mac, Windows)
+                Os.isLinux() ? 3_000_000 : 300_000,
                 "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by NONE"
         );
     }
@@ -254,7 +255,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                     appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                     ts = n * timestampIncrement;
                     try (
-                            TableReader reader = engine.getReader(tableToken, TableUtils.ANY_TABLE_VERSION);
+                            TableReader reader = engine.getReader(tableToken, TableUtils.ANY_TABLE_VERSION, null);
                             TestTableReaderTailRecordCursor cursor = new TestTableReaderTailRecordCursor().of(reader)
                     ) {
                         cursor.toBottom();
@@ -312,7 +313,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                     appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                     ts = n * timestampIncrement;
                     try (
-                            TableReader reader = engine.getReader(tableToken, TableUtils.ANY_TABLE_VERSION);
+                            TableReader reader = engine.getReader(tableToken, TableUtils.ANY_TABLE_VERSION, null);
                             TestTableReaderTailRecordCursor cursor = new TestTableReaderTailRecordCursor().of(reader)
                     ) {
                         Assert.assertTrue(cursor.reload());

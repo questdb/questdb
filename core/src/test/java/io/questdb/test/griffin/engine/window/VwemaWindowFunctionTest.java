@@ -24,323 +24,311 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
+
+import static io.questdb.test.tools.TestUtils.generateRandom;
 
 /**
  * Tests for Volume-Weighted Exponential Moving Average (VWEMA) window function.
  */
 public class VwemaWindowFunctionTest extends AbstractCairoTest {
+    private final boolean isCacheLightWindowEnabled;
+
+    public VwemaWindowFunctionTest() {
+        this.isCacheLightWindowEnabled = generateRandom(LOG).nextBoolean();
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.isCacheLightWindowEnabled));
+        super.setUp();
+    }
 
     @Test
     public void testVwemaAlphaEqualsOne() throws Exception {
         // alpha=1.0 should be valid (inclusive upper bound) - each new value fully replaces the previous
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
-                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t30.0
-                        """,
-                "select ts, price, volume, avg(price, 'alpha', 1.0, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 1.0, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
+                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t30.0
+                        """);
     }
 
     @Test
     public void testVwemaAlphaMode() throws Exception {
         // Test avg() VWEMA with alpha mode
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t16.666666666666668
-                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t25.555555555555557
-                        """,
-                "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t16.666666666666668
+                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t25.555555555555557
+                        """);
     }
 
     @Test
     public void testVwemaAlphaModeExplainPlan() throws Exception {
         // VwemaOverUnboundedRowsFrameFunction
         execute("create table tab (ts timestamp, price double, volume double) timestamp(ts)");
-        assertPlanNoLeakCheck(
-                "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab",
-                """
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab")
+                .noLeakCheck()
+                .assertsPlan("""
                         Window
                           functions: [avg(price, 'alpha', 0.5, volume) over (rows between unbounded preceding and current row)]
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testVwemaAlphaModeNaNPrice() throws Exception {
         // L558 false via !isFinite(price) in VwemaOverUnboundedRowsFrameFunction
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tnull\t100.0\tnull
-                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
-                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t26.0
-                        """,
-                "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "case when x = 1 then null::double else (x * 10.0) end as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tnull\t100.0\tnull
+                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
+                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t26.0
+                        """);
     }
 
     @Test
     public void testVwemaAlphaModeNaNVolume() throws Exception {
         // L558 false via !isFinite(volume) in VwemaOverUnboundedRowsFrameFunction
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\tnull\tnull
-                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
-                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t26.0
-                        """,
-                "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "(x * 10.0) as price, " +
                         "case when x = 1 then null::double else (x * 100.0) end as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\tnull\tnull
+                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
+                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t26.0
+                        """);
     }
 
     @Test
     public void testVwemaAlphaModeNegativeVolume() throws Exception {
         // Negative volume should be treated as invalid like zero volume
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t-100.0\tnull
-                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
-                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t26.0
-                        """,
-                "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "(x * 10.0) as price, " +
                         "case when x = 1 then -100.0 else (x * 100.0) end as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t-100.0\tnull
+                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
+                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t26.0
+                        """);
     }
 
     @Test
     public void testVwemaAlphaModeZeroVolume() throws Exception {
         // L558 false via volume <= 0 in VwemaOverUnboundedRowsFrameFunction
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t0.0\tnull
-                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
-                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t26.0
-                        """,
-                "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "(x * 10.0) as price, " +
                         "case when x = 1 then 0.0 else (x * 100.0) end as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t0.0\tnull
+                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
+                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t26.0
+                        """);
     }
 
     @Test
     public void testVwemaAlphaPartitionExplainPlan() throws Exception {
         // VwemaOverPartitionFunction
         execute("create table tab (ts timestamp, sym symbol, price double, volume double) timestamp(ts)");
-        assertPlanNoLeakCheck(
-                "select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab",
-                """
+        assertQuery("select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab")
+                .noLeakCheck()
+                .assertsPlan("""
                         Window
                           functions: [avg(price, 'alpha', 0.5, volume) over (partition by [sym] rows between unbounded preceding and current row)]
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testVwemaAlphaPartitionFirstRowNaNPrice() throws Exception {
         // L296 false via !isFinite(price) in VwemaOverPartitionFunction
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\tnull\t100.0\tnull
-                        2024-01-01T00:00:01.000000Z\tA\t20.0\t200.0\t20.0
-                        """,
-                "select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then null::double else 20.0 end as price, " +
                         "case when x = 1 then 100.0 else 200.0 end as volume " +
                         "from long_sequence(2)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\tnull\t100.0\tnull
+                        2024-01-01T00:00:01.000000Z\tA\t20.0\t200.0\t20.0
+                        """);
     }
 
     @Test
     public void testVwemaAlphaPartitionFirstRowNaNVolume() throws Exception {
         // L296 false via !isFinite(volume) in VwemaOverPartitionFunction
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\t10.0\tnull\tnull
-                        2024-01-01T00:00:01.000000Z\tA\t20.0\t200.0\t20.0
-                        """,
-                "select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then 10.0 else 20.0 end as price, " +
                         "case when x = 1 then null::double else 200.0 end as volume " +
                         "from long_sequence(2)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\t10.0\tnull\tnull
+                        2024-01-01T00:00:01.000000Z\tA\t20.0\t200.0\t20.0
+                        """);
     }
 
     @Test
     public void testVwemaAlphaPartitionFirstRowZeroVolume() throws Exception {
         // L296 false via volume <= 0 in VwemaOverPartitionFunction
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\t10.0\t0.0\tnull
-                        2024-01-01T00:00:01.000000Z\tA\t20.0\t200.0\t20.0
-                        """,
-                "select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then 10.0 else 20.0 end as price, " +
                         "case when x = 1 then 0.0 else 200.0 end as volume " +
                         "from long_sequence(2)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\t10.0\t0.0\tnull
+                        2024-01-01T00:00:01.000000Z\tA\t20.0\t200.0\t20.0
+                        """);
     }
 
     @Test
     public void testVwemaAlphaPartitionInvalidAfterValid() throws Exception {
         // L317 false via !isFinite(price) in VwemaOverPartitionFunction - keeps previous VWEMA
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:01.000000Z\tA\tnull\t200.0\t10.0
-                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t25.0
-                        """,
-                "select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then 10.0 when x = 2 then null::double else 30.0 end as price, " +
                         "case when x = 1 then 100.0 when x = 2 then 200.0 else 300.0 end as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:01.000000Z\tA\tnull\t200.0\t10.0
+                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t25.0
+                        """);
     }
 
     @Test
     public void testVwemaAlphaPartitionNaNVolumeAfterValid() throws Exception {
         // L317 false via !isFinite(volume) in VwemaOverPartitionFunction - keeps previous VWEMA
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:01.000000Z\tA\t20.0\tnull\t10.0
-                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t25.0
-                        """,
-                "select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then 10.0 when x = 2 then 20.0 else 30.0 end as price, " +
                         "case when x = 1 then 100.0 when x = 2 then null::double else 300.0 end as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:01.000000Z\tA\t20.0\tnull\t10.0
+                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t25.0
+                        """);
     }
 
     @Test
     public void testVwemaAlphaPartitionZeroVolumeAfterValid() throws Exception {
         // L317 false via volume <= 0 in VwemaOverPartitionFunction - keeps previous VWEMA
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:01.000000Z\tA\t20.0\t0.0\t10.0
-                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t25.0
-                        """,
-                "select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then 10.0 when x = 2 then 20.0 else 30.0 end as price, " +
                         "case when x = 1 then 100.0 when x = 2 then 0.0 else 300.0 end as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:01.000000Z\tA\t20.0\t0.0\t10.0
+                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t25.0
+                        """);
     }
 
     @Test
@@ -353,24 +341,22 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
                     "('2024-01-01T00:00:03.000000Z'::timestamp, 3, 'A', 20.0, 1.0), " +
                     "('2024-01-01T00:00:04.000000Z'::timestamp, 4, 'B', 200.0, 1.0)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, sort_key, sym, price, volume, " +
+                    "avg(price, 'period', 3, volume) over (order by sort_key) vwema_period, " +
+                    "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_period_part, " +
+                    "avg(price, 'second', 1, volume) over (order by sort_key) vwema_second, " +
+                    "avg(price, 'second', 1, volume) over (partition by sym order by sort_key) vwema_second_part " +
+                    "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tsort_key\tsym\tprice\tvolume\tvwema_period\tvwema_period_part\tvwema_second\tvwema_second_part
                             2024-01-01T00:00:01.000000Z\t1\tA\t10.0\t1.0\t10.0\t10.0\t10.0\t10.0
                             2024-01-01T00:00:02.000000Z\t2\tB\t100.0\t1.0\t55.0\t100.0\t66.89085029457019\t100.0
                             2024-01-01T00:00:03.000000Z\t3\tA\t20.0\t1.0\t37.5\t15.0\t37.25017980242024\t18.646647167633873
                             2024-01-01T00:00:04.000000Z\t4\tB\t200.0\t1.0\t118.75\t150.0\t140.12768709496163\t186.46647167633873
-                            """,
-                    "select ts, sort_key, sym, price, volume, " +
-                            "avg(price, 'period', 3, volume) over (order by sort_key) vwema_period, " +
-                            "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_period_part, " +
-                            "avg(price, 'second', 1, volume) over (order by sort_key) vwema_second, " +
-                            "avg(price, 'second', 1, volume) over (partition by sym order by sort_key) vwema_second_part " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -399,127 +385,95 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
             //     sk=5 (A, p=50, v=0)    invalid (vol<=0)               -> keep            vwema=82.5
             //   partition A: (sk=3,30,1) (sk=4,100,1) (sk=5,50,0)          -> 30, 65, 65
             //   partition B: (sk=1,10,NULL) (sk=2,100,1)                   -> NULL (first row invalid), 100 (first valid)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, sort_key, sym, price, volume, " +
+                    "avg(price, 'period', 3, volume) over (order by sort_key) vwema_no_part, " +
+                    "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_part " +
+                    "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tsort_key\tsym\tprice\tvolume\tvwema_no_part\tvwema_part
                             2024-01-01T00:00:01.000000Z\t3\tA\t30.0\t1.0\t65.0\t30.0
                             2024-01-01T00:00:02.000000Z\t2\tB\t100.0\t1.0\t100.0\t100.0
                             2024-01-01T00:00:03.000000Z\t5\tA\t50.0\t0.0\t82.5\t65.0
                             2024-01-01T00:00:04.000000Z\t1\tB\t10.0\tnull\tnull\tnull
                             2024-01-01T00:00:05.000000Z\t4\tA\t100.0\t1.0\t82.5\t65.0
-                            """,
-                    "select ts, sort_key, sym, price, volume, " +
-                            "avg(price, 'period', 3, volume) over (order by sort_key) vwema_no_part, " +
-                            "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_part " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
     @Test
     public void testVwemaExceptionAlphaEqualsZero() throws Exception {
         // alpha=0.0 should be invalid (exclusive lower bound) - caught by general positive check
-        assertException(
-                "select ts, price, volume, avg(price, 'alpha', 0.0, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
-                46,
-                "parameter value must be a positive number"
-        );
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 0.0, volume) over (order by ts) from tab")
+                .ddl("create table tab (ts timestamp, price double, volume double) timestamp(ts)")
+                .fails(46, "parameter value must be a positive number");
     }
 
     @Test
     public void testVwemaExceptionAlphaMustBeBetween0And1() throws Exception {
-        assertException(
-                "select ts, price, volume, avg(price, 'alpha', 1.5, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
-                46,
-                "alpha must be between 0 (exclusive) and 1 (inclusive)"
-        );
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 1.5, volume) over (order by ts) from tab")
+                .ddl("create table tab (ts timestamp, price double, volume double) timestamp(ts)")
+                .fails(46, "alpha must be between 0 (exclusive) and 1 (inclusive)");
     }
 
     @Test
     public void testVwemaExceptionFramingNotSupported() throws Exception {
-        assertException(
-                "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts rows between 1 preceding and current row) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
-                26,
-                "avg() does not support framing; remove ROWS/RANGE clause"
-        );
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts rows between 1 preceding and current row) from tab")
+                .ddl("create table tab (ts timestamp, price double, volume double) timestamp(ts)")
+                .fails(26, "avg() does not support framing; remove ROWS/RANGE clause");
     }
 
     @Test
     public void testVwemaExceptionInvalidKind() throws Exception {
-        assertException(
-                "select ts, price, volume, avg(price, 'invalid', 0.5, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
-                37,
-                "invalid kind parameter: expected 'alpha', 'period', or a time unit (second, minute, hour, day, week)"
-        );
+        assertQuery("select ts, price, volume, avg(price, 'invalid', 0.5, volume) over (order by ts) from tab")
+                .ddl("create table tab (ts timestamp, price double, volume double) timestamp(ts)")
+                .fails(37, "invalid kind parameter: expected 'alpha', 'period', or a time unit (second, minute, hour, day, week)");
     }
 
     @Test
     public void testVwemaExceptionKindCannotBeNull() throws Exception {
-        assertException(
-                "select ts, price, volume, avg(price, cast(null as string), 0.5, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
-                37,
-                "kind parameter cannot be null"
-        );
+        assertQuery("select ts, price, volume, avg(price, cast(null as string), 0.5, volume) over (order by ts) from tab")
+                .ddl("create table tab (ts timestamp, price double, volume double) timestamp(ts)")
+                .fails(37, "kind parameter cannot be null");
     }
 
     @Test
     public void testVwemaExceptionKindMustBeConstant() throws Exception {
-        assertException(
-                "select ts, kind, price, volume, avg(price, kind, 0.5, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, kind string, price double, volume double) timestamp(ts)",
-                43,
-                "kind parameter must be a constant"
-        );
+        assertQuery("select ts, kind, price, volume, avg(price, kind, 0.5, volume) over (order by ts) from tab")
+                .ddl("create table tab (ts timestamp, kind string, price double, volume double) timestamp(ts)")
+                .fails(43, "kind parameter must be a constant");
     }
 
     @Test
     public void testVwemaExceptionNegativeParameterValue() throws Exception {
-        assertException(
-                "select ts, price, volume, avg(price, 'period', -1, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
-                47,
-                "parameter value must be a positive number"
-        );
+        assertQuery("select ts, price, volume, avg(price, 'period', -1, volume) over (order by ts) from tab")
+                .ddl("create table tab (ts timestamp, price double, volume double) timestamp(ts)")
+                .fails(47, "parameter value must be a positive number");
     }
 
     @Test
     public void testVwemaExceptionOrderByRequired() throws Exception {
-        assertException(
-                "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over () from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
-                26,
-                "avg() requires ORDER BY"
-        );
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 0.5, volume) over () from tab")
+                .ddl("create table tab (ts timestamp, price double, volume double) timestamp(ts)")
+                .fails(26, "avg() requires ORDER BY");
     }
 
     @Test
     public void testVwemaExceptionParameterMustBeConstant() throws Exception {
-        assertException(
-                "select ts, price, volume, avg(price, 'alpha', price, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
-                46,
-                "parameter value must be a constant"
-        );
+        assertQuery("select ts, price, volume, avg(price, 'alpha', price, volume) over (order by ts) from tab")
+                .ddl("create table tab (ts timestamp, price double, volume double) timestamp(ts)")
+                .fails(46, "parameter value must be a constant");
     }
 
     // ========================= Period and Time-Weighted Mode Tests =========================
 
     @Test
     public void testVwemaExceptionZeroParameterValue() throws Exception {
-        assertException(
-                "select ts, price, volume, avg(price, 'alpha', 0, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
-                46,
-                "parameter value must be a positive number"
-        );
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 0, volume) over (order by ts) from tab")
+                .ddl("create table tab (ts timestamp, price double, volume double) timestamp(ts)")
+                .fails(46, "parameter value must be a positive number");
     }
 
     @Test
@@ -534,8 +488,11 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
                     "('2024-01-01T00:00:04.000000Z'::timestamp, 3, 'A', 30.0, 1.0), " +
                     "('2024-01-01T00:00:05.000000Z'::timestamp, 1, 'B', 200.0, 2.0)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, sort_key, sym, price, volume, avg(price, 'period', 3, volume) over (partition by sym order by sort_key) as vwema from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tsort_key\tsym\tprice\tvolume\tvwema
                             2024-01-01T00:00:00.000000Z\t2\tA\t10.0\t3.0\t12.5
                             2024-01-01T00:00:01.000000Z\t2\tB\t100.0\t1.0\t166.66666666666666
@@ -543,12 +500,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
                             2024-01-01T00:00:03.000000Z\t3\tB\t300.0\t4.0\t263.6363636363636
                             2024-01-01T00:00:04.000000Z\t3\tA\t30.0\t1.0\t18.333333333333332
                             2024-01-01T00:00:05.000000Z\t1\tB\t200.0\t2.0\t200.0
-                            """,
-                    "select ts, sort_key, sym, price, volume, avg(price, 'period', 3, volume) over (partition by sym order by sort_key) as vwema from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -556,430 +508,393 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaPeriodMode() throws Exception {
         // Test avg() VWEMA with period mode (alpha = 2 / (period + 1))
         // With period=2, alpha = 2/3
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t18.0
-                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t27.39130434782609
-                        """,
-                "select ts, price, volume, avg(price, 'period', 2, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'period', 2, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t18.0
+                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t27.39130434782609
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedMode() throws Exception {
         // Test avg() VWEMA with time-weighted mode
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:01.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:02.000000Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-01T00:00:03.000000Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('s', x::int, '2024-01-01'::timestamp) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:01.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:02.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:00:03.000000Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeDays() throws Exception {
         // Test 'day' and 'days' time unit parsing
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-02T00:00:00.000000Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-03T00:00:00.000000Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'day', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'day', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('d', x::int - 1, '2024-01-01'::timestamp) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by month",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by month")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-02T00:00:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-03T00:00:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeDaysPlural() throws Exception {
         // Test 'days' plural time unit parsing
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-02T00:00:00.000000Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-03T00:00:00.000000Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'days', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'days', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('d', x::int - 1, '2024-01-01'::timestamp) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by month",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by month")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-02T00:00:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-03T00:00:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeExplainPlan() throws Exception {
         // VwemaTimeWeightedOverUnboundedRowsFrameFunction
         execute("create table tab (ts timestamp, price double, volume double) timestamp(ts)");
-        assertPlanNoLeakCheck(
-                "select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab",
-                """
+        assertQuery("select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab")
+                .noLeakCheck()
+                .assertsPlan("""
                         Window
                           functions: [avg(price, 'second', 1.0, volume) over (rows between unbounded preceding and current row)]
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeHours() throws Exception {
         // Test 'hour' time unit parsing
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T01:00:00.000000Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-01T02:00:00.000000Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'hour', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'hour', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('h', x::int - 1, '2024-01-01'::timestamp) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T01:00:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T02:00:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeHoursPlural() throws Exception {
         // Test 'hours' plural time unit parsing
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T01:00:00.000000Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-01T02:00:00.000000Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'hours', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'hours', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('h', x::int - 1, '2024-01-01'::timestamp) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T01:00:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T02:00:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeMicroseconds() throws Exception {
         // Test 'microsecond' time unit parsing
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:00.000001Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-01T00:00:00.000002Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'microsecond', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'microsecond', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:00.000001Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:00:00.000002Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeMicrosecondsPlural() throws Exception {
         // Test 'microseconds' plural time unit parsing
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:00.000001Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-01T00:00:00.000002Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'microseconds', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'microseconds', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:00.000001Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:00:00.000002Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeMilliseconds() throws Exception {
         // Test 'millisecond' time unit parsing
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:00.001000Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-01T00:00:00.002000Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'millisecond', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'millisecond', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:00.001000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:00:00.002000Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeMillisecondsPlural() throws Exception {
         // Test 'milliseconds' plural time unit parsing
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:00.001000Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-01T00:00:00.002000Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'milliseconds', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'milliseconds', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:00.001000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:00:00.002000Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeMinutes() throws Exception {
         // Test 'minute' time unit parsing
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:01:00.000000Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-01T00:02:00.000000Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'minute', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'minute', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('m', x::int - 1, '2024-01-01'::timestamp) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:01:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:02:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeMinutesPlural() throws Exception {
         // Test 'minutes' plural time unit parsing
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:01:00.000000Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-01T00:02:00.000000Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'minutes', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'minutes', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('m', x::int - 1, '2024-01-01'::timestamp) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:01:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:02:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeNaNPrice() throws Exception {
         // L662 false via !isFinite(price) in VwemaTimeWeightedOverUnboundedRowsFrameFunction
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:01.000000Z\tnull\t100.0\tnull
-                        2024-01-01T00:00:02.000000Z\t20.0\t200.0\t20.0
-                        2024-01-01T00:00:03.000000Z\t30.0\t300.0\t27.20469155611041
-                        """,
-                "select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('s', x::int, '2024-01-01'::timestamp) as ts, " +
                         "case when x = 1 then null::double else (x * 10.0) end as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:01.000000Z\tnull\t100.0\tnull
+                        2024-01-01T00:00:02.000000Z\t20.0\t200.0\t20.0
+                        2024-01-01T00:00:03.000000Z\t30.0\t300.0\t27.20469155611041
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeNaNVolume() throws Exception {
         // L662 false via !isFinite(volume) in VwemaTimeWeightedOverUnboundedRowsFrameFunction
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:01.000000Z\t10.0\tnull\tnull
-                        2024-01-01T00:00:02.000000Z\t20.0\t200.0\t20.0
-                        2024-01-01T00:00:03.000000Z\t30.0\t300.0\t27.20469155611041
-                        """,
-                "select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('s', x::int, '2024-01-01'::timestamp) as ts, " +
                         "(x * 10.0) as price, " +
                         "case when x = 1 then null::double else (x * 100.0) end as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:01.000000Z\t10.0\tnull\tnull
+                        2024-01-01T00:00:02.000000Z\t20.0\t200.0\t20.0
+                        2024-01-01T00:00:03.000000Z\t30.0\t300.0\t27.20469155611041
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeSameTimestamp() throws Exception {
         // L669 true: Same timestamp (dt <= 0) - uses alpha = 1.0 in VwemaTimeWeightedOverUnboundedRowsFrameFunction
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:00.000000Z\t20.0\t200.0\t20.0
-                        """,
-                "select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select '2024-01-01'::timestamp as ts, " +
                         "case when x = 1 then 10.0 else 20.0 end as price, " +
                         "case when x = 1 then 100.0 else 200.0 end as volume " +
                         "from long_sequence(2)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:00.000000Z\t20.0\t200.0\t20.0
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeSecondsPlural() throws Exception {
         // Test 'seconds' plural time unit parsing (singular 'second' tested in testVwemaTimeWeightedMode)
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:01.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:02.000000Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-01T00:00:03.000000Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'seconds', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'seconds', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('s', x::int, '2024-01-01'::timestamp) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:01.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:02.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:00:03.000000Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeWeeks() throws Exception {
         // Test 'week' time unit parsing
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-08T00:00:00.000000Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-15T00:00:00.000000Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'week', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'week', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('d', (x::int - 1) * 7, '2024-01-01'::timestamp) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by month",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by month")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-08T00:00:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-15T00:00:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedModeWeeksPlural() throws Exception {
         // Test 'weeks' plural time unit parsing
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-08T00:00:00.000000Z\t20.0\t200.0\t17.74600326439436
-                        2024-01-15T00:00:00.000000Z\t30.0\t300.0\t27.053175178756817
-                        """,
-                "select ts, price, volume, avg(price, 'weeks', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'weeks', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('d', (x::int - 1) * 7, '2024-01-01'::timestamp) as ts, " +
                         "(x * 10.0) as price, " +
                         "(x * 100.0) as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by month",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by month")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-08T00:00:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-15T00:00:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """);
     }
 
     // ========================= Edge Case Tests for VwemaTimeWeightedOverPartitionFunction =========================
@@ -987,181 +902,166 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testVwemaTimeWeightedModeZeroVolume() throws Exception {
         // L662 false via volume <= 0 in VwemaTimeWeightedOverUnboundedRowsFrameFunction
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:01.000000Z\t10.0\t0.0\tnull
-                        2024-01-01T00:00:02.000000Z\t20.0\t200.0\t20.0
-                        2024-01-01T00:00:03.000000Z\t30.0\t300.0\t27.20469155611041
-                        """,
-                "select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select dateadd('s', x::int, '2024-01-01'::timestamp) as ts, " +
                         "(x * 10.0) as price, " +
                         "case when x = 1 then 0.0 else (x * 100.0) end as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:01.000000Z\t10.0\t0.0\tnull
+                        2024-01-01T00:00:02.000000Z\t20.0\t200.0\t20.0
+                        2024-01-01T00:00:03.000000Z\t30.0\t300.0\t27.20469155611041
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedPartitionConsecutiveInvalidRows() throws Exception {
         // L486 hasValue == 0: Multiple consecutive invalid rows return NaN
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\tnull\t100.0\tnull
-                        2024-01-01T00:00:01.000000Z\tA\tnull\t200.0\tnull
-                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t30.0
-                        """,
-                "select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x <= 2 then null::double else 30.0 end as price, " +
                         "case when x = 1 then 100.0 when x = 2 then 200.0 else 300.0 end as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\tnull\t100.0\tnull
+                        2024-01-01T00:00:01.000000Z\tA\tnull\t200.0\tnull
+                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t30.0
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedPartitionExplainPlan() throws Exception {
         // VwemaTimeWeightedOverPartitionFunction
         execute("create table tab (ts timestamp, sym symbol, price double, volume double) timestamp(ts)");
-        assertPlanNoLeakCheck(
-                "select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab",
-                """
+        assertQuery("select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab")
+                .noLeakCheck()
+                .assertsPlan("""
                         Window
                           functions: [avg(price, 'second', 1.0, volume) over (partition by [sym] rows between unbounded preceding and current row)]
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedPartitionFirstRowNaNPrice() throws Exception {
         // L431 false via !isFinite(price): First row has invalid price (NaN)
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\tnull\t100.0\tnull
-                        2024-01-01T00:00:01.000000Z\tA\t20.0\t200.0\t20.0
-                        """,
-                "select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then null::double else 20.0 end as price, " +
                         "case when x = 1 then 100.0 else 200.0 end as volume " +
                         "from long_sequence(2)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\tnull\t100.0\tnull
+                        2024-01-01T00:00:01.000000Z\tA\t20.0\t200.0\t20.0
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedPartitionFirstRowNaNVolume() throws Exception {
         // L431 false via !isFinite(volume): First row has invalid volume (NaN)
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\t10.0\tnull\tnull
-                        2024-01-01T00:00:01.000000Z\tA\t20.0\t200.0\t20.0
-                        """,
-                "select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then 10.0 else 20.0 end as price, " +
                         "case when x = 1 then null::double else 200.0 end as volume " +
                         "from long_sequence(2)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\t10.0\tnull\tnull
+                        2024-01-01T00:00:01.000000Z\tA\t20.0\t200.0\t20.0
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedPartitionInvalidAfterValid() throws Exception {
         // L479-482: Invalid value after valid - keeps previous VWEMA
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:01.000000Z\tA\tnull\t200.0\t10.0
-                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t26.750527686273102
-                        """,
-                "select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then 10.0 when x = 2 then null::double else 30.0 end as price, " +
                         "case when x = 1 then 100.0 when x = 2 then 200.0 else 300.0 end as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:01.000000Z\tA\tnull\t200.0\t10.0
+                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t26.750527686273102
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedPartitionNaNVolumeAfterValid() throws Exception {
         // L451 false: NaN volume on subsequent row - keeps previous VWEMA
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:01.000000Z\tA\t20.0\tnull\t10.0
-                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t26.750527686273102
-                        """,
-                "select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then 10.0 when x = 2 then 20.0 else 30.0 end as price, " +
                         "case when x = 1 then 100.0 when x = 2 then null::double else 300.0 end as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:01.000000Z\tA\t20.0\tnull\t10.0
+                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t26.750527686273102
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedPartitionSameTimestamp() throws Exception {
         // L460: Same timestamp (dt <= 0) - uses alpha = 1.0 (full weight to new value)
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:00.000000Z\tA\t20.0\t200.0\t20.0
-                        """,
-                "select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select '2024-01-01'::timestamp as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then 10.0 else 20.0 end as price, " +
                         "case when x = 1 then 100.0 else 200.0 end as volume " +
                         "from long_sequence(2)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:00.000000Z\tA\t20.0\t200.0\t20.0
+                        """);
     }
 
     // ========================= Zero Volume Edge Case Tests =========================
@@ -1169,98 +1069,90 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testVwemaTimeWeightedPartitionZeroVolume() throws Exception {
         // L439-443 & L479-482: Zero volume is treated as invalid
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\t10.0\t0.0\tnull
-                        2024-01-01T00:00:01.000000Z\tA\t20.0\t200.0\t20.0
-                        """,
-                "select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then 10.0 else 20.0 end as price, " +
                         "case when x = 1 then 0.0 else 200.0 end as volume " +
                         "from long_sequence(2)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\t10.0\t0.0\tnull
+                        2024-01-01T00:00:01.000000Z\tA\t20.0\t200.0\t20.0
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedPartitionZeroVolumeAfterValid() throws Exception {
         // L451 false: Zero volume on subsequent row - keeps previous VWEMA
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:01.000000Z\tA\t20.0\t0.0\t10.0
-                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t26.750527686273102
-                        """,
-                "select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "'A' as sym, " +
                         "case when x = 1 then 10.0 when x = 2 then 20.0 else 30.0 end as price, " +
                         "case when x = 1 then 100.0 when x = 2 then 0.0 else 300.0 end as volume " +
                         "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:01.000000Z\tA\t20.0\t0.0\t10.0
+                        2024-01-01T00:00:02.000000Z\tA\t30.0\t300.0\t26.750527686273102
+                        """);
     }
 
     @Test
     public void testVwemaTimeWeightedWithPartitionBy() throws Exception {
         // Test avg() VWEMA with time-weighted mode and partition by
         // This exercises VwemaTimeWeightedOverPartitionFunction
-        assertQuery(
-                """
+        assertQuery("select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
+                        "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
+                        "case when x % 2 = 1 then 'A' else 'B' end as sym, " +
+                        "case when x = 1 then 10.0 when x = 2 then 15.0 when x = 3 then 20.0 else 25.0 end as price, " +
+                        "case when x = 1 then 100.0 when x = 2 then 150.0 when x = 3 then 200.0 else 250.0 end as volume " +
+                        "from long_sequence(4)" +
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         ts\tsym\tprice\tvolume\tvwema
                         2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
                         2024-01-01T00:00:01.000000Z\tB\t15.0\t150.0\t15.0
                         2024-01-01T00:00:02.000000Z\tA\t20.0\t200.0\t19.274211165042463
                         2024-01-01T00:00:03.000000Z\tB\t25.0\t250.0\t24.1415149749738
-                        """,
-                "select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
-                        "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
-                        "case when x % 2 = 1 then 'A' else 'B' end as sym, " +
-                        "case when x = 1 then 10.0 when x = 2 then 15.0 when x = 3 then 20.0 else 25.0 end as price, " +
-                        "case when x = 1 then 100.0 when x = 2 then 150.0 when x = 3 then 200.0 else 250.0 end as volume " +
-                        "from long_sequence(4)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testVwemaWithPartitionBy() throws Exception {
         // Test avg() VWEMA with partition by
-        assertQuery(
-                """
-                        ts\tsym\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:01.000000Z\tB\t15.0\t150.0\t15.0
-                        2024-01-01T00:00:02.000000Z\tA\t20.0\t200.0\t16.666666666666668
-                        2024-01-01T00:00:03.000000Z\tB\t25.0\t250.0\t21.25
-                        """,
-                "select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab",
-                "create table tab as (" +
+        assertQuery("select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab")
+                .ddl("create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "case when x % 2 = 1 then 'A' else 'B' end as sym, " +
                         "case when x = 1 then 10.0 when x = 2 then 15.0 when x = 3 then 20.0 else 25.0 end as price, " +
                         "case when x = 1 then 100.0 when x = 2 then 150.0 when x = 3 then 200.0 else 250.0 end as volume " +
                         "from long_sequence(4)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tsym\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\tA\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:01.000000Z\tB\t15.0\t150.0\t15.0
+                        2024-01-01T00:00:02.000000Z\tA\t20.0\t200.0\t16.666666666666668
+                        2024-01-01T00:00:03.000000Z\tB\t25.0\t250.0\t21.25
+                        """);
     }
 }

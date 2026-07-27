@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -128,6 +128,30 @@ public interface ParquetDecoder {
     );
 
     /**
+     * Same as {@link #decodeRowGroupWithRowFilterFillNulls(RowGroupBuffers, int, DirectIntList, int, int, int, DirectLongList)},
+     * but takes the filtered rows as a raw memory range.
+     *
+     * @param buffers           target buffers
+     * @param columnOffset      starting offset in the columns list
+     * @param columns           {@code [parquet_column_index, column_type]} pairs
+     * @param rowGroup          zero-based row group index
+     * @param rowLo             first row within the row group (inclusive)
+     * @param rowHi             last row within the row group (exclusive)
+     * @param filteredRowsAddr  address of the sorted row indices to decode
+     * @param filteredRowsCount number of row indices at the address
+     */
+    void decodeRowGroupWithRowFilterFillNulls(
+            RowGroupBuffers buffers,
+            int columnOffset,
+            DirectIntList columns,
+            int rowGroup,
+            int rowLo,
+            int rowHi,
+            long filteredRowsAddr,
+            long filteredRowsCount
+    );
+
+    /**
      * Returns the number of columns described in the parquet metadata.
      * Used to build the column-ID-to-index map during {@code openParquet()}.
      */
@@ -143,6 +167,15 @@ public interface ParquetDecoder {
     int getColumnId(int columnIndex);
 
     /**
+     * Returns the QuestDB column type stored in the parquet file for the given
+     * parquet column index. Used by query-path lazy-conversion code to decide
+     * whether the stored type matches the table's current column type.
+     *
+     * @param columnIndex zero-based column index within the parquet file
+     */
+    int getColumnType(int columnIndex);
+
+    /**
      * Returns the base address of the parquet data file backing this decoder.
      * Used by the memory pool to detect when the underlying file changes and
      * the decoder needs to be re-initialized.
@@ -154,4 +187,25 @@ public interface ParquetDecoder {
      * Used together with {@link #getFileAddr()} for file identity checks.
      */
     long getFileSize();
+
+    /**
+     * Releases a native resource previously handed out by {@link #takeDecodeResource()}.
+     * No-op for {@code 0} and for decoders that hold no per-decode resource.
+     *
+     * @param resource an opaque handle from {@link #takeDecodeResource()}
+     */
+    default void releaseDecodeResource(long resource) {
+    }
+
+    /**
+     * Returns and clears any native resource the most recent {@code decodeRowGroup*}
+     * call acquired and that must outlive the decoded buffers. Decoders whose decoded
+     * buffers reference bytes the decoder itself keeps mapped (the mmap-backed paths)
+     * own no transferable resource and return {@code 0}.
+     *
+     * @return an opaque resource handle, or {@code 0} when there is nothing to hold
+     */
+    default long takeDecodeResource() {
+        return 0;
+    }
 }

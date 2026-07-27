@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -39,6 +40,17 @@ public interface SecurityContext extends Mutable {
     // The user is not authenticated.
     // Either tried to authenticate and failed, or did not try to authenticate at all.
     byte AUTH_TYPE_NONE = 0;
+
+    /**
+     * Returns the security context to use during SQL validation, i.e. syntax-only
+     * compilation that must not enforce authorization. The default returns an
+     * allow-all context, which is sufficient for open-source builds; implementations
+     * that enforce permissions return a view that skips authorization while
+     * preserving identity information.
+     */
+    default SecurityContext asValidationContext() {
+        return AllowAllSecurityContext.INSTANCE;
+    }
 
     void authorizeAlterMatViewSetRefreshLimit(TableToken tableToken);
 
@@ -75,6 +87,8 @@ public interface SecurityContext extends Mutable {
     // the names are pairs from-to
     void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
+    void authorizeAlterTableSetFormat(TableToken tableToken);
+
     void authorizeAlterTableSetParam(TableToken tableToken);
 
     void authorizeAlterTableSetParquetSettings(TableToken tableToken);
@@ -103,6 +117,16 @@ public interface SecurityContext extends Mutable {
 
     void authorizePGWire();
 
+    /**
+     * Authorizes {@code ALTER TABLE ... REBASE WAL}. REBASE WAL is destructive: it discards pending WAL
+     * (including queued structural changes), mints a fresh tableId and drops the old directory. It is
+     * therefore gated behind system-admin privilege rather than the table-level RESUME WAL grant, so by
+     * default it delegates to {@link #authorizeSystemAdmin()}.
+     */
+    default void authorizeRebaseWal(TableToken tableToken) {
+        authorizeSystemAdmin();
+    }
+
     void authorizeResumeWal(TableToken tableToken);
 
     void authorizeSelect(ViewDefinition viewDefinition);
@@ -114,6 +138,10 @@ public interface SecurityContext extends Mutable {
     void authorizeSettings();
 
     void authorizeSqlEngineAdmin();
+
+    default void authorizeSuspendWal(TableToken tableToken) {
+        authorizeResumeWal(tableToken);
+    }
 
     void authorizeSystemAdmin();
 

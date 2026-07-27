@@ -24,20 +24,14 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class TestRndVarchar extends AbstractCairoTest {
     @Test
-    public void testAscii() throws SqlException {
-        TestUtils.assertSql(
-                engine,
-                sqlExecutionContext,
-                "select rnd_varchar(5,10,1) n from long_sequence(130)",
-                sink,
-                "n\n" +
+    public void testAscii() throws Exception {
+        assertQuery("select rnd_varchar(5,10,1) n from long_sequence(130)")
+                .returnsOnce("n\n" +
                         "&\uDA1F\uDE98|\uD924\uDE04۲\n" +
                         "\n" +
                         "䶓zV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
@@ -168,6 +162,6 @@ public class TestRndVarchar extends AbstractCairoTest {
                         "\n" +
                         "<T/g\"\n" +
                         "\n"
-        );
+                );
     }
 }

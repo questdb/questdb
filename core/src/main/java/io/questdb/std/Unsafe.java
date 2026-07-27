@@ -46,12 +46,25 @@ public final class Unsafe {
     public static final long INT_SCALE;
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
+    // The `{used, limit}` counters backing a MemoryTracker occupy the first 16
+    // bytes and must match `struct MemoryTracker` in `allocator.rs` (Rust reads
+    // `used` at offset 0, `limit` at offset 8). The block is allocated a full
+    // cache line wide with the counters at offset 0 so each pooled tracker owns
+    // its own line: a query's workers updating `used` cannot invalidate an
+    // unrelated concurrent query's counter (cross-query false sharing). Rust
+    // views only the 16-byte head, never the trailing padding.
+    public static final long MEMORY_TRACKER_BLOCK_SIZE = Misc.CACHE_LINE_SIZE;
+    public static final long MEMORY_TRACKER_LIMIT_OFFSET = 8;
+    public static final long MEMORY_TRACKER_USED_OFFSET = 0;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final long FREE_COUNT_ADDR;
     private static final long MALLOC_COUNT_ADDR;
     private static final long[] NATIVE_ALLOCATORS = new long[MemoryTag.SIZE - NATIVE_DEFAULT];
     private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
     private static final long NON_RSS_MEM_USED_ADDR;
+    // Size of the native QdbAllocator block. Layout: {mem_tracking, memory_tracker, tagged_used, memory_tag}.
+    // Must match `struct QdbAllocator` (#[repr(C, packed)]) in `allocator.rs`.
+    private static final long QDB_ALLOCATOR_SIZE = 8 + 8 + 8 + 4;
     private static final long REALLOC_COUNT_ADDR;
     private static final long RSS_MEM_LIMIT_ADDR;
     private static final long RSS_MEM_USED_ADDR;
@@ -177,6 +190,23 @@ public final class Unsafe {
         return 0;
     }
 
+    /**
+     * Tracker-aware variant. A {@code null} tracker degrades to the
+     * global-only {@link #free(long, long, int)} variant.
+     */
+    public static long free(long ptr, long size, int memoryTag, @Nullable MemoryTracker tracker) {
+        if (tracker == null) {
+            return free(ptr, size, memoryTag);
+        }
+        if (ptr != 0) {
+            UNSAFE.freeMemory(ptr);
+            incrFreeCount();
+            recordMemAlloc(-size, memoryTag);
+            recordPerQueryMemAlloc(-size, tracker.nativeAddress());
+        }
+        return 0;
+    }
+
     public static void freeMemory(long ptr) {
         UNSAFE.freeMemory(ptr);
     }
@@ -258,8 +288,7 @@ public final class Unsafe {
      * and that assigned to memory mapped files.
      */
     public static long getMemUsed() {
-        return UNSAFE.getLongVolatile(null, NON_RSS_MEM_USED_ADDR) +
-                UNSAFE.getLongVolatile(null, RSS_MEM_USED_ADDR);
+        return getNonRssMemUsed() + getRssMemUsed();
     }
 
     public static long getMemUsedByTag(int memoryTag) {
@@ -272,6 +301,27 @@ public final class Unsafe {
      */
     public static long getNativeAllocator(int memoryTag) {
         return NATIVE_ALLOCATORS[memoryTag - NATIVE_DEFAULT];
+    }
+
+    /**
+     * Tracker-aware variant. Returns a `*const QdbAllocator` whose
+     * `memory_tracker` field points at the given tracker's native block, so
+     * Rust-side allocations charge both the global counter and the
+     * per-workload counter. A {@code null} tracker degrades to the global-only
+     * {@link #getNativeAllocator(int)}.
+     * <p>
+     * The returned pointer is owned by the tracker and remains valid until
+     * the tracker's owning provider is closed.
+     */
+    public static long getNativeAllocator(int memoryTag, @Nullable MemoryTracker tracker) {
+        if (tracker == null) {
+            return getNativeAllocator(memoryTag);
+        }
+        return tracker.getOrCreateNativeAllocator(memoryTag);
+    }
+
+    public static long getNonRssMemUsed() {
+        return UNSAFE.getLongVolatile(null, NON_RSS_MEM_USED_ADDR);
     }
 
     public static Object getObject(Object o, long offset) {
@@ -332,6 +382,52 @@ public final class Unsafe {
                     .put(getRssMemUsed())
                     .put(", size=")
                     .put(size)
+                    .put(", memoryTag=").put(memoryTag)
+                    .put("], original message: ")
+                    .put(oom.getMessage());
+            System.err.println(e.getFlyweightMessage());
+            throw e;
+        }
+    }
+
+    /**
+     * Tracker-aware variant. Performs both global and per-workload limit
+     * checks before allocating; on success, updates both counters. A
+     * {@code null} tracker degrades to the global-only
+     * {@link #malloc(long, int)} variant.
+     * <p>
+     * On global breach throws the existing global-RSS message; on per-workload
+     * breach throws a distinct {@code "query memory limit exceeded"} message
+     * carrying the workload, query id, limit, used, requested size, and
+     * memory tag. Both throw via
+     * {@code CairoException.nonCritical().setOutOfMemory(true)}.
+     */
+    public static long malloc(long size, int memoryTag, @Nullable MemoryTracker tracker) {
+        if (tracker == null) {
+            return malloc(size, memoryTag);
+        }
+        try {
+            assert memoryTag >= MemoryTag.NATIVE_PATH;
+            // Resolve the tracker's native {used, limit} block once and share it between the
+            // pre-alloc check and the post-alloc record, instead of re-reading it through
+            // getLimit()/getUsed()/nativeAddress().
+            final long trackerBase = tracker.nativeAddress();
+            checkAllocLimit(size, memoryTag);
+            checkPerQueryAllocLimit(size, memoryTag, trackerBase, tracker);
+            long ptr = UNSAFE.allocateMemory(size);
+            recordMemAlloc(size, memoryTag);
+            recordPerQueryMemAlloc(size, trackerBase);
+            incrMallocCount();
+            return ptr;
+        } catch (OutOfMemoryError oom) {
+            CairoException e = CairoException.nonCritical().setOutOfMemory(true)
+                    .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [workload=")
+                    .put(tracker.getWorkload().name())
+                    .put(", queryId=").put(tracker.getQueryId())
+                    .put(", trackerUsed=").put(tracker.getUsed())
+                    .put(", trackerLimit=").put(tracker.getLimit())
+                    .put(", RSS_MEM_USED=").put(getRssMemUsed())
+                    .put(", size=").put(size)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
@@ -428,6 +524,50 @@ public final class Unsafe {
         }
     }
 
+    /**
+     * Tracker-aware variant with strong-exception safety. Both limit checks
+     * run against the size delta before any reallocation. On breach the
+     * overload throws and {@code address} continues to point at the
+     * pre-realloc block; the caller still owns it. Counters are updated only
+     * after both checks pass and {@link sun.misc.Unsafe#reallocateMemory}
+     * succeeds, so a per-workload breach never has to roll back a global
+     * counter update. A {@code null} tracker degrades to the global-only
+     * {@link #realloc(long, long, long, int)} variant.
+     */
+    public static long realloc(long address, long oldSize, long newSize, int memoryTag, @Nullable MemoryTracker tracker) {
+        if (tracker == null) {
+            return realloc(address, oldSize, newSize, memoryTag);
+        }
+        try {
+            assert memoryTag >= MemoryTag.NATIVE_PATH;
+            final long delta = newSize - oldSize;
+            // Resolve the tracker's native {used, limit} block once; see malloc() above.
+            final long trackerBase = tracker.nativeAddress();
+            checkAllocLimit(delta, memoryTag);
+            checkPerQueryAllocLimit(delta, memoryTag, trackerBase, tracker);
+            long ptr = UNSAFE.reallocateMemory(address, newSize);
+            recordMemAlloc(delta, memoryTag);
+            recordPerQueryMemAlloc(delta, trackerBase);
+            incrReallocCount();
+            return ptr;
+        } catch (OutOfMemoryError oom) {
+            CairoException e = CairoException.nonCritical().setOutOfMemory(true)
+                    .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [workload=")
+                    .put(tracker.getWorkload().name())
+                    .put(", queryId=").put(tracker.getQueryId())
+                    .put(", trackerUsed=").put(tracker.getUsed())
+                    .put(", trackerLimit=").put(tracker.getLimit())
+                    .put(", RSS_MEM_USED=").put(getRssMemUsed())
+                    .put(", oldSize=").put(oldSize)
+                    .put(", newSize=").put(newSize)
+                    .put(", memoryTag=").put(memoryTag)
+                    .put("], original message: ")
+                    .put(oom.getMessage());
+            System.err.println(e.getFlyweightMessage());
+            throw e;
+        }
+    }
+
     public static void recordMemAlloc(long size, int memoryTag) {
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
@@ -472,24 +612,93 @@ public final class Unsafe {
         }
     }
 
+    private static void checkPerQueryAllocLimit(long size, int memoryTag, long trackerBase, MemoryTracker tracker) {
+        if (size <= 0 || trackerBase == 0) {
+            return;
+        }
+        final long limit = getLongVolatile(trackerBase + MEMORY_TRACKER_LIMIT_OFFSET);
+        if (limit > 0) {
+            final long used = getLongVolatile(trackerBase + MEMORY_TRACKER_USED_OFFSET);
+            if (used + size > limit) {
+                throw CairoException.nonCritical().setOutOfMemory(true)
+                        .put("query memory limit exceeded [workload=").put(tracker.getWorkload().name())
+                        .put(", queryId=").put(tracker.getQueryId())
+                        .put(", limit=").put(limit)
+                        .put(", used=").put(used)
+                        .put(", size=").put(size)
+                        .put(", memoryTag=").put(memoryTag)
+                        .put(']');
+            }
+        }
+    }
+
     /**
      * Allocate a new native allocator object and return its pointer
      */
-    private static long constructNativeAllocator(long nativeMemCountersArray, int memoryTag) {
-        // See `allocator.rs` for the definition of `QdbAllocator`.
+    private static long constructNativeAllocator(long nativeMemCountersArray, int memoryTag, long memoryTrackerAddress) {
+        // See `allocator.rs` for the definition of `QdbAllocator`. Layout:
+        //   { mem_tracking: *const MemTracking, memory_tracker: *const MemoryTracker,
+        //     tagged_used: *const AtomicUsize, memory_tag: i32 }
         // We construct here via `Unsafe` to avoid having initialization order issues with `Os.java`.
-        final long allocSize = 8 + 8 + 4;  // two longs, one int
-        final long addr = UNSAFE.allocateMemory(allocSize);
-        Vect.memset(addr, allocSize, 0);
+        // `memoryTrackerAddress == 0` means no per-workload tracker is attached.
+        final long addr = UNSAFE.allocateMemory(QDB_ALLOCATOR_SIZE);
+        Vect.memset(addr, QDB_ALLOCATOR_SIZE, 0);
         UNSAFE.putLong(addr, nativeMemCountersArray);
-        UNSAFE.putLong(addr + 8, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
-        UNSAFE.putInt(addr + 16, memoryTag);
+        UNSAFE.putLong(addr + 8, memoryTrackerAddress);
+        UNSAFE.putLong(addr + 16, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
+        UNSAFE.putInt(addr + 24, memoryTag);
         return addr;
     }
 
     // most significant bit
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
+    }
+
+    // Updates the per-query counter on every tracked alloc/free, with no
+    // limit > 0 gate (unlike checkPerQueryAllocLimit), so query_activity
+    // reports live usage even for unlimited queries. See QueryRegistry.register().
+    private static void recordPerQueryMemAlloc(long size, long trackerBase) {
+        if (trackerBase == 0) {
+            return;
+        }
+        final long usedAddr = trackerBase + MEMORY_TRACKER_USED_OFFSET;
+        final long mem = UNSAFE.getAndAddLong(null, usedAddr, size) + size;
+        assert mem >= 0 : "unexpected per-query mem: " + mem + ", size: " + size;
+        if (mem < 0) {
+            // Release-build safety net mirroring Rust's saturating_decrement (allocator.rs):
+            // a malloc/free asymmetry must not leave the shared counter negative. Java reads
+            // `used` as a signed long, so a negative value silently defeats the per-query
+            // limit on this side, while Rust reads the same word as an unsigned usize (~2^64)
+            // and spuriously fails every later allocation for the whole workload. Clamp at 0
+            // so the asymmetry degrades to "limit ineffective" on both sides instead of
+            // inverting it. The assert above still fires loudly under -ea, so a regression is
+            // never silent in tests/CI; this only rescues release builds. The corrective add
+            // leaves the same brief window for a concurrent reader to observe the negative
+            // value as Rust's optimistic fetch_sub does.
+            UNSAFE.getAndAddLong(null, usedAddr, -mem);
+        }
+    }
+
+    /**
+     * Builds a fresh {@code QdbAllocator} bound to {@code tracker} for the
+     * given memory tag. Used by {@link MemoryTracker} to lazily back its
+     * per-tag Rust allocator pointers.
+     */
+    static long constructTrackerNativeAllocator(MemoryTracker tracker, int memoryTag) {
+        assert memoryTag >= NATIVE_DEFAULT;
+        // The `MemTracking` struct starts at the same address as RSS_MEM_USED_ADDR;
+        // see the layout comment in the static initializer.
+        return constructNativeAllocator(RSS_MEM_USED_ADDR, memoryTag, tracker.nativeAddress());
+    }
+
+    /**
+     * Symmetric counterpart to {@link #constructTrackerNativeAllocator}.
+     */
+    static void freeTrackerNativeAllocator(long addr) {
+        if (addr != 0) {
+            UNSAFE.freeMemory(addr);
+        }
     }
 
     interface AnonymousClassDefiner {
@@ -634,7 +843,7 @@ public final class Unsafe {
         }
         for (int memoryTag = NATIVE_DEFAULT; memoryTag < MemoryTag.SIZE; ++memoryTag) {
             NATIVE_ALLOCATORS[memoryTag - NATIVE_DEFAULT] = constructNativeAllocator(
-                    nativeMemCountersArray, memoryTag);
+                    nativeMemCountersArray, memoryTag, 0L);
         }
     }
 }

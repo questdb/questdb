@@ -264,7 +264,13 @@ public class JsonLexerTest {
                 try {
                     Assert.assertEquals(l, Files.read(fd, buf, (int) l, 0));
 
-                    for (int i = 0; i < l; i++) {
+                    // Split the file at byte offset i and feed the two halves as separate chunks,
+                    // exercising the lexer's chunk-boundary state machine. Doing this at every offset
+                    // is O(l^2); on slow CI runners (Mac, Windows) sample every Nth split point, which
+                    // still spreads boundaries across the whole file. The prime stride avoids aligning
+                    // with the file's structure.
+                    final int stride = Os.isLinux() ? 1 : 7;
+                    for (int i = 0; i < l; i += stride) {
                         try {
                             LEXER.clear();
                             Unsafe.copyMemory(buf, bufA, i);

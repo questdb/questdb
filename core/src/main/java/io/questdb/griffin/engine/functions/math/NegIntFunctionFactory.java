@@ -73,8 +73,12 @@ public class NegIntFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? -((long) value) : Numbers.LONG_NULL;
+            // Widen the subtree to long so a nested INT*INT product feeding
+            // unary minus stays at long width; calling getInt() recursively
+            // would let the inner product wrap mod 2^32 before negation,
+            // diverging from the JIT widening path.
+            final long value = arg.getLong(rec);
+            return value != Numbers.LONG_NULL ? -value : Numbers.LONG_NULL;
         }
 
         @Override

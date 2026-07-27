@@ -114,7 +114,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
                     break;
             }
             final int size = ColumnType.sizeOf(columnType);
-            if (size <= 0) {
+            if (size < 0 || (size == 0 && columnType != ColumnType.NULL)) {
                 throw CairoException.nonCritical().put("key type is not supported: ").put(ColumnType.nameOf(columnType));
             }
             columnOffsets[i + keyIndexOffset] = offset;

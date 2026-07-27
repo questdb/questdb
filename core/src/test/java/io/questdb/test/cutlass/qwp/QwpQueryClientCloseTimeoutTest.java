@@ -28,7 +28,6 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.std.Os;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -51,7 +50,7 @@ import java.lang.reflect.Field;
  * deliberately ignores interrupts, and shortens {@code shutdownJoinMs}
  * so the test completes in under a second.
  */
-public class QwpQueryClientCloseTimeoutTest extends AbstractBootstrapTest {
+public class QwpQueryClientCloseTimeoutTest extends AbstractQwpBootstrapTest {
 
     private static volatile boolean stubStop;
 
@@ -68,7 +67,7 @@ public class QwpQueryClientCloseTimeoutTest extends AbstractBootstrapTest {
         // Without this, the getter would stay dead even with the timeout test
         // only exercising the true branch.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE t(id LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t SELECT x, x::TIMESTAMP FROM long_sequence(50)");
@@ -95,7 +94,7 @@ public class QwpQueryClientCloseTimeoutTest extends AbstractBootstrapTest {
         // hijacked thread, but the original connection's native resources
         // (batch buffers + WebSocket recv buffer) are the deliberate leak
         // that the flag announces.
-        try (final TestServerMain serverMain = startWithEnvVariables()) {
+        try (final TestServerMain serverMain = startFragmented()) {
             serverMain.execute("CREATE TABLE t(id LONG, ts TIMESTAMP) "
                     + "TIMESTAMP(ts) PARTITION BY DAY WAL");
             QwpQueryClient client = QwpQueryClient.fromConfig(
@@ -178,4 +177,5 @@ public class QwpQueryClientCloseTimeoutTest extends AbstractBootstrapTest {
             Assert.fail("unexpected QWP error [status=" + status + "]: " + message);
         }
     }
+
 }

@@ -167,7 +167,7 @@ include(FetchContent)
 FetchContent_Declare(
         asmjit
         GIT_REPOSITORY https://github.com/questdb/asmjit.git
-        GIT_TAG f64c90818ff2ef87ec4f73f44d0a7e73fbff3229 # Improved overhead benchmarks
+        GIT_TAG 0054ff4bede1acb92aa0192c7ce0fa5715a5f469 # fix(jit_allocator): bound BitVectorRangeIterator range_start to _end
 )
 
 FetchContent_MakeAvailable(asmjit)

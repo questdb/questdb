@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
@@ -56,7 +57,9 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
-            Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes);
+            // openOnInit=false: the cursor binds the per-query tracker and reopens the map in of(),
+            // so the first allocation is charged to the per-query counter.
+            Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes, null, false);
             this.cursor = new LatestByAllSymbolsFilteredRecordCursor(
                     configuration,
                     metadata,
@@ -88,7 +91,15 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final PageFrameRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

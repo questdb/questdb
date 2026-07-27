@@ -61,6 +61,19 @@ public interface RowCursorFactory extends Plannable, QuietCloseable {
     boolean isEntity();
 
     /**
+     * Indicates whether the returned RowCursor yields frame rows in ascending
+     * row-index order. The parquet decode clamp in
+     * {@code PageFrameRecordCursorImpl.skipRows} treats {@code isEntity() &&
+     * isForwardScan()} as permission to decode only the leading rows of a frame,
+     * so a factory whose cursor visits rows in any other order MUST override
+     * this to return false: with the unsafe default it would read undecoded
+     * memory under a clamped LIMIT scan.
+     */
+    default boolean isForwardScan() {
+        return true;
+    }
+
+    /**
      * Indicates if the factory uses index
      *
      * @return true if the returned RowCursor is using an index, false otherwise

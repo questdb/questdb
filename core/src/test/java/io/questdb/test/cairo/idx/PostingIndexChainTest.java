@@ -29,6 +29,7 @@ import io.questdb.cairo.idx.PostingIndexChainHeader;
 import io.questdb.cairo.idx.PostingIndexChainPicker;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import org.junit.After;
@@ -67,44 +68,6 @@ public class PostingIndexChainTest {
     }
 
     @Test
-    public void testInitialiseEmpty() {
-        PostingIndexChainHeader.initialiseEmpty(mem);
-
-        PostingIndexChainHeader.Snapshot snapshot = new PostingIndexChainHeader.Snapshot();
-        boolean ok = PostingIndexChainHeader.readUnderSeqlock(mem, snapshot);
-        Assert.assertTrue(ok);
-        Assert.assertEquals(PostingIndexUtils.V2_FORMAT_VERSION, snapshot.formatVersion);
-        Assert.assertEquals(PostingIndexUtils.V2_NO_HEAD, snapshot.headEntryOffset);
-        Assert.assertEquals(0, snapshot.entryCount);
-        Assert.assertEquals(PostingIndexUtils.V2_ENTRY_REGION_BASE, snapshot.regionBase);
-        Assert.assertEquals(PostingIndexUtils.V2_ENTRY_REGION_BASE, snapshot.regionLimit);
-        // Default initialiseEmpty leaves genCounter at -1 so the first
-        // appendNewEntry can use sealTxn=0 (matches .pv.0 naming).
-        Assert.assertEquals(-1L, snapshot.generationCounter);
-        Assert.assertTrue(snapshot.isEmpty());
-    }
-
-    @Test
-    public void testInitialiseEmptyWithExplicitStartSealTxn() {
-        PostingIndexChainHeader.initialiseEmpty(mem, /* startSealTxn */ 7L);
-
-        PostingIndexChainHeader.Snapshot snapshot = new PostingIndexChainHeader.Snapshot();
-        Assert.assertTrue(PostingIndexChainHeader.readUnderSeqlock(mem, snapshot));
-        Assert.assertEquals(6L, snapshot.generationCounter);
-    }
-
-    @Test
-    public void testPickerEmptyChain() {
-        PostingIndexChainHeader.initialiseEmpty(mem);
-
-        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
-        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
-        int result = PostingIndexChainPicker.pick(mem, /* pinnedTxn */ 100L, header, entry);
-
-        Assert.assertEquals(PostingIndexChainPicker.RESULT_EMPTY_CHAIN, result);
-    }
-
-    @Test
     public void testAbandonedEntrySkipped() {
         // Healthy entries:  (sealTxn=1, txnAtSeal=10), (sealTxn=2, txnAtSeal=20)
         // Abandoned entry:  (sealTxn=3, txnAtSeal=99) — publish landed but
@@ -136,6 +99,23 @@ public class PostingIndexChainTest {
         Assert.assertEquals(3, entry.sealTxn);
     }
 
+    @Test
+    public void testCircularChainDetected() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long off1 = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        long off2 = off1 + PostingIndexChainEntry.entrySize(1);
+
+        PostingIndexChainEntry.writeHeader(mem, off1, 1, 10, 0, 0, 0, 1, 64, 0, off2);
+        PostingIndexChainEntry.writeHeader(mem, off2, 2, 20, 0, 0, 0, 1, 64, 0, off1);
+        publishHead(off2, /* count */ 2, 2, off2 + PostingIndexChainEntry.entrySize(1));
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
+                PostingIndexChainPicker.pick(mem, 5L, header, entry));
+    }
+
     /**
      * NOTE: an in-memory concurrency stress test was attempted here but
      * MemoryCARWImpl is not designed for concurrent access (its
@@ -148,8 +128,8 @@ public class PostingIndexChainTest {
     public void testConcurrentReaderObservesConsistentSnapshot() throws Exception {
         PostingIndexChainHeader.initialiseEmpty(mem);
         long off1 = PostingIndexUtils.V2_ENTRY_REGION_BASE;
-        PostingIndexChainEntry.writeHeader(mem, off1, 1, 10, 0, 0, 0, 0, 64, 0, PostingIndexUtils.V2_NO_HEAD);
-        long limit = off1 + PostingIndexChainEntry.entrySize(0);
+        PostingIndexChainEntry.writeHeader(mem, off1, 1, 10, 0, 0, 0, 1, 64, 0, PostingIndexUtils.V2_NO_HEAD);
+        long limit = off1 + PostingIndexChainEntry.entrySize(1);
         publishHead(off1, 1, 1, limit);
 
         AtomicBoolean stop = new AtomicBoolean(false);
@@ -166,15 +146,15 @@ public class PostingIndexChainTest {
                 long nextOffset = limit;
                 long sealTxn = 1;
                 long entryCount = 1;
-                long bufferEnd = 64 * 1024 - PostingIndexChainEntry.entrySize(0);
+                long bufferEnd = 64 * 1024 - PostingIndexChainEntry.entrySize(1);
                 while (!stop.get() && nextOffset < bufferEnd) {
                     sealTxn++;
                     long txnAtSeal = sealTxn * 10;
                     PostingIndexChainEntry.writeHeader(
-                            mem, nextOffset, sealTxn, txnAtSeal, 0, 0, 0, 0, 64, 0, prevOffset
+                            mem, nextOffset, sealTxn, txnAtSeal, 0, 0, 0, 1, 64, 0, prevOffset
                     );
                     long thisOffset = nextOffset;
-                    nextOffset += PostingIndexChainEntry.entrySize(0);
+                    nextOffset += PostingIndexChainEntry.entrySize(1);
                     entryCount++;
                     activePage = PostingIndexChainHeader.publish(
                             mem, activePage, thisOffset, entryCount,
@@ -250,45 +230,108 @@ public class PostingIndexChainTest {
                 0, inconsistencies.get());
     }
 
+    /**
+     * Picker pre-validates entry.LEN against mappedLimit before invoking
+     * read(). A torn or corrupted LEN that overruns the mapping must be
+     * caught up front - never produce a SEGV inside read().
+     */
     @Test
-    public void testMultiEntryPicker() {
+    public void testCorruptedLenExceedingMappingDetected() {
         PostingIndexChainHeader.initialiseEmpty(mem);
-        long off1 = appendEntry(1, 10, PostingIndexUtils.V2_NO_HEAD);
-        long off2 = appendEntry(2, 20, off1);
-        long off3 = appendEntry(3, 30, off2);
-        publishHead(off3, /* count */ 3, /* genCounter */ 3);
+        long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        PostingIndexChainEntry.writeHeader(
+                mem, entryOffset,
+                1, 10, 0, 0, 0, 1, 64, 0,
+                PostingIndexUtils.V2_NO_HEAD
+        );
+        // Stomp LEN to a wildly out-of-range value.
+        mem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, 99_999_999L);
+        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(1));
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
+                PostingIndexChainPicker.pick(mem, 100L, /* coverCount */ 1, header, entry));
+    }
+
+    @Test
+    public void testCorruptedPrevPointerDetected() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        PostingIndexChainEntry.writeHeader(
+                mem, entryOffset,
+                1, 10, 0, 0, 0, 1, 64, 0,
+                /* prevEntryOffset */ 999_999L
+        );
+        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(1));
 
         PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
         PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
 
-        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
-                PostingIndexChainPicker.pick(mem, 30L, header, entry));
-        Assert.assertEquals(3, entry.sealTxn);
-
-        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
-                PostingIndexChainPicker.pick(mem, 100L, header, entry));
-        Assert.assertEquals(3, entry.sealTxn);
-
-        // Pin at 25 → picks middle (sealTxn=2 with txnAtSeal=20).
-        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
-                PostingIndexChainPicker.pick(mem, 25L, header, entry));
-        Assert.assertEquals(2, entry.sealTxn);
-        Assert.assertEquals(20, entry.txnAtSeal);
-
-        // Pin at exactly 20 → still picks middle.
-        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
-                PostingIndexChainPicker.pick(mem, 20L, header, entry));
-        Assert.assertEquals(2, entry.sealTxn);
-
-        // Pin at 19 → picks oldest.
-        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
-                PostingIndexChainPicker.pick(mem, 19L, header, entry));
-        Assert.assertEquals(1, entry.sealTxn);
-        Assert.assertEquals(10, entry.txnAtSeal);
-
-        // Pin below all entries.
-        Assert.assertEquals(PostingIndexChainPicker.RESULT_NO_VISIBLE_ENTRY,
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
                 PostingIndexChainPicker.pick(mem, 5L, header, entry));
+    }
+
+    /**
+     * Regression for the same bug, scoped to PostingIndexChainEntry.read()
+     * directly: with the entry hugging the end of the mapping, an over-eager
+     * cover-footer loop would step past the entry's LEN. The clamp must keep
+     * reads inside [entryOffset, entryOffset + entry.len).
+     */
+    @Test
+    public void testEntryReadClampsCoverFooterToEntryLen() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        PostingIndexChainEntry.writeHeader(
+                mem, entryOffset,
+                /* sealTxn */ 1, /* txnAtSeal */ 5,
+                0, 0, 0, /* genCount */ 1, 64, 0,
+                PostingIndexUtils.V2_NO_HEAD, /* coverEndOffsets */ null
+        );
+        // Sentinel bytes immediately past the entry: if the clamp regresses,
+        // the cover loop would read these as cover end-offset values.
+        long pastEntry = entryOffset + PostingIndexChainEntry.entrySize(1, 0);
+        mem.putLong(pastEntry, 0xDEAD_BEEFL);
+        mem.putLong(pastEntry + 8, 0xCAFE_BABEL);
+
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        long endOffset = PostingIndexChainEntry.read(mem, entryOffset, /* coverCount */ 3, entry);
+
+        Assert.assertEquals(104, entry.len);
+        Assert.assertEquals(entryOffset + entry.len, endOffset);
+        Assert.assertEquals(3, entry.coverFileEndOffsets.size());
+        Assert.assertEquals(0L, entry.coverFileEndOffsets.getQuick(0));
+        Assert.assertEquals(0L, entry.coverFileEndOffsets.getQuick(1));
+        Assert.assertEquals(0L, entry.coverFileEndOffsets.getQuick(2));
+    }
+
+    /**
+     * When the entry was sealed with the same coverCount the reader expects,
+     * the existing footer round-trips correctly. Guards the clamp against
+     * regressing the happy path.
+     */
+    @Test
+    public void testEntryReadReturnsWrittenCoverEndOffsets() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        LongList covers = new LongList();
+        covers.add(111L);
+        covers.add(222L);
+        PostingIndexChainEntry.writeHeader(
+                mem, entryOffset,
+                /* sealTxn */ 1, /* txnAtSeal */ 5,
+                0, 0, 0, /* genCount */ 1, 64, 0,
+                PostingIndexUtils.V2_NO_HEAD, covers
+        );
+        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(1, 2));
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, 100L, /* coverCount */ 2, header, entry));
+        Assert.assertEquals(2, entry.coverFileEndOffsets.size());
+        Assert.assertEquals(111L, entry.coverFileEndOffsets.getQuick(0));
+        Assert.assertEquals(222L, entry.coverFileEndOffsets.getQuick(1));
     }
 
     @Test
@@ -348,52 +391,160 @@ public class PostingIndexChainTest {
 
     @Test
     public void testEntrySizeIsAlignedToEightBytes() {
-        Assert.assertEquals(64, PostingIndexChainEntry.entrySize(0));
-        Assert.assertEquals(96, PostingIndexChainEntry.entrySize(1)); // 64+28=92 → 96
-        Assert.assertEquals(120, PostingIndexChainEntry.entrySize(2)); // 64+56=120
-        Assert.assertEquals(152, PostingIndexChainEntry.entrySize(3)); // 64+84=148 → 152
+        Assert.assertEquals(56, PostingIndexChainEntry.entrySize(0));
+        Assert.assertEquals(104, PostingIndexChainEntry.entrySize(1)); // 56+44=100 → 104
+        Assert.assertEquals(144, PostingIndexChainEntry.entrySize(2)); // 56+88=144
+        Assert.assertEquals(192, PostingIndexChainEntry.entrySize(3)); // 56+132=188 → 192
         for (int n = 0; n < 50; n++) {
             int sz = PostingIndexChainEntry.entrySize(n);
             Assert.assertEquals("entry size for genCount=" + n + " must be 8-aligned",
                     0, sz & 7);
-            Assert.assertTrue(sz >= 64 + n * 28);
-            Assert.assertTrue(sz < 64 + n * 28 + 8);
+            Assert.assertTrue(sz >= 56 + n * 44);
+            Assert.assertTrue(sz < 56 + n * 44 + 8);
         }
     }
 
     @Test
-    public void testCorruptedPrevPointerDetected() {
+    public void testInitialiseEmpty() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+
+        PostingIndexChainHeader.Snapshot snapshot = new PostingIndexChainHeader.Snapshot();
+        boolean ok = PostingIndexChainHeader.readUnderSeqlock(mem, snapshot);
+        Assert.assertTrue(ok);
+        Assert.assertEquals(PostingIndexUtils.V2_FORMAT_VERSION, snapshot.formatVersion);
+        Assert.assertEquals(PostingIndexUtils.V2_NO_HEAD, snapshot.headEntryOffset);
+        Assert.assertEquals(0, snapshot.entryCount);
+        Assert.assertEquals(PostingIndexUtils.V2_ENTRY_REGION_BASE, snapshot.regionBase);
+        Assert.assertEquals(PostingIndexUtils.V2_ENTRY_REGION_BASE, snapshot.regionLimit);
+        // Default initialiseEmpty leaves genCounter at -1 so the first
+        // appendNewEntry can use sealTxn=0 (matches .pv.0 naming).
+        Assert.assertEquals(-1L, snapshot.generationCounter);
+        Assert.assertTrue(snapshot.isEmpty());
+    }
+
+    @Test
+    public void testInitialiseEmptyWithExplicitStartSealTxn() {
+        PostingIndexChainHeader.initialiseEmpty(mem, /* startSealTxn */ 7L);
+
+        PostingIndexChainHeader.Snapshot snapshot = new PostingIndexChainHeader.Snapshot();
+        Assert.assertTrue(PostingIndexChainHeader.readUnderSeqlock(mem, snapshot));
+        Assert.assertEquals(6L, snapshot.generationCounter);
+    }
+
+    @Test
+    public void testMultiEntryPicker() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long off1 = appendEntry(1, 10, PostingIndexUtils.V2_NO_HEAD);
+        long off2 = appendEntry(2, 20, off1);
+        long off3 = appendEntry(3, 30, off2);
+        publishHead(off3, /* count */ 3, /* genCounter */ 3);
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, 30L, header, entry));
+        Assert.assertEquals(3, entry.sealTxn);
+
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, 100L, header, entry));
+        Assert.assertEquals(3, entry.sealTxn);
+
+        // Pin at 25 → picks middle (sealTxn=2 with txnAtSeal=20).
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, 25L, header, entry));
+        Assert.assertEquals(2, entry.sealTxn);
+        Assert.assertEquals(20, entry.txnAtSeal);
+
+        // Pin at exactly 20 → still picks middle.
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, 20L, header, entry));
+        Assert.assertEquals(2, entry.sealTxn);
+
+        // Pin at 19 → picks oldest.
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, 19L, header, entry));
+        Assert.assertEquals(1, entry.sealTxn);
+        Assert.assertEquals(10, entry.txnAtSeal);
+
+        // Pin below all entries.
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_NO_VISIBLE_ENTRY,
+                PostingIndexChainPicker.pick(mem, 5L, header, entry));
+    }
+
+    /**
+     * A non-positive LEN (zero or negative) is also a corruption signal -
+     * the picker rejects it without invoking read().
+     */
+    @Test
+    public void testNonPositiveLenDetected() {
         PostingIndexChainHeader.initialiseEmpty(mem);
         long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
         PostingIndexChainEntry.writeHeader(
                 mem, entryOffset,
-                1, 10, 0, 0, 0, 0, 64, 0,
-                /* prevEntryOffset */ 999_999L
+                1, 10, 0, 0, 0, 1, 64, 0,
+                PostingIndexUtils.V2_NO_HEAD
         );
-        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(0));
+        mem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, 0L);
+        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(1));
 
         PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
         PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
-
         Assert.assertEquals(PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
-                PostingIndexChainPicker.pick(mem, 5L, header, entry));
+                PostingIndexChainPicker.pick(mem, 100L, header, entry));
     }
 
     @Test
-    public void testCircularChainDetected() {
+    public void testPickerEmptyChain() {
         PostingIndexChainHeader.initialiseEmpty(mem);
-        long off1 = PostingIndexUtils.V2_ENTRY_REGION_BASE;
-        long off2 = off1 + PostingIndexChainEntry.entrySize(0);
 
-        PostingIndexChainEntry.writeHeader(mem, off1, 1, 10, 0, 0, 0, 0, 64, 0, off2);
-        PostingIndexChainEntry.writeHeader(mem, off2, 2, 20, 0, 0, 0, 0, 64, 0, off1);
-        publishHead(off2, /* count */ 2, 2, off2 + PostingIndexChainEntry.entrySize(0));
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        int result = PostingIndexChainPicker.pick(mem, /* pinnedTxn */ 100L, header, entry);
+
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_EMPTY_CHAIN, result);
+    }
+
+    /**
+     * Regression for the GraalVM crash in the WAL fast-lag bench: the writer
+     * sealed an entry with coverCount=0 (no .pcN footer) but the reader's
+     * .pci sidecar reported coverCount>0, so the cover-footer loop in
+     * PostingIndexChainEntry.read() would step past the entry's LEN. When
+     * the entry hugged the end of the mmap, that stepped past the mapping
+     * itself and SIGSEGV'd. The clamp must zero-fill the missing slots
+     * instead of dereferencing past the entry.
+     */
+    @Test
+    public void testPickerHandlesEntryWrittenWithFewerCoversThanReaderExpects() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        // genCount=1, coverEndOffsets=null - entry is written with no cover
+        // footer (LEN = entrySize(1, 0) = 104).
+        PostingIndexChainEntry.writeHeader(
+                mem, entryOffset,
+                /* sealTxn */ 1, /* txnAtSeal */ 5,
+                /* valueMemSize */ 0, /* maxValue */ 0,
+                /* keyCount */ 0, /* genCount */ 1,
+                /* blockCapacity */ 64, /* coveringFormat */ 0,
+                /* prevEntryOffset */ PostingIndexUtils.V2_NO_HEAD,
+                /* coverEndOffsets */ null
+        );
+        long entryLen = PostingIndexChainEntry.entrySize(1, 0);
+        Assert.assertEquals(104, entryLen);
+        publishHead(entryOffset, 1, 1, entryOffset + entryLen);
 
         PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
         PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
 
-        Assert.assertEquals(PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
-                PostingIndexChainPicker.pick(mem, 5L, header, entry));
+        // Reader passes coverCount=2 even though the entry has zero cover
+        // slots. The picker must succeed and the snapshot's
+        // coverFileEndOffsets must be zero-filled - never dereference the
+        // missing footer bytes.
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, /* pinnedTxn */ 100L, /* coverCount */ 2, header, entry));
+        Assert.assertEquals(2, entry.coverFileEndOffsets.size());
+        Assert.assertEquals(0L, entry.coverFileEndOffsets.getQuick(0));
+        Assert.assertEquals(0L, entry.coverFileEndOffsets.getQuick(1));
     }
 
     @Test
@@ -409,11 +560,13 @@ public class PostingIndexChainTest {
         PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
 
         for (int i = 1; i <= 64; i++) {
+            // genCount=1 so writeHeader populates slot[0].TXN_AT_SEAL; the
+            // entry-level txnAtSeal sourced by read() comes from slot[0].
             PostingIndexChainEntry.writeHeader(
                     mem, offset, /* sealTxn */ i, /* txnAtSeal */ i * 7L,
-                    0, 0, 0, 0, 64, 0, prevOffset
+                    0, 0, 0, /* genCount */ 1, 64, 0, prevOffset
             );
-            long entryLen = PostingIndexChainEntry.entrySize(0);
+            long entryLen = PostingIndexChainEntry.entrySize(1);
             entryCount++;
             activePage = PostingIndexChainHeader.publish(
                     mem, activePage, offset, entryCount,
@@ -467,9 +620,12 @@ public class PostingIndexChainTest {
         } else {
             offset = prevOffset + PostingIndexChainEntry.entrySize(readGenCount(prevOffset));
         }
+        // genCount=1 so writeHeader populates slot[0].TXN_AT_SEAL (the
+        // single on-disk source of entry-level visibility). Tests that read
+        // entry.txnAtSeal back need an actual slot to source it from.
         PostingIndexChainEntry.writeHeader(
                 mem, offset, sealTxn, txnAtSeal, /* valueMemSize */ 0,
-                /* maxValue */ 0, /* keyCount */ 0, 0,
+                /* maxValue */ 0, /* keyCount */ 0, /* genCount */ 1,
                 /* blockCapacity */ 64, /* coveringFormat */ 0, prevOffset
         );
         return offset;

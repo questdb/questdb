@@ -123,6 +123,110 @@ Java_io_questdb_cairo_idx_FSSTNative_trainAndCompressBlock0(
     return (static_cast<int64_t>(tableLen) << 48) | totalOut;
 }
 
+// Encoder-lifecycle bridge for streaming compression. The single-call
+// trainAndCompressBlock0 above sizes its output buffer to 2 * rawDataLen
+// in anonymous heap; for a single stride with several GB of input that
+// alone exceeds RSS_MEM_LIMIT. The four entry points below let the
+// caller train once on a small sample (typically a few tens of KB),
+// then encode the full input in small batches whose output bytes are
+// written straight into the file-backed sidecar mmap. The encoder
+// itself is a ~900 KB C++ object (per cwida) -- bounded, regardless of
+// input size.
+//
+// Lifecycle: createEncoder0 -> exportEncoder0 -> (compressBatch0)* -> destroyEncoder0.
+// The encoder is reused across compressBatch0 calls; each call's symbol
+// table emission is identical (exportEncoder0 is the source of truth).
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_cairo_idx_FSSTNative_createEncoder0(
+        JNIEnv *, jclass, jint sampleCount, jlong sampleLensAddr, jlong samplePtrsAddr) {
+    if (sampleCount <= 0 || sampleLensAddr == 0 || samplePtrsAddr == 0) return 0;
+    fsst_encoder_t *enc = fsst_create(
+            static_cast<size_t>(sampleCount),
+            reinterpret_cast<const size_t *>(sampleLensAddr),
+            reinterpret_cast<const unsigned char **>(samplePtrsAddr),
+            /*zeroTerminated=*/0);
+    return reinterpret_cast<jlong>(enc);
+}
+
+// Compress one batch with a pre-trained encoder. Returns the number of
+// strings encoded (<= count) or -1 on bad args. produced < count means
+// the output buffer is full; the caller resumes at index produced.
+//
+// batchScratchAddr layout matches trainAndCompressBlock0: four count-sized
+// arrays (lensIn, ptrsIn, lensOut, ptrsOut). Splitting the input into
+// batches keeps batch * 32 bytes of scratch instead of totalCount * 32.
+JNIEXPORT jlong JNICALL
+Java_io_questdb_cairo_idx_FSSTNative_compressBatch0(
+        JNIEnv *, jclass,
+        jlong encoderHandle, jint count,
+        jlong srcAddr, jlong srcOffsetsAddr,
+        jlong outCap, jlong outAddr,
+        jlong cmpOffsetsAddr,
+        jlong batchScratchAddr) {
+    if (encoderHandle == 0 || count <= 0 || outCap <= 0) return -1;
+    if (srcAddr == 0 || srcOffsetsAddr == 0 || outAddr == 0
+        || cmpOffsetsAddr == 0 || batchScratchAddr == 0) return -1;
+
+    auto *enc = reinterpret_cast<fsst_encoder_t *>(encoderHandle);
+    const int64_t segStride = static_cast<int64_t>(count) * 8;
+    auto *lensIn = reinterpret_cast<size_t *>(batchScratchAddr);
+    auto *ptrsIn = reinterpret_cast<const unsigned char **>(batchScratchAddr + segStride);
+    auto *lensOut = reinterpret_cast<size_t *>(batchScratchAddr + segStride * 2);
+    auto *ptrsOut = reinterpret_cast<unsigned char **>(batchScratchAddr + segStride * 3);
+
+    auto *srcBase = reinterpret_cast<const unsigned char *>(srcAddr);
+    auto *srcOffs = reinterpret_cast<const int64_t *>(srcOffsetsAddr);
+    for (jint i = 0; i < count; i++) {
+        int64_t lo = srcOffs[i];
+        int64_t hi = srcOffs[i + 1];
+        // Same monotonicity guard as trainAndCompressBlock0 -- without it,
+        // hi < lo wraps to ~2^64 length under fsst_compress.
+        if (lo < 0 || hi < lo) return -1;
+        ptrsIn[i] = srcBase + lo;
+        lensIn[i] = static_cast<size_t>(hi - lo);
+    }
+
+    size_t produced = fsst_compress(
+            enc,
+            static_cast<size_t>(count),
+            lensIn, ptrsIn,
+            static_cast<size_t>(outCap),
+            reinterpret_cast<unsigned char *>(outAddr),
+            lensOut, ptrsOut);
+
+    auto *dstBase = reinterpret_cast<unsigned char *>(outAddr);
+    auto *dstOffs = reinterpret_cast<int64_t *>(cmpOffsetsAddr);
+    for (size_t i = 0; i < produced; i++) {
+        int64_t off = static_cast<int64_t>(ptrsOut[i] - dstBase);
+        dstOffs[i] = off;
+    }
+    if (produced > 0) {
+        // One past the last value's bytes — convenient for callers that
+        // treat cmpOffsets as (n + 1) entries even within a partial batch.
+        dstOffs[produced] = static_cast<int64_t>(ptrsOut[produced - 1] - dstBase) + static_cast<int64_t>(lensOut[produced - 1]);
+    }
+    return static_cast<jlong>(produced);
+}
+
+// Export the trained symbol table. Returns the actual length (<= FSST_MAXHEADER).
+JNIEXPORT jint JNICALL
+Java_io_questdb_cairo_idx_FSSTNative_exportEncoder0(
+        JNIEnv *, jclass, jlong encoderHandle, jlong tableAddr) {
+    if (encoderHandle == 0 || tableAddr == 0) return 0;
+    auto *enc = reinterpret_cast<fsst_encoder_t *>(encoderHandle);
+    unsigned int tableLen = fsst_export(enc, reinterpret_cast<unsigned char *>(tableAddr));
+    return static_cast<jint>(tableLen);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_cairo_idx_FSSTNative_destroyEncoder0(
+        JNIEnv *, jclass, jlong encoderHandle) {
+    if (encoderHandle == 0) return;
+    auto *enc = reinterpret_cast<fsst_encoder_t *>(encoderHandle);
+    fsst_destroy(enc);
+}
+
 // Per-value decode in a tight loop (fsst_decompress is inlined from fsst.h).
 // Lets the caller index any ordinal in O(1) without needing a self-describing
 // length prefix on the decoded value (VARCHAR does not have one).

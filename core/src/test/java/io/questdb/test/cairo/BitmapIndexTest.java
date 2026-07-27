@@ -61,6 +61,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Rows;
 import io.questdb.std.Vect;
@@ -154,6 +155,38 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 assertThat("[1234,5567]", reader.getCursor(256, 0, Long.MAX_VALUE), list);
                 assertThat("[10,987,91,92,93]", reader.getCursor(64, 0, Long.MAX_VALUE), list);
                 assertThat("[1000]", reader.getCursor(0, 0, Long.MAX_VALUE), list);
+            }
+        });
+    }
+
+    @Test
+    public void testCursorNotRepooledWhenClosedOffOperatingThread() throws Exception {
+        // Genuine regression test for the M1 operating-thread re-pool gate on the
+        // default (bitmap) index reader: pooling reuses the same cursor instance, so
+        // whether an off-thread close re-pools is observable through object identity.
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 4);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
+                writer.add(256, 1234);
+                writer.add(256, 5567);
+            }
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                // Positive control: an on-thread close re-pools the cursor, so the
+                // next getCursor() on the operating thread hands back the same one.
+                final RowCursor c1 = reader.getCursor(256, 0, Long.MAX_VALUE);
+                c1.close();
+                final RowCursor c2 = reader.getCursor(256, 0, Long.MAX_VALUE);
+                Assert.assertSame("on-thread close should re-pool the cursor", c1, c2);
+
+                // Close c2 off the operating thread: the gate must skip re-pooling
+                // (getCursor() stamped the reader to this thread), so the next
+                // getCursor() allocates a fresh instance instead of handing back a
+                // cursor still being torn down elsewhere. Without the gate the
+                // off-thread close would re-pool c2 and getCursor() would return it.
+                closeOffThread(c2);
+                final RowCursor c3 = reader.getCursor(256, 0, Long.MAX_VALUE);
+                Assert.assertNotSame("off-thread close must not re-pool the cursor", c2, c3);
+                c3.close();
             }
         });
     }
@@ -503,7 +536,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testConcurrentWriterAndBackwardReadHeight() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        testConcurrentBackwardRW(rnd.nextInt(1000000), 100000);
+        // randomize row count with a floor for meaningful coverage; smaller range on slow CI runners (Mac, Windows)
+        int rowCount = Os.isLinux() ? 100_000 + rnd.nextInt(900_000) : 10_000 + rnd.nextInt(90_000);
+        testConcurrentBackwardRW(rowCount, 100000);
     }
 
     @Test
@@ -1730,6 +1765,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), contains);
         }
+    }
+
+    private void closeOffThread(RowCursor cursor) throws InterruptedException {
+        final Thread t = new Thread(cursor::close);
+        t.start();
+        t.join();
     }
 
     private MemoryA openKey() {

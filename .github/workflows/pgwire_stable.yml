@@ -12,8 +12,8 @@ jobs:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }} # Only run on non-forked PRs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '25'
@@ -40,20 +40,20 @@ jobs:
           toolchain: 1.90.0
           cache-workspaces: compat/src/test/rust/scenarios
       - name: Setup golang toolchain
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache-dependency-path: compat/src/test/golang/go.sum
       - name: Setup .NET
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '9.0.x'
       - name: Setup Python version
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: 3.8
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
       - name: Run all scenarios
@@ -63,7 +63,7 @@ jobs:
         run: ./questdb-*bin/questdb.sh stop
       - name: Upload logs
         if: failure() # Only upload logs if the job failed
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           path: ~/.questdb/log/*
           name: logs

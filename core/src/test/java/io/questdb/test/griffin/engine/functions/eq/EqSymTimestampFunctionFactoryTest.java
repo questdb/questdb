@@ -27,22 +27,27 @@ package io.questdb.test.griffin.engine.functions.eq;
 
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testBasicConstant() throws SqlException {
-        assertSql("""
-                column
-                true
-                """, "select '2017-01-01'::symbol = '2017-01-01'::timestamp");
-        assertSql("""
-                column
-                true
-                """, "select '2017-01-01'::symbol = '2017-01-01'::timestamp_ns");
+    public void testBasicConstant() throws Exception {
+        assertQuery("select '2017-01-01'::symbol = '2017-01-01'::timestamp")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        column
+                        true
+                        """);
+        assertQuery("select '2017-01-01'::symbol = '2017-01-01'::timestamp_ns")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        column
+                        true
+                        """);
 
     }
 
@@ -53,8 +58,9 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 
-            assertSql(
-                    """
+            assertQuery("select sym, t from x where sym = t")
+                    .noLeakCheck()
+                    .returns("""
                             sym\tt
                             37847040\t1970-01-01T00:00:37.847040Z
                             71892425\t1970-01-01T00:01:11.892425Z
@@ -66,9 +72,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
                             25030044\t1970-01-01T00:00:25.030044Z
                             13225820\t1970-01-01T00:00:13.225820Z
                             60453090\t1970-01-01T00:01:00.453090Z
-                            """,
-                    "select sym, t from x where sym = t"
-            );
+                            """);
         });
     }
 
@@ -79,8 +83,9 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 
-            assertSql(
-                    """
+            assertQuery("select sym, t from x where sym = t")
+                    .noLeakCheck()
+                    .returns("""
                             sym\tt
                             28258937621\t1970-01-01T00:00:28.258937621Z
                             84704108866\t1970-01-01T00:01:24.704108866Z
@@ -92,9 +97,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
                             23080510639\t1970-01-01T00:00:23.080510639Z
                             82509017689\t1970-01-01T00:01:22.509017689Z
                             28729051699\t1970-01-01T00:00:28.729051699Z
-                            """,
-                    "select sym, t from x where sym = t"
-            );
+                            """);
         });
     }
 
@@ -105,13 +108,12 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 
-            assertSql(
-                    """
+            assertQuery("select sym, t from x where '37847040'::symbol = t")
+                    .noLeakCheck()
+                    .returns("""
                             sym\tt
                             37847040\t1970-01-01T00:00:37.847040Z
-                            """,
-                    "select sym, t from x where '37847040'::symbol = t"
-            );
+                            """);
         });
     }
 
@@ -122,13 +124,12 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 
-            assertSql(
-                    """
+            assertQuery("select sym, t from x where '82509017689'::symbol = t")
+                    .noLeakCheck()
+                    .returns("""
                             sym\tt
                             82509017689\t1970-01-01T00:01:22.509017689Z
-                            """,
-                    "select sym, t from x where '82509017689'::symbol = t"
-            );
+                            """);
         });
     }
 
@@ -139,10 +140,9 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 
-            assertSql(
-                    "sym\tt\n",
-                    "select sym, t from x where sym = null::timestamp"
-            );
+            assertQuery("select sym, t from x where sym = null::timestamp")
+                    .noLeakCheck()
+                    .returns("sym\tt\n");
         });
     }
 
@@ -153,10 +153,9 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 
-            assertSql(
-                    "sym\tt\n",
-                    "select sym, t from x where sym = null::timestamp_ns"
-            );
+            assertQuery("select sym, t from x where sym = null::timestamp_ns")
+                    .noLeakCheck()
+                    .returns("sym\tt\n");
         });
     }
 
@@ -167,8 +166,9 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 
-            assertSql(
-                    """
+            assertQuery("select sym, t from x where sym = t")
+                    .noLeakCheck()
+                    .returns("""
                             sym\tt
                             37847040\t1970-01-01T00:00:37.847040Z
                             \t
@@ -180,9 +180,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
                             63602242\t1970-01-01T00:01:03.602242Z
                             74504721\t1970-01-01T00:01:14.504721Z
                             \t
-                            """,
-                    "select sym, t from x where sym = t"
-            );
+                            """);
         });
     }
 
@@ -193,8 +191,9 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 
-            assertSql(
-                    """
+            assertQuery("select sym, t from x where sym = t")
+                    .noLeakCheck()
+                    .returns("""
                             sym\tt
                             28258937621\t1970-01-01T00:00:28.258937621Z
                             \t
@@ -206,27 +205,25 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
                             12591706140\t1970-01-01T00:00:12.591706140Z
                             23253230564\t1970-01-01T00:00:23.253230564Z
                             \t
-                            """,
-                    "select sym, t from x where sym = t"
-            );
+                            """);
         });
     }
 
     @Test
     public void testDynamicSymbolTable() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    """
+            assertQuery("select x from long_sequence(10) where rnd_symbol('1','3','5') = 3::timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             x
                             3
                             8
                             10
-                            """,
-                    "select x from long_sequence(10) where rnd_symbol('1','3','5') = 3::timestamp"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select x from long_sequence(10) where rnd_symbol('1','3','5') = 3::timestamp_ns")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             x
                             1
                             3
@@ -234,9 +231,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
                             5
                             8
                             10
-                            """,
-                    "select x from long_sequence(10) where rnd_symbol('1','3','5') = 3::timestamp_ns"
-            );
+                            """);
         });
     }
 
@@ -250,10 +245,12 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             String query = "select sym, t from x where sym = $1";
 
             bindVariableService.setTimestampNano(0, NanosTimestampDriver.INSTANCE.parseFloorLiteral("1970-01-01T00:00:28.258937621Z"));
-            assertQuery("""
-                    sym\tt
-                    28258937621\t1970-01-01T00:00:28.258937621Z
-                    """, query, "", true, false);
+            assertQuery(query)
+                    .timestamp("")
+                    .returns("""
+                            sym\tt
+                            28258937621\t1970-01-01T00:00:28.258937621Z
+                            """);
 
         });
     }
@@ -268,10 +265,12 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             String query = "select sym, t from x where sym = $1";
 
             bindVariableService.setTimestamp(0, MicrosTimestampDriver.INSTANCE.parseFloorLiteral("1970-01-01T00:00:37.847040Z"));
-            assertQuery("""
-                    sym\tt
-                    37847040\t1970-01-01T00:00:37.847040Z
-                    """, query, "", true, false);
+            assertQuery(query)
+                    .timestamp("")
+                    .returns("""
+                            sym\tt
+                            37847040\t1970-01-01T00:00:37.847040Z
+                            """);
 
         });
     }
@@ -280,15 +279,14 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     public void testStaticSymbolTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('1','3','5') a from long_sequence(10))");
-            assertSql(
-                    """
+            assertQuery("select a from x where a = 3::timestamp")
+                    .noLeakCheck()
+                    .returns("""
                             a
                             3
                             3
                             3
-                            """,
-                    "select a from x where a = 3::timestamp"
-            );
+                            """);
         });
     }
 
@@ -296,8 +294,9 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     public void testStaticSymbolTableNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('1','3','5', null) a from long_sequence(30))");
-            assertSql(
-                    """
+            assertQuery("select a from x where a = null::timestamp")
+                    .noLeakCheck()
+                    .returns("""
                             a
                             
                             
@@ -307,11 +306,10 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
                             
                             
                             
-                            """,
-                    "select a from x where a = null::timestamp"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select a from x where a = null::timestamp_ns")
+                    .noLeakCheck()
+                    .returns("""
                             a
                             
                             
@@ -321,9 +319,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
                             
                             
                             
-                            """,
-                    "select a from x where a = null::timestamp_ns"
-            );
+                            """);
         });
     }
 }

@@ -237,4 +237,15 @@ public interface CharSink<T extends CharSink<?>> {
                         : b <= 0xfffccccccccccccL ? put(Math.round((bytes >> 10) / 0x1p40 * 1000.0) / 1000.0).put(" PiB")
                           : put(Math.round((bytes >> 20) / 0x1p40 * 1000.0) / 1000.0).put(" EiB"));
     }
+
+    /**
+     * Returns a reusable {@code int[1]} scratch slot for the Ryu double/float decomposition
+     * performed by {@link Numbers#append(CharSink, double, int)}. Each sink owns one cached array
+     * so the formatter never does a thread-local/carrier-local lookup per value.
+     * <p>
+     * The array is consumed entirely within a single {@code append} call, before any sink write,
+     * so one slot per sink is safe for the single-threaded use a sink instance sees, and it
+     * travels with the sink across a continuation migration (no carrier identity involved).
+     */
+    int[] ryuScratch();
 }

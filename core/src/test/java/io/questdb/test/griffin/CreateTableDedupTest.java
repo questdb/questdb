@@ -61,16 +61,16 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(3));
             }
 
-            assertSql(
-                    """
+            assertQuery("SHOW COLUMNS FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
                             x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             s\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\ttrue\tBITMAP\t
                             i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
-                            """,
-                    "SHOW COLUMNS FROM " + tableName
-            );
+                            """);
 
             execute("alter table " + tableName + " alter column s drop index");
             drainWalQueue();
@@ -82,16 +82,16 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(3));
             }
 
-            assertSql(
-                    """
+            assertQuery("SHOW COLUMNS FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
                             x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
                             i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
-                            """,
-                    "SHOW COLUMNS FROM " + tableName
-            );
+                            """);
         });
     }
 
@@ -126,41 +126,20 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             execute("create table a (ts timestamp, i int, s symbol, l long, str string) timestamp(ts) partition by day wal");
             String alterPrefix = "alter table a ";
 
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS",
-                    37,
-                    "deduplicate key column list expected"
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS (;",
-                    39,
-                    "literal expected"
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS (a)",
-                    39,
-                    "deduplicate key column not found "
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS (s)",
-                    39,
-                    "deduplicate key list must include dedicated timestamp column"
-            );
-            assertException(
-                    alterPrefix + "deduplicate KEYS (s);",
-                    26,
-                    "expected 'upsert'"
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT (s);",
-                    33,
-                    "expected 'keys'"
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS",
-                    37,
-                    "column list expected"
-            );
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS")
+                    .fails(37, "deduplicate key column list expected");
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS (;")
+                    .fails(39, "literal expected");
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS (a)")
+                    .fails(39, "deduplicate key column not found ");
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS (s)")
+                    .fails(39, "deduplicate key list must include dedicated timestamp column");
+            assertQuery(alterPrefix + "deduplicate KEYS (s);")
+                    .fails(26, "expected 'upsert'");
+            assertQuery(alterPrefix + "deduplicate UPSERT (s);")
+                    .fails(33, "expected 'keys'");
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS")
+                    .fails(37, "column list expected");
         });
     }
 
@@ -168,49 +147,28 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     public void testCreateTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
             String createPrefix = "create table a (ts timestamp, i int, s symbol, l long, str string)";
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day bypass wal deduplicate UPSERT KEYS(l);",
-                    121,
-                    "deduplication is possible only on WAL tables"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (;",
-                    127,
-                    "literal expected"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (a);",
-                    127,
-                    "deduplicate key column not found [column=a]"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (s);",
-                    127,
-                    "deduplicate key list must include dedicated timestamp column"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate KEYS (s);",
-                    114,
-                    "expected 'upsert'"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT (s);",
-                    121,
-                    "expected 'keys'"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS",
-                    125,
-                    "column list expected"
-            );
+            assertQuery(createPrefix + " timestamp(ts) partition by day bypass wal deduplicate UPSERT KEYS(l);")
+                    .fails(121, "deduplication is possible only on WAL tables");
+            assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (;")
+                    .fails(127, "literal expected");
+            assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (a);")
+                    .fails(127, "deduplicate key column not found [column=a]");
+            assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (s);")
+                    .fails(127, "deduplicate key list must include dedicated timestamp column");
+            assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate KEYS (s);")
+                    .fails(114, "expected 'upsert'");
+            assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT (s);")
+                    .fails(121, "expected 'keys'");
+            assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS")
+                    .fails(125, "column list expected");
         });
     }
 
     @Test
     public void testCreateTableWithArrayDedupKey() throws Exception {
-        assertMemoryLeak(() -> assertException("CREATE TABLE x (ts TIMESTAMP, arr DOUBLE[])" +
-                        " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, arr)",
-                101, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"));
+        assertMemoryLeak(() -> assertQuery("CREATE TABLE x (ts TIMESTAMP, arr DOUBLE[])" +
+                " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, arr)")
+                .fails(101, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"));
     }
 
     @Test
@@ -226,25 +184,25 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             try (TableWriter writer = getWriter(tableName)) {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(1));
             }
-            assertSql(
-                    """
+            assertQuery("SHOW COLUMNS FROM '" + tableName + '\'')
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             Status\tSYMBOL\tfalse\t256\ttrue\t16\t0\tfalse\tfalse\t\t
                             Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
-                            """,
-                    "SHOW COLUMNS FROM '" + tableName + '\''
-            );
+                            """);
             execute("alter table '" + tableName + "' DEDUP DISABLE;");
             execute("alter table '" + tableName + "' DEDUP ENABLE UPSERT KEYS(\"Reported time\");");
             drainWalQueue();
-            assertSql(
-                    """
+            assertQuery("SHOW COLUMNS FROM '" + tableName + '\'')
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             Status\tSYMBOL\tfalse\t256\ttrue\t16\t0\tfalse\tfalse\t\t
                             Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
-                            """,
-                    "SHOW COLUMNS FROM '" + tableName + '\''
-            );
+                            """);
         });
     }
 
@@ -264,10 +222,11 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 'duplicate1')");
             drainWalQueue();
 
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count(*) FROM " + tableName
-            );
+            assertQuery("SELECT count(*) FROM " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             // Disable deduplication
             execute("ALTER table " + tableName + " dedup disable");
@@ -278,10 +237,11 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 'duplicate3')");
             drainWalQueue();
 
-            assertSql(
-                    "count\n3\n",
-                    "SELECT count(*) FROM " + tableName
-            );
+            assertQuery("SELECT count(*) FROM " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
 
             // Re-enable deduplication with decimal key
             execute("ALTER table " + tableName + " dedup enable UPSERT KEYS(ts, amount)");
@@ -292,16 +252,16 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 200.00m, 'new2')");
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM " + tableName + " ORDER BY amount, description")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tamount\tdescription
                             2024-01-01T00:00:00.000000Z\t100.00\tduplicate1
                             2024-01-01T00:00:00.000000Z\t100.00\tduplicate2
                             2024-01-01T00:00:00.000000Z\t100.00\tduplicate3
                             2024-01-01T00:00:00.000000Z\t200.00\tnew2
-                            """,
-                    "SELECT * FROM " + tableName + " ORDER BY amount, description"
-            );
+                            """);
         });
     }
 
@@ -324,15 +284,15 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Should have 3 unique measurement values
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM " + tableName + " ORDER BY measurement")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tmeasurement\tsensor_id
                             2024-01-01T00:00:00.000000Z\t123456789012345.123456789012344\t4
                             2024-01-01T00:00:00.000000Z\t123456789012345.123456789012345\t2
                             2024-01-01T00:00:00.000000Z\t123456789012345.123456789012346\t3
-                            """,
-                    "SELECT * FROM " + tableName + " ORDER BY measurement"
-            );
+                            """);
         });
     }
 
@@ -356,15 +316,15 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Should have 3 unique combinations
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM " + tableName + " ORDER BY symbol, price")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tsymbol\tprice\tvolume\tactive
                             2024-01-01T00:00:00.000000Z\tAAPL\t150.50\t2000\tfalse
                             2024-01-01T00:00:00.000000Z\tAAPL\t150.51\t3000\ttrue
                             2024-01-01T00:00:00.000000Z\tGOOGL\t150.50\t5000\tfalse
-                            """,
-                    "SELECT * FROM " + tableName + " ORDER BY symbol, price"
-            );
+                            """);
         });
     }
 
@@ -399,16 +359,16 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Should have 4 rows (unique combinations of dedup keys)
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM " + tableName + " ORDER BY price, tax, discount")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tprice\ttax\tdiscount\tnotes
                             2024-01-01T00:00:00.000000Z\t100.00\t8.250\t5.00\tthird
                             2024-01-01T00:00:00.000000Z\t100.00\t8.250\t5.01\tdifferent discount
                             2024-01-01T00:00:00.000000Z\t100.00\t8.251\t5.00\tdifferent tax
                             2024-01-01T00:00:00.000000Z\t100.01\t8.250\t5.00\tdifferent price
-                            """,
-                    "SELECT * FROM " + tableName + " ORDER BY price, tax, discount"
-            );
+                            """);
         });
     }
 
@@ -439,14 +399,14 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Should have only 2 rows (one for each unique ts+price combination)
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM " + tableName + " ORDER BY price")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tprice\tquantity
                             2024-01-01T00:00:00.000000Z\t99.99\t30
                             2024-01-01T00:00:00.000000Z\t100.00\t40
-                            """,
-                    "SELECT * FROM " + tableName + " ORDER BY price"
-            );
+                            """);
         });
     }
 
@@ -470,15 +430,15 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Nulls should be treated as distinct values for deduplication
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM " + tableName + " ORDER BY price")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tprice\tnotes
                             2024-01-01T00:00:00.000000Z\t\tnull price 2
                             2024-01-01T00:00:00.000000Z\t0.00\tzero price
                             2024-01-01T00:00:00.000000Z\t99.99\tduplicate
-                            """,
-                    "SELECT * FROM " + tableName + " ORDER BY price"
-            );
+                            """);
         });
     }
 
@@ -506,8 +466,10 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                             " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL"
             );
-            assertException("ALTER table " + tableName + " dedup UPSERT KEYS(ts,", 54, "')' expected");
-            assertException("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s", 55, "')' expected");
+            assertQuery("ALTER table " + tableName + " dedup UPSERT KEYS(ts,")
+                    .fails(54, "')' expected");
+            assertQuery("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s")
+                    .fails(55, "')' expected");
         });
     }
 
@@ -527,16 +489,16 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(3));
             }
 
-            assertSql(
-                    """
+            assertQuery("SHOW COLUMNS FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
                             x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
                             i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
-                            """,
-                    "SHOW COLUMNS FROM " + tableName
-            );
+                            """);
         });
     }
 
@@ -588,15 +550,15 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(2));
             }
 
-            assertSql(
-                    """
+            assertQuery("SHOW COLUMNS FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
                             x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
-                            """,
-                    "SHOW COLUMNS FROM " + tableName
-            );
+                            """);
 
             execute("ALTER table " + tableName + " dedup disable");
             drainWalQueue();
@@ -608,15 +570,15 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 Assert.assertFalse(writer.getMetadata().isDedupKey(2));
             }
 
-            assertSql(
-                    """
+            assertQuery("SHOW COLUMNS FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
                             x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
-                            """,
-                    "SHOW COLUMNS FROM " + tableName
-            );
+                            """);
 
             execute("ALTER table " + tableName + " dedup UPSERT KEYS(ts)");
             drainWalQueue();
@@ -628,15 +590,15 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 Assert.assertFalse(writer.getMetadata().isDedupKey(2));
             }
 
-            assertSql(
-                    """
+            assertQuery("SHOW COLUMNS FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
                             x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
-                            """,
-                    "SHOW COLUMNS FROM " + tableName
-            );
+                            """);
 
             execute("ALTER table " + tableName + " dedup disable");
             execute("ALTER table " + tableName + " drop column x");
@@ -650,22 +612,19 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(2));
             }
 
-            assertSql(
-                    """
+            assertQuery("SHOW COLUMNS FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
                             s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
-                            """,
-                    "SHOW COLUMNS FROM " + tableName
-            );
+                            """);
 
             execute("ALTER table " + tableName + " dedup disable");
             execute("ALTER table " + tableName + " drop column s");
-            assertException(
-                    "ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)",
-                    57,
-                    "deduplicate key column not found [column=s]"
-            );
+            assertQuery("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)")
+                    .fails(57, "deduplicate key column not found [column=s]");
             drainWalQueue();
 
             try (TableWriter writer = getWriter(tableName)) {
@@ -685,50 +644,50 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                         " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                         " PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts,s)"
         );
-        assertSql(
-                """
+        assertQuery("select table_name, dedup from tables() where table_name ='" + tableName + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
                         table_name\tdedup
                         testEnableDedup\ttrue
-                        """,
-                "select table_name, dedup from tables() where table_name ='" + tableName + "'"
-        );
-        assertSql(
-                """
+                        """);
+        assertQuery("show columns from '" + tableName + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
                         column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                         ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
                         x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                         s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
-                        """,
-                "show columns from '" + tableName + "'"
-        );
+                        """);
         execute("alter table " + tableName + " dedup disable");
         drainWalQueue();
-        assertSql(
-                """
+        assertQuery("select table_name, dedup from tables() where table_name ='" + tableName + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
                         table_name\tdedup
                         testEnableDedup\tfalse
-                        """,
-                "select table_name, dedup from tables() where table_name ='" + tableName + "'"
-        );
+                        """);
 
         execute("alter table " + tableName + " dedup enable upsert keys(ts)");
         drainWalQueue();
-        assertSql(
-                """
+        assertQuery("select table_name, dedup from tables() where table_name ='" + tableName + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
                         table_name\tdedup
                         testEnableDedup\ttrue
-                        """,
-                "select table_name, dedup from tables() where table_name ='" + tableName + "'"
-        );
-        assertSql(
-                """
+                        """);
+        assertQuery("show columns from '" + tableName + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
                         column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                         ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
                         x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                         s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
-                        """,
-                "show columns from '" + tableName + "'"
-        );
+                        """);
     }
 
     @Test

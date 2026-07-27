@@ -61,7 +61,11 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sink = new StringSink();
-        private final LongIntHashMap symbolTableShortcut = new LongIntHashMap();
+        // The sentinel is Numbers.LONG_NULL rather than the default -1 so that -1
+        // (a perfectly legal TIMESTAMP input -- 1us before the epoch) can be stored
+        // as a key without colliding with the "empty slot" marker. LONG_NULL itself
+        // never reaches this map because it is filtered upstream in getInt()/getSymbol().
+        private final LongIntHashMap symbolTableShortcut = new LongIntHashMap(16, 0.5, Numbers.LONG_NULL);
         private final ObjList<String> symbols = new ObjList<>();
         private int next = 1;
 
@@ -130,6 +134,11 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isSymbolTableStatic() {
+            return false;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
             return false;
         }
 

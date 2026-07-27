@@ -53,6 +53,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
@@ -138,14 +139,48 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     public void commitAll() {
-        if (writer != null) {
-            writer.commit();
+        // Cheap idle early-out: an iteration with nothing buffered (no cached writer and an empty
+        // commit list) has nothing to flush, so skip the global role-switch lock acquire entirely.
+        // The UDP receive loop calls commitAll() on every iteration including idle ones; without
+        // this short-circuit each idle tick would contend the engine-wide role-switch lock for no
+        // work.
+        if (writer == null && commitList.size() == 0 && writerCache.size() == 0) {
+            return;
         }
-        for (int i = 0, n = commitList.size(); i < n; i++) {
-            //noinspection resource
-            commitList.valueQuick(i).commit();
+        // Cheap early-out: a node already read-only before we try to acquire the lock has nothing to
+        // flush. It must still release the cached writers (see releaseWriterCache): they hold the
+        // "ilpUdp" writer lock for the receiver's lifetime, and a held writer keeps the demote drain
+        // counting it as busy forever, so the demote can never finish. This is NOT the authoritative
+        // refusal -- the in-lock re-check below is.
+        if (engine.isReadOnlyMode()) {
+            releaseWriterCache();
+            return;
         }
-        commitList.clear();
+        // Hold the role-switch READ lock across the authoritative re-check and the actual
+        // commits, matching the TCP TableUpdateDetails discipline. The role-flip path in
+        // EntCairoEngine acquires the WRITE side of this lock around the REPLICA flag publish, so
+        // either the flip runs first (we see REPLICA on the in-lock re-check and skip the flush) or
+        // we run first (we flush as PRIMARY and the flip's write acquire waits for this read hold).
+        // This closes the window where a node demoted mid-ingest would otherwise flush a cached
+        // writer to a read-only replica, while other commit paths share the read side concurrently.
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            if (engine.isReadOnlyMode()) {
+                releaseWriterCache();
+                return;
+            }
+            if (writer != null) {
+                writer.commit();
+            }
+            for (int i = 0, n = commitList.size(); i < n; i++) {
+                //noinspection resource
+                commitList.valueQuick(i).commit();
+            }
+        } finally {
+            commitList.clear();
+            lock.unlock();
+        }
     }
 
     @Override
@@ -486,6 +521,42 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void prepareNewColumn(CachedCharSequence token) {
         columnName = token.getCacheAddress();
         columnType = ColumnType.UNDEFINED;
+    }
+
+    /**
+     * Releases every cached writer on the read-only (demoting) branch, mirroring ILP-TCP's
+     * closeNoLock. The parser caches a TableWriter per table under the "ilpUdp" lock for the
+     * receiver's lifetime; that lock is correctly NOT classified as an internal lock reason, so
+     * getBusyWriterCount() counts each cached writer as a busy client. If the read-only branch only
+     * cleared commitList (as it did before), the writers stayed pinned and the demote drain could
+     * never settle -- the demote was refused forever and buffered rows were dropped with the writers
+     * still held. Rolling back and freeing each writer back to the pool clears the busy count so the
+     * demote can complete; clearing writerCache and resetting the active state lets the parser keep
+     * running -- a later tick that arrives while still read-only simply re-runs the read-only branch
+     * with an empty cache (no NPE), and onEvent/switchTable lazily re-cache on the next PRIMARY tick.
+     */
+    private void releaseWriterCache() {
+        for (int i = 0, n = writerCache.size(); i < n; i++) {
+            final TableWriter cachedWriter = writerCache.valueQuick(i).writer;
+            if (cachedWriter != null) {
+                try {
+                    cachedWriter.rollback();
+                } catch (Throwable th) {
+                    // The pool also rolls back on return; log and keep freeing the rest so a single
+                    // distressed writer cannot leave the others pinned.
+                    LOG.error().$("could not roll back cached udp writer, releasing anyway [table=")
+                            .$(cachedWriter.getTableToken()).$(", ex=").$(th).I$();
+                }
+                Misc.free(cachedWriter);
+            }
+        }
+        LOG.info().$("released cached udp writers on read-only branch [count=").$(writerCache.size()).I$();
+        writerCache.clear();
+        commitList.clear();
+        writer = null;
+        metadata = null;
+        timestampDriver = null;
+        cacheEntryIndex = Integer.MIN_VALUE;
     }
 
     private void switchModeToAppend() {

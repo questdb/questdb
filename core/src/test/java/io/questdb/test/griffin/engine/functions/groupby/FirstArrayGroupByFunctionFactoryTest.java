@@ -35,14 +35,13 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (ARRAY[3.0, 4.0])");
-            assertQuery(
-                    "arr\n" +
-                            "[1.0,2.0]\n",
-                    "select first(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select first(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            [1.0,2.0]
+                            """);
         });
     }
 
@@ -55,15 +54,13 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (1, ARRAY[30.0, 31.0])");
             execute("insert into tab values (2, ARRAY[40.0, 41.0])");
             execute("insert into tab values (2, ARRAY[50.0, 51.0])");
-            assertQuery(
-                    "grp\tarr\n" +
-                            "1\t[10.0,11.0]\n" +
-                            "2\t[40.0,41.0]\n",
-                    "select grp, first(arr) arr from tab order by grp",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select grp, first(arr) arr from tab order by grp")
+                    .expectSize()
+                    .returns("""
+                            grp\tarr
+                            1\t[10.0,11.0]
+                            2\t[40.0,41.0]
+                            """);
         });
     }
 
@@ -73,14 +70,13 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (null)");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
-            assertQuery(
-                    "arr\n" +
-                            "null\n",
-                    "select first(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select first(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            null
+                            """);
         });
     }
 
@@ -90,14 +86,13 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
-            assertQuery(
-                    "arr\n" +
-                            "[]\n",
-                    "select first(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select first(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            []
+                            """);
         });
     }
 
@@ -107,14 +102,13 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[3.0, null, 5.0])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
-            assertQuery(
-                    "arr\n" +
-                            "[3.0,null,5.0]\n",
-                    "select first(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select first(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            [3.0,null,5.0]
+                            """);
         });
     }
 
@@ -123,14 +117,13 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
-            assertQuery(
-                    "arr\n" +
-                            "[1.0,2.0]\n",
-                    "select first(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select first(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            [1.0,2.0]
+                            """);
         });
     }
 
@@ -140,14 +133,13 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (null)");
             execute("insert into tab values (null)");
-            assertQuery(
-                    "arr\n" +
-                            "null\n",
-                    "select first(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select first(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            null
+                            """);
         });
     }
 
@@ -159,36 +151,49 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (1, ARRAY[10.0, 11.0])");
             execute("insert into tab values (2, ARRAY[20.0, 21.0])");
             execute("insert into tab values (2, null)");
-            assertQuery(
-                    "grp\tarr\n" +
-                            "1\tnull\n" +
-                            "2\t[20.0,21.0]\n",
-                    "select grp, first(arr) arr from tab order by grp",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select grp, first(arr) arr from tab order by grp")
+                    .expectSize()
+                    .returns("""
+                            grp\tarr
+                            1\tnull
+                            2\t[20.0,21.0]
+                            """);
         });
     }
 
     @Test
     public void testSampleByFillLinearRejectsArrayColumns() throws Exception {
-        assertException(
-                "SELECT ts, first(arr) arr FROM tab SAMPLE BY 10s FILL(LINEAR)",
-                "CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
-                11,
-                "support for LINEAR fill is not yet implemented"
-        );
+        final String sql = "SELECT ts, first(arr) arr FROM tab SAMPLE BY 10s FILL(LINEAR)";
+        assertQuery(sql)
+                .ddl("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY")
+                .fails(sql.indexOf("LINEAR"), "support for LINEAR fill is not yet implemented");
     }
 
     @Test
-    public void testSampleByFillValueRejectsArrayColumns() throws Exception {
-        assertException(
-                "SELECT ts, grp, first(arr) arr FROM tab SAMPLE BY 10s FILL(42)",
-                "CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
-                16,
-                "support for VALUE fill is not yet implemented"
-        );
+    public void testSampleByFillValueRejectedNonKeyed() throws Exception {
+        // Non-keyed companion to testSampleByFillValueRejectedWithArrayColumns. The
+        // non-keyed path routes through SqlOptimiser.rewriteSampleBy + the propagation
+        // of fillValues onto groupByModel in rewriteSelectClause0. first(D[]) shares
+        // getSampleByFlags() = NONE|NULL|PREVIOUS with array_agg, so FILL(VALUE) must
+        // be rejected here as well.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            final String sql = "SELECT ts, first(arr) arr FROM tab SAMPLE BY 10s FILL(42)";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("42"), "support for VALUE fill is not yet implemented");
+        });
+    }
+
+    @Test
+    public void testSampleByFillValueRejectedWithArrayColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            final String sql = "SELECT ts, grp, first(arr) arr FROM tab SAMPLE BY 10s FILL(42)";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("42"), "support for VALUE fill is not yet implemented");
+        });
     }
 
     @Test
@@ -197,14 +202,13 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[2.0, 3.0, 4.0])");
             execute("insert into tab values (ARRAY[1.0])");
-            assertQuery(
-                    "arr\n" +
-                            "[2.0,3.0,4.0]\n",
-                    "select first(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select first(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            [2.0,3.0,4.0]
+                            """);
         });
     }
 }

@@ -42,9 +42,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 
 public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Fξ)";
@@ -53,8 +55,8 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -89,7 +91,7 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public void getDecimal128(Record rec, Decimal128 decimal) {
-            float f = this.arg.getFloat(rec);
+            float f = arg.getFloat(rec);
             if (Numbers.isNull(f)) {
                 decimal.ofRawNull();
                 return;
@@ -136,7 +138,7 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public void getDecimal256(Record rec, Decimal256 decimal) {
-            float f = this.arg.getFloat(rec);
+            float f = arg.getFloat(rec);
             if (Numbers.isNull(f)) {
                 decimal.ofRawNull();
                 return;
@@ -169,7 +171,7 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
         }
 
         protected boolean cast(Record rec) {
-            float f = this.arg.getFloat(rec);
+            float f = arg.getFloat(rec);
             if (Numbers.isNull(f)) {
                 return false;
             }

@@ -47,11 +47,8 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
         final String tableName = "table_non_partitioned";
         assertMemoryLeak(() -> {
             createNonPartitionedTable();
-            assertException(
-                    "alter table " + tableName + " set type wal",
-                    12,
-                    "Cannot convert non-partitioned table"
-            );
+            assertQuery("alter table " + tableName + " set type wal")
+                    .fails(12, "Cannot convert non-partitioned table");
         });
     }
 

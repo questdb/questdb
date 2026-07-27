@@ -38,6 +38,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
@@ -53,8 +54,6 @@ import java.util.PriorityQueue;
 public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
     private static final int COLUMN_NAME_COLUMN = 3;
-    private static final int FROM_TABLE_TXN_COLUMN = 9;
-    private static final Log LOG = LogFactory.getLog(PostingSealPurgeJob.class);
     // Hitting this many consecutive errors switches the job into throttled
     // mode: subsequent iterations are skipped until ERROR_BACKOFF_MICROS
     // elapses, at which point one more attempt is allowed. A clean
@@ -62,6 +61,8 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     // disabled — that would leak orphan sidecar files for the rest of the
     // process lifetime.
     private static final long ERROR_BACKOFF_MICROS = 60L * 1_000_000L;
+    private static final int FROM_TABLE_TXN_COLUMN = 9;
+    private static final Log LOG = LogFactory.getLog(PostingSealPurgeJob.class);
     private static final int MAX_ERRORS = 11;
     private static final int PARTITION_BY_COLUMN = 8;
     private static final int PARTITION_NAME_TXN_COLUMN = 7;
@@ -116,30 +117,10 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                     null,
                     null
             );
-            String tableName = configuration.getSystemTableNamePrefix() + "posting_seal_purge_log";
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                this.tableToken = compiler.query()
-                        .$("CREATE TABLE IF NOT EXISTS \"")
-                        .$(tableName)
-                        .$("\" (" +
-                                "ts timestamp, " +
-                                "table_name symbol, " +
-                                "table_id int, " +
-                                "column_name symbol, " +
-                                "posting_column_name_txn long, " +
-                                "seal_txn long, " +
-                                "partition_timestamp timestamp, " +
-                                "partition_name_txn long, " +
-                                "partition_by int, " +
-                                "from_table_txn long, " +
-                                "to_table_txn long, " +
-                                "timestamp_type int, " +
-                                "completed timestamp" +
-                                ") timestamp(ts) partition by MONTH BYPASS WAL"
-                        )
-                        .createTable(sqlExecutionContext);
+                this.tableToken = createLogTable(configuration, compiler, sqlExecutionContext);
             }
-            this.writer = engine.getWriter(tableToken, "QuestDB system");
+            this.writer = engine.getWriter(tableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
             this.completedWriterIndex = writer.getMetadata().getColumnIndex("completed");
             this.operator = new PostingSealPurgeOperator(engine);
             recoverOpenTasks(engine);
@@ -147,6 +128,37 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             close();
             throw th;
         }
+    }
+
+    public static boolean persistReadyTasksDirect(
+            CairoEngine engine,
+            ObjList<PostingSealPurgeTask> tasks,
+            int lo,
+            int hi,
+            long currentTableTxn
+    ) {
+        if (tasks == null || hi <= lo) {
+            return true;
+        }
+        boolean hasReadyTask = false;
+        for (int i = lo, n = Math.min(hi, tasks.size()); i < n; i++) {
+            PostingSealPurgeTask task = tasks.getQuick(i);
+            if (task == null || task.isEmpty()) {
+                continue;
+            }
+            long toTxn = task.getToTableTxn();
+            if (toTxn == Long.MAX_VALUE) {
+                logUnclampedSentinel(task);
+                return false;
+            }
+            if (toTxn <= currentTableTxn) {
+                hasReadyTask = true;
+            }
+        }
+        if (!hasReadyTask) {
+            return true;
+        }
+        return persistTasksDirect0(engine, tasks, lo, hi, currentTableTxn);
     }
 
     @Override
@@ -164,13 +176,13 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     @TestOnly
-    public String getLogTableName() {
-        return tableToken == null ? null : tableToken.getTableName();
+    public int getErrorCountForTesting() {
+        return errorCount;
     }
 
     @TestOnly
-    public int getErrorCountForTesting() {
-        return errorCount;
+    public String getLogTableName() {
+        return tableToken == null ? null : tableToken.getTableName();
     }
 
     @TestOnly
@@ -192,8 +204,112 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         errorCount = v;
     }
 
+    private static long appendTask(TableWriter writer, PostingSealPurgeTask task, long scheduledAt) {
+        TableToken tok = task.getTableToken();
+        TableWriter.Row row = writer.newRow(scheduledAt);
+        row.putSym(TABLE_NAME_COLUMN, tok.getDirName());
+        row.putInt(TABLE_ID_COLUMN, tok.getTableId());
+        row.putSym(COLUMN_NAME_COLUMN, task.getIndexColumnName());
+        row.putLong(POSTING_COLUMN_NAME_TXN_COLUMN, task.getPostingColumnNameTxn());
+        row.putLong(SEAL_TXN_COLUMN, task.getSealTxn());
+        row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, task.getPartitionTimestamp());
+        row.putLong(PARTITION_NAME_TXN_COLUMN, task.getPartitionNameTxn());
+        row.putInt(PARTITION_BY_COLUMN, task.getPartitionBy());
+        row.putLong(FROM_TABLE_TXN_COLUMN, task.getFromTableTxn());
+        row.putLong(TO_TABLE_TXN_COLUMN, task.getToTableTxn());
+        row.putInt(TIMESTAMP_TYPE_COLUMN, task.getTimestampType());
+        row.append();
+        return Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1);
+    }
+
+    private static void closeDirectPersistResource(Closeable resource) {
+        if (resource != null) {
+            try {
+                resource.close();
+            } catch (Throwable th) {
+                LOG.error().$("posting seal purge: direct persist cleanup failed [err=").$(th).I$();
+            }
+        }
+    }
+
     private static int compareRetry(RetryEntry a, RetryEntry b) {
         return Long.compare(a.nextRunTime, b.nextRunTime);
+    }
+
+    private static TableToken createLogTable(
+            CairoConfiguration configuration,
+            SqlCompiler compiler,
+            SqlExecutionContextImpl sqlExecutionContext
+    ) throws SqlException {
+        String tableName = configuration.getSystemTableNamePrefix() + "posting_seal_purge_log";
+        return compiler.query()
+                .$("CREATE TABLE IF NOT EXISTS \"")
+                .$(tableName)
+                .$("\" (" +
+                        "ts timestamp, " +
+                        "table_name symbol, " +
+                        "table_id int, " +
+                        "column_name symbol, " +
+                        "posting_column_name_txn long, " +
+                        "seal_txn long, " +
+                        "partition_timestamp timestamp, " +
+                        "partition_name_txn long, " +
+                        "partition_by int, " +
+                        "from_table_txn long, " +
+                        "to_table_txn long, " +
+                        "timestamp_type int, " +
+                        "completed timestamp" +
+                        ") timestamp(ts) partition by MONTH BYPASS WAL"
+                )
+                .createTable(sqlExecutionContext);
+    }
+
+    private static void logUnclampedSentinel(PostingSealPurgeTask task) {
+        LOG.error().$("posting seal purge: refusing to persist unclamped sentinel toTxn [table=")
+                .$(task.getTableToken())
+                .$(", column=").$(task.getIndexColumnName())
+                .$(", sealTxn=").$(task.getSealTxn())
+                .I$();
+    }
+
+    private static boolean persistTasksDirect0(
+            CairoEngine engine,
+            ObjList<PostingSealPurgeTask> tasks,
+            int lo,
+            int hi,
+            long currentTableTxn
+    ) {
+        TableWriter logWriter = null;
+        SqlExecutionContextImpl sqlExecutionContext = null;
+        try {
+            CairoConfiguration configuration = engine.getConfiguration();
+            sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            sqlExecutionContext.with(
+                    configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                    null,
+                    null
+            );
+            TableToken logTableToken;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                logTableToken = createLogTable(configuration, compiler, sqlExecutionContext);
+            }
+            logWriter = engine.getWriter(logTableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
+            long scheduledAt = configuration.getMicrosecondClock().getTicks();
+            for (int i = lo, n = Math.min(hi, tasks.size()); i < n; i++) {
+                PostingSealPurgeTask task = tasks.getQuick(i);
+                if (task != null && !task.isEmpty() && task.getToTableTxn() <= currentTableTxn) {
+                    appendTask(logWriter, task, scheduledAt);
+                }
+            }
+            logWriter.commit();
+            return true;
+        } catch (Throwable th) {
+            LOG.error().$("posting seal purge: direct task batch persist failed [err=").$(th).I$();
+            return false;
+        } finally {
+            closeDirectPersistResource(logWriter);
+            closeDirectPersistResource(sqlExecutionContext);
+        }
     }
 
     private void calculateNextRunTime(RetryEntry entry, long now) {
@@ -292,21 +408,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             return;
         }
         try {
-            TableToken tok = entry.getTableToken();
-            TableWriter.Row row = writer.newRow(entry.scheduledAt);
-            row.putSym(TABLE_NAME_COLUMN, tok.getDirName());
-            row.putInt(TABLE_ID_COLUMN, tok.getTableId());
-            row.putSym(COLUMN_NAME_COLUMN, entry.getIndexColumnName());
-            row.putLong(POSTING_COLUMN_NAME_TXN_COLUMN, entry.getPostingColumnNameTxn());
-            row.putLong(SEAL_TXN_COLUMN, entry.getSealTxn());
-            row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, entry.getPartitionTimestamp());
-            row.putLong(PARTITION_NAME_TXN_COLUMN, entry.getPartitionNameTxn());
-            row.putInt(PARTITION_BY_COLUMN, entry.getPartitionBy());
-            row.putLong(FROM_TABLE_TXN_COLUMN, entry.getFromTableTxn());
-            row.putLong(TO_TABLE_TXN_COLUMN, entry.getToTableTxn());
-            row.putInt(TIMESTAMP_TYPE_COLUMN, entry.getTimestampType());
-            row.append();
-            entry.logRowId = Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1);
+            entry.logRowId = appendTask(writer, entry, entry.scheduledAt);
         } catch (Throwable th) {
             LOG.error().$("posting seal purge: failed to persist task, log writer disabled [err=").$(th).I$();
             errorCount++;

@@ -734,6 +734,15 @@ namespace questdb::aarch64 {
         }
     }
 
+    // Narrow int arithmetic always runs at i32 width via int32_*. With
+    // null_check on, the result can carry INT_NULL (e.g. INT operand was
+    // INT_NULL, or division by zero), so it must be tagged i32 -- otherwise
+    // a downstream f32/f64 conversion would skip the null check via
+    // cvt_null_check(i8) / cvt_null_check(i16) and miss the NaN substitution.
+    inline data_type_t narrow_arith_result(data_type_t dt, bool null_check) {
+        return null_check ? data_type_t::i32 : dt;
+    }
+
     jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
@@ -741,7 +750,8 @@ namespace questdb::aarch64 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_add(c, lhs.gp().w(), rhs.gp().w(), null_check), dt, dk};
+                return {int32_add(c, lhs.gp().w(), rhs.gp().w(), null_check),
+                        narrow_arith_result(dt, null_check), dk};
             case data_type_t::i64:
                 return {int64_add(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -760,7 +770,8 @@ namespace questdb::aarch64 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_sub(c, lhs.gp().w(), rhs.gp().w(), null_check), dt, dk};
+                return {int32_sub(c, lhs.gp().w(), rhs.gp().w(), null_check),
+                        narrow_arith_result(dt, null_check), dk};
             case data_type_t::i64:
                 return {int64_sub(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -779,7 +790,8 @@ namespace questdb::aarch64 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_mul(c, lhs.gp().w(), rhs.gp().w(), null_check), dt, dk};
+                return {int32_mul(c, lhs.gp().w(), rhs.gp().w(), null_check),
+                        narrow_arith_result(dt, null_check), dk};
             case data_type_t::i64:
                 return {int64_mul(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -798,7 +810,8 @@ namespace questdb::aarch64 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_div(c, lhs.gp().w(), rhs.gp().w(), null_check), dt, dk};
+                return {int32_div(c, lhs.gp().w(), rhs.gp().w(), null_check),
+                        narrow_arith_result(dt, null_check), dk};
             case data_type_t::i64:
                 return {int64_div(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -1098,6 +1111,16 @@ namespace questdb::aarch64 {
               const ConstantCache &const_cache,
               ColumnValueCache &value_cache) {
 
+        // Snapshot of value_cache.size() taken at BEGIN_SC. Restored at
+        // END_SC so column reads emitted between BEGIN_SC and END_SC do not
+        // leak cached registers past END_SC: an OR_SC forward jump can skip
+        // the load that populated such an entry, and a later MEM read for
+        // the same column would otherwise return a register that was never
+        // written on the jumped-to path. Multi-value IN() is the source of
+        // these blocks today and they never nest, so a single counter is
+        // sufficient.
+        size_t sc_value_cache_snapshot = 0;
+
         for (size_t i = 0; i < size; ++i) {
             auto &instr = istream[i];
             switch (instr.opcode) {
@@ -1126,6 +1149,25 @@ namespace questdb::aarch64 {
                 case opcodes::Not:
                     values.append(arena, bin_not(c, get_argument(c, values)));
                     break;
+                case opcodes::Sx_I64: {
+                    // Sign-extend the top of stack to i64. Used to widen narrow
+                    // integer operands (BYTE/SHORT/INT) before arithmetic so the
+                    // op dispatches to int64_*, matching the Java filter's
+                    // MulInt.getLong / AddInt.getLong (which compute via
+                    // ((long) l) OP r at long width). For i64 / f32 / f64 inputs
+                    // this is a no-op (left untouched).
+                    auto arg = get_argument(c, values);
+                    auto dt = arg.dtype();
+                    if (dt == data_type_t::i8 || dt == data_type_t::i16 || dt == data_type_t::i32) {
+                        values.append(arena, jit_value_t(
+                                int32_to_int64(c, arg.gp().w(), null_check),
+                                data_type_t::i64,
+                                arg.dkind()));
+                    } else {
+                        values.append(arena, arg);
+                    }
+                    break;
+                }
                 case opcodes::And_Sc: {
                     auto label_idx = static_cast<size_t>(instr.ipayload.lo);
                     auto arg = values.pop();
@@ -1162,6 +1204,7 @@ namespace questdb::aarch64 {
                     auto label_idx = static_cast<size_t>(instr.ipayload.lo);
                     Label label = c.new_label();
                     labels.set(label_idx, label);
+                    sc_value_cache_snapshot = value_cache.size();
                     break;
                 }
                 case opcodes::End_Sc: {
@@ -1169,6 +1212,7 @@ namespace questdb::aarch64 {
                     if (labels.has(label_idx)) {
                         c.bind(labels.get(label_idx));
                     }
+                    value_cache.truncate(sc_value_cache_snapshot);
                     break;
                 }
                 default: {

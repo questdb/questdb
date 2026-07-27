@@ -36,9 +36,11 @@ public class DoubleArrayElemSumParallelGroupByTest extends AbstractDoubleArrayEl
     @Test
     public void testParallelMergeDifferentShapes() throws Exception {
         assertKeyedParallelGroupBy(
-                "grp\tarr\n" +
-                        "1\t[[28.0,32.0],[36.0,40.0]]\n" +
-                        "2\t[[320.0,360.0,240.0],[420.0,460.0,300.0]]\n",
+                """
+                        grp\tarr
+                        1\t[[28.0,32.0],[36.0,40.0]]
+                        2\t[[320.0,360.0,240.0],[420.0,460.0,300.0]]
+                        """,
                 new String[][]{
                         {"2024-01-01T00:00:00", "1", "ARRAY[[1.0, 2.0], [3.0, 4.0]]"},
                         {"2024-01-01T01:00:00", "2", "ARRAY[[10.0, 20.0], [30.0, 40.0]]"},
@@ -55,9 +57,11 @@ public class DoubleArrayElemSumParallelGroupByTest extends AbstractDoubleArrayEl
     @Test
     public void testParallelMergeSameShape() throws Exception {
         assertKeyedParallelGroupBy(
-                "grp\tarr\n" +
-                        "1\t[[28.0,32.0],[36.0,40.0]]\n" +
-                        "2\t[[280.0,320.0],[360.0,400.0]]\n",
+                """
+                        grp\tarr
+                        1\t[[28.0,32.0],[36.0,40.0]]
+                        2\t[[280.0,320.0],[360.0,400.0]]
+                        """,
                 new String[][]{
                         {"2024-01-01T00:00:00", "1", "ARRAY[[1.0, 2.0], [3.0, 4.0]]"},
                         {"2024-01-01T01:00:00", "2", "ARRAY[[10.0, 20.0], [30.0, 40.0]]"},
@@ -73,7 +77,7 @@ public class DoubleArrayElemSumParallelGroupByTest extends AbstractDoubleArrayEl
 
     @Test
     public void testParallelDifferentShapes() throws Exception {
-        assertParallelGroupBy("DOUBLE[][]",
+        assertParallelGroupBy(
                 "[[11.0,22.0,3.0],[34.0,45.0,6.0],[50.0,60.0,null],[70.0,80.0,null]]",
                 new String[][]{
                         {"2024-01-01T00:00:00", "ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]"},
@@ -84,7 +88,7 @@ public class DoubleArrayElemSumParallelGroupByTest extends AbstractDoubleArrayEl
 
     @Test
     public void testParallelOneGroupNull() throws Exception {
-        assertParallelGroupBy("DOUBLE[][]",
+        assertParallelGroupBy(
                 "[[11.0,22.0,33.0],[44.0,55.0,66.0],[77.0,88.0,99.0]]",
                 new String[][]{
                         {"2024-01-01T00:00:00", "null"},
@@ -97,7 +101,7 @@ public class DoubleArrayElemSumParallelGroupByTest extends AbstractDoubleArrayEl
 
     @Test
     public void testParallelSameShapes() throws Exception {
-        assertParallelGroupBy("DOUBLE[][]",
+        assertParallelGroupBy(
                 "[[113.0,225.0,337.0],[449.0,561.0,673.0],[785.0,897.0,1009.0]]",
                 new String[][]{
                         {"2024-01-01T00:00:00", "ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]"},

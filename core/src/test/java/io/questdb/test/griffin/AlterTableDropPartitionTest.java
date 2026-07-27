@@ -79,16 +79,28 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     execute("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(1000)");
                     try (TableReader ignored = getReader("x")) {
                         // Open table reader and all partitions
-                        assertSql("column\n" +
-                                "1\n", "select sum(i) / sum(i) from x");
+                        assertQuery("select sum(i) / sum(i) from x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("""
+                                        column
+                                        1
+                                        """);
                     }
 
                     execute("alter table x add column new_col2 int");
                     execute("alter table x DROP partition list '2018-01-02'");
 
                     try (TableReader ignored = getReader("x")) {
-                        assertSql("column\n" +
-                                "1\n", "select sum(i) / sum(i) from x");
+                        assertQuery("select sum(i) / sum(i) from x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("""
+                                        column
+                                        1
+                                        """);
                     }
                 }
         );
@@ -181,39 +193,45 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     "    0) ts" +
                     "  from long_sequence(360)" +
                     "), index(sym capacity 128) timestamp(ts) partition by week;");
-            assertSql(
-                    "year\tweek_of_year\twoy\n" +
-                            "2024\t1\t2024-W01\n" +
-                            "2023\t52\t2023-W52\n" +
-                            "2023\t51\t2023-W51\n" +
-                            "2023\t50\t2023-W50\n" +
-                            "2023\t49\t2023-W49\n" +
-                            "2023\t48\t2023-W48\n" +
-                            "2023\t47\t2023-W47\n" +
-                            "2023\t46\t2023-W46\n" +
-                            "2023\t45\t2023-W45\n" +
-                            "2023\t44\t2023-W44\n", "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
-                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
-                            "  LIMiT 10"
-            );
+            assertQuery("WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
+                    "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                    "  LIMiT 10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            year\tweek_of_year\twoy
+                            2024\t1\t2024-W01
+                            2023\t52\t2023-W52
+                            2023\t51\t2023-W51
+                            2023\t50\t2023-W50
+                            2023\t49\t2023-W49
+                            2023\t48\t2023-W48
+                            2023\t47\t2023-W47
+                            2023\t46\t2023-W46
+                            2023\t45\t2023-W45
+                            2023\t44\t2023-W44
+                            """);
 
             execute("ALTER TABLE trade DROP PARTITION LIST '2023-W51', '2023-W50', '2023-12-05T23:47:21.038145Z'", sqlExecutionContext);
 
-            assertSql(
-                    "year\tweek_of_year\twoy\n" +
-                            "2024\t1\t2024-W01\n" +
-                            "2023\t52\t2023-W52\n" +
-                            "2023\t48\t2023-W48\n" +
-                            "2023\t47\t2023-W47\n" +
-                            "2023\t46\t2023-W46\n" +
-                            "2023\t45\t2023-W45\n" +
-                            "2023\t44\t2023-W44\n" +
-                            "2023\t43\t2023-W43\n" +
-                            "2023\t42\t2023-W42\n" +
-                            "2023\t41\t2023-W41\n", "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
-                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
-                            "  LIMiT 10"
-            );
+            assertQuery("WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
+                    "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                    "  LIMiT 10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            year\tweek_of_year\twoy
+                            2024\t1\t2024-W01
+                            2023\t52\t2023-W52
+                            2023\t48\t2023-W48
+                            2023\t47\t2023-W47
+                            2023\t46\t2023-W46
+                            2023\t45\t2023-W45
+                            2023\t44\t2023-W44
+                            2023\t43\t2023-W43
+                            2023\t42\t2023-W42
+                            2023\t41\t2023-W41
+                            """);
         });
     }
 
@@ -222,16 +240,20 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
 
-                    String expectedBeforeDrop = "count\n" +
-                            "120\n";
+                    String expectedBeforeDrop = """
+                            count
+                            120
+                            """;
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
                     execute("alter table x DROP partition list '2018-01-05', '2018-01-07'");
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    String expectedAfterDrop = """
+                            count
+                            0
+                            """;
 
                     assertPartitionResult(expectedAfterDrop, "2018-01-05");
                     assertPartitionResult(expectedAfterDrop, "2018-01-07");
@@ -244,8 +266,10 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
 
-                    String expectedBeforeDrop = "count\n" +
-                            "120\n";
+                    String expectedBeforeDrop = """
+                            count
+                            120
+                            """;
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
@@ -253,8 +277,10 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     // names have extra characters
                     execute("alter table x DROP partition list '2018-01-05T23', '2018-01-07T15'");
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    String expectedAfterDrop = """
+                            count
+                            0
+                            """;
 
                     assertPartitionResult(expectedAfterDrop, "2018-01-05");
                     assertPartitionResult(expectedAfterDrop, "2018-01-07");
@@ -267,8 +293,10 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
 
-                    String expectedBeforeDrop = "count\n" +
-                            "120\n";
+                    String expectedBeforeDrop = """
+                            count
+                            120
+                            """;
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
@@ -276,8 +304,10 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     execute("alter table x DROP partition list '2018-01-05';");
                     execute("alter table x DROP partition list '2018-01-07'; \n\n");
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    String expectedAfterDrop = """
+                            count
+                            0
+                            """;
 
                     assertPartitionResult(expectedAfterDrop, "2018-01-05");
                     assertPartitionResult(expectedAfterDrop, "2018-01-07");
@@ -373,10 +403,11 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
             }
 
             // verify partition was not dropped
-            assertSql(
-                    "count\n100\n",
-                    "SELECT count() FROM x"
-            );
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n100\n");
         });
     }
 
@@ -390,17 +421,23 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createXWithDifferentTimestampName();
 
-                    assertPartitionResultForTimestampColumnNameTs("count\n" +
-                                    "145\n",
+                    assertPartitionResultForTimestampColumnNameTs("""
+                                    count
+                                    145
+                                    """,
                             "2018");
 
-                    assertPartitionResultForTimestampColumnNameTs("count\n" +
-                            "147\n", "2020");
+                    assertPartitionResultForTimestampColumnNameTs("""
+                            count
+                            147
+                            """, "2020");
 
                     execute("alter table x drop partition where ts < dateadd('d', -1, now() ) AND ts < now()");
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    String expectedAfterDrop = """
+                            count
+                            0
+                            """;
 
                     assertPartitionResultForTimestampColumnNameTs(expectedAfterDrop, "2018");
                     assertPartitionResultForTimestampColumnNameTs(expectedAfterDrop, "2020");
@@ -413,21 +450,29 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("YEAR", 3 * 72000000000L);
 
-                    assertPartitionResult("count\n" +
-                                    "145\n",
+                    assertPartitionResult("""
+                                    count
+                                    145
+                                    """,
                             "2018");
 
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
+                    assertPartitionResult("""
+                            count
+                            147
+                            """, "2020");
 
                     execute("alter table x drop partition where timestamp = to_timestamp('2020-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')");
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    String expectedAfterDrop = """
+                            count
+                            0
+                            """;
 
                     assertPartitionResult(
-                            "count\n" +
-                                    "145\n",
+                            """
+                                    count
+                                    145
+                                    """,
                             "2018"
                     );
                     assertPartitionResult(expectedAfterDrop, "2020");
@@ -440,12 +485,16 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("YEAR", 3 * 72000000000L);
 
-                    assertPartitionResult("count\n" +
-                                    "145\n",
+                    assertPartitionResult("""
+                                    count
+                                    145
+                                    """,
                             "2018");
 
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
+                    assertPartitionResult("""
+                            count
+                            147
+                            """, "2020");
 
                     execute("alter table x drop partition where timestamp > 0 ");
 
@@ -462,21 +511,29 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("YEAR", 3 * 72000000000L);
 
-                    assertPartitionResult("count\n" +
-                                    "145\n",
+                    assertPartitionResult("""
+                                    count
+                                    145
+                                    """,
                             "2018");
 
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
+                    assertPartitionResult("""
+                            count
+                            147
+                            """, "2020");
 
                     execute("alter table x drop partition where timestamp = to_timestamp('2022-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')");
 
-                    assertPartitionResult("count\n" +
-                                    "145\n",
+                    assertPartitionResult("""
+                                    count
+                                    145
+                                    """,
                             "2018");
 
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
+                    assertPartitionResult("""
+                            count
+                            147
+                            """, "2020");
                 }
         );
     }
@@ -499,17 +556,22 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     "select x, timestamp_sequence('2022-02-26T12', 10*60*1000000), x " +
                     "from long_sequence(10)");
 
-            assertSql("inn\tts\tlo\n" +
-                    "1\t2022-02-26T12:00:00.000000Z\t1\n" +
-                    "2\t2022-02-26T12:10:00.000000Z\t2\n" +
-                    "3\t2022-02-26T12:20:00.000000Z\t3\n" +
-                    "4\t2022-02-26T12:30:00.000000Z\t4\n" +
-                    "5\t2022-02-26T12:40:00.000000Z\t5\n" +
-                    "6\t2022-02-26T12:50:00.000000Z\t6\n" +
-                    "7\t2022-02-26T13:00:00.000000Z\t7\n" +
-                    "8\t2022-02-26T13:10:00.000000Z\t8\n" +
-                    "9\t2022-02-26T13:20:00.000000Z\t9\n" +
-                    "10\t2022-02-26T13:30:00.000000Z\t10\n", "x where ts in '2022-02-26'");
+            assertQuery("x where ts in '2022-02-26'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            inn\tts\tlo
+                            1\t2022-02-26T12:00:00.000000Z\t1
+                            2\t2022-02-26T12:10:00.000000Z\t2
+                            3\t2022-02-26T12:20:00.000000Z\t3
+                            4\t2022-02-26T12:30:00.000000Z\t4
+                            5\t2022-02-26T12:40:00.000000Z\t5
+                            6\t2022-02-26T12:50:00.000000Z\t6
+                            7\t2022-02-26T13:00:00.000000Z\t7
+                            8\t2022-02-26T13:10:00.000000Z\t8
+                            9\t2022-02-26T13:20:00.000000Z\t9
+                            10\t2022-02-26T13:30:00.000000Z\t10
+                            """);
         });
     }
 
@@ -550,8 +612,10 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
             tm.col("x", ColumnType.INT).timestamp("ts");
             createPopulateTable(tm, 1, "2022-12-12T09:05", 1);
 
-            assertReader("x\tts\n" +
-                    "1\t2022-12-12T10:04:59.000000Z\n", "x");
+            assertReader("""
+                    x\tts
+                    1\t2022-12-12T10:04:59.000000Z
+                    """, "x");
 
             TableToken tableToken = engine.verifyTableName(tableName);
             TableReader rdr1 = getReader(tableToken);
@@ -570,8 +634,10 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
                 // Reader refresh after table partition remove.
                 rdr1.close();
-                assertReader("x\tts\n" +
-                        "1\t2022-12-12T11:55:00.000000Z\n", "x");
+                assertReader("""
+                        x\tts
+                        1\t2022-12-12T11:55:00.000000Z
+                        """, "x");
 
                 row = tw.newRow(MicrosTimestampDriver.floor("2022-12-12T11:56"));
                 row.putInt(0, 2);
@@ -588,9 +654,11 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
                 tw.removePartition(MicrosTimestampDriver.floor("2022-12-12T11:00"));
                 Assert.assertEquals(2, tw.size());
-                assertReader("x\tts\n" +
-                        "3\t2022-12-12T12:00:00.000000Z\n" +
-                        "4\t2022-12-12T12:55:00.000000Z\n", "x");
+                assertReader("""
+                        x\tts
+                        3\t2022-12-12T12:00:00.000000Z
+                        4\t2022-12-12T12:55:00.000000Z
+                        """, "x");
 
                 row = tw.newRow(MicrosTimestampDriver.floor("2022-12-12T12:56"));
                 row.putInt(0, 5);
@@ -602,11 +670,13 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                 tw.commit();
 
                 Assert.assertEquals(4, tw.size());
-                assertReader("x\tts\n" +
-                        "3\t2022-12-12T12:00:00.000000Z\n" +
-                        "4\t2022-12-12T12:55:00.000000Z\n" +
-                        "5\t2022-12-12T12:56:00.000000Z\n" +
-                        "6\t2022-12-12T13:00:00.000000Z\n", "x");
+                assertReader("""
+                        x\tts
+                        3\t2022-12-12T12:00:00.000000Z
+                        4\t2022-12-12T12:55:00.000000Z
+                        5\t2022-12-12T12:56:00.000000Z
+                        6\t2022-12-12T13:00:00.000000Z
+                        """, "x");
             }
         });
     }
@@ -621,16 +691,20 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
 
-                    String expectedBeforeDrop = "count\n" +
-                            "120\n";
+                    String expectedBeforeDrop = """
+                            count
+                            120
+                            """;
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
                     execute("alter table x drop partition where timestamp = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ");
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    String expectedAfterDrop = """
+                            count
+                            0
+                            """;
 
                     assertPartitionResult(expectedAfterDrop, "2018-01-05");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
@@ -643,11 +717,15 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
 
-                    String expectedBeforeDrop = "count\n" +
-                            "120\n";
+                    String expectedBeforeDrop = """
+                            count
+                            120
+                            """;
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    String expectedAfterDrop = """
+                            count
+                            0
+                            """;
 
                     execute("alter table x rename column timestamp to ts ");
 
@@ -666,11 +744,15 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
 
-                    String expectedBeforeDrop = "count\n" +
-                            "120\n";
+                    String expectedBeforeDrop = """
+                            count
+                            120
+                            """;
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    String expectedAfterDrop = """
+                            count
+                            0
+                            """;
 
                     execute("alter table x rename column b to bbb ");
 
@@ -708,7 +790,11 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                 (() -> {
                             createXSplit(2000, 750); // 2000 records per day
                             execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
-                            assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
+                            assertQuery("select count() from x where timestamp in '2018-01-01'")
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .noRandomAccess()
+                                    .returns("count\n0\n");
                         }
                 );
     }
@@ -719,7 +805,11 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                 () -> {
                     createXSplit(Micros.DAY_MICROS / 300, 299); // 300 records per day
                     execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
-                    assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
+                    assertQuery("select count() from x where timestamp in '2018-01-01'")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n0\n");
                 }
         );
     }
@@ -741,7 +831,11 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(ff,
                 () -> {
                     createXSplit(Micros.DAY_MICROS / 300, 290);
-                    assertSql("count\n308\n", "select count() from x where timestamp in '2018-01-01'");
+                    assertQuery("select count() from x where timestamp in '2018-01-01'")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n308\n");
 
                     try {
                         execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
@@ -751,11 +845,19 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     }
 
                     // no split partition deleted
-                    assertSql("count\n308\n", "select count() from x where timestamp in '2018-01-01'");
+                    assertQuery("select count() from x where timestamp in '2018-01-01'")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n308\n");
 
                     // Retry should work
                     execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
-                    assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
+                    assertQuery("select count() from x where timestamp in '2018-01-01'")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n0\n");
                 }
         );
     }
@@ -765,16 +867,20 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
 
-                    String expectedBeforeDrop = "count\n" +
-                            "120\n";
+                    String expectedBeforeDrop = """
+                            count
+                            120
+                            """;
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
                     execute("alter table x drop partition list '2018-01-05', '2018-01-07'");
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    String expectedAfterDrop = """
+                            count
+                            0
+                            """;
 
                     assertPartitionResult(expectedAfterDrop, "2018-01-05");
                     assertPartitionResult(expectedAfterDrop, "2018-01-07");
@@ -787,16 +893,20 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
 
-                    String expectedBeforeDrop = "count\n" +
-                            "120\n";
+                    String expectedBeforeDrop = """
+                            count
+                            120
+                            """;
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
                     execute("alter table x DROP partition list '2018-01-05', '2018-01-07'");
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    String expectedAfterDrop = """
+                            count
+                            0
+                            """;
 
                     assertPartitionResult(expectedAfterDrop, "2018-01-05");
                     assertPartitionResult(expectedAfterDrop, "2018-01-07");
@@ -809,17 +919,23 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("MONTH", 3 * 7200000000L);
 
-                    assertPartitionResult("count\n" +
-                                    "112\n",
+                    assertPartitionResult("""
+                                    count
+                                    112
+                                    """,
                             "2018-02");
 
-                    assertPartitionResult("count\n" +
-                            "120\n", "2018-04");
+                    assertPartitionResult("""
+                            count
+                            120
+                            """, "2018-04");
 
                     execute("alter table x drop partition list '2018-02', '2018-04'");
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    String expectedAfterDrop = """
+                            count
+                            0
+                            """;
 
                     assertPartitionResult(expectedAfterDrop, "2018-02");
                     assertPartitionResult(expectedAfterDrop, "2018-04");
@@ -832,17 +948,23 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     createX("YEAR", 3 * 72000000000L);
 
-                    assertPartitionResult("count\n" +
-                                    "147\n",
+                    assertPartitionResult("""
+                                    count
+                                    147
+                                    """,
                             "2020");
 
-                    assertPartitionResult("count\n" +
-                            "146\n", "2022");
+                    assertPartitionResult("""
+                            count
+                            146
+                            """, "2022");
 
                     execute("alter table x drop partition list '2020', '2022'");
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    String expectedAfterDrop = """
+                            count
+                            0
+                            """;
 
                     assertPartitionResult(expectedAfterDrop, "2020");
                     assertPartitionResult(expectedAfterDrop, "2022");
@@ -975,16 +1097,20 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         );
     }
 
-    private void assertPartitionResult(String expectedBeforeDrop, String intervalSearch) throws SqlException {
-        assertSql(
-                expectedBeforeDrop, "select count() from x where timestamp in '" + intervalSearch + "'"
-        );
+    private void assertPartitionResult(String expectedBeforeDrop, String intervalSearch) throws Exception {
+        assertQuery("select count() from x where timestamp in '" + intervalSearch + "'")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns(expectedBeforeDrop);
     }
 
-    private void assertPartitionResultForTimestampColumnNameTs(String expectedBeforeDrop, String intervalSearch) throws SqlException {
-        assertSql(
-                expectedBeforeDrop, "select count() from x where ts in '" + intervalSearch + "'"
-        );
+    private void assertPartitionResultForTimestampColumnNameTs(String expectedBeforeDrop, String intervalSearch) throws Exception {
+        assertQuery("select count() from x where ts in '" + intervalSearch + "'")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns(expectedBeforeDrop);
     }
 
     private void createX(String partitionBy, long increment) throws SqlException {

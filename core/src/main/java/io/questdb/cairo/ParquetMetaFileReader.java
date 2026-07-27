@@ -28,21 +28,25 @@ import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * File reader for the _pm files, which are sidecar files for the `.parquet` format.
  * <p>
  * Implements {@link ParquetRowGroupSkipper} for filter-pushdown row group
- * pruning. The first call to {@link #canSkipRowGroup} lazily allocates a
- * native handle that caches the parsed {@code _pm} header/footer; the
- * handle is reused across all subsequent skip calls and freed by
- * {@link #clear()}.
+ * pruning. The first native read ({@link #canSkipRowGroup},
+ * {@link #getResolvedSeqTxn}, {@link #readPartitionMeta}, row-group decode
+ * via {@link #getOrCreateNativeReaderPtr}) lazily allocates a native handle
+ * that caches the {@code _pm} header and the resolved footer in parsed
+ * form; the handle is reused across all subsequent native calls and freed
+ * by {@link #clear()}.
  * <p>
  * <b>Ownership:</b> The reader does NOT own the underlying {@code _pm} mmap.
  * The caller mmaps the file (typically via {@link #openAndMapRO(FilesFacade, LPSZ, ParquetMetaFileReader)}
@@ -115,6 +119,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     // Column descriptor layout (32B each, starting at header offset 24)
     private static final int COL_DESC_COL_TYPE_OFF = 12;
     private static final int COL_DESC_ID_OFF = 8;
+    private static final int COL_DESC_MAX_DEF_LEVEL_OFF = 30;
     private static final int COL_DESC_NAME_LENGTH_OFF = 24;
     private static final int COL_DESC_NAME_OFFSET_OFF = 0;
     private static final int FOOTER_FEATURE_FLAGS_OFF = 32;
@@ -130,6 +135,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int HEADER_COLUMN_COUNT_OFF = 24;
     private static final int HEADER_DESIGNATED_TS_OFF = 16;
     private static final int HEADER_FEATURE_FLAGS_OFF = 8;
+    private static final int HEADER_SORTING_COL_CNT_OFF = 20;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
     private static final long OPTIONAL_FEATURE_MASK = 0x0000_0000_FFFF_FFFFL;
     // Trailing bytes after a parquet file's footer body: 4-byte footer length + 4-byte PAR1 magic.
@@ -139,6 +145,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int ROW_GROUP_BLOCK_HEADER_SIZE = 8;
     // Each row group entry in the footer is a 4-byte u32 (block offset >> BLOCK_ALIGNMENT_SHIFT).
     private static final int ROW_GROUP_ENTRY_SIZE = 4;
+    // Header FEATURE_FLAGS bit (mirrors qdb-parquet-meta HeaderFeatureFlags::SORTING_IS_DTS_ASC_BIT):
+    // when set, the explicit sorting array is omitted and the lone sort column is the ascending
+    // designated timestamp.
+    private static final long SORTING_IS_DTS_ASC_FEATURE_FLAG = 1L << 2;
     // Stat flag bits within the column chunk stat_flags byte at COLUMN_CHUNK_STAT_FLAGS_OFF.
     // Layout mirrors the Rust writer (see parquet_metadata::types::StatFlags):
     //   bit 0 MIN_PRESENT, bit 1 MIN_INLINED, bit 2 MIN_EXACT,
@@ -152,15 +162,30 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private final DirectUtf8String flyweightColName = new DirectUtf8String();
     private long addr;
     // CRC32 verification result for the currently bound _pm mapping. Set
-    // true after a successful verifyChecksum0 call so subsequent opens
-    // (resolveFooter and onward) skip re-verification. Reset by clear().
+    // true after the verified parse on the first resolveFooter so
+    // subsequent resolves skip re-verification. Reset by clear().
     private boolean checksumVerified;
     private int columnCount;
+    // Lazily built because most readers never resolve stable ids. Reused across
+    // bindings so repeated sidecar scans do not allocate a map per partition.
+    private IntIntHashMap columnIdToIndex;
     private long fileSize;
     private long footerAddr;
-    // Lazily allocated native handle to a JniParquetMetaReader. Created on
-    // the first canSkipRowGroup call and freed by clear().
+    private boolean isColumnIdToIndexBuilt;
+    // Committed _pm snapshot size the native handle was parsed at.
+    // Meaningful only while nativeReaderPtr != 0.
+    private long nativeReaderFileSize;
+    // Native handle to a JniParquetMetaReader bound to one _pm snapshot.
+    // Created by the verified parse on the first resolveFooter (latest
+    // snapshot) or lazily by getOrCreateNativeReaderPtr (resolved
+    // snapshot); invalidated when a resolve selects a different snapshot;
+    // freed by clear().
     private long nativeReaderPtr;
+    // Committed _pm size of the MVCC snapshot whose footer resolveFooter
+    // settled on. Equals fileSize when the latest footer is selected, and a
+    // smaller value when the chain walk picks an older footer. Reset by
+    // clear(). Lets seqTxn-by-version reads target the selected footer.
+    private long resolvedFileSize;
     private int rowGroupCount;
 
     /**
@@ -287,13 +312,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
 
     @Override
     public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
-        assert addr != 0;
         assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
-        if (nativeReaderPtr == 0) {
-            nativeReaderPtr = createNativeReader(addr, fileSize);
-        }
         return canSkipRowGroup0(
-                nativeReaderPtr,
+                getOrCreateNativeReaderPtr(),
                 rowGroupIndex,
                 filters.getAddress(),
                 (int) (filters.size() / ParquetRowGroupFilter.LONGS_PER_FILTER),
@@ -306,10 +327,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             destroyNativeReader(nativeReaderPtr);
             nativeReaderPtr = 0;
         }
+        this.nativeReaderFileSize = 0;
         this.addr = 0;
         this.fileSize = 0;
+        this.resolvedFileSize = 0;
         this.footerAddr = 0;
         this.columnCount = 0;
+        this.isColumnIdToIndexBuilt = false;
         this.rowGroupCount = 0;
         this.checksumVerified = false;
     }
@@ -365,6 +389,51 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
+     * Finds a column by its stable id (the table writer index). The first lookup
+     * for a reader binding builds an id-to-dense-index map; subsequent lookups are
+     * constant time. Mirrors
+     * {@code PageFrameMemoryPool.buildColumnIdMap}: external Parquet files without
+     * QuestDB field ids (all -1) fall back to positional indexing. Returns -1 if
+     * no column matches. Unlike {@link #getColumnIndex(CharSequence)}, this stays
+     * correct across column renames because the id never changes.
+     */
+    public int getColumnIndexById(int columnId) {
+        if (columnId < 0) {
+            return -1;
+        }
+        if (!isColumnIdToIndexBuilt) {
+            if (columnIdToIndex == null) {
+                columnIdToIndex = new IntIntHashMap(columnCount);
+            } else {
+                columnIdToIndex.clear();
+            }
+            for (int i = 0; i < columnCount; i++) {
+                final int id = getColumnId(i);
+                final int effectiveId = id < 0 ? i : id;
+                final int keyIndex = columnIdToIndex.keyIndex(effectiveId);
+                if (keyIndex >= 0) {
+                    // Preserve the old linear scan's first-match behavior for a
+                    // malformed footer containing duplicate field ids.
+                    columnIdToIndex.putAt(keyIndex, effectiveId, i);
+                }
+            }
+            isColumnIdToIndexBuilt = true;
+        }
+        return columnIdToIndex.get(columnId);
+    }
+
+    /**
+     * Returns the parquet max definition level for the column. 0 means the field is
+     * Required (no definition-level stream, pages carry no nulls); a positive value
+     * means Optional. Legacy files (written before BYTE/SHORT/CHAR/SYMBOL became
+     * Optional) carry 0 here for those columns, so callers use this to detect a
+     * source file whose pages would be corrupt under a migrated Optional footer.
+     */
+    public int getColumnMaxDefLevel(int columnIndex) {
+        return Unsafe.getByte(columnDescriptorAddr(columnIndex) + COL_DESC_MAX_DEF_LEVEL_OFF) & 0xFF;
+    }
+
+    /**
      * Returns the column name for the given column index as a flyweight
      * over the mmaped _pm data. The returned reference is reused across
      * calls — callers must not hold it past the next call.
@@ -393,14 +462,20 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
-     * Returns the native reader handle, allocating it lazily on first call.
+     * Returns the native reader handle, allocating it lazily when the
+     * verified parse from {@link #resolveFooter(long)} was not retained.
      * The handle caches the parsed {@code _pm} header / footer / feature-flag
-     * layout so repeated JNI calls (filter pruning AND row-group decode) avoid
-     * reparsing. Freed by {@link #clear()}.
+     * layout so repeated JNI calls (filter pruning, row-group decode, footer
+     * field reads) avoid reparsing. It is bound to the snapshot the preceding
+     * {@link #resolveFooter(long)} settled on — the native and Java sides
+     * always describe the same footer — and a re-resolve that selects a
+     * different snapshot invalidates it. Freed by {@link #clear()}.
      */
     public long getOrCreateNativeReaderPtr() {
+        assert isOpen();
         if (nativeReaderPtr == 0) {
-            nativeReaderPtr = createNativeReader(addr, fileSize);
+            nativeReaderPtr = createNativeReader(addr, resolvedFileSize, false);
+            nativeReaderFileSize = resolvedFileSize;
         }
         return nativeReaderPtr;
     }
@@ -427,6 +502,27 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             total += Unsafe.getLong(rowGroupBlockAddr(i));
         }
         return total;
+    }
+
+    /**
+     * Returns the committed {@code _pm} size of the footer {@link #resolveFooter}
+     * settled on -- the committed head {@code N}. It drives the in-place-update
+     * parse anchor and differs from {@link #getFileSize()} (the mapped / header
+     * size) once a dead footer is present. Returns {@code 0} before
+     * {@link #resolveFooter} has run.
+     */
+    public long getResolvedFileSize() {
+        return resolvedFileSize;
+    }
+
+    /**
+     * Reads the seqTxn from the currently resolved footer (the snapshot selected by the
+     * preceding resolveFooter call), a field read off the cached native reader. Returns
+     * -1 when that footer carries no seqTxn. Caller must hold an open, resolved reader
+     * (isOpen()).
+     */
+    public long getResolvedSeqTxn() {
+        return readSeqTxn0(getOrCreateNativeReaderPtr());
     }
 
     public int getRowGroupCount() {
@@ -493,6 +589,35 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
+     * Effective number of sorting columns. The {@code SORTING_IS_DTS_ASC} flag
+     * omits the explicit array and means a single sort column (the ascending
+     * designated timestamp).
+     */
+    @TestOnly
+    public int getSortingColumnCount() {
+        if ((Unsafe.getLong(addr + HEADER_FEATURE_FLAGS_OFF) & SORTING_IS_DTS_ASC_FEATURE_FLAG) != 0) {
+            return 1;
+        }
+        return Unsafe.getInt(addr + HEADER_SORTING_COL_CNT_OFF);
+    }
+
+    /**
+     * Dense parquet column position of the sort key at {@code sortingColumnIndex}
+     * (the designated timestamp under {@code SORTING_IS_DTS_ASC}, else the explicit
+     * array). {@code sortingColumnIndex} must be in {@code [0, getSortingColumnCount())};
+     * the assertion guards the unchecked native read on the explicit-array branch.
+     */
+    @TestOnly
+    public int getSortingColumnIndex(int sortingColumnIndex) {
+        assert sortingColumnIndex >= 0 && sortingColumnIndex < getSortingColumnCount();
+        if ((Unsafe.getLong(addr + HEADER_FEATURE_FLAGS_OFF) & SORTING_IS_DTS_ASC_FEATURE_FLAG) != 0) {
+            return getDesignatedTimestampColumnIndex();
+        }
+        final long sortingArrayAddr = addr + HEADER_FIXED_SIZE + (long) columnCount * COLUMN_DESCRIPTOR_SIZE;
+        return Unsafe.getInt(sortingArrayAddr + (long) sortingColumnIndex * Integer.BYTES);
+    }
+
+    /**
      * Returns the accumulated dead bytes in the parquet file tracked by the _pm footer.
      */
     public long getUnusedBytes() {
@@ -555,6 +680,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         clear();
         this.addr = other.addr;
         this.fileSize = other.fileSize;
+        this.resolvedFileSize = other.resolvedFileSize;
         this.footerAddr = other.footerAddr;
         this.columnCount = other.columnCount;
         this.rowGroupCount = other.rowGroupCount;
@@ -562,128 +688,186 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
-     * Writes the total row count (i64) at {@code destAddr} and the partition
-     * squash tracker (i64) at {@code destAddr + 8}. The squash tracker is
-     * {@code -1} when the {@code _pm} header has no {@code SQUASH_TRACKER}
-     * feature section. Caller must provide a 16-byte buffer.
-     * <p>
-     * Enterprise callers use this to retrieve both values in a single JNI
-     * round trip.
+     * Writes two longs into a 16-byte buffer at {@code destAddr}: the
+     * resolved footer's row count and the partition squash tracker. The
+     * squash tracker is {@code -1} when its feature bit is absent.
+     * Enterprise callers use this to retrieve both values in one JNI round
+     * trip. Caller must hold an open, resolved reader (isOpen()).
      *
      * @param destAddr address of a 16-byte buffer to receive the two longs
      * @throws CairoException on malformed {@code _pm} data
      */
     public void readPartitionMeta(long destAddr) {
-        assert addr != 0;
-        readPartitionMeta0(addr, fileSize, destAddr);
+        readPartitionMeta0(getOrCreateNativeReaderPtr(), destAddr);
     }
 
     /**
-     * Locates the footer that matches {@code parquetFileSize} via the MVCC
-     * chain walk, validates the header and footer, and populates
-     * {@code footerAddr}, {@code columnCount}, and {@code rowGroupCount}.
-     * Must be called after {@link #of(long, long)} and before any accessor
-     * beyond {@link #getAddr()} / {@link #getFileSize()}.
+     * Resolves the footer whose derived parquet size equals
+     * {@code parquetFileSize} by walking the MVCC chain back from the mapped
+     * tail, then validates it and populates {@code footerAddr},
+     * {@code columnCount} and {@code rowGroupCount}. Call after
+     * {@link #of(long, long)}.
      * <p>
-     * Starting from {@code fileSize}, reads the trailer at
-     * {@code currentSize - 4} to derive the footer offset. If the latest
-     * footer's derived parquet file size does not equal
-     * {@code parquetFileSize}, walks back via each footer's
-     * {@code prev_parquet_meta_file_size}; each step re-applies the
-     * size-then-trailer indirection so its location is re-validated through
-     * its own trailer.
+     * Matching on the committed size (the {@code data.parquet} length, mirrored
+     * in {@code _txn} field 3) skips any orphaned dead footer a rolled-back
+     * in-place update left past the committed head: the {@code _pm} is no longer
+     * truncated, so the physically-last footer can be such an orphan. Pass the
+     * committed size, never the raw mapped size. To deliberately take the
+     * physically-last footer, use {@link #resolveLastFooter()}.
      *
-     * @param parquetFileSize parquet file size from {@code _txn} field 3,
-     *                        used as MVCC version token; pass
-     *                        {@link Long#MAX_VALUE} to take the latest
-     *                        footer without MVCC matching
-     * @return false if the parquet footer couldn't be found
+     * @param parquetFileSize the committed parquet file size, used as MVCC token
+     * @return false if no matching footer was found
      * @throws CairoException if the format is unsupported or corrupt
      */
     public boolean resolveFooter(long parquetFileSize) {
         final long addr = this.addr;
-        final long parquetMetaFileSize = this.fileSize;
-
-        // Verify the CRC32 once per open before trusting any byte of the
-        // file. Single-bit disk rot or RAM corruption otherwise passes the
-        // structural bound checks and is served as authoritative metadata
-        // steering SQL row-group pruning and cold-storage byte-range reads.
-        // The check parses the file once; the cached flag stops re-verifying
-        // on subsequent canSkipRowGroup calls. verifyChecksum0 throws
-        // CairoException on mismatch, null pointer, or unparseable file.
-        if (!checksumVerified) {
-            verifyChecksum0(addr, parquetMetaFileSize);
-            checksumVerified = true;
-        }
-
-        // Walk the MVCC chain. Each step: read the trailer at
-        // `currentSize - 4` to get the footer length, derive the footer
-        // offset, then check the parquet file size. If it doesn't match,
-        // read `prev_parquet_meta_file_size` from the current footer and
-        // repeat.
-        //
-        // Long.MAX_VALUE is a sentinel: use the latest footer without
-        // MVCC matching. In practice K stays small because
-        // O3PartitionJob triggers a full _pm rewrite when the
-        // unused-bytes ratio exceeds the configured threshold (default
-        // 50%) or absolute unused bytes exceed the limit (default 1 GB).
-        long currentSize = parquetMetaFileSize;
-        long currentOffset;
-        long currentFooterLength;
+        // Walk the MVCC chain back from the mapped tail: each step reads the
+        // trailer at currentSize-4 for the footer length, derives the footer,
+        // and compares its parquet size to the target; on a mismatch it follows
+        // prev_parquet_meta_file_size. The chain stays short -- O3PartitionJob
+        // rewrites the whole _pm once unused bytes pass the configured ratio
+        // (default 50%) or byte cap (default 1 GB).
+        long currentSize = this.fileSize;
         while (true) {
-            currentFooterLength = Integer.toUnsignedLong(
+            long currentFooterLength = Integer.toUnsignedLong(
                     Unsafe.getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
-            currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
-            // Bound checks use currentSize (the snapshot's committed size)
-            // not parquetMetaFileSize (the mapping size). Intermediate
-            // footers in the MVCC chain only own bytes up to their own
-            // currentSize; using the mapping size would let a corrupted
-            // footer steer reads into a later snapshot's bytes. The
-            // FOOTER_FIXED_SIZE guard ensures the subsequent fixed-field
-            // reads (parquet footer offset/length, prev_size, footer
-            // feature flags) all fall within currentSize.
-            if (currentOffset < HEADER_FIXED_SIZE
-                    || currentOffset + FOOTER_FIXED_SIZE > currentSize) {
-                throw CairoException.critical(0)
-                        .put("invalid _pm footer offset [footerLength=").put(currentFooterLength)
-                        .put(", parquetMetaFileSize=").put(currentSize)
-                        .put(']');
-            }
-            if (parquetFileSize == Long.MAX_VALUE) {
-                break;
-            }
+            long currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
+            checkFooterOffset(currentOffset, currentFooterLength, currentSize);
 
             long currentAddr = addr + currentOffset;
             long pqFooterOffset = Unsafe.getLong(currentAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
             int pqFooterLength = Unsafe.getInt(currentAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
             long derivedPqSize = pqFooterOffset + Integer.toUnsignedLong(pqFooterLength) + PARQUET_TRAILER_SIZE;
             if (derivedPqSize == parquetFileSize) {
-                break;
+                return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength);
             }
             long prevSize = Unsafe.getLong(currentAddr + FOOTER_PREV_PARQUET_META_FILE_SIZE_OFF);
-            // Reject prevSize values too small to hold a header +
-            // trailer. The next iteration dereferences addr + prevSize
-            // - FOOTER_TRAILER_SIZE, which for prevSize <
-            // FOOTER_TRAILER_SIZE would land before the mapping start.
+            // prevSize must hold at least a header + trailer; the next step reads
+            // its trailer at addr + prevSize - FOOTER_TRAILER_SIZE.
             if (prevSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE || prevSize >= currentSize) {
                 return false;
             }
             currentSize = prevSize;
         }
+    }
 
-        // Use local variables for all validation. Fields are only
-        // assigned at the very end so that a validation failure leaves
-        // isOpen()==false, preventing double-munmap in callers that
-        // check isOpen() in catch blocks.
-        //
-        // Read columnCount / rowGroupCount as u32 (writer emits Rust u32).
-        // A signed-int interpretation lets bit-31-set values become negative,
-        // making the (long) columnCount * COLUMN_DESCRIPTOR_SIZE arithmetic
-        // negative and silently passing the headerEndOffset bound check;
-        // downstream reads would then land at attacker-controlled offsets.
-        // Reject values that overflow Java int because they cannot be stored
-        // in this reader's int fields and would overflow downstream sizing
-        // arithmetic.
+    /**
+     * Resolves the physically-last footer (its trailer sits at the mapped tail),
+     * bypassing MVCC matching, then validates and commits it exactly as
+     * {@link #resolveFooter(long)} does. Use only when no committed parquet size
+     * is available to match on and no rolled-back in-place update can have left
+     * an orphaned dead footer at the tail -- e.g. a freshly staged or read-only
+     * {@code _pm}. Otherwise prefer {@link #resolveFooter(long)}.
+     *
+     * @return true once the footer is resolved (throws rather than returning false)
+     * @throws CairoException if the format is unsupported or corrupt
+     */
+    public boolean resolveLastFooter() {
+        final long addr = this.addr;
+        final long currentSize = this.fileSize;
+        final long currentFooterLength = Integer.toUnsignedLong(
+                Unsafe.getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
+        final long currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
+        checkFooterOffset(currentOffset, currentFooterLength, currentSize);
+        return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength);
+    }
+
+    private static native boolean canSkipRowGroup0(
+            long ptr,
+            int rowGroupIndex,
+            long filtersPtr,
+            int filterCount,
+            long filterBufEnd
+    );
+
+    /**
+     * Parses {@code [addr, addr + fileSize)} and returns the cached native
+     * reader handle. With {@code verifyChecksum} set, also verifies the
+     * footer CRC32 before returning, so the once-per-open verification's
+     * parse is kept rather than discarded.
+     */
+    private static native long createNativeReader(long addr, long fileSize, boolean verifyChecksum);
+
+    private static native void destroyNativeReader(long ptr);
+
+    private static native void readPartitionMeta0(long ptr, long destAddr);
+
+    /**
+     * Returns the {@code seqTxn} of the footer the cached native reader is
+     * bound to, or {@code -1} when that footer carries none. A field read
+     * off the parsed footer; no reparse.
+     */
+    private static native long readSeqTxn0(long ptr);
+
+    private void checkFooterOffset(long currentOffset, long currentFooterLength, long currentSize) {
+        // Bound the footer within currentSize -- the chain step's committed size,
+        // not the mapping size: an intermediate footer owns only its own bytes,
+        // and FOOTER_FIXED_SIZE covers the fixed-field reads that follow.
+        if (currentOffset < HEADER_FIXED_SIZE
+                || currentOffset + FOOTER_FIXED_SIZE > currentSize) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm footer offset [footerLength=").put(currentFooterLength)
+                    .put(", parquetMetaFileSize=").put(currentSize)
+                    .put(']');
+        }
+    }
+
+    /**
+     * Computes the absolute memory address of a column chunk within a row group block.
+     * Column chunks start after the row group block header (NUM_ROWS) and are 64 bytes each.
+     */
+    private long columnChunkAddr(int rowGroupIndex, int columnIndex) {
+        return rowGroupBlockAddr(rowGroupIndex) + ROW_GROUP_BLOCK_HEADER_SIZE + (long) columnIndex * COLUMN_CHUNK_SIZE;
+    }
+
+    /**
+     * Computes the absolute memory address of a column descriptor in the header.
+     * Descriptors start at offset 32 (after fixed header) and are 32 bytes each.
+     */
+    private long columnDescriptorAddr(int columnIndex) {
+        assert columnIndex >= 0 && columnIndex < columnCount;
+        return addr + HEADER_FIXED_SIZE + (long) columnIndex * COLUMN_DESCRIPTOR_SIZE;
+    }
+
+    /**
+     * Computes the absolute memory address of a row group block.
+     * Reads the footer entry for the given row group index and applies the {@code <<3} shift.
+     */
+    private long rowGroupBlockAddr(int rowGroupIndex) {
+        long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) rowGroupIndex * ROW_GROUP_ENTRY_SIZE;
+        int stored = Unsafe.getInt(entryAddr);
+        return addr + (Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT);
+    }
+
+    /**
+     * Validates the footer located at {@code currentOffset} (whose committed
+     * head is {@code currentSize}) and, on success, commits {@code footerAddr},
+     * {@code columnCount}, {@code rowGroupCount} and {@code resolvedFileSize}.
+     * Shared by {@link #resolveFooter(long)} and {@link #resolveLastFooter()}.
+     */
+    private boolean validateAndCommitFooter(long currentSize, long currentOffset, long currentFooterLength) {
+        final long addr = this.addr;
+        final long parquetMetaFileSize = this.fileSize;
+
+        // CRC-verify the resolved footer (keyed on currentSize) before trusting
+        // its bytes: the physically-last footer can be an orphaned rolled-back
+        // one, so only the resolved footer is guaranteed committed. The native
+        // reader locates its footer from the trailer at the passed size, so it
+        // must be parsed at currentSize, never the raw mapped header size --
+        // otherwise it verifies and binds to the dead footer at the tail. The
+        // parse is retained as the handle (createNativeReader throws on a
+        // mismatch or bad file); callers clear this reader before re-resolving.
+        if (!checksumVerified) {
+            assert nativeReaderPtr == 0; // of()/clear() reset the handle with the flag
+            nativeReaderPtr = createNativeReader(addr, currentSize, true);
+            nativeReaderFileSize = currentSize;
+            checksumVerified = true;
+        }
+
+        // Validate into locals and assign fields only at the end, so a failure
+        // leaves isOpen()==false (no double-munmap in a caller's catch block).
+        // Read columnCount/rowGroupCount as u32: a negative signed value would
+        // make the descriptor-size arithmetic negative and slip past the bounds.
         long footerAddr = addr + currentOffset;
         long columnCountLong = Integer.toUnsignedLong(Unsafe.getInt(addr + HEADER_COLUMN_COUNT_OFF));
         if (columnCountLong > Integer.MAX_VALUE) {
@@ -717,12 +901,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                     .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
                     .put(']');
         }
-        // Validate designated timestamp column index. The writer emits -1
-        // when no DTS is set, otherwise a 0-based column index. Any other
-        // value (e.g. a sentinel from corruption or a stale-format file)
-        // would feed downstream readers an out-of-range index that
-        // silently aliases unrelated columns or reads past the descriptor
-        // table.
+        // Designated timestamp index must be -1 (unset) or a valid column index;
+        // any other value would alias unrelated columns downstream.
         int dtsIndex = Unsafe.getInt(addr + HEADER_DESIGNATED_TS_OFF);
         if (dtsIndex < -1 || dtsIndex >= columnCount) {
             throw CairoException.critical(0)
@@ -738,6 +918,15 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                     .put(Long.toHexString(unknownRequired))
                     .put(']');
         }
+        if ((featureFlags & SORTING_IS_DTS_ASC_FEATURE_FLAG) == 0) {
+            long sortingColumnCountLong = Integer.toUnsignedLong(Unsafe.getInt(addr + HEADER_SORTING_COL_CNT_OFF));
+            if (headerEndOffset + sortingColumnCountLong * Integer.BYTES > parquetMetaFileSize) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm sorting column count [count=").put(sortingColumnCountLong)
+                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                        .put(']');
+            }
+        }
         long footerFeatureFlags = Unsafe.getLong(footerAddr + FOOTER_FEATURE_FLAGS_OFF);
         long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK;
         if (unknownRequiredFooter != 0) {
@@ -747,15 +936,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                     .put(']');
         }
 
-        // Cross-validate actual footer size from the selected footer's
-        // trailer against the expected base size. Extra bytes without
-        // feature flags to justify them indicate corruption. Both
-        // header and footer optional flag bits can attach sections, so
-        // either set is enough. The check applies to whichever footer
-        // the MVCC walk settled on — each step reads its own trailer,
-        // so this covers every footer in the chain. baseFooterLength
-        // already includes CRC (Integer.BYTES at the end). The
-        // trailer's footer_length covers from footer start through CRC.
+        // Cross-check the footer's actual length against its base size: extra
+        // bytes with no optional feature flag (header or footer) to justify them
+        // signal corruption. baseFooterLength already includes the trailing CRC.
         long knownOptionalFeatureFlags = featureFlags & OPTIONAL_FEATURE_MASK;
         long knownOptionalFooterFeatureFlags = footerFeatureFlags & OPTIONAL_FEATURE_MASK;
         if (knownOptionalFeatureFlags == 0
@@ -781,21 +964,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             }
         }
 
-        // Validate column descriptor name pointers. Each descriptor stores a
-        // (nameOffset, nameLength) pair pointing into the same mapping.
-        // Without validation, getColumnName would build a flyweight over an
-        // arbitrary memory region (UB) and even nameOffset+nameLength could
-        // wrap. Reject offsets that land in the fixed header / column
-        // descriptor area, and pairs whose end exceeds the committed size.
-        // nameLength is read as int and treated as unsigned.
+        // Validate column-name pointers: an unchecked (nameOffset, nameLength)
+        // would let getColumnName build a flyweight over arbitrary memory.
+        // Compare length against the remaining space to avoid offset+length wrap.
         for (int i = 0; i < columnCount; i++) {
             long descAddr = addr + HEADER_FIXED_SIZE + (long) i * COLUMN_DESCRIPTOR_SIZE;
             long nameOffset = Unsafe.getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
             long nameLength = Integer.toUnsignedLong(Unsafe.getInt(descAddr + COL_DESC_NAME_LENGTH_OFF));
-            // nameOffset is signed long from disk; reject negatives explicitly.
-            // nameOffset + nameLength can overflow when nameOffset is large;
-            // compare nameLength against the remaining space instead of
-            // computing the sum.
             if (nameOffset < headerEndOffset
                     || nameOffset > parquetMetaFileSize
                     || nameLength > parquetMetaFileSize - nameOffset) {
@@ -809,59 +984,20 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             }
         }
 
-        // All validations passed — commit state.
+        // All validations passed — commit state. The native handle parses one
+        // snapshot; when the walk settled on a different one — an older
+        // footer than the verified-parse handle, or a re-resolve that picked
+        // another version — it must not keep serving the old parse.
+        if (nativeReaderPtr != 0 && nativeReaderFileSize != currentSize) {
+            destroyNativeReader(nativeReaderPtr);
+            nativeReaderPtr = 0;
+            nativeReaderFileSize = 0;
+        }
         this.footerAddr = footerAddr;
+        this.resolvedFileSize = currentSize;
         this.columnCount = columnCount;
         this.rowGroupCount = rowGroupCount;
         return true;
-    }
-
-    private static native boolean canSkipRowGroup0(
-            long ptr,
-            int rowGroupIndex,
-            long filtersPtr,
-            int filterCount,
-            long filterBufEnd
-    );
-
-    private static native long createNativeReader(long addr, long fileSize);
-
-    private static native void destroyNativeReader(long ptr);
-
-    private static native void readPartitionMeta0(long parquetMetaAddr, long parquetMetaSize, long destAddr);
-
-    /**
-     * Verifies the CRC32 stored in the {@code _pm} footer.
-     * Throws {@link CairoException} on mismatch, null pointer, or any
-     * structural error encountered while parsing the file.
-     */
-    private static native void verifyChecksum0(long addr, long fileSize);
-
-    /**
-     * Computes the absolute memory address of a column chunk within a row group block.
-     * Column chunks start after the row group block header (NUM_ROWS) and are 64 bytes each.
-     */
-    private long columnChunkAddr(int rowGroupIndex, int columnIndex) {
-        return rowGroupBlockAddr(rowGroupIndex) + ROW_GROUP_BLOCK_HEADER_SIZE + (long) columnIndex * COLUMN_CHUNK_SIZE;
-    }
-
-    /**
-     * Computes the absolute memory address of a column descriptor in the header.
-     * Descriptors start at offset 32 (after fixed header) and are 32 bytes each.
-     */
-    private long columnDescriptorAddr(int columnIndex) {
-        assert columnIndex >= 0 && columnIndex < columnCount;
-        return addr + HEADER_FIXED_SIZE + (long) columnIndex * COLUMN_DESCRIPTOR_SIZE;
-    }
-
-    /**
-     * Computes the absolute memory address of a row group block.
-     * Reads the footer entry for the given row group index and applies the <<3 shift.
-     */
-    private long rowGroupBlockAddr(int rowGroupIndex) {
-        long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) rowGroupIndex * ROW_GROUP_ENTRY_SIZE;
-        int stored = Unsafe.getInt(entryAddr);
-        return addr + (Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT);
     }
 
     static {

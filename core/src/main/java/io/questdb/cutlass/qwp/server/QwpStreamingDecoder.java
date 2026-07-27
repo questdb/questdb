@@ -28,7 +28,6 @@ import io.questdb.cutlass.qwp.protocol.QwpColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
-import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -50,7 +49,7 @@ import io.questdb.std.QuietCloseable;
  * <p>
  * <b>Usage:</b>
  * <pre>{@code
- * QwpStreamingDecoder decoder = new QwpStreamingDecoder(schemaRegistry);
+ * QwpStreamingDecoder decoder = new QwpStreamingDecoder();
  * try {
  *     QwpMessageCursor message = decoder.decode(address, length);
  *     while (message.hasNextTable()) {
@@ -80,17 +79,12 @@ import io.questdb.std.QuietCloseable;
 public class QwpStreamingDecoder implements QuietCloseable {
 
     private final QwpMessageCursor messageCursor;
-    private final QwpSchemaRegistry schemaRegistry;
 
-    /**
-     * Creates a streaming decoder without a schema registry.
-     */
     public QwpStreamingDecoder() {
-        this(null, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
+        this(QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
     }
 
-    public QwpStreamingDecoder(QwpSchemaRegistry schemaRegistry, int maxRowsPerTable) {
-        this.schemaRegistry = schemaRegistry;
+    public QwpStreamingDecoder(int maxRowsPerTable) {
         this.messageCursor = new QwpMessageCursor(maxRowsPerTable);
     }
 
@@ -115,7 +109,7 @@ public class QwpStreamingDecoder implements QuietCloseable {
     public QwpMessageCursor decode(long messageAddress, int messageLength, ObjList<String> connectionSymbolDict)
             throws QwpParseException {
         messageCursor.clear();
-        messageCursor.of(messageAddress, messageLength, schemaRegistry, connectionSymbolDict);
+        messageCursor.of(messageAddress, messageLength, connectionSymbolDict);
         return messageCursor;
     }
 
@@ -144,12 +138,5 @@ public class QwpStreamingDecoder implements QuietCloseable {
      */
     public void reset() {
         messageCursor.clear();
-    }
-
-    public void resetConnectionState() {
-        reset();
-        if (schemaRegistry != null) {
-            schemaRegistry.clear();
-        }
     }
 }

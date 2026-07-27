@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
@@ -113,6 +114,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
         private final FunctionsRecordCursor cursor = new FunctionsRecordCursor();
         private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories;
         private final ObjList<CharSequence> funcNames;
+        private SqlExecutionCircuitBreaker circuitBreaker;
 
         public FunctionsCursorFactory(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories) {
             super(METADATA);
@@ -122,6 +124,8 @@ public class FunctionListFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
         }
@@ -157,6 +161,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (funcNameIndex < funcNames.size() - 1) {
                     if (funcDescriptors == null) {
                         funcNameIndex++;

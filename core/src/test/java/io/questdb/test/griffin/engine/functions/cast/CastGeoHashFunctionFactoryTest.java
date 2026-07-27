@@ -78,11 +78,11 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testCastEqNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "false\n",
-                "select cast('x' as geohash(1c)) = null"
-        ));
+        assertMemoryLeak(() -> assertQuery("select cast('x' as geohash(1c)) = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("column\n" +
+                        "false\n"));
     }
 
     @Test
@@ -217,11 +217,11 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testCastVarcharEqNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "false\n",
-                "select cast('x'::varchar as geohash(1c)) = null"
-        ));
+        assertMemoryLeak(() -> assertQuery("select cast('x'::varchar as geohash(1c)) = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("column\n" +
+                        "false\n"));
     }
 
     @Test

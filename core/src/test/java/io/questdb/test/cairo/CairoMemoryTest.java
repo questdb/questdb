@@ -365,6 +365,39 @@ public class CairoMemoryTest extends AbstractTest {
     }
 
     @Test
+    public void testSmallFileReportsLengthErrnoNotCloseErrno() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    Path path = new Path().of(temp.newFile().getAbsolutePath());
+                    Path missing = new Path().of(temp.getRoot().getAbsolutePath()).concat("definitely_missing")
+            ) {
+                FilesFacade ff = new TestFilesFacadeImpl() {
+                    @Override
+                    public boolean close(long fd) {
+                        boolean res = super.close(fd);
+                        Files.closeDetached(-1);
+                        return res;
+                    }
+
+                    @Override
+                    public long length(long fd) {
+                        return Files.length(missing.$());
+                    }
+                };
+
+                try (MemoryCMRImpl mem = new MemoryCMRImpl()) {
+                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not get length");
+                    Assert.assertTrue(Files.isErrnoFileDoesNotExist(e.getErrno()));
+                    Assert.assertTrue(e.isFileCannotRead());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWriteAndRead() throws Exception {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {

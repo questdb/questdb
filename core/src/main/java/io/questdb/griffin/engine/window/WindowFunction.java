@@ -40,10 +40,12 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface WindowFunction extends Function {
     int ONE_PASS = 1;
@@ -326,6 +328,24 @@ public interface WindowFunction extends Function {
       Set index of record chain column used to store window function result.
      */
     void setColumnIndex(int columnIndex);
+
+    /**
+     * Binds the per-query native memory tracker on this function's tracker-aware
+     * state (e.g. a per-partition map). The owning window cursor calls this before
+     * reopen() at cursor start, so the state allocates against the bound tracker and
+     * frees against it at cursor close. A null tracker degrades to global-only
+     * accounting. Default no-op for functions with no tracker-aware state.
+     * <p>
+     * Coverage limitation: ROWS-frame functions bind only their per-partition map,
+     * not the per-partition ring buffers that hold the sliding-window values. Those
+     * buffers stay global-only. A single ROWS frame is bounded by the frame literal,
+     * but under PARTITION BY ... ROWS the total ring-buffer memory scales with the
+     * partition cardinality and is not charged to the per-query counter; the bound
+     * per-partition map is only a partial backstop. RANGE-frame functions bind their
+     * tracker-aware state and are not affected.
+     */
+    default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
 
     enum Pass1ScanDirection {
         FORWARD, BACKWARD

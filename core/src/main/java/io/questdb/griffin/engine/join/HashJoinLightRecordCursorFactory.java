@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableToken;
@@ -32,6 +33,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -48,13 +50,13 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final HashJoinRecordCursor cursor;
     private final RecordSink masterSink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
-    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
+    private HashJoinRecordCursor cursor;
     private boolean masterDetermined = false;
+    private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashJoinLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -112,11 +114,15 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 }
             }
 
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker(), swapped);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+            cursor.of(masterCursor, slaveCursor, executionContext, swapped);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() binds the per-query tracker and reopens the join map + slave chain before it can throw;
+            // close() frees them under that tracker and resets isOpen so the factory is reusable.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -176,11 +182,14 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(symbolTranslatingRecord);
+        final HashJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
+        this.symbolTranslatingRecord = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class HashJoinRecordCursor extends AbstractJoinCursor {
@@ -200,10 +209,12 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         public HashJoinRecordCursor(int columnSplit, CairoConfiguration configuration, ColumnTypes joinColumnTypes, ColumnTypes valueTypes) {
             super(columnSplit);
             try {
-                isOpen = true;
                 record = new JoinRecord(columnSplit);
-                joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
-                slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
+                // Lazy variant: the map skeleton is constructed but the native backing is not
+                // allocated until the first cursor's of() binds a MemoryTracker and reopens it.
+                joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes, false, false);
+                slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages(), true);
+                isOpen = false;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -321,15 +332,17 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
         }
 
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker, boolean swapped) {
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext, boolean swapped) {
             if (!isOpen) {
                 isOpen = true;
+                joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
+                slaveChain.setMemoryTracker(executionContext.getMemoryTracker());
                 slaveChain.reopen();
             }
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            this.circuitBreaker = circuitBreaker;
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecordB();
             this.swapped = swapped;

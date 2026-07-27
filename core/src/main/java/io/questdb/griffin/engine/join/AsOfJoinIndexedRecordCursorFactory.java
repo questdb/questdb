@@ -25,8 +25,10 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -93,6 +95,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
@@ -122,9 +125,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
+        final Throwable failure = closeJoinOwnersBestEffort();
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class AsOfJoinIndexedRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {

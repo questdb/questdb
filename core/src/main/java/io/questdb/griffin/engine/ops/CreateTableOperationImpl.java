@@ -96,6 +96,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private CopyDataProgressReporter reporter = CopyDataProgressReporter.NOOP;
     private int selectSqlScanDirection;
     private int selectTextPosition;
+    private int tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
     private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private String tableName;
     private int tableNamePosition;
@@ -175,6 +176,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int maxUncommittedRows,
             int ttlHoursOrMonths,
             int ttlPosition,
+            int tableFormat,
             boolean walEnabled,
             boolean autoIncludeTimestamp
     ) throws SqlException {
@@ -187,18 +189,17 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.volumePosition = volumePosition;
         this.ignoreIfExists = ignoreIfExists;
         this.partitionByPosition = partitionByPosition;
+        this.tableFormat = tableFormat;
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             CharSequence colName = columnNames.get(i);
             this.columnNames.add(Chars.toString(colName));
             CreateTableColumnModel model = createColumnModelMap.get(colName);
             ObjList<CharSequence> coverNames = model.getCoveringColumnNames();
-            // Set the COVERING flag whenever resolveCoveringColumnIndices
-            // will produce a non-empty list — that is, either the user gave
-            // an INCLUDE clause, or auto-include applies (POSTING index on
-            // a column other than the designated timestamp).
-            boolean hasCovering = coverNames.size() > 0
-                    || (autoIncludeTimestamp && timestampIndex >= 0 && i != timestampIndex
-                    && IndexType.isPosting(model.getIndexType()));
+            // Covering iff the user gave an INCLUDE clause with at least one
+            // column. The timestamp auto-include only rounds out an explicit
+            // covering set (see resolveCoveringColumnIndices); a bare POSTING
+            // index with no INCLUDE is non-covering.
+            boolean hasCovering = coverNames.size() > 0;
             addColumnBits(
                     model.getColumnType(),
                     model.getSymbolCacheFlag(),
@@ -270,6 +271,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int volumePosition,
             int ttlHoursOrMonths,
             int ttlPosition,
+            int tableFormat,
             boolean walEnabled,
             int defaultSymbolCapacity,
             int maxUncommittedRows,
@@ -295,6 +297,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = timestampColumnNamePosition;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
+        this.tableFormat = tableFormat;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.batchSize = batchSize;
         this.batchO3MaxLag = batchO3MaxLag;
@@ -451,6 +454,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public int getTableFormat() {
+        return tableFormat;
+    }
+
+    @Override
     public int getTableKind() {
         return tableKind;
     }
@@ -604,6 +612,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampIndex = likeTableMetadata.getTimestampIndex();
         this.walEnabled = likeTableMetadata.isWalEnabled();
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
+        this.tableFormat = likeTableMetadata.getTableFormat();
         columnNames.clear();
         columnBits.clear();
         coveringColumnIndicesList.clear();
@@ -769,13 +778,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             }
             this.columnNames.add(columnName);
             ObjList<CharSequence> coverNames = augmentedCoveringNames.get(columnName);
-            // Set the COVERING flag whenever resolveCoveringFromAugmented
-            // will produce a non-empty list — that is, either the user gave
-            // an INCLUDE clause, or auto-include applies (POSTING index on
-            // a column other than the designated timestamp).
-            boolean hasCovering = (coverNames != null && coverNames.size() > 0)
-                    || (autoIncludeTimestamp && this.timestampIndex >= 0 && i != this.timestampIndex
-                    && IndexType.isPosting(indexType));
+            // Covering iff the user gave an INCLUDE clause with at least one
+            // column. The timestamp auto-include only rounds out an explicit
+            // covering set (see resolveCoveringFromAugmented); a bare POSTING
+            // index with no INCLUDE is non-covering.
+            boolean hasCovering = coverNames != null && coverNames.size() > 0;
             this.addColumnBits(
                     columnType,
                     symbolCacheFlag,
@@ -879,15 +886,13 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     indices.add(idx);
                 }
             }
-            // Auto-append the designated timestamp on POSTING indexes,
-            // including the bare INDEX TYPE POSTING case where the user
-            // gave no INCLUDE list. Skip when this column is itself the
-            // timestamp (you cannot cover yourself).
-            if (autoIncludeTimestamp && timestampIndex >= 0 && i != timestampIndex
+            // Auto-append the designated timestamp on POSTING indexes, but only
+            // when the user gave an INCLUDE clause with at least one column -- a
+            // bare INDEX TYPE POSTING (no INCLUDE) stays non-covering. Skip when
+            // this column is itself the timestamp (you cannot cover yourself).
+            if (autoIncludeTimestamp && indices != null && indices.size() > 0
+                    && timestampIndex >= 0 && i != timestampIndex
                     && IndexType.isPosting(model.getIndexType())) {
-                if (indices == null) {
-                    indices = new IntList(1);
-                }
                 maybeAppendTimestamp(indices, timestampIndex);
             }
             coveringColumnIndicesList.add(indices);
@@ -914,16 +919,13 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     indices.add(idx);
                 }
             }
-            // Auto-append the designated timestamp on POSTING indexes,
-            // including the no-INCLUDE case (the out-of-line INDEX(...)
-            // clause used by CTAS does not accept INCLUDE today, so this
-            // is the only way users get covering on CTAS). Skip when this
-            // column is itself the timestamp.
-            if (autoIncludeTimestamp && timestampIndex >= 0 && i != timestampIndex
+            // Auto-append the designated timestamp on POSTING indexes, but only
+            // when the user gave an INCLUDE clause with at least one column -- a
+            // bare INDEX TYPE POSTING (no INCLUDE) stays non-covering. Skip when
+            // this column is itself the timestamp.
+            if (autoIncludeTimestamp && indices != null && indices.size() > 0
+                    && timestampIndex >= 0 && i != timestampIndex
                     && IndexType.isPosting(getIndexType(i))) {
-                if (indices == null) {
-                    indices = new IntList(1);
-                }
                 maybeAppendTimestamp(indices, timestampIndex);
             }
             coveringColumnIndicesList.add(indices);

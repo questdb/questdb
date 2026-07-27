@@ -214,10 +214,12 @@ public class PGSecurityTest extends BasePGTest {
             // if this asserts fails then it means UPDATE are already implemented
             // please change this test to check the update throws an exception in the read-only mode
             // this is in place, so we won't forget to test UPDATE honours read-only security context
-            assertSql("""
-                    ts\tname
-                    2022-04-12T17:30:45.145921Z\tfoo
-                    """, "select * from src");
+            assertQuery("select * from src")
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            ts\tname
+                            2022-04-12T17:30:45.145921Z\tfoo
+                            """);
         });
     }
 
@@ -253,7 +255,7 @@ public class PGSecurityTest extends BasePGTest {
         // because the out of thin air property would overwrite the user set by the client. Example:
         // 2022-05-17T15:58:38.973955Z I i.q.c.p.PGConnectionContext property [name=user, value=user] <-- client indicates username is "user"
         // 2022-05-17T15:58:38.974236Z I i.q.c.p.PGConnectionContext property [name=user, value=database] <-- buggy pgwire parser overwrites username with out of thin air value
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> getConnectionWithCustomProperty(port, PGProperty.OPTIONS.getName()).close());
+        assertWithPgServer(CONN_AWARE_ALL, (_, _, _, port) -> getConnectionWithCustomProperty(port, PGProperty.OPTIONS.getName()).close());
     }
 
     @Test
@@ -292,7 +294,7 @@ public class PGSecurityTest extends BasePGTest {
                 return new DefaultFactoryProvider() {
                     @Override
                     public @NotNull SecurityContextFactory getSecurityContextFactory() {
-                        return (principalContext, interfaceId) -> {
+                        return (_, _) -> {
                             throw CairoException.nonCritical().put("test security context error");
                         };
                     }

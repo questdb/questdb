@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -114,6 +115,7 @@ public abstract class AbstractGenerateSeriesRecordCursorFactory extends Abstract
          * The step function for the series.
          */
         public final Function stepFunc;
+        protected SqlExecutionCircuitBreaker circuitBreaker;
 
         /**
          * Constructs a new generate series record cursor.
@@ -133,6 +135,7 @@ public abstract class AbstractGenerateSeriesRecordCursorFactory extends Abstract
         }
 
         public void of(SqlExecutionContext executionContext) throws SqlException {
+            circuitBreaker = executionContext.getCircuitBreaker();
             startFunc.init(null, executionContext);
             endFunc.init(null, executionContext);
             stepFunc.init(null, executionContext);

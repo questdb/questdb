@@ -5,7 +5,9 @@ use super::*;
 use crate::parquet::error::ParquetErrorReason;
 use crate::parquet::tests::ColumnTypeTagExt;
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::schema::column_type_to_parquet_type;
+use crate::parquet_write::schema::{
+    column_type_to_parquet_type, COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT,
+};
 use crate::parquet_write::tests::make_column_with_top;
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
@@ -89,6 +91,133 @@ fn page_f32_min_max(page: &Page) -> (f32, f32) {
             (stats.min_value.unwrap(), stats.max_value.unwrap())
         }
         _ => panic!("expected data page"),
+    }
+}
+
+/// Verifies the strided bit (`COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT`) on the
+/// column_type integer survives `from_raw_data` and shows up as
+/// `Column::strided_timestamp_16`. If this breaks, the Plain dispatch in
+/// encode.rs would fall through to the contiguous path and misinterpret the
+/// 16-byte merge entries as flat i64s.
+#[test]
+fn from_raw_data_extracts_strided_timestamp_bit() {
+    let dummy: [[i64; 2]; 1] = [[42, 7]];
+    let column_type =
+        ColumnType::new(ColumnTypeTag::Timestamp, 0).code() | COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT;
+    let column = crate::parquet_write::schema::Column::from_raw_data(
+        0,
+        "ts",
+        column_type,
+        0,
+        dummy.len(),
+        dummy.as_ptr() as *const u8,
+        std::mem::size_of_val(&dummy),
+        std::ptr::null(),
+        0,
+        std::ptr::null(),
+        0,
+        true,
+        true,
+        0,
+    )
+    .expect("column");
+    assert!(column.strided_timestamp_16);
+    assert_eq!(column.data_type.tag(), ColumnTypeTag::Timestamp);
+}
+
+/// Builds a designated-timestamp column with the strided merge-index layout
+/// (16-byte entries: i64 ts + i64 rowId). Bit 30 on the column type is the
+/// strided flag (`COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT`).
+fn make_strided_ts_column(pairs: &[[i64; 2]]) -> crate::parquet_write::schema::Column {
+    let column_type =
+        ColumnType::new(ColumnTypeTag::Timestamp, 0).code() | COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT;
+    crate::parquet_write::schema::Column::from_raw_data(
+        0,
+        "ts",
+        column_type,
+        0,
+        pairs.len(),
+        pairs.as_ptr() as *const u8,
+        std::mem::size_of_val(pairs),
+        std::ptr::null(),
+        0,
+        std::ptr::null(),
+        0,
+        true, // designated_timestamp
+        true,
+        0,
+    )
+    .expect("ts column")
+}
+
+/// Sanity check: `encode_designated_timestamp_strided` on a merge index whose
+/// `ts` slots hold the same values as a contiguous `[i64]` produces a Plain
+/// page byte-identical to the contiguous Required encoder (same statistics,
+/// same buffer, same header). Catches any byte-layout / iterator bug in the
+/// strided path.
+#[test]
+fn encode_designated_timestamp_strided_matches_contiguous() {
+    let ts_values: Vec<i64> = (0..1000i64)
+        .map(|i| 1_700_000_000_000_000 + i * 1000)
+        .collect();
+    let pairs: Vec<[i64; 2]> = ts_values.iter().map(|&t| [t, 42]).collect();
+
+    let pt = primitive_type_for(ColumnTypeTag::Timestamp);
+    // Schema for the designated timestamp is Required; primitive_type_for
+    // builds the Optional Timestamp by default. Override repetition here.
+    let mut pt_required = pt.clone();
+    pt_required.field_info.repetition = parquet2::schema::Repetition::Required;
+
+    let strided_col = make_strided_ts_column(&pairs);
+    let strided_pages =
+        encode_designated_timestamp_strided(&[strided_col], &pt_required, write_options(), None)
+            .expect("strided");
+
+    // For the contiguous baseline use the existing notnull path with the
+    // raw timestamps. Build a Column whose column_type carries the
+    // designated_timestamp bit but no strided bit.
+    let designated_ts_type = ColumnType::new(ColumnTypeTag::Timestamp, 0).code();
+    let contig_col = crate::parquet_write::schema::Column::from_raw_data(
+        0,
+        "ts",
+        designated_ts_type,
+        0,
+        ts_values.len(),
+        ts_values.as_ptr() as *const u8,
+        std::mem::size_of_val(ts_values.as_slice()),
+        std::ptr::null(),
+        0,
+        std::ptr::null(),
+        0,
+        true,
+        true,
+        0,
+    )
+    .expect("contig column");
+    let contig_pages = encode_int_notnull::<i64, i64>(
+        &[contig_col],
+        0,
+        ts_values.len(),
+        &pt_required,
+        write_options(),
+        None,
+    )
+    .expect("contig");
+
+    assert_eq!(strided_pages.len(), contig_pages.len());
+    for (s, c) in strided_pages.iter().zip(contig_pages.iter()) {
+        let (s_vals, s_nulls, s_enc) = v2_header(s);
+        let (c_vals, c_nulls, c_enc) = v2_header(c);
+        assert_eq!((s_vals, s_nulls, s_enc), (c_vals, c_nulls, c_enc));
+        let s_buf = match s {
+            Page::Data(d) => d.buffer.clone(),
+            _ => panic!(),
+        };
+        let c_buf = match c {
+            Page::Data(d) => d.buffer.clone(),
+            _ => panic!(),
+        };
+        assert_eq!(s_buf, c_buf, "strided buffer != contiguous buffer");
     }
 }
 
@@ -185,13 +314,18 @@ fn encode_simd_all_nulls_partition() {
     );
 }
 
+// Byte/Short/Char carry no in-band null sentinel but use Optional repetition so
+// column-top rows can be marked NULL via def-level=0. Production routes these
+// tags to encode_int_nullable; data values never report null. See
+// parquet_write/schema.rs and parquet_write/encode.rs.
 #[test]
 fn encode_int_notnull_byte_widening() {
     let data: Vec<i8> = vec![1, 2, 3, 4, 5, -1, -2, 127, -128];
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
-    let pages = encode_int_notnull::<i8, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-        .expect("encode");
+    let pages =
+        encode_int_nullable::<i8, i32, false>(&[col], 0, data.len(), &pt, write_options(), None)
+            .expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, num_nulls, enc) = v2_header(&pages[0]);
     assert_eq!(num_values, 9);
@@ -204,8 +338,9 @@ fn encode_int_notnull_short_widening() {
     let data: Vec<i16> = (0..100i16).collect();
     let col = make_column_with_top("col", ColumnTypeTag::Short, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Short);
-    let pages = encode_int_notnull::<i16, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-        .expect("encode");
+    let pages =
+        encode_int_nullable::<i16, i32, false>(&[col], 0, data.len(), &pt, write_options(), None)
+            .expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, num_nulls, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 100);
@@ -217,8 +352,9 @@ fn encode_int_notnull_char_widening() {
     let data: Vec<u16> = (0..100u16).collect();
     let col = make_column_with_top("col", ColumnTypeTag::Char, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Char);
-    let pages = encode_int_notnull::<u16, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-        .expect("encode");
+    let pages =
+        encode_int_nullable::<u16, i32, true>(&[col], 0, data.len(), &pt, write_options(), None)
+            .expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, _, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 100);
@@ -990,11 +1126,13 @@ fn encode_int_notnull_with_column_top() {
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 2, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
     // last_partition_end = column_top + data.len() = 5
-    let pages =
-        encode_int_notnull::<i8, i32>(&[col], 0, 5, &pt, write_options(), None).expect("encode");
+    let pages = encode_int_nullable::<i8, i32, false>(&[col], 0, 5, &pt, write_options(), None)
+        .expect("encode");
     assert_eq!(pages.len(), 1);
-    let (num_values, _, _) = v2_header(&pages[0]);
-    assert_eq!(num_values, 5); // 2 column-top defaults + 3 data
+    let (num_values, num_nulls, _) = v2_header(&pages[0]);
+    assert_eq!(num_values, 5);
+    // Column-top rows are encoded as parquet NULL (def-level=0).
+    assert_eq!(num_nulls, 2);
 }
 
 #[test]
@@ -1003,7 +1141,7 @@ fn encode_int_notnull_with_bloom() {
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
     let bloom = Arc::new(Mutex::new(HashSet::<u64>::new()));
-    let pages = encode_int_notnull::<i8, i32>(
+    let pages = encode_int_nullable::<i8, i32, false>(
         &[col],
         0,
         data.len(),
@@ -1023,8 +1161,8 @@ fn encode_int_notnull_no_stats() {
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
     let opts = WriteOptions { write_statistics: false, ..write_options() };
-    let pages =
-        encode_int_notnull::<i8, i32>(&[col], 0, data.len(), &pt, opts, None).expect("encode");
+    let pages = encode_int_nullable::<i8, i32, false>(&[col], 0, data.len(), &pt, opts, None)
+        .expect("encode");
     assert_eq!(pages.len(), 1);
 }
 

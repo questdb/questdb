@@ -31,7 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.mig.Mig940;
+import io.questdb.cairo.mig.Mig941;
 import io.questdb.cairo.mig.MigrationContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -48,7 +48,8 @@ import org.junit.Test;
 /**
  * Java-level regression guard for the CRC32 verification that
  * {@link ParquetMetaFileReader#resolveFooter(long)} performs on first open
- * (the {@code verifyChecksum0} call at the top of the method). Each test
+ * (the verified {@code createNativeReader} parse at the top of the method,
+ * whose handle is kept as the cached native reader). Each test
  * flips a single byte in a real on-disk {@code _pm}, opens it through the
  * production JNI path, and asserts a clean {@link CairoException} surfaces.
  * Without that wiring, the same flip would pass structural validation and be
@@ -78,12 +79,11 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCrcRefusedLetsMig940RegenerateAfterFlip() throws Exception {
-        // After a CRC flip, Mig940 must treat the _pm as stale (its
-        // isParquetMetadataStale helper swallows CairoException as "stale")
-        // and regenerate it from data.parquet. This proves the migration is
-        // the documented recovery path for CRC-detected corruption rather
-        // than a hard failure.
+    public void testCrcRefusedLetsMig941RegenerateAfterFlip() throws Exception {
+        // After a CRC flip, Mig941 regenerates the _pm from data.parquet -- it
+        // rewrites every parquet partition's _pm unconditionally, so a corrupt
+        // _pm is simply overwritten. This proves the migration is the documented
+        // recovery path for CRC-detected corruption rather than a hard failure.
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
@@ -109,9 +109,9 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
             // the CRC mismatch BEFORE the migration runs.
             assertReadFails(ff, token, partitionTs, partitionNameTxn);
 
-            runMig940(token);
+            runMig941(token);
 
-            // After Mig940, the regenerated _pm must open cleanly.
+            // After Mig941, the regenerated _pm must open cleanly.
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
                 TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
@@ -121,7 +121,7 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     reader.of(addr, size);
-                    Assert.assertTrue(reader.resolveFooter(Long.MAX_VALUE));
+                    Assert.assertTrue(reader.resolveLastFooter());
                     reader.clear();
                 } finally {
                     ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
@@ -162,7 +162,7 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
             Assert.assertNotEquals("openAndMapRO should not skip the file", 0L, addr);
             long size = reader.getFileSize();
             try {
-                reader.resolveFooter(Long.MAX_VALUE);
+                reader.resolveLastFooter();
                 Assert.fail("expected CairoException from CRC verification");
             } catch (CairoException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("checksum"));
@@ -198,7 +198,7 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
         }
     }
 
-    private void runMig940(TableToken token) {
+    private void runMig941(TableToken token) {
         engine.releaseAllWriters();
         engine.releaseAllReaders();
         engine.releaseInactive();
@@ -211,7 +211,7 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
         ) {
             MigrationContext ctx = new MigrationContext(engine, tempMem, 1024, tempVirtualMem, rwMem);
             ctx.of(tablePath, tablePath2, -1);
-            Mig940.migrate(ctx);
+            Mig941.migrate(ctx);
         } finally {
             Unsafe.free(tempMem, 1024, MemoryTag.NATIVE_MIG_MMAP);
         }

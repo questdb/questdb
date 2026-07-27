@@ -71,7 +71,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                     }
                 },
                 LeadFunction::new,
-                LagLongFunctionFactory.LeadLagValueCurrentRow::new,
+                LagTimestampFunctionFactory.LeadLagValueCurrentRow::new,
                 LeadOverPartitionFunction::new
         );
     }

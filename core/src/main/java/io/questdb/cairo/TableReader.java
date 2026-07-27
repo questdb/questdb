@@ -105,9 +105,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> parquetPartitions;
     private int partitionCount;
     private long rowCount;
-    // When streaming mode is enabled, partitions are opened with MADV_DONTNEED hint
-    // to release page cache after reading. Used by Parquet export to avoid page cache exhaustion.
-    private boolean streamingMode = false;
+    // Per-checkout scan profile -- controls kernel page-cache hints and
+    // post-checkout partition retention. Reset to DEFAULT by goPassive() on
+    // every pool return so cross-checkout leaks are impossible.
+    private ReaderScanProfile scanProfile = ReaderScanProfile.DEFAULT;
     private TableToken tableToken;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private long txColumnVersion;
@@ -269,7 +270,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public void closeExcessPartitions() {
         // close all but N latest partitions
-        int keepOpen = streamingMode ? 0 : maxOpenPartitions;
+        int keepOpen = scanProfile == ReaderScanProfile.SEQUENTIAL_EVICT ? 0 : maxOpenPartitions;
         if (PartitionBy.isPartitioned(partitionBy) && openPartitionCount > keepOpen) {
             final int originallyOpen = openPartitionCount;
             int openCount = 0;
@@ -326,7 +327,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     public ParquetPartitionDecoder getAndInitParquetPartitionDecoder(int partitionIndex) {
         ParquetPartitionDecoder decoder = parquetMetaDecoders.getQuick(partitionIndex);
         if (decoder == null) {
-            decoder = new ParquetPartitionDecoder();
+            decoder = configuration.newParquetPartitionDecoder();
             parquetMetaDecoders.setQuick(partitionIndex, decoder);
         }
         long parquetMetaAddr = getParquetMetadataAddr(partitionIndex);
@@ -334,7 +335,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         long parquetAddr = getParquetAddr(partitionIndex);
         long parquetSize = getParquetFileSize(partitionIndex);
         if (decoder.getParquetMetaAddr() != parquetMetaAddr || decoder.getParquetMetaSize() != parquetMetaSize) {
-            decoder.of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            final long timestamp = getPartitionTimestamp(partitionIndex);
+            decoder.of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize,
+                    tableToken, partitionBy, timestampType, timestamp,
+                    MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
         return decoder;
     }
@@ -359,6 +363,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader;
     }
 
+    public CairoConfiguration getConfiguration() {
+        return configuration;
+    }
+
     public long getDataVersion() {
         return txFile.getDataVersion();
     }
@@ -371,6 +379,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
         IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
         if (indexReader != null) {
+            // Single choke point for refreshing the scoreboard pin on cached
+            // readers. TableReader.txn advances through several paths
+            // (goActive / reload / ...); setting it here covers all of them.
+            indexReader.setPinnedTableTxn(txn);
             if (
                     !indexReader.isOpen()
                             || indexReader.getColumnTxn() != columnNameTxn
@@ -443,10 +455,17 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Returns previously open Parquet partition read size or -1 in case of a native partition.
+     * Returns the parquet file size recorded in {@code _txn} for this
+     * partition, which must be parquet-format: the format bit is the source
+     * of truth and {@link TxReader#getPartitionParquetFileSize(int)} asserts
+     * it. Reading from {@link TxReader} keeps the size authoritative when the
+     * local {@code data.parquet} mapping is a {@link NullMemoryCMR} (e.g. the
+     * file has been removed under the reader): {@code _txn} still records
+     * the size the file had at commit time, which is what callers like the
+     * parquet decoder's footer resolver need.
      */
     public long getParquetFileSize(int partitionIndex) {
-        return parquetPartitions.getQuick(partitionIndex).size();
+        return txFile.getPartitionParquetFileSize(partitionIndex);
     }
 
     public long getParquetMetadataAddr(int partitionIndex) {
@@ -540,6 +559,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public int getPartitionedBy() {
         return metadata.getPartitionBy();
+    }
+
+    @TestOnly
+    public ReaderScanProfile getScanProfile() {
+        return scanProfile;
     }
 
     public long getSeqTxn() {
@@ -652,7 +676,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         closeExcessPartitions();
         hasActiveColumns = false;
         resetAllColumnsOpenFlag();
-        streamingMode = false;
+        scanProfile = ReaderScanProfile.DEFAULT;
     }
 
     public boolean hasParquetPartitions() {
@@ -674,6 +698,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public boolean isOpen() {
         return tempMem8b != 0;
+    }
+
+    @TestOnly
+    public boolean isParquetMetaReaderOpen() {
+        return parquetMetaReader.isOpen();
     }
 
     @Override
@@ -746,15 +775,15 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Enables or disables streaming mode for this reader.
-     * When streaming mode is enabled, partitions are opened with MADV_DONTNEED hint
-     * to release page cache after reading. This is useful for large sequential scans
-     * like Parquet export to avoid page cache exhaustion under memory pressure.
+     * Sets the scan profile for the current checkout. See {@link ReaderScanProfile}
+     * for the meaning of each value. Reset to {@link ReaderScanProfile#DEFAULT}
+     * by {@link #goPassive()} on every pool return, so the profile is always
+     * a per-checkout decision.
      *
-     * @param enabled true to enable streaming mode, false to disable
+     * @param profile the profile to adopt for the current checkout (non-null)
      */
-    public void setStreamingMode(boolean enabled) {
-        this.streamingMode = enabled;
+    public void setScanProfile(ReaderScanProfile profile) {
+        this.scanProfile = profile;
     }
 
     public long size() {
@@ -921,7 +950,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void closePartitionColumn(int base, int columnIndex) {
         int index = getPrimaryColumnIndex(base, columnIndex);
-        if (streamingMode) {
+        if (scanProfile != ReaderScanProfile.DEFAULT) {
             MemoryCMR mem = columns.get(index);
             if (mem != null) {
                 ff.madvise(mem.addressOf(0), mem.size(), Files.POSIX_MADV_DONTNEED);
@@ -1055,7 +1084,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         getColumnTop(columnBase, columnIndex),
                         metadata,
                         columnVersionReader,
-                        partitionTimestamp
+                        partitionTimestamp,
+                        txn
                 );
                 if (direction == IndexReader.DIR_BACKWARD) {
                     indexes.setQuick(globalIndex, reader);
@@ -1184,6 +1214,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (tempMem8b != 0) {
             tempMem8b = Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
         }
+    }
+
+    private long getPartitionNameTxn(int partitionIndex) {
+        return txFile.getPartitionNameTxn(partitionIndex);
+    }
+
+    private long getPartitionTimestamp(int partitionIndex) {
+        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
     }
 
     private void init() {
@@ -1344,9 +1382,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             long columnSize,
             boolean keepFdOpen
     ) {
-        // When streaming mode is enabled, use MADV_DONTNEED to hint the kernel
-        // to release page cache after reading, avoiding memory pressure during large scans
-        final int madviseOpts = streamingMode ? Files.POSIX_MADV_SEQUENTIAL : -1;
+        // Sequential scan profiles hint the kernel to read ahead and to
+        // release page cache after reading, avoiding memory pressure during
+        // large scans. closePartitionColumn() applies the matching DONTNEED
+        // hint at unmap time.
+        final int madviseOpts = scanProfile != ReaderScanProfile.DEFAULT ? Files.POSIX_MADV_SEQUENTIAL : -1;
         MemoryCMRDetachedImpl memory;
         if (mem != null && mem != NullMemoryCMR.INSTANCE) {
             memory = (MemoryCMRDetachedImpl) mem;
@@ -1362,12 +1402,9 @@ public class TableReader implements Closeable, SymbolTableSource {
      * Opens (or remaps) the _pm metadata file for the given partition and
      * returns the parquet file size derived from its footer metadata.
      */
-    private long openParquetMetadata(int partitionIndex, long partitionNameTxn) {
+    private long openParquetMetadata(int partitionIndex) {
         final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
         assert parquetFileSize > 0;
-
-        path.trimTo(rootLen);
-        pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn);
 
         MemoryCMRDetachedImpl parquetMetaMem;
         final MemoryCMR existing = parquetMetadataPartitions.getQuick(partitionIndex);
@@ -1379,11 +1416,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         parquetMetaMem.ofWithSizeFromHeader(ff, path.$(), MemoryTag.MMAP_PARQUET_METADATA_READER);
 
-        parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaMem.size());
-        if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
-            throw CairoException.critical(0).put("invalid _pm file: failed to resolve footer [path=").put(path).put(']');
+        try {
+            parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaMem.size());
+            if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
+                throw CairoException.critical(0).put("invalid _pm file: failed to resolve footer [path=").put(path).put(']');
+            }
+            return parquetMetaReader.getParquetFileSize();
+        } finally {
+            // resolveFooter retains a native reader that borrows parquetMetaMem. This reader is
+            // only needed to resolve the size, so destroy it before any later close or remap can
+            // invalidate the mmap it references.
+            parquetMetaReader.clear();
         }
-        return parquetMetaReader.getParquetFileSize();
     }
 
     private long openPartition0(int partitionIndex) {
@@ -1394,10 +1438,9 @@ public class TableReader implements Closeable, SymbolTableSource {
 
         try {
             path.trimTo(rootLen);
-            final long partitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-
+            final long partitionNameTxn = getPartitionNameTxn(partitionIndex);
             if (txFile.isPartitionParquet(partitionIndex)) {
-                Path path = pathGenParquetPartition(partitionIndex, partitionNameTxn);
+                Path path = pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn);
                 if (ff.exists(path.$())) {
                     final long partitionSize = getPartitionRowCountFromMetadata(partitionIndex);
                     if (partitionSize > -1) {
@@ -1414,16 +1457,34 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
 
-                        final long parquetFileSize = openParquetMetadata(partitionIndex, partitionNameTxn);
+                        final long parquetFileSize = openParquetMetadata(partitionIndex);
                         path.trimTo(rootLen);
                         pathGenParquetPartition(partitionIndex, partitionNameTxn);
-                        MemoryCMR parquetMem = parquetPartitions.getQuick(partitionIndex);
-                        if (parquetMem != null && parquetMem != NullMemoryCMR.INSTANCE) {
-                            parquetMem.of(ff, path.$(), parquetFileSize, parquetFileSize, MemoryTag.MMAP_TABLE_READER);
+                        if (ff.exists(path.$())) {
+                            MemoryCMR parquetMem = parquetPartitions.getQuick(partitionIndex);
+                            try {
+                                if (parquetMem != null && parquetMem != NullMemoryCMR.INSTANCE) {
+                                    parquetMem.of(ff, path.$(), parquetFileSize, parquetFileSize, MemoryTag.MMAP_TABLE_READER);
+                                } else {
+                                    // Don't keep fd around to close/open reconciled parquet partitions instead of mremap'ping them.
+                                    parquetMem = new MemoryCMRDetachedImpl(ff, path.$(), parquetFileSize, MemoryTag.MMAP_TABLE_READER, false);
+                                    parquetPartitions.setQuick(partitionIndex, parquetMem);
+                                }
+                            } catch (CairoException e) {
+                                if (!txFile.isPartitionRemote(partitionIndex)) {
+                                    throw e;
+                                }
+                                LOG.error().$("could not open parquet partition [path=").$(path).$(", err=").$safe(e.getFlyweightMessage()).I$();
+                                Misc.free(parquetPartitions.getQuick(partitionIndex));
+                                parquetPartitions.setQuick(partitionIndex, NullMemoryCMR.INSTANCE);
+                            }
+                        } else if (txFile.isPartitionRemote(partitionIndex)) {
+                            Misc.free(parquetPartitions.getQuick(partitionIndex));
+                            parquetPartitions.setQuick(partitionIndex, NullMemoryCMR.INSTANCE);
                         } else {
-                            // Don't keep fd around to close/open reconciled parquet partitions instead of mremap'ping them.
-                            parquetMem = new MemoryCMRDetachedImpl(ff, path.$(), parquetFileSize, MemoryTag.MMAP_TABLE_READER, false);
-                            parquetPartitions.setQuick(partitionIndex, parquetMem);
+                            // Local parquet partition whose data.parquet vanished. Fail loudly here
+                            // instead of stubbing, which would surface later as an obscure null pointer.
+                            throw CairoException.critical(0).put("parquet partition data file missing [path=").put(path).put(']');
                         }
                         // Initialize columns and index readers for parquet partitions.
                         // reloadColumnAt() sets columns to null (not NullMemoryCMR) for parquet,

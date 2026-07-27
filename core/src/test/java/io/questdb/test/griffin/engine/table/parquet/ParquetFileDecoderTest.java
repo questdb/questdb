@@ -30,7 +30,9 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
@@ -195,6 +197,74 @@ public class ParquetFileDecoderTest extends AbstractCairoTest {
             // Freed memory is tracked.
             final long memFinal = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             Assert.assertEquals(memFinal, memInit);
+        });
+    }
+
+    @Test
+    public void testVarcharSlicePageBuffersAccounting() throws Exception {
+        // A compressed VARCHAR_SLICE chunk keeps its decompressed string bytes in retained Rust
+        // page buffers (data_vec stays empty), so getChunkDataSize() alone undercounts the frame.
+        // The decode cache adds getChunkPageBuffersSize() so the byte budget tracks those string
+        // bytes, and sumChunkBytes() must fold it in. This is the assertion that distinguishes the
+        // fix from the undercount bug: without page-buffer accounting the sum would equal data+aux.
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int rows = 20_000;
+        assertMemoryLeak(() -> {
+            execute("create table x as (select" +
+                    " rnd_varchar(40, 80, 0) v," +
+                    " timestamp_sequence(0, 1000) designated_ts" +
+                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");
+
+            long fd = -1;
+            long addr = 0;
+            long fileSize = 0;
+            try (
+                    Path path = new Path();
+                    RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
+                    TableReader reader = engine.getReader("x");
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor()
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                // Compress so the varchar string bytes are retained in heap page buffers; the
+                // uncompressed path borrows them from the mmap and reports a zero page-buffers size.
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.packCompressionCodecLevel(ParquetCompression.COMPRESSION_LZ4_RAW, 0),
+                        true,
+                        false,
+                        0,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
+                );
+
+                fd = TableUtils.openRO(ff, path.$(), LOG);
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                parquetFileDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+                // Decode the varchar column (index 0) as a VARCHAR_SLICE chunk into slot 0.
+                columns.add(0);
+                columns.add(ColumnType.VARCHAR_SLICE);
+                final int rowGroupRows = (int) parquetFileDecoder.metadata().getRowCount();
+                parquetFileDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, rowGroupRows);
+
+                final long dataSize = rowGroupBuffers.getChunkDataSize(0);
+                final long auxSize = rowGroupBuffers.getChunkAuxSize(0);
+                final long pageBuffersSize = rowGroupBuffers.getChunkPageBuffersSize(0);
+
+                Assert.assertTrue("page buffers must retain the decompressed varchar bytes, got " + pageBuffersSize, pageBuffersSize > 0);
+                final long sum = rowGroupBuffers.sumChunkBytes(0, 1);
+                Assert.assertEquals(dataSize + auxSize + pageBuffersSize, sum);
+                Assert.assertTrue("sumChunkBytes must exceed data+aux alone for a compressed varchar frame, got " + sum, sum > dataSize + auxSize);
+            } finally {
+                ff.close(fd);
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
         });
     }
 

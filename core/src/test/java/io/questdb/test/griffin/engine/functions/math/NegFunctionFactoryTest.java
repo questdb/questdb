@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class NegFunctionFactoryTest extends AbstractCairoTest {
@@ -71,14 +70,13 @@ public class NegFunctionFactoryTest extends AbstractCairoTest {
     }
 
     private void assertNeg(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                engine,
-                sqlExecutionContext,
-                sql,
-                sink,
-                "column\ttypeOf\n" +
+        assertMemoryLeak(() -> assertQuery(sql)
+                .withEngine(engine)
+                .withContext(sqlExecutionContext)
+                .noLeakCheck()
+                .returnsOnce("column\ttypeOf\n" +
                         expected
-        ));
+                ));
     }
 
 }

@@ -31,329 +31,273 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullInCursorInFilter() throws Exception {
-        assertQuery(
-                "x\n",
-                "SELECT x FROM long_sequence(3) WHERE NULL IN (SELECT 'abc'::symbol);",
-                null,
-                null,
-                true,
-                false
-        );
+        assertQuery("SELECT x FROM long_sequence(3) WHERE NULL IN (SELECT 'abc'::symbol);")
+                .ddl(null)
+                .returns("x\n");
     }
 
     @Test
     public void testNullInCursorInSelect() throws Exception {
-        assertQuery(
-                "column\n" +
-                        "false\n",
-                "SELECT NULL IN (SELECT 'abc'::symbol);",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("SELECT NULL IN (SELECT 'abc'::symbol);")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        column
+                        false
+                        """);
     }
 
     @Test
     public void testNullInNullCursorInFilter() throws Exception {
-        assertQuery(
-                "x\n",
-                "SELECT x FROM long_sequence(3) WHERE NULL IN (SELECT 'abc'::symbol);",
-                null,
-                null,
-                true,
-                false
-        );
+        assertQuery("SELECT x FROM long_sequence(3) WHERE NULL IN (SELECT 'abc'::symbol);")
+                .ddl(null)
+                .returns("x\n");
     }
 
     @Test
     public void testNullInNullCursorInSelect() throws Exception {
-        assertQuery(
-                "column\n" +
-                        "true\n",
-                "SELECT NULL IN (SELECT NULL);",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("SELECT NULL IN (SELECT NULL);")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        column
+                        true
+                        """);
     }
 
     @Test
     public void testNullInNullInFilter() throws Exception {
-        assertQuery(
-                "x\n" +
-                        "1\n" +
-                        "2\n" +
-                        "3\n",
-                "SELECT x FROM long_sequence(3) WHERE NULL IN NULL;",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("SELECT x FROM long_sequence(3) WHERE NULL IN NULL;")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        x
+                        1
+                        2
+                        3
+                        """);
     }
 
     @Test
     public void testNullInNullInSelect() throws Exception {
-        assertQuery(
-                "column\n" +
-                        "true\n",
-                "SELECT NULL IN NULL;",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("SELECT NULL IN NULL;")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        column
+                        true
+                        """);
     }
 
     @Test
     public void testSymbolColumnInCursorInFilter() throws Exception {
-        assertQuery(
-                "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
-                "select * from x where b in (select 'RXGZ'::symbol from long_sequence(3))",
-                "create table x as (" +
+        assertQuery("select * from x where b in (select 'RXGZ'::symbol from long_sequence(3))")
+                .ddl("create table x as (" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(5)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                true,
-                false
-        );
+                        ") timestamp(k) partition by DAY")
+                .timestamp("k")
+                .returns("""
+                        a\tb\tk
+                        23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
+                        """);
     }
 
     @Test
     public void testSymbolColumnInCursorInSelect() throws Exception {
-        assertQuery(
-                "column\tb\n" +
-                        "false\t\n" +
-                        "false\tVTJW\n" +
-                        "true\tRXGZ\n" +
-                        "false\tPEHN\n" +
-                        "false\t\n",
-                "select b in (select 'RXGZ'::symbol from long_sequence(3)), b from x",
-                "create table x as (" +
+        assertQuery("select b in (select 'RXGZ'::symbol from long_sequence(3)), b from x")
+                .ddl("create table x as (" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(5)" +
-                        ") timestamp(k) partition by DAY",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(k) partition by DAY")
+                .expectSize()
+                .returns("""
+                        column\tb
+                        false\t
+                        false\tVTJW
+                        true\tRXGZ
+                        false\tPEHN
+                        false\t
+                        """);
     }
 
     @Test
     public void testSymbolColumnInNullInFilter() throws Exception {
-        assertQuery(
-                "a\tb\tk\n" +
-                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n",
-                "select * from x where b in (select null from long_sequence(10))",
-                "create table x as (" +
+        assertQuery("select * from x where b in (select null from long_sequence(10))")
+                .ddl("create table x as (" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(5)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                true,
-                false
-        );
+                        ") timestamp(k) partition by DAY")
+                .timestamp("k")
+                .returns("""
+                        a\tb\tk
+                        11.427984775756228\t\t1970-01-01T00:00:00.000000Z
+                        87.99634725391621\t\t1970-01-05T15:06:40.000000Z
+                        """);
     }
 
     @Test
     public void testSymbolColumnInNullInSelect() throws Exception {
-        assertQuery(
-                "column\tb\n" +
-                        "true\t\n" +
-                        "false\tVTJW\n" +
-                        "false\tRXGZ\n" +
-                        "false\tPEHN\n" +
-                        "true\t\n",
-                "select b in (select null from long_sequence(10)), b from x",
-                "create table x as (" +
+        assertQuery("select b in (select null from long_sequence(10)), b from x")
+                .ddl("create table x as (" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(5)" +
-                        ") timestamp(k) partition by DAY",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(k) partition by DAY")
+                .expectSize()
+                .returns("""
+                        column\tb
+                        true\t
+                        false\tVTJW
+                        false\tRXGZ
+                        false\tPEHN
+                        true\t
+                        """);
     }
 
     @Test
     public void testSymbolExprInNullInFilter() throws Exception {
-        assertQuery(
-                "a\tb\tk\n" +
-                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n",
-                "select * from x where substring(b, 1, 2)::symbol in (select null from long_sequence(10))",
-                "create table x as (" +
+        assertQuery("select * from x where substring(b, 1, 2)::symbol in (select null from long_sequence(10))")
+                .ddl("create table x as (" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(5)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                true,
-                false
-        );
+                        ") timestamp(k) partition by DAY")
+                .timestamp("k")
+                .returns("""
+                        a\tb\tk
+                        11.427984775756228\t\t1970-01-01T00:00:00.000000Z
+                        87.99634725391621\t\t1970-01-05T15:06:40.000000Z
+                        """);
     }
 
     @Test
     public void testSymbolExprInNullInSelect() throws Exception {
-        assertQuery(
-                "column\tb\n" +
-                        "true\t\n" +
-                        "false\tVTJW\n" +
-                        "false\tRXGZ\n" +
-                        "false\tPEHN\n" +
-                        "true\t\n",
-                "select substring(b, 1, 2)::symbol in (select null from long_sequence(10)), b from x",
-                "create table x as (" +
+        assertQuery("select substring(b, 1, 2)::symbol in (select null from long_sequence(10)), b from x")
+                .ddl("create table x as (" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(5)" +
-                        ") timestamp(k) partition by DAY",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(k) partition by DAY")
+                .expectSize()
+                .returns("""
+                        column\tb
+                        true\t
+                        false\tVTJW
+                        false\tRXGZ
+                        false\tPEHN
+                        true\t
+                        """);
     }
 
     @Test
     public void testSymbolInCursorInFilter() throws Exception {
-        assertQuery(
-                "x\n" +
-                        "1\n" +
-                        "2\n" +
-                        "3\n",
-                "SELECT x FROM long_sequence(3) WHERE 'abc'::symbol IN (SELECT 'abc'::symbol);",
-                null,
-                null,
-                true,
-                false
-        );
+        assertQuery("SELECT x FROM long_sequence(3) WHERE 'abc'::symbol IN (SELECT 'abc'::symbol);")
+                .ddl(null)
+                .returns("""
+                        x
+                        1
+                        2
+                        3
+                        """);
     }
 
     @Test
     public void testSymbolInCursorInSelect() throws Exception {
-        assertQuery(
-                "column\n" +
-                        "true\n",
-                "SELECT 'abc'::symbol IN (SELECT 'abc'::symbol);",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("SELECT 'abc'::symbol IN (SELECT 'abc'::symbol);")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        column
+                        true
+                        """);
     }
 
     @Test
     public void testSymbolInNullCursorInFilter() throws Exception {
-        assertQuery(
-                "x\n",
-                "SELECT x FROM long_sequence(3) WHERE 'foobar'::symbol IN (SELECT NULL);",
-                null,
-                null,
-                false,
-                false
-        );
+        assertQuery("SELECT x FROM long_sequence(3) WHERE 'foobar'::symbol IN (SELECT NULL);")
+                .ddl(null)
+                .returns("x\n");
     }
 
     @Test
     public void testSymbolInNullCursorInSelect() throws Exception {
-        assertQuery(
-                "column\n" +
-                        "false\n",
-                "SELECT 'foobar'::symbol IN (SELECT NULL);",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("SELECT 'foobar'::symbol IN (SELECT NULL);")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        column
+                        false
+                        """);
     }
 
     @Test
     public void testSymbolInNullInFilter() throws Exception {
-        assertQuery(
-                "x\n",
-                "SELECT x FROM long_sequence(3) WHERE 'foobar'::symbol IN NULL;",
-                null,
-                null,
-                false,
-                false
-        );
+        assertQuery("SELECT x FROM long_sequence(3) WHERE 'foobar'::symbol IN NULL;")
+                .ddl(null)
+                .returns("x\n");
     }
 
     @Test
     public void testSymbolInNullInSelect() throws Exception {
-        assertQuery(
-                "column\n" +
-                        "false\n",
-                "SELECT 'foobar'::symbol IN NULL;",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("SELECT 'foobar'::symbol IN NULL;")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        column
+                        false
+                        """);
     }
 
     @Test
     public void testSymbolInSymbolInFilter() throws Exception {
-        assertQuery(
-                "x\n" +
-                        "1\n" +
-                        "2\n" +
-                        "3\n",
-                "SELECT x FROM long_sequence(3) WHERE 'foobar'::symbol IN 'foobar'::symbol;",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("SELECT x FROM long_sequence(3) WHERE 'foobar'::symbol IN 'foobar'::symbol;")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        x
+                        1
+                        2
+                        3
+                        """);
     }
 
     @Test
     public void testSymbolInSymbolInSelect() throws Exception {
-        assertQuery(
-                "column\n" +
-                        "false\n",
-                "SELECT 'foo'::symbol IN 'bar'::symbol;",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("SELECT 'foo'::symbol IN 'bar'::symbol;")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        column
+                        false
+                        """);
     }
 
     @Test
     public void testUnsupportedColumnType() throws Exception {
-        assertException(
-                "select * from x where b in (select 12, rnd_str('RXGZ', 'HYRX', null) a from long_sequence(10))",
-                "create table x as (" +
+        assertQuery("select * from x where b in (select 12, rnd_str('RXGZ', 'HYRX', null) a from long_sequence(10))")
+                .ddl("create table x as (" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                24,
-                "supported column types are VARCHAR, SYMBOL and STRING, found: INT"
-        );
+                        ") timestamp(k) partition by DAY")
+                .fails(24, "supported column types are VARCHAR, SYMBOL and STRING, found: INT");
     }
 }

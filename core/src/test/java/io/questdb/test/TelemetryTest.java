@@ -93,13 +93,19 @@ public class TelemetryTest extends AbstractCairoTest {
                         instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
                         instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
                         """;
-                assertSql(expected, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
+                assertQuery("SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns(expected);
                 expected = """
                         id\tversion
                         0x01\t
                         0x01\t[DEVELOPMENT]
                         """;
-                assertSql(expected, "SELECT id, version FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
+                assertQuery("SELECT id, version FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
             }
         });
     }
@@ -231,11 +237,9 @@ public class TelemetryTest extends AbstractCairoTest {
                     CairoEngine engine = new CairoEngine(configuration);
                     TelemetryJob ignored = new TelemetryJob(engine)
             ) {
-                assertException(
-                        "drop table telemetry",
-                        11,
-                        "table does not exist [table=" + TELEMETRY + "]"
-                );
+                assertQuery("drop table telemetry")
+                        .noLeakCheck()
+                        .fails(11, "table does not exist [table=" + TELEMETRY + "]");
             }
         });
     }
@@ -311,9 +315,15 @@ public class TelemetryTest extends AbstractCairoTest {
             String middle = " PARTITION BY NONE";
             String end = " BYPASS WAL;\n";
 
-            assertSql(start + middle + end, showCreateTable);
+            assertQuery(showCreateTable)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(start + middle + end);
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                assertSql(start + " PARTITION BY DAY TTL 4 WEEKS" + end, showCreateTable);
+                assertQuery(showCreateTable)
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns(start + " PARTITION BY DAY TTL 4 WEEKS" + end);
             }
         });
     }
@@ -337,9 +347,15 @@ public class TelemetryTest extends AbstractCairoTest {
             String middle = " PARTITION BY DAY TTL 1 WEEK";
             String end = " BYPASS WAL;\n";
 
-            assertSql(start + middle + end, showCreateTable);
+            assertQuery(showCreateTable)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(start + middle + end);
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                assertSql(start + " PARTITION BY DAY TTL 4 WEEKS" + end, showCreateTable);
+                assertQuery(showCreateTable)
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns(start + " PARTITION BY DAY TTL 4 WEEKS" + end);
             }
         });
     }
@@ -360,24 +376,52 @@ public class TelemetryTest extends AbstractCairoTest {
 
                 try (TelemetryJob ignore = new TelemetryJob(engine)) {
                     String expectedSql = "count\n1\n";
-                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
+                    assertQuery("SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expectedSql);
                     expectedSql = "version\tos\n" +
                             "1.0\t" + os + "\n";
-                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
+                    assertQuery("SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(expectedSql);
                 }
 
                 try (TelemetryJob ignore = new TelemetryJob(engine)) {
                     String expectedSql = "count\n1\n";
-                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
+                    assertQuery("SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expectedSql);
                 }
 
                 refVersion.set("1.1");
                 try (TelemetryJob ignore = new TelemetryJob(engine)) {
                     String expectedSql = "count\n2\n";
-                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
+                    assertQuery("SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expectedSql);
                     expectedSql = "version\tos\n" +
                             "1.1\t" + os + "\n";
-                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " LIMIT -1", sink, expectedSql);
+                    assertQuery("SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " LIMIT -1")
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(expectedSql);
                 }
             }
         });
@@ -411,12 +455,18 @@ public class TelemetryTest extends AbstractCairoTest {
                     "\tlatency FLOAT\n";
             String end = " BYPASS WAL;\n";
 
-            assertSql(header + ") timestamp(created) PARTITION BY MONTH" + end, showCreateTable);
+            assertQuery(showCreateTable)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(header + ") timestamp(created) PARTITION BY MONTH" + end);
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                assertSql(header.replace("\tlatency FLOAT\n", "\tlatency FLOAT,\n") +
-                        "\tminTimestamp TIMESTAMP,\n" +
-                        "\tmaxTimestamp TIMESTAMP\n" +
-                        ") timestamp(created) PARTITION BY DAY TTL 1 WEEK" + end, showCreateTable);
+                assertQuery(showCreateTable)
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns(header.replace("\tlatency FLOAT\n", "\tlatency FLOAT,\n") +
+                                "\tminTimestamp TIMESTAMP,\n" +
+                                "\tmaxTimestamp TIMESTAMP\n" +
+                                ") timestamp(created) PARTITION BY DAY TTL 1 WEEK" + end);
             }
         });
     }

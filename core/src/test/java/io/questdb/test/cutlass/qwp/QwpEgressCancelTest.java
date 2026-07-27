@@ -30,7 +30,6 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -63,7 +62,7 @@ import org.junit.Test;
  * streams is tracked as a Phase-2 item (dispatcher dual-registration for
  * read+write during streaming).
  */
-public class QwpEgressCancelTest extends AbstractBootstrapTest {
+public class QwpEgressCancelTest extends AbstractQwpBootstrapTest {
 
     // Status codes (copies; avoids dragging the server-side enum into the test path).
     private static final byte STATUS_CANCELLED = 0x0A;
@@ -84,7 +83,7 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
         // Cancel fired after the query has already completed must not corrupt
         // the connection: a follow-up query on the same client must run cleanly.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE q1(id LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO q1 VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
@@ -145,7 +144,7 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
         // CANCEL is consumed only after the query completes; verify that it
         // still doesn't break subsequent queries on the same connection.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE small(id LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO small SELECT x, x::TIMESTAMP FROM long_sequence(1000)");
@@ -225,7 +224,7 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
         // client's currentRequestId is -1 in that window, so cancel() short-circuits
         // before sending anything.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE mini(x INT, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO mini VALUES (1, 1::TIMESTAMP)");
@@ -328,7 +327,7 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
         // current single-op-per-fd dispatcher (the Phase-2 limitation applies to
         // default unbounded-credit streams where the server is WRITE-parked).
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE big AS (SELECT x AS id, x::TIMESTAMP AS ts "
                         + "FROM long_sequence(500_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTable("big");
@@ -382,4 +381,5 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
             }
         });
     }
+
 }

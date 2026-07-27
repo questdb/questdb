@@ -51,11 +51,13 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractBivariateStatWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -77,8 +79,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         if (cYY < 0) {
             cYY = 0;
         }
-        double denom = Math.sqrt(cXX * cYY);
-        return denom == 0.0 ? Double.NaN : cXY / denom;
+        return Numbers.corrFromSums(cXY, cXX, cYY);
     }
 
     // Welford's online algorithm result for correlation.
@@ -92,8 +93,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         if (sumYY < 0) {
             sumYY = 0;
         }
-        double denom = Math.sqrt(sumXX * sumYY);
-        return denom == 0.0 ? Double.NaN : sumXY / denom;
+        return Numbers.corrFromSums(sumXY, sumXX, sumYY);
     }
 
     // Naive sum-of-products formula for covariance, used by sliding-window (removable) frames.
@@ -840,6 +840,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(argY).val(',').val(argX).val(')');
@@ -1177,7 +1183,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             this.name = name;
 
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             count = 0;
             size = 0;
@@ -1340,6 +1346,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override

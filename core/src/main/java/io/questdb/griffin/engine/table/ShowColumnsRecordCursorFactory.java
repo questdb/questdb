@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -76,6 +77,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext, tableToken, tokenPosition);
     }
 
@@ -97,6 +99,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         private final IntList staticSymbolTableSizes = new IntList();
         private CairoColumn cairoColumn = new CairoColumn();
         private CairoTable cairoTable;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private int columnIndex;
 
         @Override
@@ -112,6 +115,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (columnIndex < cairoTable.getColumnCount() - 1) {
                 cairoColumn = cairoTable.getColumnQuiet(++columnIndex);
                 return true;
@@ -144,7 +148,14 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             final CairoEngine engine = executionContext.getCairoEngine();
+            // The token is resolved from the synchronously loaded registry, but the
+            // metadata cache is hydrated lazily; hydrate this table on demand so we do
+            // not report a registered-but-not-yet-cached table as non-existent during
+            // the startup hydration window (or before any catalogue query has warmed an
+            // embedded engine).
+            engine.getMetadataCache().hydrateTableOnDemand(tableToken);
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 final CairoTable cairoTable = metadataRO.getTable(tableToken);
                 if (cairoTable != null) {

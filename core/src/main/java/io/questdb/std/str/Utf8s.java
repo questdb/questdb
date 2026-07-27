@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.SwarUtils;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringIntHashMap;
 import io.questdb.std.Utf8StringObjHashMap;
@@ -50,7 +50,7 @@ public final class Utf8s {
     private static final long ASCII_MASK = 0x8080808080808080L;
     private static final long DOT_WORD = SwarUtils.broadcast((byte) '.');
     private static final char[] HEX_CHARS = "0123456789ABCDEF".toCharArray();
-    private static final io.questdb.std.ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private Utf8s() {
     }
@@ -1449,6 +1449,29 @@ public final class Utf8s {
      */
     public static boolean utf8ToUtf16(@NotNull Utf8Sequence seq, @NotNull Utf16Sink sink) {
         return utf8ToUtf16(seq, 0, seq.size(), sink);
+    }
+
+    /**
+     * Returns a CharSequence view of {@code seq} whose chars are real UTF-16 code
+     * points. If {@code seq.isAscii()} reports true, the raw bytes are already valid
+     * code points one-to-one and the zero-allocation {@link Utf8Sequence#asAsciiCharSequence()}
+     * view is returned. Otherwise the sequence is decoded into {@code decodeSink}
+     * (which is {@link StringSink#clear() cleared} first) and the sink is returned.
+     * <p>
+     * Callers must not mutate {@code decodeSink} until they finish reading the
+     * returned CharSequence, since the returned reference may alias it.
+     *
+     * @param seq        source UTF-8 sequence; must be non-null
+     * @param decodeSink scratch UTF-16 sink used only on the non-ASCII path
+     * @return a CharSequence exposing {@code seq} as UTF-16 code points
+     */
+    public static CharSequence utf8ToUtf16OrView(@NotNull Utf8Sequence seq, @NotNull StringSink decodeSink) {
+        if (seq.isAscii()) {
+            return seq.asAsciiCharSequence();
+        }
+        decodeSink.clear();
+        utf8ToUtf16(seq, decodeSink);
+        return decodeSink;
     }
 
     /**
