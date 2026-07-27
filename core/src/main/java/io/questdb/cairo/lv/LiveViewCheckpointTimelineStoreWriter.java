@@ -80,6 +80,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     public static final int TEST_FAIL_AFTER_DATA_PUBLISH = 1;
     @TestOnly
     public static final int TEST_FAIL_AFTER_METADATA_PUBLISH = 2;
+    /**
+     * Throws once the superblock has committed, so the caller observes a failed
+     * publication over a durably advanced generation. Unlike the two stages
+     * above, {@link #publishCompaction} is the only path that honours it -
+     * compaction is the only publication that stages a data segment an abort
+     * could unlink.
+     */
+    @TestOnly
+    public static final int TEST_FAIL_AFTER_SUPERBLOCK_PUBLISH = 3;
 
     private final HashSet<String> lifecycleReconciledDirs = new HashSet<>();
     private final CairoConfiguration configuration;
@@ -383,6 +392,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             copy(newTimelineRoot, superblock.timelineRootRef);
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
             metaStore.publish();
+            if (testFailureStage == TEST_FAIL_AFTER_SUPERBLOCK_PUBLISH) {
+                throw CairoException.critical(0).put("test failure after live view checkpoint superblock publication");
+            }
 
             return new CompactionResult(
                     generation,

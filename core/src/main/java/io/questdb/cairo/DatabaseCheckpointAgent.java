@@ -280,7 +280,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             // LV branch of the inner for(;;) and cleared in the finally below,
                             // so _lv.s + _txn + partition data all capture a single consistent
                             // refresh-worker state. Refresh worker observes
-                            // isFreezeInProgress() at the top of refreshInstance and skips
+                            // isFreezeArmed() at the top of refreshInstance and skips
                             // the cycle.
                             LiveViewInstance freezeLvInstance = null;
                             try {
@@ -443,7 +443,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         if (freezeLvInstance == null) {
                                             final LiveViewInstance lvInstance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
                                             if (lvInstance != null) {
-                                                if (lvInstance.startCheckpoint()) {
+                                                if (lvInstance.startCheckpoint(circuitBreaker)) {
                                                     freezeLvInstance = lvInstance;
                                                 } else {
                                                     // Checkpoint/drop handshake, agent side: a concurrent

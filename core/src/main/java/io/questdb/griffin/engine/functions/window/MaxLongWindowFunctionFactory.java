@@ -2339,14 +2339,6 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             maxMin = Numbers.LONG_NULL;
         }
 
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-            if (dequeMemory != null) {
-                dequeMemory.setMemoryTracker(tracker);
-            }
-        }
-
         /**
          * Appends a textual plan fragment for this window function to the provided PlanSink.
          * <p>

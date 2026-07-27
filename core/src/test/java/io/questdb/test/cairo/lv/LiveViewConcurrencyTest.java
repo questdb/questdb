@@ -38,10 +38,12 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -69,6 +71,7 @@ import org.junit.Test;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -203,18 +206,162 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     public void testCheckpointFreezeDuringLatchHeldRewriteDoesNotDeadlock() throws Exception {
         // Deterministic regression for the CHECKPOINT <-> refresh-worker deadlock.
         // advanceLiveViewConsumedSeqTxn (and the in-band applyLiveViewData reconcile
-        // path) rewrite _lv.s while the refresh worker holds the refresh latch.
-        // DatabaseCheckpointAgent.startCheckpoint sets freezeInProgress then spins for
-        // that same latch with no timeout. If the latch-held rewrite parked on
-        // waitForUnfrozen(), the worker would wait for an unfreeze only endCheckpoint
-        // delivers - and endCheckpoint is never reached because startCheckpoint is
-        // still spinning for the latch the parked worker holds. A permanent hang of
-        // CHECKPOINT plus the shared refresh worker. The startCheckpoint latch
-        // handshake already serialises the rewrite against the agent's file copy, so
-        // the latch-held path must not wait. This forces exactly the deadlock window:
-        // the worker takes the latch, the agent arms the freeze, then the worker runs
-        // the rewrite while frozen.
+        // path) rewrite _lv.s while the refresh worker holds the refresh latch. If a
+        // latch-held rewrite parked on waitForUnfrozen(), it would wait for an unfreeze
+        // only endCheckpoint delivers - and endCheckpoint is never reached, because
+        // startCheckpoint is still waiting for the latch the parked worker holds. A
+        // permanent hang of CHECKPOINT plus the shared refresh worker. The
+        // startCheckpoint latch handshake already serialises the rewrite against the
+        // agent's file copy, so the latch-held path must not wait. This forces the
+        // window: the worker takes the latch, the agent arms the freeze, then the
+        // worker runs the rewrite with the freeze armed.
+        //
+        // Since startCheckpoint publishes the copy flag only under the latch, the
+        // rewrite now runs with the intent armed but the copy flag clear, so a
+        // re-introduced waitForUnfrozen() would no longer park here. The
+        // structural guarantee has moved to the isFreezeArmed() gate in
+        // refreshInstance, which precedes every latch-held rewrite.
         assertMemoryLeak(this::runCheckpointFreezeDuringLatchHeldRewrite);
+    }
+
+    @Test
+    public void testCheckpointFreezeRequestDoesNotParkAnInvalidator() throws Exception {
+        // The three-way stall. A refresh turn holds the refresh latch (in production it
+        // is inside waitForApply, waiting for ApplyWal2TableJob). CHECKPOINT CREATE
+        // requests a freeze and waits for that latch, holding the database-wide WAL
+        // purge lock. Meanwhile the WAL apply worker - holding the base table's
+        // TableWriter - reaches invalidateLiveViewsForBaseTable and parks in
+        // waitForUnfrozen(). Apply then cannot advance, so the refresh turn cannot
+        // finish, so the freeze cannot be taken: A waits on B waits on C waits on A.
+        //
+        // startCheckpoint therefore publishes only its INTENT before waiting for the
+        // latch, and the copy flag waitForUnfrozen() parks on afterwards, under the
+        // latch. An invalidator must sail straight through while the request is still
+        // waiting. Before that split it parked here indefinitely.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+            execute("DROP LIVE VIEW IF EXISTS lv");
+            execute("DROP TABLE IF EXISTS base");
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, sym, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final TableToken baseToken = engine.verifyTableName("base");
+
+            final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+            final CountDownLatch invalidatorReturned = new CountDownLatch(1);
+
+            // Stand in for the refresh turn parked in waitForApply.
+            Assert.assertTrue("test setup must take the refresh latch", instance.tryLockForRefresh());
+            final Thread agent = new Thread(
+                    () -> {
+                        try {
+                            instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                        } catch (Throwable th) {
+                            errors.add(th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    },
+                    "lv-checkpoint-agent"
+            );
+            final Thread invalidator = new Thread(
+                    () -> {
+                        try {
+                            engine.invalidateLiveViewsForBaseTable(baseToken, "test apply-worker invalidation");
+                            invalidatorReturned.countDown();
+                        } catch (Throwable th) {
+                            errors.add(th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    },
+                    "lv-apply-worker"
+            );
+            try {
+                agent.start();
+                // Fence on the freeze INTENT, which both orderings publish before waiting
+                // for the latch. That is strictly tighter than probing the agent's stack,
+                // which can observe startCheckpoint before it has published anything. What
+                // must not appear here is the copy flag - that is the whole property.
+                TestUtils.assertEventually(() -> Assert.assertTrue(
+                        "the checkpoint agent must have armed the freeze intent",
+                        instance.isFreezeArmed()
+                ), 30);
+                Assert.assertFalse(
+                        "the copy flag must not be published while the latch is held",
+                        instance.isFreezeInProgress()
+                );
+
+                invalidator.start();
+                Assert.assertTrue(
+                        "the invalidator parked behind a freeze that is itself waiting for the refresh latch",
+                        invalidatorReturned.await(30, TimeUnit.SECONDS)
+                );
+            } finally {
+                instance.unlockAfterRefresh();
+                agent.join(30_000);
+                invalidator.join(30_000);
+                if (instance.isFreezeArmed()) {
+                    instance.endCheckpoint();
+                }
+            }
+
+            Assert.assertFalse("checkpoint agent thread did not finish", agent.isAlive());
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("worker thread failed", errors.peek());
+            }
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testCheckpointFreezeWaitIsCancellable() throws Exception {
+        // CHECKPOINT CREATE holds the database-wide WAL purge lock while it waits for a
+        // view's refresh latch, so an unbounded uninterruptible wait there blocks purge
+        // for every table. The wait polls the statement's circuit breaker, which is what
+        // lets CANCEL QUERY (and shutdown) abort it. On that abort nothing may be left
+        // frozen: a stranded freeze intent would silently stop the view refreshing for
+        // the process's life.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+            execute("DROP LIVE VIEW IF EXISTS lv");
+            execute("DROP TABLE IF EXISTS base");
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, sym, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+            circuitBreaker.cancel();
+
+            // Hold the latch so the wait cannot complete, then let the breaker end it.
+            Assert.assertTrue("test setup must take the refresh latch", instance.tryLockForRefresh());
+            try {
+                instance.startCheckpoint(circuitBreaker);
+                Assert.fail("a tripped circuit breaker must abort the freeze wait");
+            } catch (CairoException e) {
+                Assert.assertTrue("expected a cancellation, got: " + e.getFlyweightMessage(), e.isCancellation());
+            } finally {
+                instance.unlockAfterRefresh();
+            }
+
+            Assert.assertFalse("an aborted freeze must not strand its intent", instance.isFreezeArmed());
+            Assert.assertFalse("an aborted freeze must not publish the copy flag", instance.isFreezeInProgress());
+            // The latch is free again, so a later checkpoint still works.
+            Assert.assertTrue(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+            Assert.assertTrue(instance.isFreezeInProgress());
+            instance.endCheckpoint();
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
     }
 
     @Test
@@ -443,10 +590,14 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // A DROP marked the instance dropped first; the agent looks it up and only now
             // calls startCheckpoint. It must observe the drop and refuse the freeze.
             instance.markAsDropped();
-            instance.startCheckpoint();
+            instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
             Assert.assertFalse(
                     "startCheckpoint on a dropped instance must not set freezeInProgress",
                     instance.isFreezeInProgress()
+            );
+            Assert.assertFalse(
+                    "a refused freeze must not leave its intent behind either, or refresh stops",
+                    instance.isFreezeArmed()
             );
 
             // Finish the drop cleanly (no freeze to wait out) and drop the base.
@@ -480,8 +631,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             Assert.assertNotNull(instance);
 
             // Publish a checkpoint freeze on the main thread exactly as the agent does:
-            // startCheckpoint sets freezeInProgress and fences the refresh latch.
-            instance.startCheckpoint();
+            // startCheckpoint fences the refresh latch and publishes freezeInProgress
+            // under that hold.
+            Assert.assertTrue(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
             Assert.assertTrue(instance.isFreezeInProgress());
 
             final Thread dropper = new Thread(() -> {
@@ -1290,7 +1442,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         // Mirror DatabaseCheckpointAgent: freeze, (the per-LV file
                         // copy would run here), unfreeze. The finally guarantees
                         // endCheckpoint regardless of how the freeze interleaves.
-                        instance.startCheckpoint();
+                        instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
                         try {
                             Thread.yield();
                         } finally {
@@ -1371,8 +1523,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
         // Worker: mirrors refreshInstance - takes the refresh latch for the whole
         // turn, then (once the agent has armed the freeze mid-turn) runs the two
-        // latch-held _lv.s rewrites. Pre-fix, the first parks forever in
-        // waitForUnfrozen() while still holding the latch.
+        // latch-held _lv.s rewrites. Before waitForUnfrozen() was dropped from them,
+        // the first parked forever while still holding the latch.
         final Thread worker = new Thread(() -> {
             try (
                     BlockFileWriter bfw = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
@@ -1381,10 +1533,12 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 Assert.assertTrue(instance.tryLockForRefresh());
                 try {
                     latchHeld.countDown();
-                    // Spin until the agent publishes freezeInProgress=true, so the
-                    // rewrites below run strictly inside the freeze window.
+                    // Spin until the agent arms the freeze, so the rewrites below run
+                    // strictly inside its window. It is the INTENT that is observable
+                    // here: startCheckpoint publishes freezeInProgress only once it holds
+                    // the refresh latch, which this thread is holding for the whole body.
                     final long deadline = System.currentTimeMillis() + 60_000;
-                    while (!instance.isFreezeInProgress()) {
+                    while (!instance.isFreezeArmed()) {
                         if (System.currentTimeMillis() > deadline) {
                             throw new AssertionError("checkpoint freeze was never armed");
                         }
@@ -1405,12 +1559,12 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }, "lv-worker");
 
         // Agent: mirrors DatabaseCheckpointAgent - once the worker holds the latch,
-        // startCheckpoint publishes freezeInProgress and then spins for that same
-        // latch, blocking until the worker releases it after its rewrites.
+        // startCheckpoint arms the freeze intent and then waits for that same latch,
+        // blocking until the worker releases it after its rewrites.
         final Thread agent = new Thread(() -> {
             try {
                 latchHeld.await();
-                instance.startCheckpoint();
+                instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
                 instance.endCheckpoint();
             } catch (Throwable th) {
                 errors.add(th);

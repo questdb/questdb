@@ -373,6 +373,22 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     }
 
     /**
+     * Reports whether the selected slot carries the highest generation of the two
+     * CRC-valid slots. {@code false} means {@link #selectFallbackSlot()} stepped
+     * down over a root that failed bounded validation - a per-open outcome, not a
+     * durable one, since validation never opens a data segment and a later open
+     * can select the newer slot again.
+     * <p>
+     * {@link #select()} derives {@code generationFloor} from every valid slot and
+     * the fallback deliberately leaves it alone, so this is exact rather than a
+     * proxy for it.
+     */
+    boolean isSelectedSlotNewest() {
+        ensureOpen();
+        return generation == generationFloor;
+    }
+
+    /**
      * Selects the other independently valid slot after bounded validation of the
      * current slot's referenced root pages failed. This is package-private because
      * only {@link LiveViewCheckpointMetaStore} may fall back: once a generation has

@@ -41,6 +41,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -128,6 +129,26 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 Assert.assertFalse(dataTmpFileExists(4));
             }
         });
+    }
+
+    @Test
+    public void testAbandonedTargetSurvivesASilentGenerationFallback() throws Exception {
+        // Generation 2 names the repacked target. A transient stat failure on generation 2's
+        // metadata segment - ff.length() returning -1, which the reader condemns as
+        // LV_CHECKPOINT_TIMELINE_INVALID - makes a fresh open fall back to generation 1,
+        // which does not name the target. That fallback is per-open and NOT durable: bounded
+        // validation never opens a data segment, so a later open can select generation 2
+        // again and would then find the target gone. The abort must keep the file rather
+        // than trust the catalogue it happened to read.
+        assertAbandonedTargetSurvives(false);
+    }
+
+    @Test
+    public void testAbandonedTargetSurvivesAnUnreadableCatalogue() throws Exception {
+        // Both generations' metadata segments stat-fail, so the fresh open selects nothing
+        // and no catalogue is read at all. That is a corruption signal, not evidence the
+        // target is free, so the abort must keep the file.
+        assertAbandonedTargetSurvives(true);
     }
 
     @Test
@@ -326,6 +347,12 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
         return path.of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
     }
 
+    private static String metaSegmentPath(long segmentId) {
+        try (Path path = new Path(); Path dir = new Path()) {
+            return LiveViewCheckpointLayout.metaSegmentPath(path, checkpointsDir(dir), segmentId).toString();
+        }
+    }
+
     private static LiveViewCheckpointStatePageRef stateRef(long segmentId, long offset, int storedLength) {
         return new LiveViewCheckpointStatePageRef().of(
                 segmentId,
@@ -337,6 +364,59 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 1,
                 0
         );
+    }
+
+    // Drives an abandoned candidate whose target generation 2 already catalogues, with the
+    // metadata segments the gate needs made unreadable at abort time. Either way the gate
+    // cannot confirm the target is free, so it must keep the file.
+    private void assertAbandonedTargetSurvives(boolean failBothGenerations) throws Exception {
+        final ObjList<String> statFailPaths = new ObjList<>();
+        final TestFilesFacadeImpl statFailingFacade = new TestFilesFacadeImpl() {
+            @Override
+            public long length(LPSZ name) {
+                for (int i = 0, n = statFailPaths.size(); i < n; i++) {
+                    if (Utf8s.endsWithAscii(name, statFailPaths.getQuick(i))) {
+                        return -1;
+                    }
+                }
+                return super.length(name);
+            }
+        };
+        assertMemoryLeak(statFailingFacade, () -> {
+            final DataSegment source = writeDataSegment(1, 11);
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointMetaStore metaStore = openMetaStore();
+                 LiveViewCheckpointDataStore dataStore = openDataStore(metaStore)) {
+                directory.addSegment(1, source.fileLength, 1);
+                directory.publish(metaStore, 1, 101);
+
+                final ObjList<LiveViewCheckpointStatePageRef> sourceRefs = new ObjList<>();
+                sourceRefs.add(source.refs.getQuick(0));
+                final ObjList<LiveViewCheckpointStatePageRef> targetRefs = new ObjList<>();
+                try (LiveViewCheckpointDataStore.Candidate candidate = dataStore.beginCandidate()) {
+                    final long targetLength = candidate.repack(5, sourceRefs, targetRefs);
+                    Assert.assertTrue("repack must publish the target under its final name", dataFileExists(5));
+
+                    directory.addSegment(5, targetLength, 1);
+                    directory.publish(metaStore, 2, 102);
+
+                    // Arm the failure only now, so everything above runs against a healthy
+                    // catalogue and only the gate's fresh open is affected. No
+                    // markPublished(): this is the abandoned-candidate path.
+                    statFailPaths.add(metaSegmentPath(102));
+                    if (failBothGenerations) {
+                        statFailPaths.add(metaSegmentPath(101));
+                    }
+                }
+                statFailPaths.clear();
+
+                Assert.assertTrue(
+                        "the gate must not unlink a target it could not confirm is free",
+                        dataFileExists(5)
+                );
+                Assert.assertTrue("the source segment must be untouched", dataFileExists(1));
+            }
+        });
     }
 
     private boolean dataFileExists(long segmentId) {

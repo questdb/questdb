@@ -464,10 +464,14 @@ public interface CairoConfiguration {
      * a limit breach rather than spending the retry budget), and invalidation is durable and
      * sticky - recovery is an operator DROP + CREATE.
      * <p>
-     * Two floors dominate that sizing. A view with a bounded (ROWS) window frame allocates a
-     * whole window store page for its ring buffer on the first row ({@link
-     * #getSqlWindowStorePageSize()}, 1 MiB by default), so such a view cannot run under a limit
-     * of one page at all. A view reading parquet partitions decodes a whole row group at a time.
+     * Two floors dominate that sizing. A view reading parquet partitions decodes a whole row
+     * group at a time. And a view whose SELECT binds a ring buffer - any RANGE frame, or a
+     * {@code PARTITION BY} ROWS / lag() / lead() ring - charges a whole
+     * {@link #getSqlWindowStorePageSize()} (1 MiB by default) on its first allocation (its
+     * first partition, where the frame is partitioned), however small the frame: the ring is
+     * created at page granularity. A NON-partitioned ROWS or
+     * lag()/lead() ring is fixed by the query text and stays on global accounting, so it
+     * imposes no floor here (see {@code WindowFunction.setMemoryTracker}).
      */
     long getLiveViewRefreshMemoryLimitBytes();
 

@@ -52,6 +52,7 @@ import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -19656,7 +19657,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             final AtomicBoolean returned = new AtomicBoolean(false);
             final Thread agent = new Thread(() -> {
-                lv.startCheckpoint();
+                lv.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
                 returned.set(true);
             }, "lv-freeze-handshake-test");
             try {
@@ -19669,8 +19670,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 // it, because this thread holds the refresh latch the whole time - startCheckpoint
                 // cannot return however long the agent takes to get going.
                 TestUtils.assertEventually(() -> Assert.assertTrue(
-                        "freeze flag must be published before the agent blocks on the latch",
-                        lv.isFreezeInProgress()
+                        "freeze intent must be published before the agent blocks on the latch",
+                        lv.isFreezeArmed()
                 ), 30);
                 Assert.assertFalse(
                         "startCheckpoint must block while the refresh latch is held",
@@ -19689,7 +19690,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         returned.get()
                 );
             } finally {
-                if (lv.isFreezeInProgress()) {
+                if (lv.isFreezeArmed()) {
                     lv.endCheckpoint();
                 }
             }
@@ -19713,7 +19714,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             Assert.assertNotNull(lv);
 
             // Take the freeze. Now an out-of-band invalidate must wait.
-            lv.startCheckpoint();
+            lv.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
             Assert.assertTrue(lv.isFreezeInProgress());
             Assert.assertFalse("LV must still be valid pre-freeze", lv.isInvalid());
 
@@ -19762,7 +19763,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         Chars.equals("test queued behind freeze", lv.getStateReader().getInvalidationReason())
                 );
             } finally {
-                if (lv.isFreezeInProgress()) {
+                if (lv.isFreezeArmed()) {
                     lv.endCheckpoint();
                 }
             }
@@ -19798,7 +19799,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 // Freeze the LV. The refresh worker's next turn must see the
                 // flag, skip, and leave lastProcessedSeqTxn unchanged.
-                lv.startCheckpoint();
+                lv.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
                 Assert.assertTrue("freeze in progress after startCheckpoint", lv.isFreezeInProgress());
                 drainJob(job);
                 Assert.assertEquals(

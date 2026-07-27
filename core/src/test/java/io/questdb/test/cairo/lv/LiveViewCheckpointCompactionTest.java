@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointCompaction;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
@@ -96,6 +97,136 @@ public class LiveViewCheckpointCompactionTest extends AbstractLiveViewTest {
         // the most boundaries a repair can partially supersede.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setCurrentMicros(0);
+    }
+
+    @Test
+    public void testAbandonedCompactionBeforeCommitUnlinksItsTarget() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+                    LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)
+            ) {
+                final LiveViewInstance instance = buildFragmentedHistory(job);
+                assertViewMatchesRecompute();
+                Assert.assertTrue("the overlapping corrections must leave sparse segments", sparseSegmentCount(instance) > 0);
+                final long generationBefore = generation(instance);
+                final LongList segmentsBefore = dataSegmentIds(instance);
+
+                // The negative of the case below: fail one step BEFORE the superblock
+                // commits. The repack has already renamed the target to its final name,
+                // but nothing durable names it and the catalogue never learns the id, so
+                // no later purge could ever reclaim it. Abandoning the candidate must
+                // take the file with it.
+                writer.setTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                try (Path dir = checkpointsDir(instance)) {
+                    LiveViewCheckpointCompaction.compact(
+                            configuration,
+                            dir,
+                            writer,
+                            instance.getLiveViewToken().getTableId(),
+                            0,
+                            true,
+                            100,
+                            1,
+                            64
+                    );
+                    Assert.fail("the injected pre-commit failure must propagate");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "test failure after live view checkpoint metadata publication"
+                    );
+                } finally {
+                    writer.setTestFailureStage(0);
+                }
+
+                Assert.assertEquals(
+                        "a failure before the commit point must not advance the generation",
+                        generationBefore,
+                        generation(instance)
+                );
+                final LongList segmentsAfter = dataSegmentIds(instance);
+                Assert.assertEquals(
+                        "the abandoned target must leave no data segment behind",
+                        segmentsBefore.size(),
+                        segmentsAfter.size()
+                );
+                for (int i = 0, n = segmentsBefore.size(); i < n; i++) {
+                    Assert.assertEquals("data segment at index " + i, segmentsBefore.getQuick(i), segmentsAfter.getQuick(i));
+                }
+                assertCataloguedDataSegmentsExist(instance);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testCommittedCompactionSurvivesAFailureAfterSuperblockPublication() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+                    LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)
+            ) {
+                final LiveViewInstance instance = buildFragmentedHistory(job);
+                assertViewMatchesRecompute();
+                Assert.assertTrue("the overlapping corrections must leave sparse segments", sparseSegmentCount(instance) > 0);
+                final long generationBefore = generation(instance);
+
+                // Commit the superblock and then throw. That is the shape a real
+                // failure takes past the commit point: the msync that follows the
+                // slot write under a non-NOSYNC commit mode reports EIO, or the
+                // result tail exhausts the heap. Neither rolls the generation back.
+                writer.setTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_SUPERBLOCK_PUBLISH);
+                try (Path dir = checkpointsDir(instance)) {
+                    LiveViewCheckpointCompaction.compact(
+                            configuration,
+                            dir,
+                            writer,
+                            instance.getLiveViewToken().getTableId(),
+                            0,
+                            true,
+                            100,
+                            1,
+                            64
+                    );
+                    Assert.fail("the injected post-commit failure must propagate");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "test failure after live view checkpoint superblock publication"
+                    );
+                } finally {
+                    writer.setTestFailureStage(0);
+                }
+
+                // The commit stands, so the compacted target is named by the roots a
+                // restart selects. Abandoning the candidate must not unlink it.
+                Assert.assertEquals(
+                        "a failure past the commit point must not roll the generation back",
+                        generationBefore + 1,
+                        generation(instance)
+                );
+                assertCataloguedDataSegmentsExist(instance);
+
+                // Corroboration rather than a second independent proof: both checks below
+                // also hold if the view self-heals by rebuilding, so they bound the damage
+                // without pinning the mechanism. The assertion above is the load-bearing one.
+                assertViewMatchesRecompute();
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                final LiveViewInstance restored = viewInstance();
+                try (LiveViewRefreshJob restartJob = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(restartJob);
+                }
+                assertViewMatchesRecompute();
+                Assert.assertTrue(
+                        "the restart must restore from the committed compacted generation",
+                        generation(restored) >= generationBefore + 1
+                );
+            }
+        });
     }
 
     @Test
@@ -315,6 +446,36 @@ public class LiveViewCheckpointCompactionTest extends AbstractLiveViewTest {
         drainWalQueue();
         drainJob(job);
         drainWalQueue();
+    }
+
+    // Every data segment the committed generation still references must have its
+    // file on disk. A catalogued-but-unlinked segment is an unreadable timeline:
+    // the roots name pages nothing can open, and the fallback slot names the
+    // sources compaction has just retired.
+    private void assertCataloguedDataSegmentsExist(LiveViewInstance instance) {
+        final LongList missing = new LongList();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader segments = new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                segments.of(dir, pin.getSegmentDirectoryRootRef());
+                segments.iterateAll(entry -> {
+                    if (entry.referenceCount > 0 && !dataSegmentFileExists(instance, entry.segmentId)) {
+                        missing.add(entry.segmentId);
+                    }
+                });
+            }
+        }
+        Assert.assertEquals(
+                "the committed generation references unlinked data segments " + missing,
+                0,
+                missing.size()
+        );
     }
 
     private void assertViewMatchesRecompute() throws Exception {

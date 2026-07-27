@@ -777,7 +777,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 // The freeze must be released despite the retry that saw a null instance.
                 Assert.assertFalse(
                         "CHECKPOINT leaked the live view freeze across a reader retry",
-                        instance.isFreezeInProgress()
+                        instance.isFreezeArmed()
                 );
 
                 // The injection removed the instance from the registry; re-register it so normal

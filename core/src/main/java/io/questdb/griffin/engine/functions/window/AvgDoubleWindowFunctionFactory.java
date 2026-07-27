@@ -1695,11 +1695,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');

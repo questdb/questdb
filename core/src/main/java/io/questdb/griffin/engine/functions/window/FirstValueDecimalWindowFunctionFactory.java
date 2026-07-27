@@ -3693,11 +3693,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -5786,11 +5781,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             firstValue = Decimals.DECIMAL16_NULL;
             count = 0;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -7981,11 +7971,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -10083,11 +10068,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -12171,11 +12151,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -14256,11 +14231,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             firstValue = Decimals.DECIMAL8_NULL;
             count = 0;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override

@@ -2449,11 +2449,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(',').val(n).val(')');
@@ -4176,11 +4171,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             nthValue = Decimals.DECIMAL16_NULL;
             loIdx = 0;
             count = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -5947,11 +5937,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(',').val(n).val(')');
@@ -7685,11 +7670,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(',').val(n).val(')');
@@ -9394,11 +9374,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(',').val(n).val(')');
@@ -11099,11 +11074,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             nthValue = Decimals.DECIMAL8_NULL;
             loIdx = 0;
             count = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override

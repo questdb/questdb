@@ -3313,11 +3313,6 @@ public class FirstValueWindowFunctionFactoryHelper {
             count = 0;
         }
 
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
         /**
          * Append a textual plan fragment for this window function to the provided sink.
          * <p>

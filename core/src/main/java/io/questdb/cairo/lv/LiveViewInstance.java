@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
@@ -94,6 +95,9 @@ public class LiveViewInstance implements QuietCloseable {
     private static final int HEAD_CHECKPOINT_LV_SEQ_TXN = 0;
     private static final int HEAD_CHECKPOINT_MAX_TS = 1;
     private static final int HEAD_CHECKPOINT_STATE_BYTES = 2;
+    // Spins before the refresh-latch wait starts sleeping. Short, because the wait
+    // is either over almost immediately or lasts a whole refresh turn.
+    private static final int LATCH_SPINS_BEFORE_SLEEP = 64;
     private static final long[] EMPTY_CHECKPOINT_REPAIR = {
             0L, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL
     };
@@ -105,7 +109,7 @@ public class LiveViewInstance implements QuietCloseable {
     // Cancellation flag the refresh worker binds into its execution context's circuit
     // breaker for the duration of a cycle over this view. DROP and invalidation set it,
     // so a scan already inside the compiled cursor unwinds instead of running to
-    // completion while the caller spins in fenceRefresh(). Terminal by construction -
+    // completion while the caller waits in fenceRefresh(). Terminal by construction -
     // both sources end the view's refreshing life - so nothing clears it.
     private final AtomicBoolean refreshCancelled = new AtomicBoolean(false);
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
@@ -163,11 +167,17 @@ public class LiveViewInstance implements QuietCloseable {
     // streak; Numbers.LONG_NULL when no streak is in progress. Same write-only
     // discipline as flushRetryCount.
     private long flushRetryStartUs = Numbers.LONG_NULL;
-    // Snapshot-freeze gate. DatabaseCheckpointAgent sets this true before
-    // copying an LV's file set and clears it afterwards; the refresh worker
-    // observes the flag at the top of refreshInstance (after the latch +
-    // dropped/invalid checks) and skips the cycle.
+    // Snapshot-freeze gate, published only while startCheckpoint holds the refresh
+    // latch and cleared by endCheckpoint. It marks the window in which
+    // DatabaseCheckpointAgent is actually copying this LV's file set, which is
+    // exactly the window waitForUnfrozen() parks for.
     private volatile boolean freezeInProgress;
+    // Freeze intent, published BEFORE startCheckpoint waits for the refresh latch.
+    // It stops refresh turns that have not started yet, so a continuously busy view
+    // cannot starve the agent, but it deliberately does not gate waitForUnfrozen():
+    // a thread parking on the intent would be waiting for a freeze that is itself
+    // waiting for the latch, which is the three-way stall this split prevents.
+    private volatile boolean freezePending;
     // One-shot latch for the advisory log the refresh worker emits the first time
     // a view drops in-order rows below viewLowerBoundTimestamp. Keeps the "dropping
     // sub-floor rows" hint to a single line per process rather than one per drain.
@@ -733,29 +743,28 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Companion to {@link #startCheckpoint()}. Clears the freeze gate so
+     * Companion to {@link #startCheckpoint(SqlExecutionCircuitBreaker)}. Clears the freeze gate so
      * the refresh worker resumes on its next turn and wakes any thread blocked
      * in {@link #waitForUnfrozen()}. Idempotent.
      */
     public void endCheckpoint() {
         synchronized (this) {
             freezeInProgress = false;
+            freezePending = false;
             notifyAll();
         }
     }
 
     /**
-     * Spin-acquires and releases the refresh latch, mirroring
-     * {@link #startCheckpoint()} without the freeze gate: it waits out any
+     * Acquires and releases the refresh latch (spin, then sleep), mirroring
+     * {@link #startCheckpoint(SqlExecutionCircuitBreaker)} without the freeze gate: it waits out any
      * in-flight refresh turn and, via the CAS barrier, publishes state the caller
      * set beforehand to the worker's next {@link #tryLockForRefresh()}. DROP pairs
      * it with a prior {@link #markAsDropped()} so no worker is mid-commit and the
      * next under-latch recheck sees the drop before the table is torn down.
      */
     public void fenceRefresh() {
-        while (!refreshLatch.compareAndSet(false, true)) {
-            Os.pause();
-        }
+        awaitRefreshLatch(null);
         refreshLatch.set(false);
     }
 
@@ -1292,10 +1301,22 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * @return true while a snapshot freeze is active for this view. Callers
-     * that mutate {@code _lv.s} or advance any LV watermark MUST honour
-     * this flag and back off until {@link #endCheckpoint()} clears it. The
-     * refresh worker observes it at the top of its turn.
+     * @return true from the moment a snapshot freeze is requested until
+     * {@link #endCheckpoint()}, spanning both the wait for the refresh latch and
+     * the agent's file copy. Refresh turns back off on this rather than on
+     * {@link #isFreezeInProgress()} so a continuously busy view cannot starve the
+     * agent out of the latch.
+     */
+    public boolean isFreezeArmed() {
+        return freezePending || freezeInProgress;
+    }
+
+    /**
+     * @return true only while the agent is copying this view's file set. Callers
+     * that mutate {@code _lv.s} or advance any LV watermark outside the refresh
+     * latch MUST honour this flag and back off until {@link #endCheckpoint()}
+     * clears it. Under the latch the handshake already excludes the copy, so the
+     * refresh worker backs off on the broader {@link #isFreezeArmed()} instead.
      */
     public boolean isFreezeInProgress() {
         return freezeInProgress;
@@ -1415,11 +1436,11 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * DROP side of the checkpoint/drop handshake, the counterpart to
-     * {@link #startCheckpoint()}. Marks the view dropped and then waits out any
+     * {@link #startCheckpoint(SqlExecutionCircuitBreaker)}. Marks the view dropped and then waits out any
      * in-progress {@code DatabaseCheckpointAgent} freeze, both under the instance
      * monitor so the two interlock:
      * <ul>
-     *     <li>if this runs first, a later {@link #startCheckpoint()} observes
+     *     <li>if this runs first, a later {@link #startCheckpoint(SqlExecutionCircuitBreaker)} observes
      *     {@code dropped} under the same monitor and refuses the freeze (returns
      *     {@code false}), so the agent skips the view;</li>
      *     <li>if a freeze is already published, this parks in {@link #waitForUnfrozen()}
@@ -1434,7 +1455,7 @@ public class LiveViewInstance implements QuietCloseable {
         synchronized (this) {
             dropped = true;
             // Trip the breaker before waiting on anything: the fenceRefresh() that follows
-            // this call spins until the in-flight cycle releases the latch, and an
+            // this call waits until the in-flight cycle releases the latch, and an
             // unlocalized rebuild scanning a large base holds it for as long as that scan
             // takes. Cancelling first makes that cycle unwind at its next breaker
             // consultation rather than at the end of its scan.
@@ -1992,48 +2013,75 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Marks the view frozen for the duration of a {@code DatabaseCheckpointAgent}
-     * file copy. Refresh-worker turns that observe {@link #isFreezeInProgress()}
+     * file copy. Refresh-worker turns that observe {@link #isFreezeArmed()}
      * short-circuit before mutating {@code _lv.s} or advancing any LV watermark.
      * The caller is responsible for pairing this with a {@link #endCheckpoint()}
      * after the copy completes.
      * <p>
-     * After setting the flag the call takes and releases the refresh latch.
-     * The CAS spins until any in-flight refresh turn releases the latch in
-     * its finally block; this forces happens-before with the worker so that
-     * (a) no refresh turn is still mutating {@code _lv.s} when the caller
+     * The call publishes {@code freezePending}, waits out any in-flight refresh
+     * turn by taking the refresh latch, publishes {@code freezeInProgress} under
+     * that hold, and releases. The latch forces happens-before with the worker so
+     * that (a) no refresh turn is still mutating {@code _lv.s} when the caller
      * proceeds with its copy, and (b) the worker's next call to
-     * {@link #tryLockForRefresh()} observes {@code freezeInProgress=true}.
+     * {@link #tryLockForRefresh()} observes the freeze.
+     * <p>
+     * The two flags exist because publishing {@code freezeInProgress} before
+     * acquiring the latch would let a third thread park in
+     * {@link #waitForUnfrozen()} - holding the base table's {@code TableWriter} -
+     * behind a freeze that is itself waiting on a refresh turn that is waiting on
+     * WAL apply. {@code freezePending} keeps the anti-starvation property without
+     * that edge.
      * <p>
      * Agent side of the checkpoint/drop handshake: returns {@code false} without
      * freezing when a concurrent DROP has already marked the view dropped (see
      * {@link #markDroppedAndAwaitCheckpoint()}). The caller must then skip the view.
      *
+     * @param circuitBreaker polled while waiting for the latch, so {@code CANCEL
+     *                       QUERY} can abort a checkpoint stuck behind a long
+     *                       refresh turn. A trip throws with nothing frozen and no
+     *                       {@code endCheckpoint()} owed.
      * @return {@code true} if the freeze was published (pair with
      * {@link #endCheckpoint()}); {@code false} if the view is being dropped and the
      * caller must skip it (no {@code endCheckpoint()} is owed).
      */
-    public boolean startCheckpoint() {
-        // Synchronize on the instance monitor while publishing the flag so any
-        // invalidator inside synchronized(instance) on another thread either
-        // (a) commits its rewrite before the agent's file copy begins, or
-        // (b) observes freezeInProgress=true and parks via waitForUnfrozen().
-        synchronized (this) {
-            if (dropped) {
-                // Checkpoint/drop handshake, agent side. A concurrent DROP LIVE VIEW has
-                // already marked this instance dropped (under this same monitor, in
-                // markDroppedAndAwaitCheckpoint) and is about to tear its files down.
-                // Refuse the freeze so the agent skips the view instead of copying a
-                // directory that is about to vanish - do NOT set freezeInProgress, or
-                // the DROP would park forever waiting for an endCheckpoint the agent will
-                // never issue for a view it skipped.
-                return false;
+    public boolean startCheckpoint(@NotNull SqlExecutionCircuitBreaker circuitBreaker) {
+        // Stop turns that have not started yet, so the wait below is bounded by the
+        // in-flight turn rather than by an endless stream of new ones. This is only
+        // an intent: nothing parks on it.
+        freezePending = true;
+        try {
+            awaitRefreshLatch(circuitBreaker);
+        } catch (Throwable th) {
+            // Nothing was frozen, so leaving the intent set would wedge refresh.
+            freezePending = false;
+            throw th;
+        }
+        try {
+            // Publish the freeze while holding the latch. Holding it means no turn is
+            // mid-rewrite now, and publishing before releasing it means every turn that
+            // takes the latch afterwards observes the flag. An invalidator inside
+            // synchronized(instance) on another thread therefore either commits its
+            // rewrite before the copy begins, or observes freezeInProgress=true and
+            // parks via waitForUnfrozen() - and it can only park once the copy is
+            // genuinely imminent, never behind this wait.
+            synchronized (this) {
+                if (dropped) {
+                    // Checkpoint/drop handshake, agent side. A concurrent DROP LIVE VIEW
+                    // has already marked this instance dropped (under this same monitor,
+                    // in markDroppedAndAwaitCheckpoint) and is about to tear its files
+                    // down. Refuse the freeze so the agent skips the view instead of
+                    // copying a directory that is about to vanish - do NOT set
+                    // freezeInProgress, or the DROP would park forever waiting for an
+                    // endCheckpoint the agent will never issue for a view it skipped.
+                    // The intent goes too, for the same reason.
+                    freezePending = false;
+                    return false;
+                }
+                freezeInProgress = true;
             }
-            freezeInProgress = true;
+        } finally {
+            refreshLatch.set(false);
         }
-        while (!refreshLatch.compareAndSet(false, true)) {
-            Os.pause();
-        }
-        refreshLatch.set(false);
         return true;
     }
 
@@ -2152,6 +2200,33 @@ public class LiveViewInstance implements QuietCloseable {
         }
         if (isInterrupted) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Spins briefly, then sleeps, until the refresh latch is acquired. The caller
+     * owns the latch on return and must release it.
+     * <p>
+     * A refresh turn can hold the latch for as long as its scan takes, so a bare
+     * {@link Os#pause()} loop would pin a core for that whole time. Sleeping after
+     * the spin also gives {@code circuitBreaker} somewhere to be polled, which is
+     * what lets {@code CANCEL QUERY} and shutdown break a checkpoint out of the
+     * wait; {@code null} means the caller has nothing to cancel against.
+     */
+    private void awaitRefreshLatch(@Nullable SqlExecutionCircuitBreaker circuitBreaker) {
+        int spins = 0;
+        while (!refreshLatch.compareAndSet(false, true)) {
+            if (spins < LATCH_SPINS_BEFORE_SLEEP) {
+                // Stops incrementing at the threshold, so a long wait cannot overflow
+                // back into the spin branch and stop polling the breaker.
+                spins++;
+                Os.pause();
+                continue;
+            }
+            if (circuitBreaker != null) {
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            }
+            Os.sleep(1);
         }
     }
 

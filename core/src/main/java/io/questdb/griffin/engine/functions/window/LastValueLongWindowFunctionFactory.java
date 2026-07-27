@@ -1693,11 +1693,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             loIdx = 0;
         }
 
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
         /**
          * Appends a human-readable plan fragment for this window function to the provided PlanSink.
          * <p>
@@ -3472,11 +3467,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             buffer.close();
             lastValue = Numbers.LONG_NULL;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         /**

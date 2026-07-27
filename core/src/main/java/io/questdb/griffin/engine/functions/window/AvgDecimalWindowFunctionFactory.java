@@ -2397,11 +2397,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(')');
             sink.val(" over (");
@@ -4095,11 +4090,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             value = Decimals.DECIMAL16_NULL;
             count = 0;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -5993,11 +5983,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(')');
             sink.val(" over (");
@@ -7706,11 +7691,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             value = Decimals.DECIMAL32_NULL;
             count = 0;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -9425,11 +9405,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -11100,11 +11075,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             value = Decimals.DECIMAL8_NULL;
             count = 0;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override

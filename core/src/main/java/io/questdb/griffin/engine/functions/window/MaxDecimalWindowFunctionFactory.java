@@ -2692,14 +2692,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-            if (dequeMemory != null) {
-                dequeMemory.setMemoryTracker(tracker);
-            }
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(')');
             sink.val(" over (");
@@ -4543,14 +4535,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             loIdx = 0;
             dequeStartIndex = 0;
             dequeEndIndex = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-            if (dequeMemory != null) {
-                dequeMemory.setMemoryTracker(tracker);
-            }
         }
 
         @Override
@@ -6495,14 +6479,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-            if (dequeMemory != null) {
-                dequeMemory.setMemoryTracker(tracker);
-            }
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(')');
             sink.val(" over (");
@@ -8355,14 +8331,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-            if (dequeMemory != null) {
-                dequeMemory.setMemoryTracker(tracker);
-            }
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(')');
             sink.val(" over (");
@@ -10175,14 +10143,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             loIdx = 0;
             dequeStartIndex = 0;
             dequeEndIndex = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-            if (dequeMemory != null) {
-                dequeMemory.setMemoryTracker(tracker);
-            }
         }
 
         @Override
@@ -11999,14 +11959,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             loIdx = 0;
             dequeStartIndex = 0;
             dequeEndIndex = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-            if (dequeMemory != null) {
-                dequeMemory.setMemoryTracker(tracker);
-            }
         }
 
         @Override

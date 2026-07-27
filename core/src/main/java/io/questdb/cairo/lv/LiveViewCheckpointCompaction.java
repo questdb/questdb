@@ -55,8 +55,11 @@ import java.util.HashMap;
  * <p>Compaction is a maintenance operation, not a per-commit one: it runs
  * occasionally and touches metadata proportional to the roots that name a drained
  * segment, so it allocates per call rather than pooling state. Every step is
- * best-effort - a failure abandons the candidate, which unlinks the half-written
- * target and leaves the published generation byte-identical.</p>
+ * best-effort, and what abandoning the candidate does depends on where the
+ * failure landed: before the metadata commit point it unlinks the half-written
+ * target and leaves the published generation byte-identical, while past that
+ * point it keeps the target, because the committed generation already names
+ * it.</p>
  */
 public final class LiveViewCheckpointCompaction {
 

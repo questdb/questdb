@@ -66,11 +66,11 @@ import org.jetbrains.annotations.Nullable;
 // Returns value evaluated at the row that is the first row of the window frame.
 public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
+    public static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES;
+    public static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES_LV;
     public static final String NAME = "first_value";
     protected static final ArrayColumnTypes FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES;
     protected static final ArrayColumnTypes FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
-    protected static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES;
-    protected static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES_LV;
     protected static final ArrayColumnTypes FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES;
     protected static final ArrayColumnTypes FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV;
     protected static final ArrayColumnTypes FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES;
@@ -1339,10 +1339,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.createValue();
 
-            if (value.isNew() || value.getByte(1) == 0) {
+            if (value.isNew()) {
                 firstValue = arg.getDouble(record);
                 value.putDouble(0, firstValue);
-                value.putByte(1, (byte) 1);
             } else {
                 firstValue = value.getDouble(0);
             }
@@ -1351,15 +1350,6 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public double getDouble(Record rec) {
             return firstValue;
-        }
-
-        @Override
-        public void resetPartition(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue value = key.createValue();
-            value.putByte(1, (byte) 0);
         }
 
         @Override
@@ -2462,11 +2452,6 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -2552,10 +2537,15 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             if (mapValue.isNew() && tombstoneValueIndex >= 0) {
                 mapValue.putByte(tombstoneValueIndex, (byte) 0);
             }
-            if (mapValue.isNew() || mapValue.getByte(1) == 0) {
+            // The "initialized" byte only exists in the live-view layout, where
+            // resetPartition clears it to re-arm a partition the anchor has retired.
+            // Outside a live view resetPartition never runs, so isNew() alone decides.
+            if (mapValue.isNew() || (liveView && mapValue.getByte(1) == 0)) {
                 double d = arg.getDouble(record);
                 mapValue.putDouble(0, d);
-                mapValue.putByte(1, (byte) 1);
+                if (liveView) {
+                    mapValue.putByte(1, (byte) 1);
+                }
                 value = d;
             } else {
                 value = mapValue.getDouble(0);
@@ -2618,7 +2608,13 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
-            mapValue.putByte(1, (byte) 0);
+            if (liveView) {
+                // Slot 1 exists only in the live-view layout. LiveViewWindow is the sole
+                // dispatcher of resetPartition, so this is defence in depth rather than a
+                // reachable branch - but an out-of-range slot on the one-slot layout would
+                // raise ArrayIndexOutOfBoundsException, so keep the write with its layout.
+                mapValue.putByte(1, (byte) 0);
+            }
             if (mapValue.isNew()) {
                 if (tombstoneValueIndex >= 0) {
                     mapValue.putByte(tombstoneValueIndex, (byte) 0);
@@ -2738,11 +2734,13 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     static {
         FIRST_VALUE_COLUMN_TYPES = new ArrayColumnTypes();
         FIRST_VALUE_COLUMN_TYPES.add(ColumnType.DOUBLE);
-        // Live-view ANCHOR contract: explicit "initialized" byte signals "no value
-        // captured yet for this partition" so resetPartition can re-arm the slot
-        // without relying on MapValue.isNew() (only fires on the first access).
-        FIRST_VALUE_COLUMN_TYPES.add(ColumnType.BYTE); // initialized flag
 
+        // Live-view ANCHOR contract: an explicit "initialized" byte signals "no value
+        // captured yet for this partition" so resetPartition can re-arm the slot
+        // without relying on MapValue.isNew(), which only fires on the first access.
+        // It lives in the LV layout alone - resetPartition never runs outside a live
+        // view, so adding it to FIRST_VALUE_COLUMN_TYPES would widen the map entry of
+        // every ordinary first_value() query for a flag it can never read.
         FIRST_VALUE_COLUMN_TYPES_LV = new ArrayColumnTypes();
         FIRST_VALUE_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // captured value
         FIRST_VALUE_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // initialized flag

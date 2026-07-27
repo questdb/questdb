@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactor
 import io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CountFunctionFactoryHelper;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.FirstValueLongWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MaxLongWindowFunctionFactory;
@@ -340,6 +341,50 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 },
                 (a, b) -> b
         );
+    }
+
+    @Test
+    public void testFirstValueLayoutHasNoLiveViewFlagOutsideLiveView() {
+        // The sibling of testMaxMinValueLayoutHasNoLiveViewFlagOutsideLiveView, for the same
+        // reason. The live-view ANCHOR contract needs an explicit "initialized" byte so
+        // resetPartition can re-arm a partition without deleting its entry; MapValue.isNew()
+        // flips on first access and is too coarse. That byte belongs to the live-view layout
+        // ONLY - LiveViewWindow is the sole dispatcher of resetPartition - so carrying it in
+        // the shared layout makes every ordinary first_value(x) OVER (PARTITION BY ...) query
+        // pay an extra per-row byte load and a wider map entry it can never read.
+        //
+        // The cost is not marginal: Unordered4Map sizes entries as align4b(4 + valueSize), so
+        // a 9th value byte pushes them 12 -> 16 bytes; Unordered8Map (align8b(8 + valueSize))
+        // goes 16 -> 24.
+        Assert.assertEquals(
+                "non-live-view first_value(DOUBLE) value layout must stay [DOUBLE]",
+                1,
+                FirstValueDoubleWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES.getColumnCount()
+        );
+        Assert.assertEquals(
+                ColumnType.DOUBLE,
+                FirstValueDoubleWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES.getColumnType(0)
+        );
+        Assert.assertEquals(
+                "non-live-view first_value(LONG) value layout must stay [LONG]",
+                1,
+                FirstValueLongWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES.getColumnCount()
+        );
+        Assert.assertEquals(
+                ColumnType.LONG,
+                FirstValueLongWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES.getColumnType(0)
+        );
+
+        // The live-view layout keeps both extra bytes: the initialized flag at slot 1 (read
+        // only behind the liveView gate) and the tombstone at slot 2 (anchor-driven compaction).
+        Assert.assertEquals(3, FirstValueDoubleWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnCount());
+        Assert.assertEquals(ColumnType.DOUBLE, FirstValueDoubleWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(0));
+        Assert.assertEquals(ColumnType.BYTE, FirstValueDoubleWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(1));
+        Assert.assertEquals(ColumnType.BYTE, FirstValueDoubleWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(2));
+        Assert.assertEquals(3, FirstValueLongWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnCount());
+        Assert.assertEquals(ColumnType.LONG, FirstValueLongWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(0));
+        Assert.assertEquals(ColumnType.BYTE, FirstValueLongWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(1));
+        Assert.assertEquals(ColumnType.BYTE, FirstValueLongWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(2));
     }
 
     @Test

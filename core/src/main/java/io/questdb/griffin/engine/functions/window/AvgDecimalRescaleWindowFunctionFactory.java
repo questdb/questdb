@@ -2429,11 +2429,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(',').val(targetScale).val(')');
             sink.val(" over ( rows between ");
@@ -4448,11 +4443,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(',').val(targetScale).val(')');
             sink.val(" over ( rows between ");
@@ -6399,11 +6389,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(',').val(targetScale).val(')');
             sink.val(" over ( rows between ");
@@ -8339,11 +8324,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             count = 0;
             loIdx = 0;
             acc.ofRaw(0);
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -10285,11 +10265,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             count = 0;
             loIdx = 0;
             acc.ofRaw(0, 0, 0, 0);
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -12390,11 +12365,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             count = 0;
             loIdx = 0;
             acc.ofRaw(0);
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override

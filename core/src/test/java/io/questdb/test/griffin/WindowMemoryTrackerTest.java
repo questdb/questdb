@@ -52,13 +52,22 @@ import org.junit.Test;
  * allocates it under the bound tracker. A runaway {@code PARTITION BY} over a
  * high-cardinality key therefore crosses the per-query limit at the map's growth.
  * <p>
- * The per-partition map and the RANGE-frame value ring buffer ({@code MemoryARW})
- * are wired. The {@code PARTITION BY}-only tests exercise the map (their only
- * unbounded native structure); the {@code RANGE BETWEEN ... PRECEDING} tests exercise
- * the ring buffer. The non-partition range test is the cleanest buffer proof: with no
- * {@code PARTITION BY} there is no map on the path, so a breach is charged solely to
- * the buffer. ROWS-frame buffers are sized by the frame literal (bounded) and stay on
- * global-only accounting.
+ * The per-partition map, the RANGE-frame value ring buffer ({@code MemoryARW}) and
+ * the partitioned ROWS-frame ring buffer are wired. The {@code PARTITION BY}-only
+ * tests exercise the map (their only unbounded native structure); the
+ * {@code RANGE BETWEEN ... PRECEDING} tests exercise the ring buffer. The
+ * non-partition range test is the cleanest buffer proof: with no {@code PARTITION BY}
+ * there is no map on the path, so a breach is charged solely to the buffer.
+ * <p>
+ * A NON-partitioned ROWS-frame buffer, and a NON-partitioned lag()/lead() ring, are
+ * sized from a constant in the query text and stay on global-only accounting. The
+ * {@code testStreamingRowsFrameBufferStaysOffTheQueryLimit},
+ * {@code testStreamingSmallRowsFrameDoesNotChargeAWindowStorePage} and
+ * {@code testStreamingLagDoesNotChargeAWindowStorePage} cases assert that such a
+ * query does NOT breach, however large the literal - the last two at the shipped
+ * 1 MiB page size, which is where the regression bit. Their partitioned counterpart
+ * ({@code testPartitionRowsFrameBufferFailsOnLargeFrame}) asserts the opposite,
+ * because there one ring exists per partition.
  * <p>
  * The per-query limit is applied per test in {@link #setUp()} via
  * {@code setProperty} so it survives the per-test override reset; the provider
@@ -215,6 +224,36 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile("SELECT k, cume_dist() OVER (PARTITION BY k ORDER BY v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
                 assertInTree(factory, CachedWindowRecordCursorFactory.class);
+                for (int i = 0; i < 10; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals("iteration " + i, 2_000, rows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNonPartitionedRowsFrameBufferReleasesAllocations() throws Exception {
+        // The global-only sibling of testRowsFrameBufferReleasesAllocations. This branch moved
+        // the non-partitioned ring's initBuffer() out of the constructor into reopen()/toTop(),
+        // so repeated open/close cycles are worth pinning even though the ring is no longer
+        // charged to the per-query tracker: allocate and free must still pair on the global
+        // counter, which assertMemoryLeak around the loop checks.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(2_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT ts, avg(v) OVER (ORDER BY ts ROWS BETWEEN 1_000 PRECEDING AND CURRENT ROW) FROM tab",
+                         sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, WindowRecordCursorFactory.class);
                 for (int i = 0; i < 10; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         long rows = 0;
@@ -442,24 +481,21 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testRowsFrameBufferReleasesAllocations() throws Exception {
-        // The symmetry check for the ROWS-frame ring buffer, and the reason its allocation moved
-        // out of the constructor. The buffer used to be filled by initBuffer() at newInstance()
-        // time - before any cursor exists, so the malloc landed on the global counter - while
-        // reset() freed it at cursor close, by then against the bound per-query tracker. Binding
-        // the tracker without moving the allocation drives the per-query counter NEGATIVE (-1 MiB
-        // per cycle) and aborts the JVM on the following free.
-        //
-        // Now reopen() performs the first allocation, after the cursor binds the tracker, and
-        // reset() frees it under that same tracker. Ten getCursor/close cycles must net to zero;
-        // assertMemoryLeak around the loop is the load-bearing check.
+        // The symmetry check for the tracker-BOUND path. The frame is partitioned on purpose:
+        // that is the shape whose ring stays bound, so this is the round trip that can go
+        // wrong. The map allocates in reopen() and the ring on each partition's first row,
+        // both under the tracker the cursor bound; reset() frees both against that same
+        // tracker. Ten getCursor/close cycles must net to zero; assertMemoryLeak around the
+        // loop is the load-bearing check. Its non-partitioned sibling covers the
+        // global-only path, where the same pairing must hold on the other counter.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (" +
-                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "SELECT (x % 4)::int AS k, x::double AS v, timestamp_sequence(0, 1) AS ts " +
                     "FROM long_sequence(2_000)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile(
-                         "SELECT ts, avg(v) OVER (ORDER BY ts ROWS BETWEEN 1_000 PRECEDING AND CURRENT ROW) FROM tab",
+                         "SELECT k, avg(v) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 1_000 PRECEDING AND CURRENT ROW) FROM tab",
                          sqlExecutionContext).getRecordCursorFactory()) {
                 assertInTree(factory, WindowRecordCursorFactory.class);
                 for (int i = 0; i < 10; i++) {
@@ -537,6 +573,34 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                         TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingLagDoesNotChargeAWindowStorePage() throws Exception {
+        // lag()/lead() are the same rule in a different shape: non-partitioned, with a ring
+        // sized by the constant offset - one slot, eight bytes, by default. They are also the
+        // most common window form there is, so charging them a whole 1 MiB page would break
+        // more previously-working queries than the ROWS-frame case above.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT ts, lag(v) OVER (ORDER BY ts) FROM tab",
+                         sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, WindowRecordCursorFactory.class);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    long rows = 0;
+                    while (cursor.hasNext()) {
+                        rows++;
+                    }
+                    Assert.assertEquals(1_000, rows);
                 }
             }
         });
@@ -779,42 +843,6 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStreamingRowsFrameBufferFailsOnLargeFrame() throws Exception {
-        // The cleanest proof of the ROWS-frame buffer wiring, mirroring
-        // testStreamingRangeFrameBufferFailsOnHighDensity: no PARTITION BY means no map on the
-        // path, so the ring buffer inside AvgOverRowsFrameFunction is the only native structure
-        // that can breach. A ROWS frame sizes its buffer from the frame literal alone - 100k
-        // slots * 8 bytes = ~800 KiB - so it breaches the 256 KiB limit on the first allocation.
-        // Before the buffer was bound it allocated against the global counter only and this query
-        // ran to completion.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab AS (" +
-                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
-                    "FROM long_sequence(200_000)) TIMESTAMP(ts) PARTITION BY DAY");
-            drainWalQueue();
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                final CompiledQuery cq = compiler.compile(
-                        "SELECT ts, avg(v) OVER (ORDER BY ts ROWS BETWEEN 100_000 PRECEDING AND CURRENT ROW) FROM tab",
-                        sqlExecutionContext);
-                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                    assertInTree(factory, WindowRecordCursorFactory.class);
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        //noinspection StatementWithEmptyBody
-                        while (cursor.hasNext()) {
-                            // drain until breach
-                        }
-                        Assert.fail("expected per-query memory breach");
-                    } catch (CairoException e) {
-                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
-                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testStreamingRowNumberPartitionMapFailsOnHighCardinality() throws Exception {
         // row_number() over (partition by k) routes through the streaming window cursor and
         // grows one LONG counter per distinct partition key. The map is the only unbounded
@@ -862,6 +890,64 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals("iteration " + i, 2_000, rows);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingRowsFrameBufferStaysOffTheQueryLimit() throws Exception {
+        // The inverse of testPartitionRowsFrameBufferFailsOnLargeFrame, and the reason the two
+        // differ. A ROWS frame sizes its buffer from the frame literal alone - 100k slots *
+        // 8 bytes = ~800 KiB here - so without a PARTITION BY it is structurally capped at
+        // construction and cannot run away. It therefore stays on global-only accounting and
+        // must NOT breach the 256 KiB per-query limit, however large the literal. Charge it and
+        // this previously-working query starts throwing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(200_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT ts, avg(v) OVER (ORDER BY ts ROWS BETWEEN 100_000 PRECEDING AND CURRENT ROW) FROM tab",
+                         sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, WindowRecordCursorFactory.class);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    long rows = 0;
+                    while (cursor.hasNext()) {
+                        rows++;
+                    }
+                    Assert.assertEquals(200_000, rows);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingSmallRowsFrameDoesNotChargeAWindowStorePage() throws Exception {
+        // The user-visible half of the same rule, at the shipped page size. MemoryCARWImpl
+        // allocates a whole window-store page up front, so binding the ROWS buffer to the
+        // per-query tracker puts a hard floor of one page under every non-partitioned ROWS
+        // query: at the 1 MiB default a 5-row frame needing 40 bytes would charge 1 MiB, and
+        // any query running under a limit at or below that would throw where it used to pass.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT ts, avg(v) OVER (ORDER BY ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) FROM tab",
+                         sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, WindowRecordCursorFactory.class);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    long rows = 0;
+                    while (cursor.hasNext()) {
+                        rows++;
+                    }
+                    Assert.assertEquals(1_000, rows);
                 }
             }
         });

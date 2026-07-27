@@ -60,6 +60,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
     private final Path checkpointsDir = new Path();
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
+    private final LiveViewCheckpointSegmentDirectoryEntry lookupEntry = new LiveViewCheckpointSegmentDirectoryEntry();
     private final LiveViewCheckpointMetaStore metaStore;
     private final LiveViewCheckpointSegmentDirectoryReader segmentDirectory;
     private final PurgeSweep sweep = new PurgeSweep();
@@ -124,17 +125,49 @@ public class LiveViewCheckpointDataStore implements Closeable {
         }
     }
 
+    /**
+     * Abandons a candidate, unlinking the targets it staged.
+     * <p>
+     * A publication commits when it writes the inactive superblock slot's CRC and
+     * then keeps running. The {@code msync} that follows under a non-NOSYNC commit
+     * mode throws on EIO, which unwinds out of {@code publish()} itself, and the
+     * result tail past it can still exhaust the heap. The candidate is then
+     * abandoned over a generation that already names its target, so the
+     * final-name unlink is gated on the durable catalogue rather than on
+     * {@link Candidate#published} alone - a flag no marking order can set once the
+     * commit and the throw share a frame. The temporary name is never published,
+     * so it always goes.
+     */
     private synchronized void abortCandidate(@NotNull Candidate candidate) {
-        for (int i = 0, n = candidate.targetSegmentIds.size(); i < n; i++) {
-            final long segmentId = candidate.targetSegmentIds.get(i);
-            try (Path path = new Path()) {
-                LiveViewCheckpointLayout.dataSegmentTmpPath(path, checkpointsDir, segmentId);
-                ff.removeQuiet(path.$());
-                LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
-                ff.removeQuiet(path.$());
+        // The gate below opens and maps catalogue files, so this loop can now throw
+        // where it once could not. Ownership must be released either way, or
+        // close() trips its leaked-candidate assert.
+        try {
+            for (int i = 0, n = candidate.targetSegmentIds.size(); i < n; i++) {
+                final long segmentId = candidate.targetSegmentIds.get(i);
+                try (Path path = new Path()) {
+                    LiveViewCheckpointLayout.dataSegmentTmpPath(path, checkpointsDir, segmentId);
+                    ff.removeQuiet(path.$());
+                    LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
+                    if (!ff.exists(path.$())) {
+                        // The repack never reached its rename, which is the common
+                        // abort. Nothing to weigh against the catalogue, so skip the
+                        // open the gate would otherwise pay for.
+                        continue;
+                    }
+                    if (isSegmentDurablyCatalogued(segmentId)) {
+                        LOG.info()
+                                .$("keeping an abandoned live view checkpoint compaction target the durable catalogue names [dir=")
+                                .$(checkpointsDir)
+                                .$(", segmentId=").$(segmentId).I$();
+                        continue;
+                    }
+                    ff.removeQuiet(path.$());
+                }
             }
+        } finally {
+            releaseCandidate(candidate);
         }
-        releaseCandidate(candidate);
     }
 
     private static long checkedAdd(long a, long b) {
@@ -168,6 +201,56 @@ public class LiveViewCheckpointDataStore implements Closeable {
 
     private boolean isCandidateOwned(long segmentId) {
         return candidateOwnershipCounts.get(segmentId) > 0;
+    }
+
+    /**
+     * Re-reads the catalogue off disk and reports whether the newest durable
+     * generation catalogues {@code segmentId}.
+     * <p>
+     * The answer has to come off disk rather than off {@link #metaStore}, whose
+     * snapshot predates the publication that may have just committed. It is
+     * fail-closed: anything short of a clean read of the newest durable
+     * catalogue answers true.
+     * <p>
+     * The asymmetry is what justifies that. Keeping a segment costs disk -
+     * {@link LiveViewCheckpointLifecycle#purgeFinalOrphans} reclaims it at the
+     * first cadence seal after a reconcile, while its id still sits at or above
+     * the durable {@code nextSegmentId} ceiling, and leaks it once a publication
+     * has stepped over that id or if the view stops sealing. That is the same
+     * best-effort reclaim the metadata segments of a failed publication already
+     * rely on. Unlinking a live target costs the whole timeline.
+     */
+    private boolean isSegmentDurablyCatalogued(long segmentId) {
+        try (
+                LiveViewCheckpointMetaStore durable = new LiveViewCheckpointMetaStore(configuration);
+                LiveViewCheckpointSegmentDirectoryReader durableDirectory = new LiveViewCheckpointSegmentDirectoryReader(configuration)
+        ) {
+            durable.of(checkpointsDir);
+            if (!durable.isValid()) {
+                // No slot was selected, so no catalogue was read at all. Nothing here
+                // is evidence the target is free.
+                return true;
+            }
+            final LiveViewCheckpointSuperblock superblock = durable.getSuperblock();
+            if (!superblock.isSelectedSlotNewest()) {
+                // This open fell back over a root that failed bounded validation. That
+                // failure is not durable - validation never opens a data segment, so a
+                // later open can select the newer slot again and only fail deep, at page
+                // read - so the catalogue in hand is not necessarily the one that names
+                // the target.
+                return true;
+            }
+            durableDirectory.of(checkpointsDir, superblock.segmentDirectoryRootRef);
+            return durableDirectory.find(segmentId, lookupEntry);
+        } catch (CairoException e) {
+            LOG.error()
+                    .$("could not read the live view checkpoint catalogue while abandoning a compaction target [dir=")
+                    .$(checkpointsDir)
+                    .$(", segmentId=").$(segmentId)
+                    .$(", errno=").$(e.getErrno())
+                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            return true;
+        }
     }
 
     private void own(@NotNull Candidate candidate, long segmentId) {

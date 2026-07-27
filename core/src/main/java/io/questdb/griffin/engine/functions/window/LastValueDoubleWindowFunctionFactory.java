@@ -1293,11 +1293,6 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(") ignore nulls");
@@ -2591,11 +2586,6 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             buffer.close();
             lastValue = Double.NaN;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override

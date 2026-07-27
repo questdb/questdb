@@ -628,14 +628,34 @@ public interface WindowFunction extends Function {
 
     /**
      * Binds the per-query native memory tracker on this function's tracker-aware
-     * state: the per-partition map, and the ring buffers holding the frame values
-     * (both RANGE and ROWS frames, and the Max/Min monotonic deque). The owning
-     * window cursor calls this before reopen() at cursor start, so the state
-     * allocates against the bound tracker and frees against it at cursor close. A
-     * null tracker degrades to global-only accounting. Default no-op for functions
-     * with no tracker-aware state.
+     * state: the per-partition map, and the ring buffers (plus the Max/Min monotonic
+     * deque) of RANGE frames, of partitioned ROWS frames, and of partitioned
+     * lag()/lead(). The owning window cursor calls this before reopen() at cursor
+     * start, so the state allocates against the bound tracker and frees against it at
+     * cursor close. A null tracker degrades to global-only accounting. Default no-op
+     * for functions with no tracker-aware state.
      * <p>
-     * An implementation must therefore leave its ring buffer UNALLOCATED at
+     * Deliberately excluded: the ring buffer (and Max/Min deque) of a NON-partitioned
+     * ROWS frame, and the ring of a NON-partitioned lag()/lead(). Both are sized at
+     * construction from a constant in the query text - the frame literal ({@code |rowsLo|},
+     * {@code |rowsHi|} or the frame width, depending on the shape) or the lag/lead
+     * offset - so neither grows with the data. Their PARTITIONED counterparts stay
+     * bound, because there one ring exists per partition.
+     * Charging them would put a hard floor of one
+     * {@code cairo.sql.window.store.page.size} under every such query, because
+     * MemoryCARWImpl allocates a whole page up front: a five-row frame needing forty
+     * bytes, or a default lag() needing eight, would each charge a megabyte at the
+     * shipped default, and queries that ran fine would start throwing. Under
+     * {@code PARTITION BY ... ROWS} the total instead scales with partition
+     * cardinality, which is why those stay bound.
+     * <p>
+     * The exclusion buys accounting sanity, not a hard bound: the buffer size is an
+     * int cast of an unbounded long literal, so a single
+     * {@code ROWS BETWEEN 500000000 PRECEDING} still allocates gigabytes outside the
+     * per-query limit. That is the coverage limitation this rule has always carried;
+     * {@code cairo.sql.window.store.max.pages} is the knob that bounds it.
+     * <p>
+     * An implementation that IS bound must leave its ring buffer UNALLOCATED at
      * construction and let reopen() perform the first allocation, matching the
      * lazy-map pattern in BasePartitionedWindowFunction's constructor. A buffer
      * filled in the constructor allocates at newInstance() time, before any cursor

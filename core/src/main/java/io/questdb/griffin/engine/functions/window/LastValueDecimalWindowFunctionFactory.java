@@ -2490,11 +2490,6 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(") ignore nulls");
@@ -3834,11 +3829,6 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -4712,11 +4702,6 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             lastValue = Decimals.DECIMAL16_NULL;
             cacheValue = Decimals.DECIMAL16_NULL;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -6014,11 +5999,6 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -6949,11 +6929,6 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             lastValue.ofRawNull();
             cacheValue.ofRawNull();
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -8316,11 +8291,6 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -9196,11 +9166,6 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             lastValue = Decimals.DECIMAL32_NULL;
             cacheValue = Decimals.DECIMAL32_NULL;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -10498,11 +10463,6 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -11369,11 +11329,6 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             lastValue = Decimals.DECIMAL64_NULL;
             cacheValue = Decimals.DECIMAL64_NULL;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -12666,11 +12621,6 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -13532,11 +13482,6 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             lastValue = Decimals.DECIMAL8_NULL;
             cacheValue = Decimals.DECIMAL8_NULL;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -14831,11 +14776,6 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             buffer.close();
             lastValue = Decimals.DECIMAL8_NULL;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         @Override

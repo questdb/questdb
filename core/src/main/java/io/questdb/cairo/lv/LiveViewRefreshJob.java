@@ -5454,6 +5454,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long startUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         TableReader reader = engine.getReader(baseToken);
         while (reader.getSeqTxn() < targetSeqTxn) {
+            try {
+                // The job's breaker trips on engine shutdown and on the per-view cancel
+                // flag a DROP or an invalidation sets, so neither has to wait out the
+                // remaining budget. It has to leave through the breaker rather than as a
+                // plain failure: handleRefreshFailure skips the flush-retry budget only
+                // for a cancellation, and counting one would invalidate the view durably
+                // on the way down - the exact hazard its comment describes.
+                executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+            } catch (Throwable th) {
+                reader.close();
+                throw th;
+            }
             long elapsedUs = engine.getConfiguration().getMicrosecondClock().getTicks() - startUs;
             if (elapsedUs >= maxWaitUs) {
                 long readerSeqTxn = reader.getSeqTxn();
@@ -7787,7 +7799,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (instance.isStub()
                     || instance.isDropped()
                     || instance.isInvalid()
-                    || instance.isFreezeInProgress()
+                    || instance.isFreezeArmed()
                     || !hasPendingLiveViewApply(instance)) {
                 return false;
             }
@@ -8074,14 +8086,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // advance while the agent is reading them. The agent clears the
             // flag via endCheckpoint() once the per-LV copy completes; the
             // next fallback or notification tick picks the worker back up.
-            // This check is load-bearing for the checkpoint deadlock fix: it runs
-            // under the refresh latch acquired above, so a freeze armed AFTER this
-            // turn took the latch is observed here and skips the turn, while a freeze
-            // armed BEFORE is serialised by startCheckpoint's latch take-and-release.
-            // That handshake is what lets the in-band _lv.s rewrites drop
-            // waitForUnfrozen() without racing the agent's copy - do not move a rewrite
-            // ahead of this guard or out of the latch hold.
-            if (instance.isFreezeInProgress()) {
+            // This check is load-bearing for the checkpoint handshake: it runs under
+            // the refresh latch acquired above, so a freeze armed AFTER this turn took
+            // the latch is observed here and skips the turn, while a freeze armed
+            // BEFORE is serialised by startCheckpoint's latch take-and-release. That
+            // handshake is what lets the in-band _lv.s rewrites drop waitForUnfrozen()
+            // without racing the agent's copy - do not move a rewrite ahead of this
+            // guard or out of the latch hold.
+            // It tests isFreezeArmed(), not isFreezeInProgress(): startCheckpoint
+            // publishes the copy flag only once it holds the latch, so a busy view
+            // would otherwise keep retaking the latch ahead of the waiting agent.
+            if (instance.isFreezeArmed()) {
                 return false;
             }
             // Authoritative apply-lag gate, under the refresh latch, and the only place the floor is
@@ -8443,6 +8458,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             // The rebuild replay itself failed; account for THAT error below.
             t = rebuildErr;
+            if (t instanceof CairoException rebuildCancelled && rebuildCancelled.isCancellation()) {
+                // Re-test after the reassignment. The replay consults the same breaker, so
+                // a shutdown or a DROP that arrived mid-rebuild surfaces here rather than at
+                // the guard above - and counting it toward the flush-retry budget is exactly
+                // what that guard exists to prevent.
+                LOG.info().$("live view refresh cancelled during mid-drain rebuild [view=")
+                        .$(instance.getDefinition().getViewName()).I$();
+                return null;
+            }
         }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.recordRefreshFailure(nowUs);

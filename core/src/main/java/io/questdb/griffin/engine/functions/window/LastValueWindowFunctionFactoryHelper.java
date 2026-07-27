@@ -1849,11 +1849,6 @@ public class LastValueWindowFunctionFactoryHelper {
             loIdx = 0;
         }
 
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
-        }
-
         /**
          * Appends this function's execution-plan fragment to the given PlanSink.
          * <p>
@@ -3668,11 +3663,6 @@ public class LastValueWindowFunctionFactoryHelper {
             buffer.close();
             lastValue = Numbers.LONG_NULL;
             loIdx = 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            buffer.setMemoryTracker(tracker);
         }
 
         /**
