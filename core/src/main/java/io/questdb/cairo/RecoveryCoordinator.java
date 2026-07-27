@@ -74,6 +74,9 @@ import io.questdb.std.str.Path;
  */
 public class RecoveryCoordinator {
     private static final Log LOG = LogFactory.getLog(RecoveryCoordinator.class);
+    // Left in a table dir by a restore that cleared the table's epoch artifacts, to say the cleared state
+    // is a trustworthy restored cut rather than a lost anchor. Consumed once the baseline is republished.
+    public static final String RESTORE_ENROL_FILE_NAME = "_epoch.enrol";
     private final boolean checkpointRestored;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -137,11 +140,20 @@ public class RecoveryCoordinator {
                         throw metadataFailure;
                     }
                     tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                    if (!ff.exists(dir.$()) && checkpointRestored) {
-                        // A checkpoint restore is a trustworthy, internally consistent materialized cut, but
-                        // checkpoint metadata intentionally excludes adaptive epoch anchors. Record the table
-                        // for synchronous baseline publication below. A one-startup in-memory exemption is not
+                    if (!ff.exists(dir.$()) && (checkpointRestored || isMarkedForRestoreEnrolment(token, dir))) {
+                        // A restore is a trustworthy, internally consistent materialized cut, but restore
+                        // metadata intentionally excludes adaptive epoch anchors -- both the checkpoint path
+                        // (TableSnapshotRestore) and an out-of-process restore that clears them via
+                        // removeAdaptiveEpochArtifacts, because a SOURCE anchor left behind would roll the
+                        // freshly restored _txn/_cv back to a pre-restore cut. Record the table for
+                        // synchronous baseline publication below. A one-startup in-memory exemption is not
                         // sufficient: a second restart before WAL apply must find a durable marker.
+                        //
+                        // checkpointRestored is an in-process flag, so it cannot speak for a restore that ran
+                        // before this engine existed; such a restore leaves the per-table marker instead (see
+                        // markRestoredForEnrolment). Without one of the two signals an absent anchor is
+                        // indistinguishable from a table whose anchor was lost, which recoverTable must keep
+                        // refusing.
                         checkpointEnrollments.add(token);
                         continue;
                     }
@@ -188,6 +200,11 @@ public class RecoveryCoordinator {
                             .put(token.getTableName()).put(']');
                 }
                 pinRecoveredEpoch(token, marker.getEpochTxn(), marker.getEpochSeqTxn());
+                // Consume the restore marker only now: the baseline above is durable and validated, so a
+                // crash before this point simply re-enrols on the next start rather than losing the signal
+                // and refusing to boot.
+                markerPath.of(configuration.getDbRoot()).concat(token).concat(RESTORE_ENROL_FILE_NAME);
+                ff.removeQuiet(markerPath.$());
             } catch (CairoException | CairoError e) {
                 if (CairoException.isDataSyncFailure(e)) {
                     engine.handleDataSyncFailure(e);
@@ -226,6 +243,11 @@ public class RecoveryCoordinator {
             return false;
         }
         return false;
+    }
+
+    private boolean isMarkedForRestoreEnrolment(TableToken token, Path dir) {
+        tablePath(dir, token).concat(RESTORE_ENROL_FILE_NAME);
+        return ff.exists(dir.$());
     }
 
     private int resolveEffectiveCommitModeNoRetry(TableToken token, Path metaPath) {
@@ -740,6 +762,27 @@ public class RecoveryCoordinator {
      * after deletion is a hard restore failure. Only the {@code .epoch} copies + marker are removed; the LIVE
      * {@code _txn}/{@code _cv} are never touched. Leaves {@code path} trimmed back to the table root.
      */
+    /**
+     * Records that this table's epoch artifacts were cleared by a wholesale restore of its files, so the
+     * next startup republishes a baseline at the RESTORED cut instead of refusing to start.
+     *
+     * <p>Separate from {@link #removeAdaptiveEpochArtifacts} on purpose. Clearing the artifacts is also how
+     * a test manufactures a genuinely anchorless table, and how a torn or superseded anchor is discarded;
+     * neither of those may be silently re-enrolled. Only a caller that KNOWS the files it just laid down are
+     * a trustworthy, internally consistent cut may say so, and it says so with this call.
+     *
+     * <p>Marks the table rather than the database because a restore may cover a subset of tables. The
+     * marker is consumed by {@code recover()} once the baseline is published.
+     */
+    public static void markRestoredForEnrolment(FilesFacade ff, Path path, int tableRootLen) {
+        path.trimTo(tableRootLen).concat(RESTORE_ENROL_FILE_NAME);
+        if (!ff.touch(path.$())) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not mark restored table for adaptive epoch enrolment [path=").put(path).put(']');
+        }
+        path.trimTo(tableRootLen);
+    }
+
     public static void removeAdaptiveEpochArtifacts(FilesFacade ff, Path path, int tableRootLen) {
         removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.SNAPSHOT_FILE_NAME));
         removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.META_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX));
