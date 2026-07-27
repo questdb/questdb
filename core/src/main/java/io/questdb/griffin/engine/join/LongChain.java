@@ -64,6 +64,7 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     }
 
     public LongChain(long valuePageSize, int valueMaxPages, boolean keepClosed) {
+        assert valuePageSize >= CHAIN_VALUE_SIZE;
         this.initialHeapSize = valuePageSize;
         this.maxHeapSize = Math.min(valuePageSize * valueMaxPages, MAX_HEAP_SIZE_LIMIT);
         if (!keepClosed) {
@@ -120,7 +121,7 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         return (int) (rawOffset >> 2);
     }
 
-    // Compressed offsets are unsigned: values past the 8GB mark have the top bit set.
+    // Compressed offsets are unsigned: values at or past the 8GB mark have the top bit set.
     private static long uncompressOffset(int offset) {
         return Integer.toUnsignedLong(offset) << 2;
     }
@@ -128,14 +129,21 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     private void checkCapacity() {
         if (heapPos + CHAIN_VALUE_SIZE > heapLimit) {
             final long required = heapPos - heapStart + CHAIN_VALUE_SIZE;
-            long newHeapSize = heapSize << 1;
+            if (required > maxHeapSize) {
+                throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in LongChain");
+            }
+            // Take required into account rather than trusting the doubling alone. Doubling covers
+            // it whenever heapSize >= CHAIN_VALUE_SIZE, but this class - unlike the tree chains,
+            // which set their heap size in the constructor either way - leaves heapSize at 0 until
+            // reopen(), so a put() on a keepClosed chain would otherwise realloc to 0 and write
+            // 12 bytes at address 0. It also covers a sub-block page size, which config validation
+            // and the constructor's assert rule out but neither runs in every embedding.
+            long newHeapSize = Math.max(heapSize << 1, required);
+            // Doubling overshoots a cap that is rarely a power of two, and the throw above has
+            // already established that the value we have to fit does fit under the cap. Clamp
+            // instead of rejecting, otherwise the largest reachable heap is the largest power of
+            // two below the cap and up to half of the configured budget stays unused.
             if (newHeapSize > maxHeapSize) {
-                if (required > maxHeapSize) {
-                    throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in LongChain");
-                }
-                // Doubling overshoots a cap that is rarely a power of two, so rejecting here
-                // would strand up to half of the configured budget. The value we have to fit
-                // still fits, so clamp to the cap instead.
                 newHeapSize = maxHeapSize;
             }
             long newHeapPos = Unsafe.realloc(heapStart, heapSize, newHeapSize, MemoryTag.NATIVE_DEFAULT, memoryTracker);

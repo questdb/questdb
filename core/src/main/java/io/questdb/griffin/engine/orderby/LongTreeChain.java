@@ -190,7 +190,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         return (int) (rawOffset >> 2);
     }
 
-    // Compressed offsets are unsigned: values past the 8GB mark have the top bit set.
+    // Compressed offsets are unsigned: values at or past the 8GB mark have the top bit set.
     private static long uncompressValueOffset(int offset) {
         return Integer.toUnsignedLong(offset) << 2;
     }

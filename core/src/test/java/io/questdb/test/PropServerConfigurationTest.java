@@ -940,6 +940,7 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("cairo.sql.sort.key.page.size", "64");
         properties.setProperty("cairo.sql.sort.light.value.page.size", "12");
+        properties.setProperty("cairo.sql.hash.join.light.value.page.size", "12");
         properties.setProperty("cairo.sql.window.store.page.size", "64");
         properties.setProperty("cairo.sql.window.rowid.page.size", "16");
         properties.setProperty("cairo.sql.window.tree.page.size", "32");
@@ -964,6 +965,8 @@ public class PropServerConfigurationTest {
         assertPageSizeRejected("cairo.sql.window.rowid.page.size", "8");
         assertPageSizeRejected("cairo.sql.window.store.page.size", "0");
         assertPageSizeRejected("cairo.sql.window.store.page.size", "32");
+        assertPageSizeRejected("cairo.sql.hash.join.light.value.page.size", "0");
+        assertPageSizeRejected("cairo.sql.hash.join.light.value.page.size", "8");
     }
 
     @Test

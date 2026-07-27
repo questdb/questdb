@@ -44,7 +44,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class SingleRecordSinkTest extends AbstractTest {
     public static void runWithSink(WithNewSink code) throws Exception {
         assertMemoryLeak(() -> {
-            try (SingleRecordSink sink = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT)) {
+            try (SingleRecordSink sink = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test sink")) {
                 code.runWithSink(sink);
             }
         });
@@ -52,8 +52,8 @@ public class SingleRecordSinkTest extends AbstractTest {
 
     public static void runWithSinks(WithNewSinks code, int maxHeap) throws Exception {
         assertMemoryLeak(() -> {
-            try (SingleRecordSink left = new SingleRecordSink(maxHeap, MemoryTag.NATIVE_DEFAULT);
-                 SingleRecordSink right = new SingleRecordSink(maxHeap, MemoryTag.NATIVE_DEFAULT)) {
+            try (SingleRecordSink left = new SingleRecordSink(maxHeap, MemoryTag.NATIVE_DEFAULT, "test sink");
+                 SingleRecordSink right = new SingleRecordSink(maxHeap, MemoryTag.NATIVE_DEFAULT, "test sink")) {
                 code.runWithSink(left, right);
             }
         });
@@ -68,6 +68,57 @@ public class SingleRecordSinkTest extends AbstractTest {
         Rnd rnd = TestUtils.generateRandom(null);
         testFuzz0(rnd, false);
         testFuzz0(rnd, true);
+    }
+
+    @Test
+    public void testHeapAcceptsTargetEqualToMaxHeapSize() throws Exception {
+        // A 2052-byte budget is reached exactly: the heap doubles to 2048, and the 513th int makes
+        // target exactly 2052. That is the boundary of the throw predicate - a value that fits
+        // exactly must be accepted, so 513 ints fit rather than 512.
+        assertMemoryLeak(() -> {
+            try (SingleRecordSink sink = new SingleRecordSink(2052, MemoryTag.NATIVE_DEFAULT, "test sink")) {
+                for (int i = 0; i < 513; i++) {
+                    sink.putInt(i);
+                }
+                try {
+                    sink.putInt(513);
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 2052 memory exceeded in test sink");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHeapClampsToMaxHeapSize() throws Exception {
+        // A 3000-byte budget is not a power of two, while every doubling step is: the heap grows
+        // 4 -> 8 -> ... -> 2048 and then wants 4096. Rejecting there stranded a third of the
+        // configured budget at 512 ints; clamping to 3000 fits the 750 that actually do fit.
+        // The owner name also has to reach the message: the same sink backs the RANK() window
+        // function, which used to report a hard-coded ASOF join error.
+        assertMemoryLeak(() -> {
+            try (
+                    SingleRecordSink clamped = new SingleRecordSink(3000, MemoryTag.NATIVE_DEFAULT, "RANK() window function");
+                    // 4096 is a power of two above the budget, so this one never clamps.
+                    SingleRecordSink reference = new SingleRecordSink(4096, MemoryTag.NATIVE_DEFAULT, "test sink")
+            ) {
+                for (int i = 0; i < 750; i++) {
+                    clamped.putInt(i);
+                    reference.putInt(i);
+                }
+                // Everything written into the clamped heap must survive its reallocs byte for byte.
+                Assert.assertTrue(clamped.memeq(reference));
+
+                try {
+                    clamped.putInt(750);
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
+                            "limit of 3000 memory exceeded in RANK() window function");
+                }
+            }
+        });
     }
 
     @Test(expected = LimitOverflowException.class)

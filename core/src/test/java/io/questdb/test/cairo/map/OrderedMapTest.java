@@ -1924,6 +1924,51 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResizeAcceptsTargetEqualToMaxHeapSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // A 2064-byte ceiling is an exact multiple of the 16-byte entry, and the heap doubles
+            // 32 -> ... -> 2048, so the 129th entry makes target exactly 2064. That is the boundary
+            // of the throw predicate: an entry that fits exactly must be accepted, so the map holds
+            // 129 entries rather than stopping at the 128 that fitted in the 2048-byte heap.
+            final long maxHeapSize = 2_064;
+            final int clampedEntries = 129;
+
+            try (
+                    OrderedMap map = new OrderedMap(
+                            32,
+                            new SingleColumnType(ColumnType.LONG),
+                            new SingleColumnType(ColumnType.LONG),
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE
+                    )
+            ) {
+                map.setMaxHeapSize(maxHeapSize);
+
+                for (int i = 0; i < clampedEntries; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i);
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putLong(0, i);
+                }
+                Assert.assertEquals(maxHeapSize, map.getHeapSize());
+                Assert.assertEquals(clampedEntries, map.size());
+                Assert.assertEquals(16L * clampedEntries, map.getUsedHeapSize());
+
+                try {
+                    MapKey overflowing = map.withKey();
+                    overflowing.putLong(clampedEntries);
+                    overflowing.createValue();
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 2064 memory exceeded in FastMap");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testResizeClampedHeapVarSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // Same clamp as the fixed-size case, but reached through VarSizeKey.checkCapacity(),
@@ -1933,7 +1978,6 @@ public class OrderedMapTest extends AbstractCairoTest {
             // 3064 bytes hold 127 entries; the pre-clamp 2048 held 85.
             final long maxHeapSize = 3_064;
             final int clampedEntries = 127;
-            final Rnd rnd = new Rnd();
 
             try (
                     OrderedMap map = new OrderedMap(
@@ -1950,7 +1994,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                 // Fill to one entry short of the ceiling. The clamp happens well before that.
                 for (int i = 0; i < clampedEntries - 1; i++) {
                     MapKey key = map.withKey();
-                    key.putStr(rnd.nextString(4));
+                    key.putStr(varSizeKey(i));
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
                     value.putLong(0, i);
@@ -1958,10 +2002,9 @@ public class OrderedMapTest extends AbstractCairoTest {
                 Assert.assertEquals(maxHeapSize, map.getHeapSize());
 
                 // Every entry written into the clamped heap must still be readable.
-                rnd.reset();
                 for (int i = 0; i < clampedEntries - 1; i++) {
                     MapKey key = map.withKey();
-                    key.putStr(rnd.nextString(4));
+                    key.putStr(varSizeKey(i));
                     MapValue value = key.findValue();
                     Assert.assertNotNull(value);
                     Assert.assertEquals(i, value.getLong(0));
@@ -1969,14 +2012,14 @@ public class OrderedMapTest extends AbstractCairoTest {
 
                 // The last entry fits exactly, the one after it does not.
                 MapKey key = map.withKey();
-                key.putStr(rnd.nextString(4));
+                key.putStr(varSizeKey(clampedEntries - 1));
                 key.createValue().putLong(0, clampedEntries - 1);
                 Assert.assertEquals(clampedEntries, map.size());
                 Assert.assertEquals(24L * clampedEntries, map.getUsedHeapSize());
 
                 try {
                     MapKey overflowing = map.withKey();
-                    overflowing.putStr(rnd.nextString(4));
+                    overflowing.putStr(varSizeKey(clampedEntries));
                     overflowing.createValue();
                     Assert.fail("expected LimitOverflowException");
                 } catch (LimitOverflowException e) {
@@ -1995,7 +2038,6 @@ public class OrderedMapTest extends AbstractCairoTest {
             // rather than fail. 3064 bytes hold 191 16-byte entries; the pre-clamp 2048 held 128.
             final long maxHeapSize = 3_064;
             final int clampedEntries = 191;
-            final int preClampEntries = 128;
 
             try (
                     OrderedMap map = new OrderedMap(
@@ -2018,10 +2060,9 @@ public class OrderedMapTest extends AbstractCairoTest {
                     Assert.assertTrue(value.isNew());
                     value.putLong(0, i);
                 }
+                // 3064 is not a power of two, so nothing downstream may assume the heap is one.
+                // Without the clamp this would have stopped at the 2048-byte doubling step.
                 Assert.assertEquals(maxHeapSize, map.getHeapSize());
-                Assert.assertTrue("the clamp must have added capacity", map.size() > preClampEntries);
-                // A clamped heap is not a power of two - nothing downstream may assume it is.
-                Assert.assertNotEquals(maxHeapSize, Numbers.ceilPow2(maxHeapSize));
 
                 // Probing works over the clamped heap. It needs one entry of headroom at kPos,
                 // where withKey() stages the search key, so it has to run before the last insert.
@@ -2428,6 +2469,18 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    /**
+     * Builds a 4-char key that is distinct by construction, so an entry count can be asserted
+     * without depending on a random generator not colliding. The width is what matters: a 4-char
+     * STRING key plus a LONG value is exactly a 24-byte entry.
+     */
+    private static String varSizeKey(int i) {
+        return "k"
+                + (char) ('a' + i / 676 % 26)
+                + (char) ('a' + i / 26 % 26)
+                + (char) ('a' + i % 26);
     }
 
     private void assertCursor2(Rnd rnd, TestRecord.ArrayBinarySequence binarySequence, int keyColumnOffset, Rnd rnd2, RecordCursor mapCursor) {

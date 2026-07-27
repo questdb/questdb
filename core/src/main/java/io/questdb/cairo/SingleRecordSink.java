@@ -39,12 +39,17 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenable {
     private static final int INITIAL_CAPACITY_BYTES = 8;
     private final long maxHeapSize;
     private final int memoryTag;
+    // Names the feature that owns this sink, so that an exceeded budget blames the query the
+    // user actually ran. The same sink backs ASOF joins and the RANK() window function.
+    @NotNull
+    private final String ownerName;
     private long appendAddress;
     private long heapLimit;
     private long heapStart;
@@ -55,9 +60,10 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     @Nullable
     private MemoryTracker memoryTracker;
 
-    public SingleRecordSink(long maxHeapSizeBytes, int memoryTag) {
+    public SingleRecordSink(long maxHeapSizeBytes, int memoryTag, @NotNull String ownerName) {
         this.memoryTag = memoryTag;
         this.maxHeapSize = maxHeapSizeBytes;
+        this.ownerName = ownerName;
     }
 
     @Override
@@ -311,14 +317,22 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
 
     private void resize(long entrySize, long appendAddress) {
         assert appendAddress >= heapStart;
+        final long target = appendAddress + entrySize - heapStart;
+        if (target > maxHeapSize) {
+            throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in ").put(ownerName);
+        }
         long currentCapacity = heapLimit - heapStart;
         long newCapacity = currentCapacity << 1;
-        long target = appendAddress + entrySize - heapStart;
         if (newCapacity < target) {
             newCapacity = Numbers.ceilPow2(target);
         }
+        // Both the doubling and the ceilPow2 above yield a power of two, while the budget is
+        // derived from configuration and rarely is one. Clamp rather than reject: the data we
+        // have to fit still fits, and nothing downstream requires a power-of-two heap. Without
+        // the clamp the largest reachable heap is the largest power of two below the budget,
+        // stranding up to half of it.
         if (newCapacity > maxHeapSize) {
-            throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in ASOF join");
+            newCapacity = maxHeapSize;
         }
         long newAddress = Unsafe.realloc(heapStart, currentCapacity, newCapacity, memoryTag, memoryTracker);
 

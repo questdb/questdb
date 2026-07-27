@@ -82,9 +82,10 @@ import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
  * <li>2. Off-heap memory for key-value pairs a.k.a. "key memory"</li>
  * </ul>
  * The offset list contains [compressed_offset, hash code 32 LSBs] pairs. An offset value contains
- * an offset to the address of a key-value pair in the key memory compressed to an int. Compressed
- * offsets are unsigned: they are shifted by +1, so that 0 marks an empty slot, and 8 byte aligned,
- * so a FastMap is capable of holding up to 32GB of data.
+ * an offset to the address of a key-value pair in the key memory compressed to an int. Key-value
+ * pair addresses are 8 byte aligned, so the offset is stored scaled down by 8 and shifted by +1,
+ * which reserves 0 as the empty-slot marker. The stored int is unsigned, so a FastMap is capable
+ * of holding up to 32GB of data.
  * <p>
  * The offset list is used as a hash table with linear probing. So, a table resize allocates a new
  * offset list and copies offsets there while the key memory stays as is.
@@ -133,7 +134,7 @@ public class OrderedMap implements Map, Reopenable {
     private int keyCapacity;
     private int mask;
     // Heap ceiling honoured by resize(). Always MAX_HEAP_SIZE in production; tests lower it
-    // to exercise the clamp without allocating 16GB.
+    // to exercise the clamp without growing a 16GB heap into a 32GB one.
     private long maxHeapSize = MAX_HEAP_SIZE;
     // Per-query native memory tracker bound by the owning factory at cursor start.
     // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
@@ -144,7 +145,8 @@ public class OrderedMap implements Map, Reopenable {
     // Holds a list of [compressed_offset, hash_code] pairs.
     // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory with 0.
     // A compressed offset is an UNSIGNED 32-bit value, so slot emptiness must be tested as
-    // "raw offset == 0", never as "raw offset <= 0": offsets past 16GB have their top bit set.
+    // "raw offset == 0", never as "raw offset <= 0": because of the +1 shift, every offset from
+    // 16GB - 8 upwards has its top bit set.
     // Lowest 32 bits of hash code can be used to obtain an entry index since
     // maximum number of entries in the map is limited with 32-bit compressed offsets.
     private long offsetsAddr;
@@ -446,7 +448,12 @@ public class OrderedMap implements Map, Reopenable {
     public void restoreInitialCapacity() {
         if (heapSize != initialHeapSize || keyCapacity != initialKeyCapacity) {
             try {
-                heapAddr = kPos = Unsafe.realloc(heapAddr, heapLimit - heapAddr, heapSize = initialHeapSize, heapMemoryTag, memoryTracker);
+                // Commit heapSize only once the realloc has returned. Java evaluates arguments
+                // left to right, so assigning it inline would leave close() freeing the still
+                // larger block while decrementing the counters by the smaller size.
+                long newHeapAddr = Unsafe.realloc(heapAddr, heapLimit - heapAddr, initialHeapSize, heapMemoryTag, memoryTracker);
+                heapAddr = kPos = newHeapAddr;
+                heapSize = initialHeapSize;
                 heapLimit = heapAddr + initialHeapSize;
                 int newKeyCapacity = initialKeyCapacity < MIN_KEY_CAPACITY ? MIN_KEY_CAPACITY : Numbers.ceilPow2(initialKeyCapacity);
                 offsetsAddr = Unsafe.realloc(offsetsAddr, (long) keyCapacity << 3, (long) newKeyCapacity << 3, listMemoryTag, memoryTracker);
@@ -497,14 +504,15 @@ public class OrderedMap implements Map, Reopenable {
 
     /**
      * Lowers the heap ceiling honoured by {@code resize()}, so that both the clamp and the
-     * limit-exceeded path can be exercised without allocating 16GB. The value must be positive,
-     * 8-byte aligned, since heap offsets are 8-byte scaled, and no greater than the natural
-     * ceiling imposed by compressed offsets.
+     * limit-exceeded path can be exercised without growing a 16GB heap into a 32GB one. The value
+     * must be positive and 8-byte aligned, since heap offsets are 8-byte scaled. Anything above
+     * the natural ceiling imposed by compressed offsets is capped to it: an entry starting at
+     * MAX_HEAP_SIZE would compress to 0, which is the empty-slot marker.
      */
     @TestOnly
     public void setMaxHeapSize(long maxHeapSize) {
-        assert maxHeapSize > 0 && (maxHeapSize & 7) == 0 && maxHeapSize <= MAX_HEAP_SIZE;
-        this.maxHeapSize = maxHeapSize;
+        assert maxHeapSize > 0 && (maxHeapSize & 7) == 0;
+        this.maxHeapSize = Math.min(maxHeapSize, MAX_HEAP_SIZE);
     }
 
     @Override

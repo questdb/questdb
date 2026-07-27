@@ -26,17 +26,39 @@ package io.questdb.test.griffin.engine.orderby;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.AbstractRedBlackTree;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LongTreeChain;
-import io.questdb.std.LongList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Method;
+
 public class LongTreeChainTest extends AbstractCairoTest {
+
+    @Test
+    public void testKeyHeapAcceptsRequiredEqualToMaxHeapSize() throws Exception {
+        // A 144-byte key budget is an exact multiple of the 24-byte block, so the 6th block makes
+        // required exactly 144. That is the boundary of the throw predicate: a block that fits
+        // exactly must be accepted, so the tree takes 6 blocks rather than stopping at 5.
+        assertMemoryLeak(() -> {
+            try (
+                    LongTreeChain chain = new LongTreeChain(
+                            64,             // key page >= BLOCK_SIZE
+                            144,            // key heap budget == 6 blocks exactly
+                            128 * 1024,
+                            Long.MAX_VALUE, // value heap uncapped
+                            PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                            PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+                    )
+            ) {
+                Assert.assertEquals(6, fillUntilOverflow(chain, "limit of 144 memory exceeded in RedBlackTree"));
+            }
+        });
+    }
 
     @Test
     public void testKeyHeapClampsToMaxHeapSize() throws Exception {
@@ -55,6 +77,66 @@ public class LongTreeChainTest extends AbstractCairoTest {
                     )
             ) {
                 Assert.assertEquals(8, fillUntilOverflow(chain, "memory exceeded in RedBlackTree"));
+            }
+        });
+    }
+
+    @Test
+    public void testKeyOffsetCompressionRoundTripsAboveSignedIntRange() throws Exception {
+        // Compressed block offsets are unsigned 32-bit and 8-byte scaled, with EMPTY (-1)
+        // reserved as the leaf sentinel. Offsets at or above 2^31 * 8 set the top bit of the
+        // raw int; reading them back as a signed int yielded a negative offset, so every
+        // node accessor addressed 16GB below the heap. There is no +1 bias here, so offset 0
+        // legitimately compresses to 0 and only -1 is out of bounds.
+        final Method compressKeyOffset = AbstractRedBlackTree.class.getDeclaredMethod("compressKeyOffset", long.class);
+        final Method uncompressKeyOffset = AbstractRedBlackTree.class.getDeclaredMethod("uncompressKeyOffset", int.class);
+        compressKeyOffset.setAccessible(true);
+        uncompressKeyOffset.setAccessible(true);
+
+        final long blockSize = 24;
+        final long maxKeyHeapSize = (Integer.toUnsignedLong(-1) - 1) << 3; // (2^32 - 2) * 8
+        final long lastSignedOffset = ((long) Integer.MAX_VALUE) << 3; // compresses to Integer.MAX_VALUE
+        final long firstUnsignedOffset = (1L << 31) << 3;              // compresses to Integer.MIN_VALUE
+        final long lastBlockOffset = maxKeyHeapSize - blockSize;       // last offset a block can start at
+        final long[] offsets = {
+                0,
+                8,
+                1L << 30,
+                lastSignedOffset,
+                firstUnsignedOffset,
+                3L << 33, // mid-unsigned range: compresses negative, but to neither boundary
+                lastBlockOffset,
+        };
+        for (long offset : offsets) {
+            int rawOffset = (Integer) compressKeyOffset.invoke(null, offset);
+            Assert.assertNotEquals("offset " + offset + " must not compress to the EMPTY sentinel", -1, rawOffset);
+            Assert.assertEquals("offset " + offset, offset, ((Long) uncompressKeyOffset.invoke(null, rawOffset)).longValue());
+        }
+
+        // Offset 0 is a legal block start here, so 0 is not a sentinel and must round-trip as itself.
+        Assert.assertEquals(0, (int) (Integer) compressKeyOffset.invoke(null, 0L));
+        // The upper half of the range is exactly what the signed reading got wrong.
+        Assert.assertTrue((Integer) compressKeyOffset.invoke(null, lastSignedOffset) > 0);
+        Assert.assertTrue((Integer) compressKeyOffset.invoke(null, firstUnsignedOffset) < 0);
+        Assert.assertTrue((Integer) compressKeyOffset.invoke(null, lastBlockOffset) < 0);
+    }
+
+    @Test
+    public void testValueHeapAcceptsRequiredEqualToMaxHeapSize() throws Exception {
+        // Same boundary on the value heap: a 36-byte budget is an exact multiple of the 12-byte
+        // chain value, so the 3rd value makes required exactly 36 and must be accepted.
+        assertMemoryLeak(() -> {
+            try (
+                    LongTreeChain chain = new LongTreeChain(
+                            64,
+                            Long.MAX_VALUE, // key heap uncapped
+                            12,             // value page == CHAIN_VALUE_SIZE
+                            36,             // value heap budget == 3 values exactly
+                            PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                            PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+                    )
+            ) {
+                Assert.assertEquals(3, fillUntilOverflow(chain, "limit of 36 memory exceeded in LongTreeChain"));
             }
         });
     }
@@ -80,6 +162,58 @@ public class LongTreeChainTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testValueOffsetCompressionRoundTripsAboveSignedIntRange() throws Exception {
+        // Same unsigned encoding on the rowid value chain, 4-byte scaled, with -1 reserved as
+        // the chain-end sentinel. Offsets at or above 2^31 * 4 set the top bit of the raw int.
+        final Method compressValueOffset = LongTreeChain.class.getDeclaredMethod("compressValueOffset", long.class);
+        final Method uncompressValueOffset = LongTreeChain.class.getDeclaredMethod("uncompressValueOffset", int.class);
+        compressValueOffset.setAccessible(true);
+        uncompressValueOffset.setAccessible(true);
+
+        final long chainValueSize = 12;
+        final long maxValueHeapSize = (Integer.toUnsignedLong(-1) - 1) << 2; // (2^32 - 2) * 4
+        final long lastSignedOffset = ((long) Integer.MAX_VALUE) << 2; // compresses to Integer.MAX_VALUE
+        final long firstUnsignedOffset = (1L << 31) << 2;              // compresses to Integer.MIN_VALUE
+        final long lastValueOffset = maxValueHeapSize - chainValueSize; // last offset a value can start at
+        final long[] offsets = {
+                0,
+                4,
+                1L << 30,
+                lastSignedOffset,
+                firstUnsignedOffset,
+                3L << 32, // mid-unsigned range: compresses negative, but to neither boundary
+                lastValueOffset,
+        };
+        for (long offset : offsets) {
+            int rawOffset = (Integer) compressValueOffset.invoke(null, offset);
+            Assert.assertNotEquals("offset " + offset + " must not compress to the chain-end sentinel", -1, rawOffset);
+            Assert.assertEquals("offset " + offset, offset, ((Long) uncompressValueOffset.invoke(null, rawOffset)).longValue());
+        }
+
+        // Offset 0 is a legal value start here, so 0 is not a sentinel and must round-trip as itself.
+        Assert.assertEquals(0, (int) (Integer) compressValueOffset.invoke(null, 0L));
+        // The upper half of the range is exactly what the signed reading got wrong.
+        Assert.assertTrue((Integer) compressValueOffset.invoke(null, lastSignedOffset) > 0);
+        Assert.assertTrue((Integer) compressValueOffset.invoke(null, firstUnsignedOffset) < 0);
+        Assert.assertTrue((Integer) compressValueOffset.invoke(null, lastValueOffset) < 0);
+    }
+
+    /**
+     * Walks the tree back after a clamped growth step. Values go in ascending with rowId == value,
+     * so the cursor has to yield 0..inserted-1 in order - which only holds if every heap-relative
+     * offset survived the reallocs that moved the heap.
+     */
+    private void assertReadsBack(LongTreeChain chain, int inserted) {
+        LongTreeChain.TreeCursor cursor = chain.getCursor();
+        int count = 0;
+        while (cursor.hasNext()) {
+            Assert.assertEquals(count, cursor.next());
+            count++;
+        }
+        Assert.assertEquals(inserted, count);
+    }
+
     /**
      * Inserts distinct ascending values until one of the heaps runs out, and returns how many
      * of them the chain accepted. Fails when no overflow happens at all.
@@ -94,106 +228,19 @@ public class LongTreeChainTest extends AbstractCairoTest {
         final Record placeholder = cursor.getRecordB();
         final RecordComparator comparator = new TestRecordComparator();
 
+        // LongTreeChain.put() sets the comparator's left side itself, so the loop must not.
         int inserted = 0;
         while (cursor.hasNext()) {
-            comparator.setLeft(left);
             try {
                 chain.put(left, cursor, placeholder, comparator);
             } catch (LimitOverflowException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+                assertReadsBack(chain, inserted);
                 return inserted;
             }
             inserted++;
         }
         Assert.fail("expected LimitOverflowException");
         return -1;
-    }
-
-    private static class TestRecord implements Record {
-        long position;
-        long value;
-
-        @Override
-        public long getLong(int col) {
-            return value;
-        }
-
-        @Override
-        public long getRowId() {
-            return position;
-        }
-    }
-
-    private static class TestRecordComparator implements RecordComparator {
-        Record left;
-
-        @Override
-        public int compare(Record record) {
-            return Long.compare(left.getLong(0), record.getLong(0));
-        }
-
-        @Override
-        public void setLeft(Record record) {
-            left = record;
-        }
-    }
-
-    private static class TestRecordCursor implements RecordCursor {
-        final Record left = new TestRecord();
-        final Record right = new TestRecord();
-        final LongList values = new LongList();
-        int position = -1;
-
-        TestRecordCursor(long... newValues) {
-            for (int i = 0; i < newValues.length; i++) {
-                values.add(newValues[i]);
-            }
-        }
-
-        @Override
-        public void close() {
-            // nothing to do here
-        }
-
-        @Override
-        public Record getRecord() {
-            return left;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return right;
-        }
-
-        @Override
-        public boolean hasNext() {
-            if (position < values.size() - 1) {
-                position++;
-                recordAt(left, position);
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        public long preComputedStateSize() {
-            return 0;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            ((TestRecord) record).value = values.get((int) atRowId);
-            ((TestRecord) record).position = atRowId;
-        }
-
-        @Override
-        public long size() {
-            return values.size();
-        }
-
-        @Override
-        public void toTop() {
-            position = 0;
-        }
     }
 }

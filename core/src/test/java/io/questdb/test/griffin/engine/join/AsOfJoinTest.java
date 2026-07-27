@@ -1053,6 +1053,32 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinKeySinkLimitNamesAsofJoin() throws Exception {
+        // The keyed ASOF join serializes each join key into a SingleRecordSink sized from the
+        // hash-join value budget. That sink's limit message names the owning feature, which the
+        // factory threads in; it used to be hard-coded, so every other user of the sink reported
+        // an ASOF join error.
+        node1.setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 8);
+        node1.setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 1);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master AS (" +
+                    "SELECT rnd_str(20, 20, 0) AS k, x AS v, (x * 1_000_000L)::TIMESTAMP AS ts" +
+                    " FROM long_sequence(50)) TIMESTAMP(ts)");
+            execute("CREATE TABLE slave AS (" +
+                    "SELECT rnd_str(20, 20, 0) AS k, x AS v, (x * 1_000_000L)::TIMESTAMP AS ts" +
+                    " FROM long_sequence(50)) TIMESTAMP(ts)");
+
+            // A 20-char STRING key needs 44 bytes, well past the 8-byte budget.
+            assertExceptionNoLeakCheck(
+                    "SELECT m.k, m.v, s.v FROM master m ASOF JOIN slave s ON (k)",
+                    0,
+                    "limit of 8 memory exceeded in ASOF join"
+            );
+        });
+    }
+
+    @Test
     public void testAsOfJoinLinearSearchHint() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table orders as (\n" +

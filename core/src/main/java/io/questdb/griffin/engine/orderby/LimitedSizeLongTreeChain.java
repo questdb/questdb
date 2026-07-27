@@ -371,7 +371,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         return (int) (rawOffset >> 2);
     }
 
-    // Compressed offsets are unsigned: values past the 8GB mark have the top bit set.
+    // Compressed offsets are unsigned: values at or past the 8GB mark have the top bit set.
     private static long uncompressValueOffset(int offset) {
         return Integer.toUnsignedLong(offset) << 2;
     }
@@ -428,7 +428,9 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private int getChainLength(int chainStart) {
         int counter = 1;
         int nextOffset = nextValueOffset(chainStart);
-        while (nextOffset != EMPTY) {
+        // CHAIN_END, not EMPTY: this walks value offsets, which are a different namespace from
+        // the tree's block offsets even though both sentinels happen to be -1.
+        while (nextOffset != CHAIN_END) {
             nextOffset = nextValueOffset(nextOffset);
             counter++;
         }
