@@ -225,10 +225,34 @@ pre-built java-questdb-client module, installed in the local Maven cache. It may
 be stale and result in build errors. Fix this issue with:
 
 ```bash
-cd java-questdb-client && mvn clean install -DskipTests && cd -
+cd java-questdb-client && mvn install -DskipTests && cd -
 ```
 
 This should install a fresh version into the Maven cache.
+
+**Do NOT add `clean` to that command.** The client no longer commits its native
+libraries — `libquestdb` is built from source into
+`core/target/classes/io/questdb/client/bin-local/`, which `clean` deletes and a
+plain `mvn install` does not regenerate. The resulting jar is missing its native,
+and `mvn -pl core test` then fails with hundreds of
+`NoClassDefFoundError: Could not initialize class io.questdb.client.std.Os`
+across unrelated suites — a failure that looks nothing like its cause.
+
+If the native is already missing (or you changed the client's C sources), rebuild
+it before installing. Requires `cmake` and `nasm`:
+
+```bash
+cd java-questdb-client/core
+export MACOSX_DEPLOYMENT_TARGET=13.0   # macOS only
+cmake -B cmake-build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build cmake-build-release --config Release
+cd .. && mvn install -DskipTests && cd -
+```
+
+Do not copy natives out of an older cached jar to repair this. The client's C
+sources change between versions, so an older `libquestdb` links against a
+different symbol set and fails with `UnsatisfiedLinkError` instead — a different
+wall of errors that also does not name its cause.
 
 ### Running Tests
 
