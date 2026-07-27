@@ -118,6 +118,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void addLateralCountTemplate(QueryColumn template) {
+        delegate.addLateralCountTemplate(template);
+    }
+
+    @Override
     public void addLatestBy(ExpressionNode latestBy) {
         throw new UnsupportedOperationException();
     }
@@ -410,6 +415,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public int getJoinType() {
         return delegate.getJoinType();
+    }
+
+    @Override
+    public ObjList<QueryColumn> getLateralCountTemplates() {
+        return delegate.getLateralCountTemplates();
     }
 
     @Override

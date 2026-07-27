@@ -337,7 +337,7 @@ public class ExpressionParser {
     }
 
     private boolean isCount() {
-        return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
+        return opStack.size() >= 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
     }
 
     private boolean isExtractFunctionOnStack() {
@@ -1343,7 +1343,11 @@ public class ExpressionParser {
                                 while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '(')) {
                                     // special case - (*) expression
                                     if (Chars.equals(node.token, '*') && argStackDepth == 0 && isCount()) {
-                                        argStackDepth = onNode(listener, node, 2, prevBranch);
+                                        // emit as a leaf: with the binary paramCount kept, the tree builder
+                                        // would pop a previously completed operand (e.g. the first aggregate
+                                        // of count(*) + count(*)) as the star's argument
+                                        node.paramCount = 0;
+                                        argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                         continue;
                                     }
                                     if (thisWasCast && prevBranch != BRANCH_GEOHASH && prevBranch != BRANCH_DECIMAL) {

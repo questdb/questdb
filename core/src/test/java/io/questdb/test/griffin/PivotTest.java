@@ -2441,6 +2441,32 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithCountDistinctEmptyCells() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        count_distinct(population) AS cd,
+                        approx_count_distinct(population) AS acd,
+                        sum(population) AS total
+                        FOR year IN (2020, 2030)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country	2020_cd	2020_acd	2020_total	2030_cd	2030_acd	2030_total
+                            NL	1	1	1158	0	0	null
+                            US	2	2	9510	0	0	null
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotWithDoubleType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE measurements (sensor SYMBOL, metric SYMBOL, value DOUBLE);");

@@ -803,6 +803,21 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountStarAfterOperator() throws SqlException {
+        x("2 * count *", "2 * count(*)");
+    }
+
+    @Test
+    public void testCountStarNestedInFunction() throws SqlException {
+        x("* count 5 coalesce", "coalesce(count(*), 5)");
+    }
+
+    @Test
+    public void testCountStarRepeated() throws SqlException {
+        x("* count * count +", "count(*) + count(*)");
+    }
+
+    @Test
     public void testDanglingExpression() {
         assertFail(
                 "(.*10)",
