@@ -838,6 +838,18 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountStarInExpressions() throws Exception {
+        assertQuery("SELECT count(*) + count(*) AS s, coalesce(count(*), 5) AS c, 2 * count(*) AS d FROM t")
+                .ddl("CREATE TABLE t AS (SELECT x AS v FROM long_sequence(3))")
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        s\tc\td
+                        6\t3\t6
+                        """);
+    }
+
+    @Test
     public void testGroupByAliasInDifferentOrder1() throws Exception {
         assertQuery("select key1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1, 2")
                 .ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ")

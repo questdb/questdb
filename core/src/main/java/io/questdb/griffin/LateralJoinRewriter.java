@@ -144,6 +144,7 @@ class LateralJoinRewriter implements Mutable {
         innerJoinNonCorrelated.clear();
         nonCorrelatedPreds.clear();
         hasCorrelation = false;
+        hasZeroOnEmptyLeaf = false;
         outerRefId = 0;
         sharedModels.clear();
     }
@@ -474,19 +475,21 @@ class LateralJoinRewriter implements Mutable {
     private void buildCountTemplates(IQueryModel body, int depth) throws SqlException {
         carrierChain.clear();
         IQueryModel current = body;
+        boolean hasAggregateTail = false;
         while (current != null) {
             if (current.getBottomUpColumns().size() > 0) {
                 carrierChain.add(current);
                 if (hasAggregateFunctions(current)) {
+                    hasAggregateTail = true;
                     break;
                 }
             }
             current = current.getNestedModel();
         }
-        int layers = carrierChain.size();
-        if (layers == 0 || !hasAggregateFunctions(carrierChain.getQuick(layers - 1))) {
+        if (!hasAggregateTail) {
             return;
         }
+        int layers = carrierChain.size();
         ObjList<QueryColumn> columns = carrierChain.getQuick(0).getBottomUpColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             QueryColumn column = columns.getQuick(i);
@@ -601,6 +604,10 @@ class LateralJoinRewriter implements Mutable {
                 for (int li = layer + 1, ln = carrierChain.size(); li < ln; li++) {
                     QueryColumn definition = findOutputColumn(carrierChain.getQuick(li), node.token);
                     if (definition != null && definition.getAst() != null) {
+                        if (definition instanceof WindowExpression
+                                || checkForChildWindowFunctions(sqlNodeStack2, definition.getAst())) {
+                            return null;
+                        }
                         return buildTemplateNode(definition.getAst(), li, depth, isBuilding);
                     }
                 }
@@ -650,6 +657,17 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    // Returns true if per-side push optimization is possible:
+    // - Main chain (nestedModel chain) has no correlated expressions
+    // - All branches at terminateHere level are INNER/CROSS/RIGHT
+    // - Every branch with correlated ON has a correlated nested model
+    //   (so a clone can be pushed into it)
+    // Per-side push: skip main chain CROSS JOIN (Neumann-Kemper transform
+    // R ⋈ (D ⋈ S) instead of (R × D) ⋈ S). Conditions:
+    //  1. Main chain has no own correlated expressions (R doesn't need D)
+    //  2. All branches are INNER/CROSS/RIGHT (no LEFT/FULL row preservation)
+    //  3. Table-model branches have no correlated ON (can't create clone)
+    //  4. At least one correlated branch exists (alignment needs a source)
     private boolean canPerSidePush(IQueryModel model, int depth) {
         IQueryModel m = model;
         while (m != null) {
@@ -1962,6 +1980,10 @@ class LateralJoinRewriter implements Mutable {
         for (int li = layer + 1, ln = carrierChain.size(); li < ln; li++) {
             QueryColumn definition = findOutputColumn(carrierChain.getQuick(li), node.token);
             if (definition != null && definition.getAst() != null) {
+                if (definition instanceof WindowExpression
+                        || checkForChildWindowFunctions(sqlNodeStack2, definition.getAst())) {
+                    return false;
+                }
                 return isBareZeroOnEmptyColumn(definition.getAst(), li);
             }
         }
@@ -2567,6 +2589,7 @@ class LateralJoinRewriter implements Mutable {
         assert terminateLevel != null;
 
         IQueryModel scalarCountDriver = null;
+        IQueryModel scalarCountBodyNested = null;
         ObjList<IQueryModel> terminateJoins = terminateLevel.getJoinModels();
         for (int bi = 1, bn = terminateJoins.size(); bi < bn; bi++) {
             IQueryModel branch = terminateJoins.getQuick(bi);
@@ -2575,6 +2598,7 @@ class LateralJoinRewriter implements Mutable {
                     && branchNested != null
                     && branchNested.isCorrelatedAtDepth(depth)
                     && hasScalarCountBody(branchNested)) {
+                scalarCountBodyNested = branchNested;
                 scalarCountDriver = cloneOuterRef(outerRefJoinModel, COUNT_DRIVER_PREFIX, terminateLevel);
                 terminateJoins.insert(1, 1, null);
                 terminateJoins.setQuick(1, scalarCountDriver);
@@ -2614,7 +2638,8 @@ class LateralJoinRewriter implements Mutable {
                 branch.setJoinCriteria(rewriteOuterRefs(branch.getJoinCriteria(), outerToInnerAlias, depth));
             }
 
-            boolean isScalarCountBody = isLeftJoin && hasScalarCountBody(branchNested);
+            boolean isScalarCountBody = isLeftJoin
+                    && (branchNested == scalarCountBodyNested || hasScalarCountBody(branchNested));
             int templateBase = templateBuffer.size();
             if (isScalarCountBody && scalarCountDriver != null) {
                 buildCountTemplates(branchNested, depth);
