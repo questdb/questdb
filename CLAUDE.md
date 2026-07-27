@@ -73,6 +73,22 @@ standard resizable list and integrates with `Misc.freeObjList()` /
   any deterministic query it leaves real bugs untested. Default to `.returns(...)`;
   reach for `.returnsOnce(...)` only with a stated reason that the output cannot be
   stable across two reads.
+- **Never assert peer behaviour with a hand-built frame or a fake socket.** Server
+  tests must drive the real `java-questdb-client` for anything that asserts how a
+  client reacts to server output — close codes, NACK classification, ack watermark
+  advance, reconnect eligibility. The client is already on the test classpath (53 of
+  91 QWP tests import it). A hand-forged frame encodes the contract you *assume* the
+  client implements, so it passes even when the pinned client disagrees; that is how
+  the ROLE_CHANGE (4001) close shipped against a client that classified it as a
+  poison strike. If a test names a client class in a comment to justify an assertion,
+  it must import that class instead.
+- Fake sockets (`MockRawSocket`, `TestableContext`) remain valid for *transport fault
+  injection only* — partial sends, `PeerIsSlowToWriteException` resume paths, and
+  malformed frames a correct client would never emit. They must never encode what a
+  correct client would send in response to the server.
+- **Any change to a wire constant or wire format requires a test that exercises the
+  pinned submodule client.** A green OSS build does not otherwise prove the pinned
+  client agrees.
 - use execute() to run non-queries (DDL)
 - prefer UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
   etc.), but mixing cases is acceptable since SQL is case-insensitive
