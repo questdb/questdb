@@ -2152,6 +2152,29 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithApproxCountDistinctEmptyCellsCaseMode() throws Exception {
+        assertQuery("""
+                cities
+                PIVOT (
+                    approx_count_distinct(population) AS acd
+                    FOR
+                        year IN (2020, 2030)
+                        country IN ('NL', 'US')
+                    GROUP BY name
+                ) ORDER BY name;
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .returns("""
+                        name	2020_NL_acd	2020_US_acd	2030_NL_acd	2030_US_acd
+                        Amsterdam	1	0	0	0
+                        New York City	0	1	0	0
+                        Seattle	0	1	0	0
+                        """);
+    }
+
+    @Test
     public void testPivotWithCTEAndKeyedAsOfJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlSensors);

@@ -1343,9 +1343,7 @@ public class ExpressionParser {
                                 while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '(')) {
                                     // special case - (*) expression
                                     if (Chars.equals(node.token, '*') && argStackDepth == 0 && isCount()) {
-                                        // emit as a leaf: with the binary paramCount kept, the tree builder
-                                        // would pop a previously completed operand (e.g. the first aggregate
-                                        // of count(*) + count(*)) as the star's argument
+                                        // the rescued star is count's argument, not a binary operator
                                         node.paramCount = 0;
                                         argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                         continue;

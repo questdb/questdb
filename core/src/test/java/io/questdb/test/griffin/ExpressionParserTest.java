@@ -818,6 +818,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountStarWhitespace() throws SqlException {
+        x("* count", "count( * )");
+    }
+
+    @Test
     public void testDanglingExpression() {
         assertFail(
                 "(.*10)",
