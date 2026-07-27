@@ -35,6 +35,7 @@ import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
+import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.log.Log;
 import io.questdb.network.NetworkFacadeImpl;
@@ -336,6 +337,280 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
                 }
             } finally {
                 Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCloseEchoWaitDiscardedFrameFloodPollsDeadlineOncePerDispatch() throws Exception {
+        // The close-echo wait discards every non-CLOSE frame, and the read cap
+        // lets one worker turn admit CLOSE_ECHO_FRAME_BYTE_BUDGET / 6 = 43_690
+        // minimum-size masked frames. Polling the grace deadline per discarded
+        // frame therefore costs 43_690 Os.currentTimeMicros() JNI transitions
+        // per turn (~15 ns each on an Apple M-series host, ~0.7 ms of pure
+        // clock reads -- more than the 256 KiB recv syscall that admitted the
+        // bytes) and buys nothing: processWebSocketFrames polls the same
+        // deadline once on entry, before the parse loop, and that entry poll is
+        // on EVERY path that can reach the discard gate (resumeRecv and
+        // drainBufferedFrames are its only callers). The parse loop always
+        // returns to the dispatcher, so the poll it would add can only fire
+        // sooner within a bounded, sub-millisecond turn.
+        //
+        // Asserts an operation count, never elapsed time: the counting clock
+        // records every read the processor makes through
+        // LineHttpProcessorConfiguration.getMicrosecondClock(), which is where
+        // all of this path's deadlines come from.
+        assertMemoryLeak(() -> {
+            long[] nowMicros = {0};
+            long[] clockReads = {0};
+            // Deliberately larger than the byte budget: the read cap must bind,
+            // so one turn admits a full budget's worth of discardable frames.
+            int recvBufferSize = 300_000;
+            HttpFullFatServerConfiguration httpConfig = createHttpConfiguration(nowMicros, clockReads, recvBufferSize);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
+            Assert.assertEquals("test setup: this must be the minimum masked client frame", 6, ping.length);
+            int pipelinedFrames = 44_000; // 264_000 bytes -- outlasts one budget
+            byte[] wire = new byte[pipelinedFrames * ping.length];
+            for (int i = 0; i < pipelinedFrames; i++) {
+                System.arraycopy(ping, 0, wire, i * ping.length, ping.length);
+            }
+            int framesPerTurn = QwpIngressUpgradeProcessor.CLOSE_ECHO_FRAME_BYTE_BUDGET / ping.length;
+            Assert.assertEquals("test setup: one turn must admit a full budget of minimum frames", 43_690, framesPerTurn);
+
+            RecordingNetworkFacade mockNf = new RecordingNetworkFacade(wire);
+            long recvBuf = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (TestableContext context = new TestableContext(
+                    httpConfig, mockNf,
+                    new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
+                    recvBuf, recvBufferSize
+            )) {
+                QwpIngressProcessorState state = setupState(httpConfig, context);
+                state.initiateRoleChangeClose();
+                state.beginCloseEchoWait();
+                Assert.assertTrue(state.isAwaitingCloseEcho());
+                // Arming read the clock once to compute the deadline; count
+                // only what the dispatch below spends.
+                clockReads[0] = 0;
+
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("Expected PeerIsSlowToWriteException (close-echo read cap yield)");
+                } catch (PeerIsSlowToWriteException e) {
+                    // expected: the fixed byte budget yielded the worker
+                }
+
+                Assert.assertEquals("test setup: the flood must be admitted in a single capped recv", 1, mockNf.recvCalls);
+                Assert.assertEquals(
+                        "one worker turn must poll the echo deadline ONCE, on processWebSocketFrames entry;"
+                                + " a poll per discarded frame costs " + (framesPerTurn + 1)
+                                + " JNI clock transitions per turn for zero added deadline accuracy",
+                        1, clockReads[0]
+                );
+
+                // The next turn gets its own single entry poll: the cost is
+                // one clock read per dispatch, not per frame.
+                clockReads[0] = 0;
+                try {
+                    processor.resumeRecv(context);
+                } catch (PeerIsSlowToWriteException e) {
+                    // either outcome is fine: the flood has fewer than a
+                    // budget's worth of bytes left
+                }
+                Assert.assertEquals(
+                        "the second dispatch must poll the deadline once too, and only on"
+                                + " processWebSocketFrames entry: no path through the discard gate may add a poll",
+                        1, clockReads[0]
+                );
+            } finally {
+                Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCloseEchoWaitDrainsPipelinedTailInOneDispatch() throws Exception {
+        // The close-echo wait must read the client's pipelined tail at
+        // min(recvBufferSize, CLOSE_ECHO_FRAME_BYTE_BUDGET) per dispatch and
+        // not at a frame-count-derived 6 KiB. The echo sits BEHIND that tail
+        // in the same TCP stream, so the server cannot observe it before it
+        // has consumed everything the client sent earlier: every extra
+        // dispatcher turn spent draining is added latency on the delivery
+        // confirmation the wait exists to collect, and added epoll re-arm /
+        // worker-dispatch work per connection on a fleet-wide demote.
+        // Asserts operation counts, never elapsed time: 10_000 minimum-size
+        // pipelined frames plus the echo (60_008 bytes, one recv buffer's
+        // worth) must cost ONE recv and ONE dispatch. The count-derived
+        // 6 KiB cap needed ten of each.
+        assertMemoryLeak(() -> {
+            long[] nowMicros = {0};
+            int recvBufferSize = 64 * 1024;
+            HttpFullFatServerConfiguration httpConfig = createHttpConfiguration(nowMicros, recvBufferSize);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
+            Assert.assertEquals("test setup: this must be the minimum masked client frame", 6, ping.length);
+            byte[] echo = roleChangeCloseEchoFrame();
+            int pipelinedFrames = 10_000;
+            byte[] wire = new byte[pipelinedFrames * ping.length + echo.length];
+            for (int i = 0; i < pipelinedFrames; i++) {
+                System.arraycopy(ping, 0, wire, i * ping.length, ping.length);
+            }
+            System.arraycopy(echo, 0, wire, pipelinedFrames * ping.length, echo.length);
+            Assert.assertTrue(
+                    "test setup: the whole pipelined tail must fit one recv buffer",
+                    wire.length <= recvBufferSize
+            );
+
+            RecordingNetworkFacade mockNf = new RecordingNetworkFacade(wire);
+            long recvBuf = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (TestableContext context = new TestableContext(
+                    httpConfig, mockNf,
+                    new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
+                    recvBuf, recvBufferSize
+            )) {
+                QwpIngressProcessorState state = setupState(httpConfig, context);
+                // The ROLE_CHANGE CLOSE is on the wire; the connection now
+                // only waits for the echo that proves the client read it.
+                state.initiateRoleChangeClose();
+                state.beginCloseEchoWait();
+                Assert.assertTrue(state.isAwaitingCloseEcho());
+
+                int dispatches = 0;
+                boolean hasObservedEcho = false;
+                while (dispatches < 64) {
+                    dispatches++;
+                    try {
+                        processor.resumeRecv(context);
+                    } catch (PeerIsSlowToWriteException e) {
+                        // the read cap yielded the worker; the dispatcher
+                        // re-arms READ and re-enters on the next turn
+                        continue;
+                    } catch (ServerDisconnectException e) {
+                        hasObservedEcho = true;
+                        break;
+                    }
+                }
+
+                Assert.assertTrue(
+                        "the close echo must be reached within the dispatch allowance",
+                        hasObservedEcho
+                );
+                Assert.assertEquals(
+                        "reaching the echo must cost one dispatcher turn: each extra turn is an epoll re-arm,"
+                                + " an epoll_wait wakeup and a worker dispatch of added echo latency",
+                        1, dispatches
+                );
+                Assert.assertEquals(
+                        "two receives total: ONE that consumes the whole pipelined tail plus the echo,"
+                                + " and gracefulCloseAndDisconnect's pre-close drain probe",
+                        2, mockNf.recvCalls
+                );
+                Assert.assertEquals(
+                        "the close-echo read must be capped at min(recvBufferSize, CLOSE_ECHO_FRAME_BYTE_BUDGET);"
+                                + " a frame-count-derived cap throttles the drain to 6 KiB a turn and delays the echo",
+                        recvBufferSize, mockNf.firstRecvRequestSize
+                );
+                Assert.assertEquals(
+                        "the parse loop must leave nothing buffered once the echo has been parsed",
+                        0, state.getRecvBufferLen()
+                );
+            } finally {
+                Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCloseEchoWaitYieldsWithinByteBudgetOnFloodedTail() throws Exception {
+        // Fairness twin of testCloseEchoWaitDrainsPipelinedTailInOneDispatch:
+        // the raised read cap must stay a FIXED budget rather than the
+        // configured recv buffer, and one dispatch must still yield the
+        // worker. A peer flooding minimum-size frames therefore costs one
+        // recv of CLOSE_ECHO_FRAME_BYTE_BUDGET bytes and at most
+        // BYTE_BUDGET / 6 = 43_690 header parses per worker turn, whatever
+        // the operator configured http.recv.buffer.size to.
+        //
+        // It also pins the no-stall invariant the recv-time cap exists for:
+        // whatever the parse loop leaves in the recv buffer is an INCOMPLETE
+        // frame (four bytes here), never a complete one. A complete frame
+        // parked in user space behind an emptied kernel socket would need an
+        // inbound event to be re-parsed, and the dispatcher's edge-triggered
+        // READ re-arm never delivers one -- the connection would stall until
+        // the idle reaper collected it.
+        assertMemoryLeak(() -> {
+            long[] nowMicros = {0};
+            // Deliberately larger than the byte budget: the cap must bind.
+            int recvBufferSize = 300_000;
+            HttpFullFatServerConfiguration httpConfig = createHttpConfiguration(nowMicros, recvBufferSize);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
+            int pipelinedFrames = 44_000; // 264_000 bytes -- outlasts one budget
+            byte[] wire = new byte[pipelinedFrames * ping.length];
+            for (int i = 0; i < pipelinedFrames; i++) {
+                System.arraycopy(ping, 0, wire, i * ping.length, ping.length);
+            }
+            Assert.assertTrue(
+                    "test setup: the flood must exceed one byte budget",
+                    wire.length > QwpIngressUpgradeProcessor.CLOSE_ECHO_FRAME_BYTE_BUDGET
+            );
+
+            RecordingNetworkFacade mockNf = new RecordingNetworkFacade(wire);
+            long recvBuf = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (TestableContext context = new TestableContext(
+                    httpConfig, mockNf,
+                    new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
+                    recvBuf, recvBufferSize
+            )) {
+                QwpIngressProcessorState state = setupState(httpConfig, context);
+                state.initiateRoleChangeClose();
+                state.beginCloseEchoWait();
+
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("Expected PeerIsSlowToWriteException (close-echo read cap yield)");
+                } catch (PeerIsSlowToWriteException e) {
+                    // expected: the fixed budget yielded the worker
+                }
+                Assert.assertEquals(
+                        "one worker turn must admit exactly CLOSE_ECHO_FRAME_BYTE_BUDGET bytes,"
+                                + " independently of the configured recv buffer",
+                        QwpIngressUpgradeProcessor.CLOSE_ECHO_FRAME_BYTE_BUDGET, mockNf.firstRecvRequestSize
+                );
+                Assert.assertEquals("the capped read must be a single recv", 1, mockNf.recvCalls);
+                Assert.assertEquals(
+                        "STALL RISK: the parse loop must park only an incomplete frame; a complete frame left"
+                                + " in user space behind an emptied kernel socket never gets re-parsed",
+                        QwpIngressUpgradeProcessor.CLOSE_ECHO_FRAME_BYTE_BUDGET % ping.length,
+                        state.getRecvBufferLen()
+                );
+                Assert.assertTrue(
+                        "the buffered remainder must be shorter than one minimum frame",
+                        state.getRecvBufferLen() < ping.length
+                );
+
+                // The next dispatch resumes with a fresh budget of the same
+                // fixed size -- progress is bounded per turn, not per buffer.
+                try {
+                    processor.resumeRecv(context);
+                } catch (PeerIsSlowToWriteException e) {
+                    // either outcome is fine: the flood has fewer than a
+                    // budget's worth of bytes left
+                }
+                Assert.assertEquals(
+                        "every close-echo dispatch must request the same fixed budget",
+                        QwpIngressUpgradeProcessor.CLOSE_ECHO_FRAME_BYTE_BUDGET, mockNf.secondRecvRequestSize
+                );
+            } finally {
+                Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
         });
@@ -1371,6 +1646,54 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         };
     }
 
+    private static HttpFullFatServerConfiguration createHttpConfiguration(long[] nowMicros, int recvBufferSize) {
+        HttpFullFatServerConfiguration delegate = createHttpConfiguration(nowMicros);
+        return new DefaultHttpServerConfiguration(configuration) {
+            @Override
+            public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                return delegate.getLineHttpProcessorConfiguration();
+            }
+
+            @Override
+            public int getRecvBufferSize() {
+                return recvBufferSize;
+            }
+        };
+    }
+
+    /**
+     * Frozen clock that also counts how many times the processor reads it.
+     * Every deadline this path evaluates -- the close-echo grace, the
+     * role-change deferral, the post-CLOSE drain -- goes through
+     * {@code LineHttpProcessorConfiguration.getMicrosecondClock()}, so
+     * {@code clockReads} is an exact operation count of the
+     * {@code Os.currentTimeMicros()} JNI transitions production would make.
+     */
+    private static HttpFullFatServerConfiguration createHttpConfiguration(long[] nowMicros, long[] clockReads, int recvBufferSize) {
+        MicrosecondClock countingClock = () -> {
+            clockReads[0]++;
+            return nowMicros[0];
+        };
+        LineHttpProcessorConfiguration lineConfig =
+                new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return countingClock;
+                    }
+                };
+        return new DefaultHttpServerConfiguration(configuration) {
+            @Override
+            public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                return lineConfig;
+            }
+
+            @Override
+            public int getRecvBufferSize() {
+                return recvBufferSize;
+            }
+        };
+    }
+
     private static byte[] createMaskedFrame(int opcode, byte[] payload) {
         int payloadLen = payload.length;
         int headerLen;
@@ -1422,6 +1745,18 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         Field lvField = QwpIngressUpgradeProcessor.class.getDeclaredField("LV");
         lvField.setAccessible(true);
         return (LocalValue<QwpIngressProcessorState>) lvField.get(null);
+    }
+
+    /**
+     * The client's CLOSE echo of the server's ROLE_CHANGE close code, masked
+     * like every client frame. Only this code completes the close-echo wait:
+     * the client can have learned it only by reading the server's CLOSE.
+     */
+    private static byte[] roleChangeCloseEchoFrame() {
+        return createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{
+                (byte) (WebSocketCloseCode.ROLE_CHANGE >>> 8),
+                (byte) WebSocketCloseCode.ROLE_CHANGE
+        });
     }
 
     private static QwpIngressProcessorState setupState(
@@ -1706,6 +2041,32 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         void reset() {
             sendCallCount = 0;
             sentSize = 0;
+        }
+    }
+
+    /**
+     * {@link MockNetworkFacade} that records how many receives a dispatch
+     * issued and how many bytes each one requested -- the operation counts
+     * the close-echo read cap is asserted through.
+     */
+    private static class RecordingNetworkFacade extends MockNetworkFacade {
+        int firstRecvRequestSize = -1;
+        int recvCalls;
+        int secondRecvRequestSize = -1;
+
+        RecordingNetworkFacade(byte[] data) {
+            super(data);
+        }
+
+        @Override
+        public int recvRaw(long fd, long buffer, int bufferLen) {
+            recvCalls++;
+            if (recvCalls == 1) {
+                firstRecvRequestSize = bufferLen;
+            } else if (recvCalls == 2) {
+                secondRecvRequestSize = bufferLen;
+            }
+            return super.recvRaw(fd, buffer, bufferLen);
         }
     }
 

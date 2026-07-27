@@ -73,6 +73,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // conformant client echoes the CLOSE immediately (WebSocketClient does so
     // before even dispatching the close to its handler), so the wait is one
     // round trip; the budget is a stall guard against a wedged-but-chatty peer.
+    // beginCloseEchoWaitIfEligible half-closes the write side when it arms the
+    // wait -- unless the socket still owes the peer ciphertext of the CLOSE
+    // record, in which case it records hasPendingCloseEchoHalfClose below and
+    // the next recv-driven re-entry issues the FIN once that tail has drained.
+    // So a peer that reads the CLOSE and then falls silent still gets an
+    // EOF to react to, and a peer that closes on that EOF completes the wait
+    // with an inbound event. Any peer that answers neither the CLOSE nor the FIN
+    // escapes this budget entirely: a crashed host or a blackholing partition,
+    // but equally a live client that reads the EOF and simply keeps its own write
+    // side open. The transport reaper collects all of them.
     public static final long CLOSE_ECHO_WAIT_GRACE_MICROS = 5_000_000;
     // Bounded grace a role-change close may be deferred while
     // committed-but-not-yet-durably-uploaded work drains. The demote cascade
@@ -221,6 +231,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // echo grace expires or the peer's FIN arrives. Reset only on
     // onDisconnected(), like closeEchoDeadline.
     private boolean hasLostCloseEchoSync;
+    // Set when the arming half-close of the close-echo wait could not go out
+    // because the TLS socket still held ciphertext of the CLOSE record: FIN ahead
+    // of that tail would truncate the record the wait exists to deliver. While
+    // set, every recv-driven re-entry retries the half-close (see
+    // QwpIngressUpgradeProcessor.halfCloseWriteSide) so the connection still gets
+    // its FIN once the tail drains. Always false for a plain socket, which never
+    // buffers ciphertext. Reset only on onDisconnected(), like closeEchoDeadline.
+    private boolean hasPendingCloseEchoHalfClose;
     // Deadline (MicrosecondClock ticks) for a deferred role-change close, or -1
     // when no deferral is in progress. Unlike roleChangeClosePending this survives
     // per-message clear()/clearMessageState(): the deferral spans multiple inbound
@@ -529,6 +547,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * True while the close-echo wait still owes the peer its write-side
+     * half-close -- see {@link #onCloseEchoHalfCloseDeferred}.
+     */
+    public boolean hasPendingCloseEchoHalfClose() {
+        return hasPendingCloseEchoHalfClose;
+    }
+
+    /**
      * True when this connection has committed seqTxns whose durable-upload
      * coverage has not yet been fully acked (the {@code pendingDurableSeqTxns}
      * map is non-empty). Unlike {@link #isDurableWorkFullyUploaded}, this reads
@@ -808,6 +834,24 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Records that the arming half-close of the close-echo wait was deferred
+     * because the socket still held pending TLS write data. Every recv-driven
+     * re-entry retries the half-close until the ciphertext drains, so the peer
+     * still gets FIN behind an intact CLOSE record.
+     */
+    public void onCloseEchoHalfCloseDeferred() {
+        hasPendingCloseEchoHalfClose = true;
+    }
+
+    /**
+     * Records that the close-echo wait's write-side half-close went out, so no
+     * re-entry retries it.
+     */
+    public void onCloseEchoHalfClosed() {
+        hasPendingCloseEchoHalfClose = false;
+    }
+
+    /**
      * Records that WebSocket frame sync died during the close-echo wait: a
      * too-big inbound frame jammed the recv machinery, so the CLOSE echo can
      * never be parsed. The recv path switches to read-and-discard until the
@@ -924,6 +968,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         closeDrainDeadline = -1;
         closeEchoDeadline = -1;
         hasLostCloseEchoSync = false;
+        hasPendingCloseEchoHalfClose = false;
         pendingCloseResponseCode = -1;
         roleChangeCloseDeferredDeadline = -1;
         roleChangeCloseInitiated = false;

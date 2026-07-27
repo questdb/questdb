@@ -96,21 +96,21 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      */
     public static final int CLOSE_ECHO_DISCARD_BYTE_BUDGET = 256 * 1024;
     /**
-     * Maximum bytes read in one close-echo worker turn. Binding only while
-     * the recv buffer holds the header of one legal in-progress frame whose
-     * boundary is known: the read is then extended up to this budget without
-     * crossing that boundary. Otherwise the count-derived cap
-     * ({@link #CLOSE_ECHO_FRAME_COUNT_BUDGET} x 6, the minimum masked client
-     * frame size) applies, so a receive can never admit more minimum-size
-     * frames than the count budget.
+     * Maximum bytes one close-echo worker turn may read, and the sole cap on
+     * that read. The wait cannot observe the client's CLOSE echo before it has
+     * consumed everything the client pipelined ahead of it in the same TCP
+     * stream, so this budget is what trades echo latency against per-turn
+     * worker fairness. It matches what the sibling post-CLOSE drains of this
+     * same path spend per dispatch ({@link #CLOSE_ECHO_DISCARD_BYTE_BUDGET},
+     * {@link #GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET}), so the work one turn
+     * performs stays independent of the configured recv buffer. At the
+     * six-byte minimum masked client frame it bounds one turn at 43_690 frame
+     * headers -- parse only, with no payload unmask and no engine work,
+     * because {@code handleWebSocketFrame} discards every non-CLOSE frame
+     * during the wait. {@code resumeRecv} explains why the bound is enforced
+     * on the receive and not in the parse loop that follows it.
      */
     public static final int CLOSE_ECHO_FRAME_BYTE_BUDGET = 256 * 1024;
-    /**
-     * Maximum complete client frames admitted in one close-echo worker turn.
-     * Enforced at recv time: reads are capped at count x 6 bytes unless the
-     * extension above admits the remainder of exactly one known legal frame.
-     */
-    public static final int CLOSE_ECHO_FRAME_COUNT_BUDGET = 1024;
     /**
      * Read budget for the best-effort inbound drain performed immediately
      * before a graceful teardown ({@link #gracefulCloseAndDisconnect}). The
@@ -203,6 +203,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // which omits the header entirely.
     private final byte[] effectiveMaxBatchSizeBytes;
     private final CairoEngine engine;
+    // Frames handleWebSocketFrame's discard gate dropped during the current
+    // processWebSocketFrames call. Scratch, exactly like frameParser: the
+    // parse loop resets it on entry and logs the total once on the way out,
+    // instead of paying a LOG.debug() call per discarded frame -- one capped
+    // echo-wait read admits up to CLOSE_ECHO_FRAME_BYTE_BUDGET / 6 = 43_690
+    // of them, enough to swamp the log ring of an operator who enabled DEBUG
+    // to watch a demote.
+    private int closeEchoDiscardedFrames;
     private final int forceRecvFragmentationChunkSize;
     // WebSocket frame parser (scratchpad — fully reset within each processWebSocketFrames call)
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
@@ -594,6 +602,31 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
 
         try {
+            if (state.hasPendingCloseEchoHalfClose() && state.isAwaitingCloseEcho()) {
+                // The close-echo wait armed while the TLS socket still held
+                // ciphertext of the CLOSE record, so it could not put FIN on
+                // the wire without truncating it. The dispatcher had its
+                // chance to flush that tail before it published this
+                // operation -- it runs tlsIO on a socket it found writable --
+                // so retry now; if the tail is still there halfCloseWriteSide
+                // simply defers again. The deferral flag is read FIRST and
+                // short-circuits: it is false for every ingest connection, so
+                // the steady-state cost of this gate is one field load and a
+                // predicted-not-taken branch, with no virtual call.
+                // isAwaitingCloseEcho() is defence in depth. The flag already
+                // implies the wait -- halfCloseWriteSide sets it immediately
+                // before beginCloseEchoWait, the wait is terminal, and only
+                // onDisconnected() clears either -- but requiring both makes
+                // a stale flag structurally incapable of half-closing a live
+                // connection's write side. That same implication is why this
+                // gate can sit behind the close-drain branch above: the drain
+                // is armed only by gracefulCloseAndDrain, which
+                // finishServerFatalClose reaches only when the echo wait did
+                // NOT arm, so a pending deferral and a close drain cannot
+                // coexist.
+                halfCloseWriteSide(context, state);
+            }
+
             if (state.hasLostCloseEchoSync()) {
                 // Frame sync died earlier in the close-echo wait (a too-big
                 // frame jammed the recv machinery): the CLOSE echo can never
@@ -652,42 +685,36 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             int uncappedReadSize = Math.min(forceRecvFragmentationChunkSize, remaining);
             int readSize = uncappedReadSize;
             if (state.isAwaitingCloseEcho()) {
-                // A masked client frame occupies at least six bytes. Bound the
-                // recv itself so all admitted complete frames can be consumed
-                // without parking a user-space suffix behind an empty kernel
-                // socket, which an edge-triggered READ re-arm would not wake.
-                // The count-derived term (COUNT_BUDGET * 6) bounds how many
-                // minimum-size frames one turn can admit, but alone it would
-                // throttle one legal large frame to ~6 KiB per dispatcher turn
-                // (~342 turns for a default 2 MiB frame), risking echo-grace
-                // expiry with the client's CLOSE echo queued behind it. When
-                // the buffer already holds the header of one legal in-progress
-                // frame (buffer start is always a frame boundary after
-                // processWebSocketFrames compaction), extend the cap up to the
-                // byte budget WITHOUT crossing that frame's boundary: the
-                // extended read can complete at most that one frame, so the
-                // frame-count bound is preserved. The peek is stateless -- the
-                // scratchpad parser is reset again inside
-                // processWebSocketFrames before any real parse.
-                int closeEchoCap = Math.min(CLOSE_ECHO_FRAME_BYTE_BUDGET, CLOSE_ECHO_FRAME_COUNT_BUDGET * 6);
-                if (recvBufferLen > 0) {
-                    frameParser.reset();
-                    frameParser.parse(recvBuffer, recvBuffer + recvBufferLen);
-                    if (frameParser.getState() == WebSocketFrameParser.STATE_NEED_PAYLOAD) {
-                        long totalFrameSize = frameParser.getHeaderSize() + frameParser.getPayloadLength();
-                        if (totalFrameSize <= recvBufferSize) {
-                            // Boundary known and the frame is legal: admit its
-                            // remainder up to the byte budget. Oversized frames
-                            // keep the small cap; processWebSocketFrames flags
-                            // them as sync-lost after the recv. Incomplete
-                            // headers, peek errors, and complete-frame leftovers
-                            // (ACK-backpressure unwind) also keep the small cap
-                            // and are handled by the post-recv parse.
-                            closeEchoCap = (int) Math.min(CLOSE_ECHO_FRAME_BYTE_BUDGET, totalFrameSize - recvBufferLen);
-                        }
-                    }
-                }
-                readSize = Math.min(readSize, closeEchoCap);
+                // Bound the RECEIVE, not the parse loop that follows it. The
+                // echo is queued behind whatever the client pipelined ahead of
+                // it in the same TCP stream, so this cap is what bounds how
+                // many dispatcher turns -- epoll re-arm, epoll_wait wakeup,
+                // worker dispatch -- the wait spends before it can see the
+                // echo. A fixed byte budget keeps that work independent of the
+                // configured recv buffer and equal to what the sibling drains
+                // (discardInboundBytes, gracefulCloseAndDisconnect) already
+                // spend per dispatch; at the six-byte minimum masked frame it
+                // admits at most 43_690 frames per turn, each costing a header
+                // parse and nothing else (handleWebSocketFrame discards every
+                // non-CLOSE frame unread during the wait). Leftover kernel
+                // readiness re-fires the dispatcher, so the drain resumes next
+                // turn with a fresh budget while the other connections on this
+                // worker get service in between.
+                //
+                // Capping the recv is also what keeps the wait re-entrant:
+                // processWebSocketFrames consumes every complete frame the
+                // read admitted, so the compacted remainder is always ONE
+                // incomplete frame that genuinely needs more socket bytes.
+                // Enforcing the bound by breaking the parse loop early would
+                // instead park complete frames in the user-space buffer, and
+                // both exits of HttpConnectionContext
+                // .handleProtocolSwitchedRecv end in registerDispatcherRead,
+                // whose epoll registration is edge-triggered oneshot: a peer
+                // that goes quiet after pipelining generates no further
+                // readiness, so those parked frames -- the echo among them --
+                // would never be parsed and the connection would hang until
+                // the transport idle reaper collected it.
+                readSize = Math.min(readSize, CLOSE_ECHO_FRAME_BYTE_BUDGET);
             }
             int read = socket.recv(recvBuffer + recvBufferLen, readSize);
             if (read < 0) {
@@ -990,6 +1017,35 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * duplicate" alarm has already fired) and non-durable-ack connections
      * keep the immediate teardown: there is no delivery guarantee left to
      * protect.
+     * <p>
+     * Arming half-closes the write side, like the sibling teardowns do
+     * ({@link #gracefulCloseAndDrain}, {@link #gracefulCloseAndDisconnect}),
+     * except behind a pending TLS write (see below).
+     * FIN is the peer's only signal that our CLOSE is final, and this wait
+     * needs it more than they do: the grace budget
+     * ({@link QwpIngressProcessorState#CLOSE_ECHO_WAIT_GRACE_MICROS}) is polled
+     * only on inbound recv re-entry, so a peer that reads our CLOSE and then
+     * falls silent -- no echo, no data, no keepalive PING -- generates no
+     * further event and the budget is never evaluated again. Everything this
+     * connection holds (fd, dispatcher slot, recv and send buffers, the state's
+     * native buffer and every WAL writer checked out into
+     * {@code QwpTudCache}, released only by {@code onDisconnected}) would then
+     * stay pinned until the transport idle reaper fires
+     * ({@code http.net.connection.timeout}, default 300s) -- for every ingress
+     * connection at once at a mass demote. The half-close turns that silence
+     * into an event: the peer reads EOF, closes, and its FIN completes the wait
+     * on the next dispatch.
+     * <p>
+     * Unlike the sibling teardowns, arming is NOT a terminal point -- an
+     * encrypted socket can still hold ciphertext of the CLOSE record when we get
+     * here ({@link Socket#send} buffers internally, and
+     * {@code IODispatcherLinux.epollOp} asks for EPOLLOUT on
+     * {@link Socket#wantsTlsWrite()} precisely to flush it later). FIN ahead of
+     * that tail would make the later {@code tlsIO} write fail and leave the peer
+     * with a truncated TLS stream instead of the ROLE_CHANGE code and the final
+     * durable ack. {@link #halfCloseWriteSide} therefore defers the half-close
+     * while a TLS write is pending and the recv-driven re-entry retries it, so
+     * the delivered CLOSE stays intact and the connection still gets its FIN.
      *
      * @return true when the echo wait was entered and the caller must NOT
      * disconnect; false when the caller should proceed with the immediate
@@ -1014,6 +1070,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         if (state.isDurableAckEnabled()
                 && state.isRoleChangeCloseInitiated()
                 && !state.hasPendingDurableWork()) {
+            // Half-close the write side behind the CLOSE frame (see the
+            // javadoc). RFC 6455 s5.5.1 permits no frame after our CLOSE and
+            // flushPendingAck's echo gate enforces that structurally, so
+            // nothing is lost by giving up the write side here -- while the FIN
+            // is what prompts a conformant peer to close promptly instead of
+            // sitting on the connection. Half-closing WRITE does not stop the
+            // peer's echo from arriving: only an RST discards a receive queue,
+            // and the peer parses the buffered CLOSE before it can observe EOF
+            // (WebSocketClient.tryReceiveFrame parses the recv buffer before
+            // its next recv).
+            halfCloseWriteSide(context, state);
             state.beginCloseEchoWait();
             LOG.info().$("role-change CLOSE sent, awaiting client close echo [fd=").$(context.getFd()).I$();
             return true;
@@ -1027,8 +1094,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * the same trade the upload-grace expiry makes). Called from the
      * recv-driven re-entry gates; a conformant client echoes within one round
      * trip, so expiry here means a wedged peer. Like the upload grace, this
-     * deadline is polled only on inbound events -- a fully silent peer is the
-     * transport idle reaper's to collect.
+     * deadline is polled only on inbound events, so it bounds a peer that keeps
+     * talking without echoing. A peer that answers nothing at all -- not even
+     * the FIN {@link #beginCloseEchoWaitIfEligible} put on the wire: a crashed
+     * host, a blackholing partition, or a live client that reads the EOF and
+     * keeps its own write side open -- generates no event to poll on and remains
+     * the transport reaper's to collect (TCP keepalive, then {@code http.net.connection.timeout}), the
+     * same policy the post-CLOSE read-drain and the upload grace follow.
      */
     private void checkCloseEchoWaitExpiry(HttpConnectionContext context, QwpIngressProcessorState state)
             throws ServerDisconnectException {
@@ -1326,10 +1398,36 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * reserved for connections that can have nothing further in flight: a
      * completed client-initiated close handshake (the peer's CLOSE is already
      * consumed and RFC 6455 s5.5.1 has the server close the TCP connection
-     * first) and an expired close-echo wait (which has been draining inbound
-     * for its whole grace budget). A server-initiated fatal close against a
+     * first), a close-echo wait that the peer's CLOSE ended (the genuine
+     * role-change echo, or a voluntary client CLOSE that crossed ours), and an
+     * expired close-echo wait (which has been draining inbound for its whole
+     * grace budget). A server-initiated fatal close against a
      * still-streaming peer must use {@link #gracefulCloseAndDrain} instead --
      * see {@link #finishServerFatalClose}.
+     * <p>
+     * On the two echo-wait cases {@link #beginCloseEchoWaitIfEligible} usually
+     * half-closed the write side already when it armed the wait, so the shutdown
+     * below repeats on an already half-closed socket -- a no-op syscall on a cold
+     * path. The unconditional call keeps this helper correct both for the
+     * client-initiated close paths, which reach it with the write side open, and
+     * for an echo wait whose half-close {@link #halfCloseWriteSide} deferred
+     * behind a pending TLS write and never got to retry.
+     * <p>
+     * On that last case the shutdown is deliberately unconditional even though
+     * it performs exactly the truncation {@link #halfCloseWriteSide} declines:
+     * an outstanding deferral means the socket still owes the peer ciphertext,
+     * and FIN here makes the later flush fail. The trade differs from arming's
+     * because the outcome differs. Arming is not terminal -- it has a whole
+     * grace budget in which to deliver the CLOSE intact -- whereas every caller
+     * of this helper tears the connection down on return, so the fd close would
+     * discard that userspace ciphertext regardless and the peer reads a
+     * truncated TLS stream either way. Both callers that can arrive with a
+     * deferral outstanding (a crossed client CLOSE, and echo-wait expiry) have
+     * already reported the final durable ack as unconfirmed, and both RST'd the
+     * peer before the half-close existed, so preferring FIN here is strictly
+     * better than the alternative. What it costs, and what a TLS-capable
+     * server-side socket would want revisited, is the CLOSE record itself on
+     * those two paths.
      * <p>
      * The pre-close inbound drain is bounded by both
      * {@link #GRACEFUL_CLOSE_DRAIN_READ_BUDGET} and
@@ -1386,6 +1484,51 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
         state.beginCloseDrain();
         LOG.debug().$("fatal CLOSE sent, draining until peer close [fd=").$(context.getFd()).I$();
+    }
+
+    /**
+     * Puts FIN behind the role-change CLOSE frame of the close-echo wait, or
+     * defers it when the socket still owes the peer TLS ciphertext.
+     * <p>
+     * An encrypted {@link Socket} reports a complete {@code send} while the tail
+     * of the record is still in its internal buffer; only a later
+     * {@link Socket#tlsIO(int)} on a writable socket flushes it, which is why the
+     * dispatchers OR EPOLLOUT into their registration on
+     * {@link Socket#wantsTlsWrite()}. Half-closing WRITE under a pending tail
+     * makes that flush fail with EPIPE and the peer reads a truncated TLS stream
+     * instead of the CLOSE, destroying exactly what the wait exists to deliver.
+     * So this defers instead ({@code onCloseEchoHalfCloseDeferred}) and every
+     * recv-driven re-entry of {@link #resumeRecv} retries: the dispatcher runs
+     * {@code tlsIO} on a socket it found writable before it publishes the
+     * operation, so by then the tail has had its chance to drain. A retry that
+     * still finds ciphertext pending simply defers again. A plain socket never
+     * reports a pending TLS write ({@code PlainSocket.wantsTlsWrite} returns
+     * false), so it always takes the immediate half-close and pays nothing for
+     * the check.
+     * <p>
+     * Residual: a peer that stays silent forever with our ciphertext still
+     * undrained never gets FIN, because nothing re-enters the processor to retry.
+     * It keeps the same transport-reaper exposure as a peer that ignores the FIN
+     * outright, which is the trade the wait already makes -- and it is strictly
+     * better than truncating the CLOSE.
+     * <p>
+     * The shutdown result is deliberately NOT checked: shutdown fails only on an
+     * already-dead socket, which epoll reports as readable, so the very next
+     * dispatch reads the error and tears the connection down anyway -- there is
+     * no silent hold to guard against, and declining the wait on a transport
+     * hiccup would downgrade the exactly-once guard for no gain.
+     */
+    private void halfCloseWriteSide(HttpConnectionContext context, QwpIngressProcessorState state) {
+        Socket socket = context.getSocket();
+        if (socket == null) {
+            return;
+        }
+        if (socket.wantsTlsWrite()) {
+            state.onCloseEchoHalfCloseDeferred();
+            return;
+        }
+        socket.shutdown(Net.SHUT_WR);
+        state.onCloseEchoHalfClosed();
     }
 
     private void handleBinaryMessage(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
@@ -1598,8 +1741,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // final durable ack is unconfirmed -- surface the same operator alarm
         // as the echo-wait expiry. Either way skip the close response (our
         // CLOSE is on the wire; a second one would violate the protocol) and
-        // let the dispatch path disconnect: the fd closes with no unread
-        // inbound data and no RST.
+        // let the caller tear the connection down through
+        // gracefulCloseAndDisconnect, which half-closes and runs a bounded
+        // best-effort drain of whatever trails the peer's CLOSE so the fd
+        // close emits FIN rather than an RST that would destroy our unread
+        // tail. The drain is bounded by GRACEFUL_CLOSE_DRAIN_READ_BUDGET and
+        // GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET, so a peer that keeps the kernel
+        // receive buffer non-empty past those budgets still gets an RST -- the
+        // helper trades that residual case for a prompt teardown.
         if (state.isAwaitingCloseEcho()) {
             if (closeCode == WebSocketCloseCode.ROLE_CHANGE) {
                 LOG.info().$("close echo received, role-change close handshake complete [fd=").$(context.getFd()).I$();
@@ -1968,13 +2117,29 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // route to sendFatalClose -- that would put a second CLOSE frame on
         // the wire. Reading and dropping them here is what keeps the socket
         // drained, so the eventual fd close cannot turn abortive (RST) and
-        // destroy the client's unread [durable ack][CLOSE] tail. Every
-        // discarded frame doubles as the recv-driven poll of the echo grace
-        // budget.
+        // destroy the client's unread [durable ack][CLOSE] tail.
+        //
+        // The discard does NOT poll the echo grace budget. Its only caller,
+        // processWebSocketFrames, polls that deadline once on entry -- before
+        // the parse loop -- and resumeRecv and drainBufferedFrames are the only
+        // ways into processWebSocketFrames, so every discarded frame already
+        // sits behind a poll made in the same call. A per-frame poll would add
+        // one Os.currentTimeMicros() JNI transition (a native call, not an
+        // intrinsic) per six-byte frame header: at the CLOSE_ECHO_FRAME_BYTE_BUDGET
+        // read cap one turn discards up to 43_690 of them, so a wedged-but-chatty
+        // peer would spend hundreds of microseconds of this worker on clock reads
+        // alone -- more than the single recv syscall that admitted the bytes, and
+        // exactly the fairness the read cap exists to protect. It buys no
+        // accuracy either: the parse loop is bounded by the bytes that one
+        // capped recv admitted and always returns to the dispatcher, which
+        // re-enters and polls again, so the deadline can slip by at most the
+        // duration of one such loop against a five-second budget.
         if (state.isAwaitingCloseEcho() && opcode != WebSocketOpcode.CLOSE) {
-            LOG.debug().$("WebSocket frame discarded, awaiting close echo [fd=").$(context.getFd())
-                    .$(", opcode=").$(WebSocketOpcode.name(opcode)).I$();
-            checkCloseEchoWaitExpiry(context, state);
+            // Count, do not log: processWebSocketFrames logs the per-call
+            // total. An increment also keeps the gate free of the LOG.debug()
+            // call chain a flooding peer would otherwise drive 43_690 times a
+            // turn.
+            closeEchoDiscardedFrames++;
             return;
         }
         switch (opcode) {
@@ -1997,7 +2162,26 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             case WebSocketOpcode.PONG -> LOG.debug().$("WebSocket pong [fd=").$(context.getFd()).I$();
             case WebSocketOpcode.CLOSE -> {
                 handleClose(context, state, payload, length);
-                throw ServerDisconnectException.INSTANCE;
+                // Every sub-case handleClose returns from -- the role-change
+                // echo, a voluntary client CLOSE that crossed ours, and a
+                // plain client-initiated close whose response is already
+                // flushed -- has a complete RFC 6455 close handshake behind
+                // it, so nothing more is coming and s5.5.1 has the server
+                // close the TCP connection first. Tear down through the
+                // graceful helper rather than a bare disconnect: a peer that
+                // left anything on the wire behind its CLOSE (a concurrent
+                // writer, an intermediary that coalesces frames) leaves those
+                // bytes unread in our receive queue, and close(2) on unread
+                // bytes emits RST -- which discards the close response and,
+                // on a durable-ack connection, the final ACKs ahead of it,
+                // even when the peer's kernel already holds them. The client
+                // then never advances its trim watermark and replays every
+                // committed-but-unacked batch. The helper's drain is a bounded
+                // best effort (see gracefulCloseAndDisconnect): a peer still
+                // streaming past the read and byte budgets outruns it and
+                // still gets an RST. This is the same teardown the resume-path
+                // twin (finishClientCloseResponse) takes.
+                gracefulCloseAndDisconnect(context);
             }
             default -> LOG.debug().$("WebSocket unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
         }
@@ -2036,13 +2220,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         long pos = buffer;
         boolean hasPolledDurableProgress = false;
         boolean hasProcessedFrame = false;
+        closeEchoDiscardedFrames = 0;
 
         try {
-            // The close-echo wait's expiry must be polled on EVERY receive
-            // re-entry, not only on parsed-frame dispatch: a peer trickling a
-            // legal-size frame byte-by-byte (or a partial header) re-enters
-            // here on every recv without ever completing a frame. Without
-            // this poll, both break-out paths below (STATE_NEED_PAYLOAD
+            // This entry poll is the close-echo wait's ONE deadline check per
+            // call, and it covers every frame the loop below discards: it runs
+            // before the first parse, and resumeRecv and drainBufferedFrames
+            // are the only callers, so no inbound frame reaches
+            // handleWebSocketFrame's discard gate without it (which is why that
+            // gate does not poll per frame -- see the note there).
+            // It must sit here rather than only on parsed-frame dispatch: a
+            // peer trickling a legal-size frame byte-by-byte (or a partial
+            // header) re-enters on every recv without ever completing a frame.
+            // Without this poll, both break-out paths below (STATE_NEED_PAYLOAD
             // within buffer capacity, STATE_NEED_MORE) bypass the deadline,
             // so a slowloris peer keeps the nominally five-second wait alive
             // indefinitely while the active socket also dodges the idle
@@ -2167,6 +2357,21 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             // table with outstanding work, so a partial-frame-only re-entry
             // must not repeat that scan without a meaningful frame event.
             flushPendingAck(context, state, hasProcessedFrame && !hasPolledDurableProgress);
+        } catch (ServerDisconnectException e) {
+            // Every teardown this method can reach -- handleWebSocketFrame's
+            // CLOSE arm and the entry expiry poll both go through
+            // gracefulCloseAndDisconnect -- drains inbound bytes into THIS
+            // buffer, using it as scratch from offset 0. Whatever pos still
+            // points at has been overwritten, so drop it: the compaction below
+            // would otherwise memmove up to a full recv buffer of drained
+            // garbage and record it as parked frame bytes. The connection is
+            // going away in either case (a ServerDisconnectException always
+            // ends in dispatcher.disconnect, whose onDisconnected() zeroes
+            // recvBufferLen), so this changes no observable behaviour today --
+            // it removes a pointless copy on teardown and keeps a future
+            // non-terminal caller from parsing drained garbage as frames.
+            pos = bufferEnd;
+            throw e;
         } finally {
             // Compact unprocessed bytes to buffer start and update state.
             // Handles both normal exit (remaining=0) and exception unwind
@@ -2176,6 +2381,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 Unsafe.copyMemory(pos, buffer, remaining);
             }
             state.setRecvBufferLen(remaining);
+            if (closeEchoDiscardedFrames > 0) {
+                // One record per call, not per frame: the discard gate can fire
+                // 43_690 times in a single capped echo-wait read.
+                LOG.debug().$("WebSocket frames discarded awaiting close echo [fd=").$(context.getFd())
+                        .$(", frames=").$(closeEchoDiscardedFrames).I$();
+            }
         }
 
     }
