@@ -2166,7 +2166,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
-                .returns("""
+                .returns("name\t2020_NL_acd\t2020_US_acd\t2030_NL_acd\t2030_US_acd\n", """
                         name	2020_NL_acd	2020_US_acd	2030_NL_acd	2030_US_acd
                         Amsterdam	1	0	0	0
                         New York City	0	1	0	0
