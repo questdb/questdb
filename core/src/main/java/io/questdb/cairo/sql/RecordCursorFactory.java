@@ -355,6 +355,31 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true if this factory reads data from outside the database, i.e. from a source whose
+     * contents QuestDB neither owns nor tracks transactionally (currently {@code read_parquet()}).
+     * <p>
+     * <b>Polarity matters, and it is the opposite of {@link #isNonDeterministic()}.</b> This
+     * property is <i>fail-open</i>: the default is {@code false}, meaning "not external unless a
+     * factory says so". It exists to answer a question of <i>semantic legality</i> (may this query
+     * be persisted as a materialized view?), where a wrong {@code true} rejects SQL that users
+     * already run successfully and permanently invalidates deployed views.
+     * {@link #isNonDeterministic()} answers a question of <i>optimizer safety</i> (may we prune?),
+     * where a wrong {@code true} merely forgoes an optimization. Those two questions have opposite
+     * safe defaults, so they must never share a property: consulting the fail-safe determinism
+     * flag from a rejection gate makes every factory that simply never overrode it illegal by
+     * accident.
+     * <p>
+     * Delegates to the base factory so wrapping factories (projection, filter, sort, limit,
+     * group-by, set operations) report their underlying scan.
+     *
+     * @return true if this factory, or any factory beneath it, reads an external data source
+     */
+    default boolean usesExternalDataSource() {
+        final RecordCursorFactory base = getBaseFactory();
+        return base != null && base.usesExternalDataSource();
+    }
+
+    /**
      * Returns true if this factory may read a Parquet-format partition storing a column whose
      * type was later changed by {@code ALTER COLUMN TYPE} (decoded in its source type and
      * converted lazily, so raw-address readers would misread it). Delegates to the base

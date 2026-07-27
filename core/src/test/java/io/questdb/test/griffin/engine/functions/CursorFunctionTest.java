@@ -213,19 +213,42 @@ public class CursorFunctionTest {
         function.getVarcharB(null);
     }
 
+    /**
+     * {@code RecordCursorFactory#isNonDeterministic()} is a fail-safe optimizer hint that defaults to
+     * true for the ~97 of 114 factories that never override it. {@code Function#isNonDeterministic()}
+     * is a fail-open legality flag, read by the materialized-view guard in {@code FunctionParser},
+     * that defaults to false. Delegating across that polarity boundary makes {@code BinaryFunction}
+     * OR the fail-safe true up through any enclosing operator, so a predicate such as
+     * {@code n > (SELECT count() FROM t)} is rejected as a non-deterministic use of the operator.
+     * CursorFunction must therefore keep the fail-open Function default.
+     */
     @Test
-    public void testIsNonDeterministic() {
+    public void testDoesNotInheritFactoryFailSafeNonDeterminism() {
+        try (CursorFunction cursorFunction = new CursorFunction(new EmptyTableRecordCursorFactory(new GenericRecordMetadata()))) {
+            // the factory reports the fail-safe optimizer default...
+            Assert.assertTrue(cursorFunction.getRecordCursorFactory().isNonDeterministic());
+            // ...which must not leak into the legality flag consulted by the mat-view guard
+            Assert.assertFalse(cursorFunction.isNonDeterministic());
+        }
+    }
+
+    /**
+     * External-source reporting is the fail-open, opt-in property the materialized-view guard is
+     * allowed to reject on, and it must propagate from the factory tree.
+     */
+    @Test
+    public void testUsesExternalDataSourceDelegatesToFactory() {
         try (
-                CursorFunction deterministicFunction = new CursorFunction(new EmptyTableRecordCursorFactory(new GenericRecordMetadata()) {
+                CursorFunction internal = new CursorFunction(new EmptyTableRecordCursorFactory(new GenericRecordMetadata()));
+                CursorFunction external = new CursorFunction(new EmptyTableRecordCursorFactory(new GenericRecordMetadata()) {
                     @Override
-                    public boolean isNonDeterministic() {
-                        return false;
+                    public boolean usesExternalDataSource() {
+                        return true;
                     }
-                });
-                CursorFunction nonDeterministicFunction = new CursorFunction(new EmptyTableRecordCursorFactory(new GenericRecordMetadata()))
+                })
         ) {
-            Assert.assertFalse(deterministicFunction.isNonDeterministic());
-            Assert.assertTrue(nonDeterministicFunction.isNonDeterministic());
+            Assert.assertFalse(internal.getRecordCursorFactory().usesExternalDataSource());
+            Assert.assertTrue(external.getRecordCursorFactory().usesExternalDataSource());
         }
     }
 }
