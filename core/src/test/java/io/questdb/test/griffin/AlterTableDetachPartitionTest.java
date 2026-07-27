@@ -37,6 +37,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -716,6 +717,38 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testCannotAttachParquetPartitionMissingDataFile() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tabAttachNoParquetData";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            renameDetachedToAttachable(tableName, "2022-06-01");
+
+            // Evict the parquet data file, leaving only _pm, to mirror a remotely-served partition.
+            TableToken tableToken = engine.verifyTableName(tableName);
+            path.of(configuration.getDbRoot()).concat(tableToken)
+                    .concat("2022-06-01").put(configuration.getAttachPartitionSuffix())
+                    .concat(PARQUET_PARTITION_NAME).$();
+            Assert.assertTrue(Files.exists(path.$()));
+            Assert.assertTrue(Files.remove(path.$()));
+
+            assertFailure(
+                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'",
+                    "could not attach partition [table=" + tableName + ", detachStatus=ATTACH_ERR_MISSING_PARQUET_DATA"
+            );
+        });
+    }
+
+    @Test
     public void testCannotCopyColumnVersions() throws Exception {
         assertCannotCopyMeta("testCannotCopyColumnVersions", 2);
     }
@@ -737,6 +770,43 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 "ALTER TABLE tab17 DETACH PARTITION LIST '2022-06-05'",
                 "could not detach partition [table=tab17, detachStatus=DETACH_ERR_ACTIVE"
         );
+    }
+
+    @Test
+    public void testCannotDetachRemotelyServedPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tabDetachRemote";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+
+            try (TableWriter writer = getWriter(tableName)) {
+                TxWriter tx = writer.getTxWriter();
+                Assert.assertTrue(tx.isPartitionParquet(0));
+                tx.setPartitionParquetGenerated(0, false);
+                tx.setPartitionRemote(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+                Assert.assertTrue(tx.isPartitionRemotelyServed(0));
+            }
+
+            assertFailure(
+                    "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'",
+                    "could not detach partition [table=" + tableName + ", detachStatus=DETACH_ERR_REMOTE"
+            );
+
+            // The rejection left the partition attached and still remotely served.
+            try (TableWriter writer = getWriter(tableName)) {
+                Assert.assertTrue(writer.getTxWriter().isPartitionRemotelyServed(0));
+            }
+        });
     }
 
     @Test

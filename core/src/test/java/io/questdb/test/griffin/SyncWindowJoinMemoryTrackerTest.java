@@ -61,7 +61,7 @@ import org.junit.Test;
  * {@link WindowJoinRecordCursorFactory}. Within the fast factory a batch-computable
  * aggregate (e.g. {@code sum}) routes to the vectorized cursor and a non-batch one
  * (e.g. {@code array_agg}) to the scalar cursor; both carry their own allocators, so
- * both are exercised here. The {@code assertInTree} routing guard pins each test to
+ * both are exercised here. The {@code assertFactoryInTree} routing guard pins each test to
  * the synchronous factory, so a future change that drops the binding or re-routes to
  * the parallel path fails loudly rather than silently passing.
  * <p>
@@ -94,18 +94,25 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // allocator the cursor binds to the per-query tracker in of(); the bump allocator is reset
         // only on toTop()/close(), so the build-loop growth trips the limit. Without the binding the
         // lists escape and the query completes, firing Assert.fail below.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: in
+        // the build loop, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createTrades(engine, sqlExecutionContext, 200_000, 8);
-                        createPrices(engine, sqlExecutionContext, 2_000_000, 8);
+                        createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createPrices(engine, sqlExecutionContext, 400_000, 8);
                         final String query = "SELECT t.ts, array_agg(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 15 seconds PRECEDING AND 15 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, WindowJoinFastRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, WindowJoinFastRecordCursorFactory.class);
                             assertQueryBreaches(factory, sqlExecutionContext);
                         }
                     },
@@ -132,7 +139,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, WindowJoinFastRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, WindowJoinFastRecordCursorFactory.class);
                             assertOpenFailureReleasesAllocations(factory, sqlExecutionContext);
                         }
                     },
@@ -158,7 +165,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, WindowJoinFastRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, WindowJoinFastRecordCursorFactory.class);
                             assertReleasesAllocations(factory, sqlExecutionContext);
                         }
                     },
@@ -174,18 +181,25 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // Every slave row in the window matches, so each master row's list grows through the same
         // allocator bound in of(). The build-loop growth trips the limit; without the binding the
         // query completes and Assert.fail fires.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: in
+        // the build loop, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createTrades(engine, sqlExecutionContext, 200_000, 8);
-                        createPrices(engine, sqlExecutionContext, 2_000_000, 8);
+                        createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createPrices(engine, sqlExecutionContext, 400_000, 8);
                         final String query = "SELECT t.ts, array_agg(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p " +
                                 "RANGE BETWEEN 15 seconds PRECEDING AND 15 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, WindowJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, WindowJoinRecordCursorFactory.class);
                             assertQueryBreaches(factory, sqlExecutionContext);
                         }
                     },
@@ -213,14 +227,14 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "SELECT t.ts, array_agg(p.price) FROM trades t WINDOW JOIN prices p " +
                                         "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING",
                                 sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(f, WindowJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(f, WindowJoinRecordCursorFactory.class);
                             // intentionally never call getCursor()
                         }
                         try (RecordCursorFactory f = compiler.compile(
                                 "SELECT t.ts, array_agg(p.price) FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                         "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING",
                                 sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(f, WindowJoinFastRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(f, WindowJoinFastRecordCursorFactory.class);
                             // intentionally never call getCursor()
                         }
                     },
@@ -245,7 +259,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t WINDOW JOIN prices p " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, WindowJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, WindowJoinRecordCursorFactory.class);
                             assertOpenFailureReleasesAllocations(factory, sqlExecutionContext);
                         }
                     },
@@ -269,7 +283,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t WINDOW JOIN prices p " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, WindowJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, WindowJoinRecordCursorFactory.class);
                             assertReleasesAllocations(factory, sqlExecutionContext);
                         }
                     },
@@ -297,7 +311,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, WindowJoinFastRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, WindowJoinFastRecordCursorFactory.class);
                             assertOpenFailureReleasesAllocations(factory, sqlExecutionContext);
                         }
                     },
@@ -324,7 +338,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, WindowJoinFastRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, WindowJoinFastRecordCursorFactory.class);
                             assertReleasesAllocations(factory, sqlExecutionContext);
                         }
                     },
@@ -332,17 +346,6 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     LOG
             );
         });
-    }
-
-    private static void assertInTree(RecordCursorFactory factory, Class<?> expected) {
-        RecordCursorFactory f = factory;
-        while (f != null) {
-            if (expected.isInstance(f)) {
-                return;
-            }
-            f = f.getBaseFactory();
-        }
-        Assert.fail("expected " + expected.getSimpleName() + " in the factory tree, but top was " + factory.getClass().getName());
     }
 
     private static void assertOpenFailureReleasesAllocations(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
