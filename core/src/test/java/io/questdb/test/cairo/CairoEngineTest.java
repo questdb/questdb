@@ -37,9 +37,15 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -62,6 +68,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
@@ -314,6 +321,63 @@ public class CairoEngineTest extends AbstractCairoTest {
                     TableToken y = engine.rename(securityContext, path, mem, "x", otherPath, "y");
                     assertWriter(engine, y);
                     assertReader(engine, y);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReconcileReadLockBlocksReadersMetadataAndQueries() throws Exception {
+        // The enterprise RECONCILE TABLE apply calls lockReconcileReads(token) while it swaps the
+        // table's files. From that point every getReader overload and getTableMetadata must refuse
+        // the dir with EntryLockedException -- which extends CairoException, so a racing SELECT
+        // surfaces it as an ordinary query error instead of opening a reader over half-swapped
+        // files. unlockReconcileReads restores full access.
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into x values (1, '2024-01-01T00:00:00Z')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("x");
+
+            engine.lockReconcileReads(token);
+            try {
+                assertReconcileReadLocked(() -> engine.getReader("x"));
+                assertReconcileReadLocked(() -> engine.getReader(token));
+                assertReconcileReadLocked(() -> engine.getReader(token, null));
+                assertReconcileReadLocked(() -> engine.getReader(token, -1, null));
+                assertReconcileReadLocked(() -> engine.getTableMetadata(token));
+                assertReconcileReadLocked(() -> engine.getTableMetadata(token, -1));
+
+                // A SELECT resolves through the same guarded entry points; the compiler catches the
+                // EntryLockedException during table resolution and surfaces it as a sensible
+                // "table is locked" error rather than opening a reader over half-swapped files.
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    try (RecordCursorFactory factory = compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory();
+                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                        }
+                        Assert.fail("expected the SELECT to fail while the reconcile read lock is held");
+                    }
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table is locked");
+                }
+            } finally {
+                engine.unlockReconcileReads(token);
+            }
+
+            // Unlock restores full access: readers, metadata and the SELECT all work again.
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals(1, reader.size());
+            }
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                Assert.assertEquals(2, metadata.getColumnCount());
+            }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory factory = compiler.compile("select count() from x", sqlExecutionContext).getRecordCursorFactory();
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(1, cursor.getRecord().getLong(0));
                 }
             }
         });
@@ -580,6 +644,17 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Assert.assertTrue(engine.clear());
             }
         });
+    }
+
+    private static void assertReconcileReadLocked(Supplier<?> readerOrMetadata) {
+        try {
+            // On the bug path the call would hand back a reader/metadata over the locked dir; free
+            // it so the failure is a clean assertion rather than a masked resource leak.
+            Misc.freeIfCloseable(readerOrMetadata.get());
+            Assert.fail("expected EntryLockedException while the reconcile read lock is held");
+        } catch (EntryLockedException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "reconcile in progress");
+        }
     }
 
     private static void waitForTableStatus(int status) {

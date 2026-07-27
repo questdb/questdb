@@ -1678,7 +1678,11 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public boolean isWalWriteSuspended(TableToken tableToken) {
         final SeqTxnTracker tracker = tableSequencerAPI.getTxnTracker(tableToken);
-        if (tracker.isHardSuspended() && tracker.isWriteSuspended()) {
+        // Read the packed suspend-state word once: the WRITE flag alone means the tracker denies
+        // WAL writes. A two-read isHardSuspended() && isWriteSuspended() form can interleave and,
+        // the moment a WRITE-without-APPLY combo is ever written, would wrongly report a
+        // write-suspended table as writable.
+        if (tracker.isWriteSuspended()) {
             return true;
         }
         final ObjHashSet<String> configured = configuration.getWalApplySuspendedTables();
@@ -2828,7 +2832,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // Require suspension to actually stop writes, so the table is quiescent without extra locking:
         // in the write-denial flavour, getWalWriter rejects ingestion for the suspended table.
         if (!isWalWriteSuspended(oldToken)) {
-            throw CairoException.nonCritical().put("REBASE WAL requires the table to be SUSPEND WAL'd in the write-denial flavour (cairo.wal.apply.suspended.write.denied=true) so that suspension blocks writes [table=").put(oldToken.getTableName()).put(']');
+            throw CairoException.nonCritical().put("REBASE WAL requires the table to be suspended in a flavour that also denies WAL writes. That flavour is captured when SUSPEND WAL runs, so changing cairo.wal.apply.suspended.write.denied afterwards does not affect an already-suspended table; run RESUME WAL then SUSPEND WAL APPLY AND WRITE [table=").put(oldToken.getTableName()).put(']');
         }
         // The rebase repoints the name registry (dropTable/registerName), which a read-only instance
         // (cairo.read.only=true) refuses. Fail early with a clear message instead of deep in the registry.

@@ -45,6 +45,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -1263,6 +1264,62 @@ public class WalTableFailureTest extends AbstractCairoTest {
                             1\tAB\t2022-02-24T00:00:00.000000Z\tEF
                             1\tab\t2022-02-24T23:00:00.000000Z\tef
                             """);
+        });
+    }
+
+    @Test
+    public void testReconcileLockRefusesResumeAndSuspendWal() throws Exception {
+        // The reconcile priority lock (SUSPEND_PRIORITY_RECONCILE) OUTRANKS operator DDL
+        // (SUSPEND_PRIORITY_DDL). While an in-progress RECONCILE holds the table's SeqTxnTracker,
+        // ALTER TABLE ... RESUME WAL / SUSPEND WAL must be REFUSED with a clear CairoException from
+        // removeWalApplySuspended / addWalApplySuspended -- never a silent no-op, which would leave
+        // the operator believing they freed (or re-froze) a table the reconcile still owns. Once the
+        // reconcile releases its lock, both statements are accepted again.
+        assertMemoryLeak(() -> {
+            final TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            final String name = tableToken.getTableName();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+
+            // Simulate an in-progress RECONCILE taking the priority lock (apply + write suspend).
+            Assert.assertTrue(engine.getTableSequencerAPI().tryAcquireSuspend(
+                    tableToken,
+                    SeqTxnTracker.SUSPEND_PRIORITY_RECONCILE,
+                    SeqTxnTracker.SUSPEND_FLAG_APPLY | SeqTxnTracker.SUSPEND_FLAG_WRITE));
+            try {
+                try {
+                    execute("alter table " + name + " resume wal");
+                    Assert.fail("expected RESUME WAL to be refused while a RECONCILE holds the table");
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "cannot RESUME WAL: table is locked by an in-progress RECONCILE");
+                }
+
+                try {
+                    execute("alter table " + name + " suspend wal");
+                    Assert.fail("expected SUSPEND WAL to be refused while a RECONCILE holds the table");
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "cannot SUSPEND WAL: table is locked by an in-progress RECONCILE");
+                }
+
+                try {
+                    execute("alter table " + name + " suspend wal apply and write");
+                    Assert.fail("expected SUSPEND WAL APPLY AND WRITE to be refused while a RECONCILE holds the table");
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "cannot SUSPEND WAL: table is locked by an in-progress RECONCILE");
+                }
+
+                // The refusals must not have disturbed the reconcile's lock.
+                Assert.assertTrue("reconcile apply+write suspend must survive the refused DDL", tracker.isWriteSuspended());
+            } finally {
+                // Release the reconcile lock even if an assertion above threw, so a failing run does
+                // not leave the (per-table) tracker locked for its own teardown.
+                engine.getTableSequencerAPI().trySetSuspend(tableToken, SeqTxnTracker.SUSPEND_PRIORITY_RECONCILE, 0);
+            }
+
+            // Reconcile has released its lock; operator DDL is accepted again and observably takes effect.
+            execute("alter table " + name + " suspend wal");
+            Assert.assertTrue("operator SUSPEND WAL takes effect once the reconcile lock is gone", tracker.isHardSuspended());
+            execute("alter table " + name + " resume wal");
+            Assert.assertFalse("operator RESUME WAL takes effect once the reconcile lock is gone", tracker.isHardSuspended());
         });
     }
 

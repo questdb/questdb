@@ -65,6 +65,7 @@ import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
@@ -5223,16 +5224,31 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testRebaseWalRejectedWhenWriteNotDenied() throws Exception {
-        // write-denial defaults to false; rebase requires it so suspension actually blocks writes.
+        // write-denial defaults to false, so a bare SUSPEND WAL captures the apply-only flavour and
+        // REBASE WAL is rejected. The rejection must name a remedy that actually works: because the
+        // flavour is captured at SUSPEND time, flipping cairo.wal.apply.suspended.write.denied would
+        // NOT help an already-suspended table -- the operator must RESUME WAL then
+        // SUSPEND WAL APPLY AND WRITE. This test also follows that remedy and asserts it lifts the
+        // rejection, so the message can never drift back to naming an ineffective fix.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
             execute("alter table t suspend wal");
             try {
                 execute("alter table t rebase wal");
                 Assert.fail("expected rejection");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "cairo.wal.apply.suspended.write.denied=true");
+                TestUtils.assertContains(e.getFlyweightMessage(), "RESUME WAL then SUSPEND WAL APPLY AND WRITE");
             }
+
+            // Follow the remedy the message names; it must actually lift the rejection.
+            final TableToken oldToken = engine.verifyTableName("t");
+            execute("alter table t resume wal");
+            execute("alter table t suspend wal apply and write");
+            execute("alter table t rebase wal");
+            final TableToken newToken = engine.verifyTableName("t");
+            Assert.assertNotEquals("REBASE WAL must adopt a fresh dir once suspended write-denied", oldToken.getDirName(), newToken.getDirName());
         });
     }
 
@@ -5598,6 +5614,34 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("alter table t resume wal");
             drainWalQueue();
             assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testWalWriteSuspendedReflectsWriteFlagWithoutApplyFlag() throws Exception {
+        // isWalWriteSuspended must decide purely on the WRITE suspend flag, read from the packed
+        // suspend-state word ONCE. Production only ever writes flag combos APPLY or APPLY|WRITE, so
+        // a two-read "isHardSuspended() && isWriteSuspended()" form happens to agree today -- but it
+        // silently returns the WRONG answer the moment a WRITE-without-APPLY combo exists (it would
+        // report a write-suspended table as writable). Pin the single-flag contract by driving that
+        // exact combo directly on the tracker.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("t");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+
+            Assert.assertTrue(engine.getTableSequencerAPI().trySetSuspend(
+                    token, SeqTxnTracker.SUSPEND_PRIORITY_DDL, SeqTxnTracker.SUSPEND_FLAG_WRITE));
+            // WRITE set, APPLY clear: the exact combo the two-read form mishandles.
+            Assert.assertFalse("precondition: APPLY flag must be clear", tracker.isHardSuspended());
+            Assert.assertTrue(
+                    "isWalWriteSuspended must be true whenever the WRITE flag is set, regardless of APPLY",
+                    engine.isWalWriteSuspended(token));
+
+            // Clearing the lock lifts write suspension.
+            Assert.assertTrue(engine.getTableSequencerAPI().trySetSuspend(
+                    token, SeqTxnTracker.SUSPEND_PRIORITY_DDL, 0));
+            Assert.assertFalse(engine.isWalWriteSuspended(token));
         });
     }
 
