@@ -30,16 +30,24 @@ import org.jetbrains.annotations.NotNull;
 /**
  * A stable {@link LiveViewStateStore} that forwards every call to a swappable inner delegate.
  * <p>
- * The engine installs one instance of this wrapper for its whole life and never replaces the field;
- * a role switch swaps the inner delegate instead ({@link NoOpLiveViewStateStore} on a read-only
- * replica, a real {@link LiveViewStateStoreImpl} on a primary). Because {@link LiveViewRefreshJob}
- * caches the result of {@code engine.getLiveViewStateStore()} at construction, swapping the engine
- * field directly would strand that cached reference on the stale store. Forwarding through a stable
- * wrapper makes a single delegate write visible to every cached holder at once.
+ * The engine installs one instance of this wrapper for its whole life and never replaces the field.
+ * Because {@link LiveViewRefreshJob} caches the result of {@code engine.getLiveViewStateStore()} at
+ * construction, swapping the engine field directly would strand that cached reference on the stale
+ * store; forwarding through a stable wrapper would make a single delegate write visible to every
+ * cached holder at once.
  * <p>
- * The delegate reference is volatile so a swap on the lifecycle thread is visible to refresh worker
- * threads without external synchronization. A swap returns the previous delegate so the caller can
- * close it once it is unreachable.
+ * <b>Nothing swaps it today.</b> Under symmetric local refresh a live view is node-local derived
+ * data that every node refreshes for itself, so a role switch is continuation rather than
+ * reconstruction and both roles run the same store. The delegate is therefore chosen once, at
+ * construction, by {@code CairoEngine.createLiveViewStateStore}: a real {@link LiveViewStateStoreImpl}
+ * when live views are enabled, {@link NoOpLiveViewStateStore} when the feature is off. {@link
+ * #swapDelegate} has no production caller — it is kept because it is what makes the wrapper worth
+ * having if a future role-dependent store returns, and because it mirrors the mat-view side, which
+ * does swap. Treat a monomorphic delegate as the current invariant, not as an accident.
+ * <p>
+ * The delegate reference is volatile so a swap on the lifecycle thread would be visible to refresh
+ * worker threads without external synchronization. A swap returns the previous delegate so the
+ * caller can close it once it is unreachable.
  */
 public class ForwardingLiveViewStateStore implements LiveViewStateStore {
     private volatile LiveViewStateStore delegate;

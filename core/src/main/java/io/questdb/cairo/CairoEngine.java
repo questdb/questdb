@@ -997,7 +997,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             // The refresh worker re-opens the same bounded-selected
                             // generation and pins it while choosing/restoring a root.
                             // Role-agnostic: under symmetric local refresh
-                            // (LIVE_VIEW_REPLICATION_LOCAL_REFRESH_DESIGN) a replica
+                            // (questdb-enterprise:docs/live_view_replication.md) a replica
                             // seals its own node-local timeline over its own durable
                             // output, so this boot pass reconciles what THIS node
                             // sealed before it stopped - the artefact a replica used

@@ -510,7 +510,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code true}: it downloads and applies its base WAL asynchronously, so the raw segments can still
      * be settling (mid-download / post-apply purge) when the sequencer head already advertises the
      * commit -- a raw read would transiently miss applied rows. Under symmetric local refresh
-     * (LIVE_VIEW_REPLICATION_LOCAL_REFRESH_DESIGN) the replica runs the full refresh + flush locally, so
+     * (questdb-enterprise:docs/live_view_replication.md) the replica runs the full refresh + flush locally, so
      * {@link #refreshInstance} routes it through the coupled applied-base drain
      * ({@link #drainAppliedBase}), which pins the applied base reader behind the cooperative apply-lag
      * gate and routes any timestamp overlap through {@code o3Replay} -- the same well-tested path a
@@ -2412,7 +2412,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return Math.max(deleteLo, Numbers.LONG_NULL + 1);
     }
 
-    // Under symmetric local refresh (LIVE_VIEW_REPLICATION_LOCAL_REFRESH_DESIGN) the live-view table is
+    // Under symmetric local refresh (questdb-enterprise:docs/live_view_replication.md) the live-view table is
     // node-local derived data: every node -- primary AND replica -- refreshes and flushes its own LV
     // table locally, and LV WAL is never uploaded or downloaded. So the read-only fence this method once
     // held (refuse an LV mint on a read-only node, to stop a demoting primary externalizing a local-only
@@ -5605,7 +5605,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean force,
             boolean appendTimelineRoot
     ) {
-        // Under symmetric local refresh (LIVE_VIEW_REPLICATION_LOCAL_REFRESH_DESIGN) every node --
+        // Under symmetric local refresh (questdb-enterprise:docs/live_view_replication.md) every node --
         // primary or replica -- owns and seals its own node-local checkpoint timeline for restart
         // recovery; nothing replicates. So this seal runs on every role.
         if (!instance.isSnapshotCapabilityComputed()) {

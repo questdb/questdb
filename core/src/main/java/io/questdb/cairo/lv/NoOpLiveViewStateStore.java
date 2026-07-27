@@ -27,12 +27,15 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.TableToken;
 
 /**
- * A {@link LiveViewStateStore} that drops every call. Installed as the delegate of
- * {@link ForwardingLiveViewStateStore} on a read-only replica so refresh workers stay idle:
+ * A {@link LiveViewStateStore} that drops every call, so refresh workers stay idle:
  * {@link #notifyBaseTableCommit} ignores base-table commits (no task ever queues) and
  * {@link #isRefreshEnabled()} returns false, so {@link LiveViewRefreshJob} skips its whole pass --
- * both the notification drain and the registry fallback scan. A promote swaps the delegate to a real
- * {@link LiveViewStateStoreImpl}.
+ * both the notification drain and the registry fallback scan.
+ * <p>
+ * Installed when {@code cairo.live.view.enabled} is off, on every node and every role. It is NOT the
+ * read-only-replica store: under symmetric local refresh a replica refreshes its own live views
+ * exactly as a primary does, so an enabled replica gets a real {@link LiveViewStateStoreImpl} and no
+ * role change swaps it. See {@link ForwardingLiveViewStateStore}.
  */
 public class NoOpLiveViewStateStore implements LiveViewStateStore {
     public static final NoOpLiveViewStateStore INSTANCE = new NoOpLiveViewStateStore();
