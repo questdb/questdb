@@ -323,9 +323,10 @@ public class CoveringIndexPostFilterBenchmark {
         final boolean isValid = switch (route) {
             case "covering" -> text.contains("CoveringIndex")
                     && (EXPECT_JIT
-                        ? text.contains("Async JIT Filter")
-                        : text.contains("Async Filter") && !text.contains("Async JIT Filter"));
-            case "covering_count", "covering_eager" -> text.contains("Async JIT Filter") && text.contains("CoveringIndex");
+                    ? text.contains("Async JIT Filter")
+                    : text.contains("Async Filter") && !text.contains("Async JIT Filter"));
+            case "covering_count", "covering_eager" ->
+                    text.contains("Async JIT Filter") && text.contains("CoveringIndex");
             case "covering_java_eager" -> text.contains("Async Filter")
                     && !text.contains("Async JIT Filter")
                     && text.contains("CoveringIndex");
