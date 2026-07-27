@@ -377,6 +377,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
         // a failure in the very next statement must still reach them through close()
         assertConstructionFailureClosesAdoptedResources(SYMBOL_FILTER_FAILURE, false, fixture ->
                 new SampleByFirstLastRecordCursorFactory(
+                        configuration,
                         fixture.base(),
                         fixture.sampler(),
                         fixture.groupByMetadata,
@@ -418,6 +419,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
 
             final Throwable e = Assert.assertThrows(Throwable.class, () ->
                     new SampleByFirstLastRecordCursorFactory(
+                            configuration,
                             base,
                             fixture.sampler(),
                             fixture.groupByMetadata,

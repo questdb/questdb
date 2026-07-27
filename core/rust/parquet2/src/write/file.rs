@@ -275,6 +275,22 @@ pub struct CopiedColumnIndex {
     pub offset_index: Vec<u8>,
 }
 
+fn row_group_page_indexable(
+    column_count: usize,
+    page_specs: &[Vec<PageWriteSpec>],
+    copied_columns: Option<&[Option<CopiedColumnIndex>]>,
+) -> bool {
+    (0..column_count).all(|column_idx| {
+        copied_columns
+            .and_then(|columns| columns.get(column_idx))
+            .and_then(Option::as_ref)
+            .is_some()
+            || page_specs
+                .get(column_idx)
+                .is_some_and(|pages| !pages.is_empty())
+    })
+}
+
 /// Writes the page index for `row_groups`, recording each column's index
 /// offset/length in place and advancing `offset`. Fresh groups derive it from
 /// `page_specs` (`boundary_order` from `sorting_columns`); copied groups (an
@@ -295,11 +311,17 @@ fn write_page_index<W: Write>(
     offset: &mut u64,
     row_groups: &mut [RowGroup],
     page_specs: &[Vec<Vec<PageWriteSpec>>],
-    copied_page_index: &[Option<Vec<CopiedColumnIndex>>],
+    copied_page_index: &[Option<Vec<Option<CopiedColumnIndex>>>],
     sorting_columns: &Option<Vec<SortingColumn>>,
     allow_column_index: bool,
 ) -> Result<bool> {
-    let copied_for = |rg_idx: usize| copied_page_index.get(rg_idx).and_then(Option::as_ref);
+    let copied_for = |rg_idx: usize, column_idx: usize| {
+        copied_page_index
+            .get(rg_idx)
+            .and_then(Option::as_ref)
+            .and_then(|columns| columns.get(column_idx))
+            .and_then(Option::as_ref)
+    };
 
     // A fresh group can supply a ColumnIndex from its page stats when
     // allow_column_index is set, unless a column carries an opaque-Binary page with an
@@ -309,29 +331,39 @@ fn write_page_index<W: Write>(
     // with an unbounded-max page, would otherwise leave the output with a ColumnIndex
     // on some row groups but not others.
     let emit_column_index = allow_column_index
-        && (0..row_groups.len()).all(|rg_idx| match copied_for(rg_idx) {
-            Some(columns) => columns.iter().all(|c| c.column_index.is_some()),
-            None => page_specs
-                .get(rg_idx)
-                .is_none_or(|cols| cols.iter().all(|pages| pages_support_column_index(pages))),
+        && (0..row_groups.len()).all(|rg_idx| {
+            row_groups[rg_idx]
+                .columns
+                .iter()
+                .enumerate()
+                .all(|(column_idx, _)| match copied_for(rg_idx, column_idx) {
+                    Some(copied) => copied.column_index.is_some(),
+                    None => page_specs
+                        .get(rg_idx)
+                        .and_then(|columns| columns.get(column_idx))
+                        .is_some_and(|pages| pages_support_column_index(pages)),
+                })
         });
 
     if emit_column_index {
-        for (rg_idx, (group, pages)) in row_groups.iter_mut().zip(page_specs.iter()).enumerate() {
-            if let Some(columns) = copied_for(rg_idx) {
-                for (column, copied) in group.columns.iter_mut().zip(columns.iter()) {
-                    if let Some(bytes) = &copied.column_index {
-                        let start = *offset;
-                        column.column_index_offset = Some(start as i64);
-                        writer.write_all(bytes)?;
-                        *offset += bytes.len() as u64;
-                        column.column_index_length = Some((*offset - start) as i32);
-                    }
-                }
-            } else {
-                for (column_idx, (column, pages)) in
-                    group.columns.iter_mut().zip(pages.iter()).enumerate()
-                {
+        for (rg_idx, group) in row_groups.iter_mut().enumerate() {
+            for (column_idx, column) in group.columns.iter_mut().enumerate() {
+                if let Some(copied) = copied_for(rg_idx, column_idx) {
+                    let start = *offset;
+                    column.column_index_offset = Some(start as i64);
+                    let bytes = copied.column_index.as_ref().unwrap();
+                    writer.write_all(bytes)?;
+                    *offset += bytes.len() as u64;
+                    column.column_index_length = Some((*offset - start) as i32);
+                } else {
+                    let pages = page_specs
+                        .get(rg_idx)
+                        .and_then(|columns| columns.get(column_idx))
+                        .ok_or_else(|| {
+                            Error::InvalidParameter(format!(
+                                "missing encoded page specs for row group {rg_idx}, column {column_idx}"
+                            ))
+                        })?;
                     let start = *offset;
                     column.column_index_offset = Some(start as i64);
                     let boundary_order = boundary_order_for_column(sorting_columns, column_idx);
@@ -342,17 +374,23 @@ fn write_page_index<W: Write>(
         }
     }
 
-    for (rg_idx, (group, pages)) in row_groups.iter_mut().zip(page_specs.iter()).enumerate() {
-        if let Some(columns) = copied_for(rg_idx) {
-            for (column, copied) in group.columns.iter_mut().zip(columns.iter()) {
+    for (rg_idx, group) in row_groups.iter_mut().enumerate() {
+        for (column_idx, column) in group.columns.iter_mut().enumerate() {
+            if let Some(copied) = copied_for(rg_idx, column_idx) {
                 let start = *offset;
                 column.offset_index_offset = Some(start as i64);
                 writer.write_all(&copied.offset_index)?;
                 *offset += copied.offset_index.len() as u64;
                 column.offset_index_length = Some((*offset - start) as i32);
-            }
-        } else {
-            for (column, pages) in group.columns.iter_mut().zip(pages.iter()) {
+            } else {
+                let pages = page_specs
+                    .get(rg_idx)
+                    .and_then(|columns| columns.get(column_idx))
+                    .ok_or_else(|| {
+                        Error::InvalidParameter(format!(
+                            "missing encoded page specs for row group {rg_idx}, column {column_idx}"
+                        ))
+                    })?;
                 let start = *offset;
                 column.offset_index_offset = Some(start as i64);
                 *offset += write_offset_index(writer, pages)?;
@@ -622,10 +660,11 @@ pub struct ParquetFile<W: Write> {
     metadata: Option<ThriftFileMetaData>,
     mode: Mode,
     is_insert: Vec<bool>,
-    /// Pre-rebased page index for raw-copied row groups, parallel to
-    /// `row_groups`. `None` marks a freshly encoded group (indexed from
-    /// `page_specs`) or a copied group whose source carried no OffsetIndex.
-    copied_page_index: Vec<Option<Vec<CopiedColumnIndex>>>,
+    /// Pre-rebased page indexes for raw-copied columns, parallel to
+    /// `row_groups` and each row group's columns. A per-column `None` means
+    /// that column was freshly encoded and is indexed from `page_specs`.
+    /// An outer `None` marks a wholly fresh group or an unindexable copied one.
+    copied_page_index: Vec<Option<Vec<Option<CopiedColumnIndex>>>>,
     parquet_footer_offset: u64,
 }
 
@@ -965,9 +1004,36 @@ impl<W: Write> ParquetFile<W> {
         self.row_groups.push(row_group);
         self.page_specs.push(vec![]);
         self.bloom_bitsets.push(bloom_bitsets);
-        self.copied_page_index.push(copied_page_index);
+        self.copied_page_index.push(
+            copied_page_index.map(|columns| columns.into_iter().map(Some).collect()),
+        );
         self.is_insert.push(false);
         Ok(())
+    }
+
+    /// Registers a hybrid row group whose copied and encoded bytes the caller
+    /// has already streamed to [`writer_mut`](Self::writer_mut). This is the
+    /// bounded-memory counterpart to
+    /// [`write_raw_row_group_with_bloom`](Self::write_raw_row_group_with_bloom):
+    /// callers can copy large column chunks directly instead of first collecting
+    /// the complete row group in a `Vec`, while retaining a mixed page index.
+    ///
+    /// The caller must call [`ensure_started`](Self::ensure_started) before it
+    /// writes the bytes and must pass their exact total length here.
+    pub fn register_streamed_hybrid_row_group(
+        &mut self,
+        bytes_written: u64,
+        row_group: RowGroup,
+        bloom_bitsets: Vec<Option<Vec<u8>>>,
+        page_specs: Vec<Vec<PageWriteSpec>>,
+        copied_page_index: Vec<Option<CopiedColumnIndex>>,
+    ) {
+        self.offset += bytes_written;
+        self.row_groups.push(row_group);
+        self.page_specs.push(page_specs);
+        self.bloom_bitsets.push(bloom_bitsets);
+        self.copied_page_index.push(Some(copied_page_index));
+        self.is_insert.push(false);
     }
 
     pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> Result<u64> {
@@ -987,8 +1053,12 @@ impl<W: Write> ParquetFile<W> {
                 // a copied group whose source lacked an OffsetIndex keeps the
                 // whole file unindexed, since a mixed file is rejected by strict
                 // readers.
-                let all_indexable = self.row_groups.iter().enumerate().all(|(i, _)| {
-                    !self.page_specs[i].is_empty() || self.copied_page_index[i].is_some()
+                let all_indexable = self.row_groups.iter().enumerate().all(|(i, row_group)| {
+                    row_group_page_indexable(
+                        row_group.columns.len(),
+                        &self.page_specs[i],
+                        self.copied_page_index[i].as_deref(),
+                    )
                 });
                 if all_indexable {
                     write_page_index(
@@ -1063,8 +1133,13 @@ impl<W: Write> ParquetFile<W> {
                 // source_offset_indexed, this keeps the file from mixing indexed
                 // and unindexed row groups (which strict readers reject), the
                 // same all-or-nothing rule the Mode::Write branch applies.
-                let new_groups_indexable = (0..groups.len())
-                    .all(|i| !page_specs[i].is_empty() || copied_page_index[i].is_some());
+                let new_groups_indexable = groups.iter().enumerate().all(|(i, row_group)| {
+                    row_group_page_indexable(
+                        row_group.columns.len(),
+                        &page_specs[i],
+                        copied_page_index[i].as_deref(),
+                    )
+                });
                 let new_groups_have_column_index = if source_offset_indexed && new_groups_indexable
                 {
                     write_page_index(

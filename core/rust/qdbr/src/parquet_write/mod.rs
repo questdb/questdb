@@ -206,6 +206,7 @@ mod tests {
     use parquet2::page::CompressedPage;
     use parquet2::types;
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+    use qdb_parquet_meta::SeqTxn;
     use std::env;
     use std::fs::File;
     use std::io::{Cursor, Write};
@@ -887,7 +888,8 @@ mod tests {
             columns: vec![col3],
         };
 
-        let (schema, additional_meta) = to_parquet_schema(&partition1, false, -1).unwrap();
+        let (schema, additional_meta) =
+            to_parquet_schema(&partition1, false, -1, SeqTxn::UNSET).unwrap();
         let encodings = to_encodings(&partition1);
 
         let mut chunked = ParquetWriter::new(&mut buf)
@@ -2681,7 +2683,8 @@ mod tests {
             columns: vec![col1_b, col2_b],
         };
 
-        let (schema, additional_meta) = to_parquet_schema(&partition_a, false, -1).unwrap();
+        let (schema, additional_meta) =
+            to_parquet_schema(&partition_a, false, -1, SeqTxn::UNSET).unwrap();
         let encodings = to_encodings(&partition_a);
         let compressions = to_compressions(&partition_a);
 
@@ -4491,7 +4494,8 @@ mod tests {
         end: usize,
     ) -> Bytes {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        let (schema, additional_meta) = schema::to_parquet_schema(p1, false, -1).expect("schema");
+        let (schema, additional_meta) =
+            schema::to_parquet_schema(p1, false, -1, SeqTxn::UNSET).expect("schema");
         let encodings = schema::to_encodings(p1);
         assert_eq!(encodings[0], parquet2::encoding::Encoding::RleDictionary);
         let mut chunked = ParquetWriter::new(&mut buf)
@@ -4673,7 +4677,7 @@ mod tests {
         let single_partition = Partition { table: "t".to_string(), columns: vec![single_col] };
         let mut single_buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let (single_schema, single_meta) =
-            schema::to_parquet_schema(&single_partition, false, -1).expect("schema");
+            schema::to_parquet_schema(&single_partition, false, -1, SeqTxn::UNSET).expect("schema");
         let single_encodings = schema::to_encodings(&single_partition);
         let mut single_chunked = ParquetWriter::new(&mut single_buf)
             .with_statistics(true)
@@ -4700,7 +4704,7 @@ mod tests {
         let part_refs: Vec<&Partition> = part_objs.iter().collect();
         let mut multi_buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let (multi_schema, multi_meta) =
-            schema::to_parquet_schema(&part_objs[0], false, -1).expect("schema");
+            schema::to_parquet_schema(&part_objs[0], false, -1, SeqTxn::UNSET).expect("schema");
         let multi_encodings = schema::to_encodings(&part_objs[0]);
         let mut multi_chunked = ParquetWriter::new(&mut multi_buf)
             .with_statistics(true)

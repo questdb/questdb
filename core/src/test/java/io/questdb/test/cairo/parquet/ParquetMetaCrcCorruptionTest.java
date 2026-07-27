@@ -48,7 +48,8 @@ import org.junit.Test;
 /**
  * Java-level regression guard for the CRC32 verification that
  * {@link ParquetMetaFileReader#resolveFooter(long)} performs on first open
- * (the {@code verifyChecksum0} call at the top of the method). Each test
+ * (the verified {@code createNativeReader} parse at the top of the method,
+ * whose handle is kept as the cached native reader). Each test
  * flips a single byte in a real on-disk {@code _pm}, opens it through the
  * production JNI path, and asserts a clean {@link CairoException} surfaces.
  * Without that wiring, the same flip would pass structural validation and be

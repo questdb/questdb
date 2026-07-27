@@ -82,12 +82,24 @@ pub fn decode_single_timestamp_value(
     // for the duration of this call.
     let alloc = unsafe { &*allocator }.clone();
     let mut bufs = ColumnChunkBuffers::new(alloc);
+    // A stale or corrupt `_pm`/footer can record a byte range past the parquet
+    // mmap; surface it as Err rather than slice-panic out of the JNI boundary.
+    let col_data = col_start
+        .checked_add(col_len)
+        .and_then(|col_end| file_data.get(col_start..col_end))
+        .ok_or_else(|| {
+            fmt_err!(
+                InvalidType,
+                "column chunk range {}..{} exceeds file data length {}",
+                col_start,
+                col_start.saturating_add(col_len),
+                file_data.len()
+            )
+        })?;
     decode_column_chunk_with_params(
         &mut ctx,
         &mut bufs,
-        file_data,
-        col_start,
-        col_len,
+        col_data,
         compression,
         descriptor,
         num_values,
@@ -111,13 +123,15 @@ pub fn decode_single_timestamp_value(
 /// Builds a [`Descriptor`] from `_pm` column descriptor fields.
 ///
 /// `logical_type` and `converted_type` are set to `None` — the decode
-/// dispatch (Phase 1C) no longer depends on them.
+/// dispatch (Phase 1C) no longer depends on them. `field_info.name` is left
+/// empty for the same reason: the decode path never reads it (error context
+/// carries the column name separately), and a non-empty name would be cloned
+/// into every `SlicedDataPage` the page reader yields.
 pub fn reconstruct_descriptor(
     physical_type_u8: u8,
     fixed_byte_len: i32,
     max_rep_level: u8,
     max_def_level: u8,
-    name: &str,
     repetition: Repetition,
 ) -> Descriptor {
     let physical_type = match physical_type_u8 {
@@ -133,7 +147,7 @@ pub fn reconstruct_descriptor(
     };
     Descriptor {
         primitive_type: PrimitiveType {
-            field_info: FieldInfo { name: name.to_string(), repetition, id: None },
+            field_info: FieldInfo { name: String::new(), repetition, id: None },
             logical_type: None,
             converted_type: None,
             physical_type,
@@ -151,9 +165,7 @@ pub fn reconstruct_descriptor(
 pub fn decode_column_chunk_with_params(
     ctx: &mut DecodeContext,
     bufs: &mut ColumnChunkBuffers,
-    file_data: &[u8],
-    col_start: usize,
-    col_len: usize,
+    col_data: &[u8],
     compression: Compression,
     descriptor: Descriptor,
     num_values: i64,
@@ -168,9 +180,10 @@ pub fn decode_column_chunk_with_params(
     // absolute data_vec offsets, so appended chunks stay internally consistent.
     reset_bufs: bool,
 ) -> ParquetResult<usize> {
+    let col_len = col_data.len();
     let page_reader = SlicePageReader::from_parts(
-        file_data,
-        col_start,
+        col_data,
+        0,
         col_len,
         compression,
         descriptor,
@@ -312,9 +325,7 @@ pub fn decode_column_chunk_with_params(
 pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
     ctx: &mut DecodeContext,
     bufs: &mut ColumnChunkBuffers,
-    file_data: &[u8],
-    col_start: usize,
-    col_len: usize,
+    col_data: &[u8],
     compression: Compression,
     descriptor: Descriptor,
     num_values: i64,
@@ -325,9 +336,10 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
     column_name: &str,
     row_group_index: usize,
 ) -> ParquetResult<usize> {
+    let col_len = col_data.len();
     let page_reader = SlicePageReader::from_parts(
-        file_data,
-        col_start,
+        col_data,
+        0,
         col_len,
         compression,
         descriptor,
@@ -681,7 +693,6 @@ mod tests {
             0,
             desc.max_rep_level as u8,
             desc.max_def_level as u8,
-            "col",
             prim.field_info.repetition,
         );
 
@@ -702,12 +713,12 @@ mod tests {
         let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
         let mut bufs = ColumnChunkBuffers::new(allocator);
 
+        let col_start = col_start as usize;
+        let col_len = col_len as usize;
         super::decode_column_chunk_with_params(
             &mut ctx,
             &mut bufs,
-            buf,
-            col_start as usize,
-            col_len as usize,
+            &buf[col_start..col_start + col_len],
             compression,
             descriptor,
             num_values,
@@ -733,49 +744,49 @@ mod tests {
 
     #[test]
     fn reconstruct_boolean() {
-        let desc = reconstruct_descriptor(0, 0, 0, 1, "flag", Repetition::Optional);
+        let desc = reconstruct_descriptor(0, 0, 0, 1, Repetition::Optional);
         assert_eq!(desc.primitive_type.physical_type, PhysicalType::Boolean);
     }
 
     #[test]
     fn reconstruct_int32() {
-        let desc = reconstruct_descriptor(1, 0, 0, 1, "count", Repetition::Required);
+        let desc = reconstruct_descriptor(1, 0, 0, 1, Repetition::Required);
         assert_eq!(desc.primitive_type.physical_type, PhysicalType::Int32);
     }
 
     #[test]
     fn reconstruct_int64() {
-        let desc = reconstruct_descriptor(2, 0, 0, 0, "big_count", Repetition::Required);
+        let desc = reconstruct_descriptor(2, 0, 0, 0, Repetition::Required);
         assert_eq!(desc.primitive_type.physical_type, PhysicalType::Int64);
     }
 
     #[test]
     fn reconstruct_int96() {
-        let desc = reconstruct_descriptor(3, 0, 0, 1, "nano_ts", Repetition::Optional);
+        let desc = reconstruct_descriptor(3, 0, 0, 1, Repetition::Optional);
         assert_eq!(desc.primitive_type.physical_type, PhysicalType::Int96);
     }
 
     #[test]
     fn reconstruct_float() {
-        let desc = reconstruct_descriptor(4, 0, 0, 1, "temperature", Repetition::Optional);
+        let desc = reconstruct_descriptor(4, 0, 0, 1, Repetition::Optional);
         assert_eq!(desc.primitive_type.physical_type, PhysicalType::Float);
     }
 
     #[test]
     fn reconstruct_double() {
-        let desc = reconstruct_descriptor(5, 0, 0, 0, "price", Repetition::Required);
+        let desc = reconstruct_descriptor(5, 0, 0, 0, Repetition::Required);
         assert_eq!(desc.primitive_type.physical_type, PhysicalType::Double);
     }
 
     #[test]
     fn reconstruct_byte_array() {
-        let desc = reconstruct_descriptor(6, 0, 0, 1, "payload", Repetition::Optional);
+        let desc = reconstruct_descriptor(6, 0, 0, 1, Repetition::Optional);
         assert_eq!(desc.primitive_type.physical_type, PhysicalType::ByteArray);
     }
 
     #[test]
     fn reconstruct_flba_16() {
-        let desc = reconstruct_descriptor(7, 16, 0, 1, "uuid", Repetition::Optional);
+        let desc = reconstruct_descriptor(7, 16, 0, 1, Repetition::Optional);
         assert_eq!(
             desc.primitive_type.physical_type,
             PhysicalType::FixedLenByteArray(16)
@@ -784,7 +795,7 @@ mod tests {
 
     #[test]
     fn reconstruct_flba_32() {
-        let desc = reconstruct_descriptor(7, 32, 0, 1, "hash256", Repetition::Optional);
+        let desc = reconstruct_descriptor(7, 32, 0, 1, Repetition::Optional);
         assert_eq!(
             desc.primitive_type.physical_type,
             PhysicalType::FixedLenByteArray(32)
@@ -793,7 +804,7 @@ mod tests {
 
     #[test]
     fn reconstruct_flba_arbitrary() {
-        let desc = reconstruct_descriptor(7, 5, 0, 0, "short_fixed", Repetition::Required);
+        let desc = reconstruct_descriptor(7, 5, 0, 0, Repetition::Required);
         assert_eq!(
             desc.primitive_type.physical_type,
             PhysicalType::FixedLenByteArray(5)
@@ -802,7 +813,7 @@ mod tests {
 
     #[test]
     fn reconstruct_invalid_phys_fallback() {
-        let desc = reconstruct_descriptor(99, 0, 0, 0, "unknown", Repetition::Required);
+        let desc = reconstruct_descriptor(99, 0, 0, 0, Repetition::Required);
         assert_eq!(desc.primitive_type.physical_type, PhysicalType::Int64);
     }
 
@@ -820,7 +831,7 @@ mod tests {
         ];
         for &(phys_id, ref expected_phys) in type_ids {
             let flba_len = if phys_id == 7 { 12 } else { 0 };
-            let desc = reconstruct_descriptor(phys_id, flba_len, 0, 0, "col", Repetition::Required);
+            let desc = reconstruct_descriptor(phys_id, flba_len, 0, 0, Repetition::Required);
             assert_eq!(&desc.primitive_type.physical_type, expected_phys);
             assert!(
                 desc.primitive_type.logical_type.is_none(),
@@ -836,32 +847,33 @@ mod tests {
     }
 
     #[test]
-    fn reconstruct_preserves_rep_def_name() {
+    fn reconstruct_preserves_rep_def_leaves_name_empty() {
         // rep=2, def=3
-        let desc = reconstruct_descriptor(2, 0, 2, 3, "nested_val", Repetition::Repeated);
+        let desc = reconstruct_descriptor(2, 0, 2, 3, Repetition::Repeated);
         assert_eq!(desc.max_rep_level, 2);
         assert_eq!(desc.max_def_level, 3);
-        assert_eq!(desc.primitive_type.field_info.name, "nested_val");
+        // The decode path never reads the name, so it is left empty.
+        assert!(desc.primitive_type.field_info.name.is_empty());
         assert_eq!(
             desc.primitive_type.field_info.repetition,
             Repetition::Repeated
         );
 
         // rep=0, def=0, Required
-        let desc = reconstruct_descriptor(1, 0, 0, 0, "flat_req", Repetition::Required);
+        let desc = reconstruct_descriptor(1, 0, 0, 0, Repetition::Required);
         assert_eq!(desc.max_rep_level, 0);
         assert_eq!(desc.max_def_level, 0);
-        assert_eq!(desc.primitive_type.field_info.name, "flat_req");
+        assert!(desc.primitive_type.field_info.name.is_empty());
         assert_eq!(
             desc.primitive_type.field_info.repetition,
             Repetition::Required
         );
 
         // rep=1, def=1, Optional
-        let desc = reconstruct_descriptor(5, 0, 1, 1, "opt_col", Repetition::Optional);
+        let desc = reconstruct_descriptor(5, 0, 1, 1, Repetition::Optional);
         assert_eq!(desc.max_rep_level, 1);
         assert_eq!(desc.max_def_level, 1);
-        assert_eq!(desc.primitive_type.field_info.name, "opt_col");
+        assert!(desc.primitive_type.field_info.name.is_empty());
         assert_eq!(
             desc.primitive_type.field_info.repetition,
             Repetition::Optional
@@ -873,7 +885,7 @@ mod tests {
 
     #[test]
     fn reconstruct_flba_zero_length() {
-        let desc = reconstruct_descriptor(7, 0, 0, 0, "empty_flba", Repetition::Required);
+        let desc = reconstruct_descriptor(7, 0, 0, 0, Repetition::Required);
         assert_eq!(
             desc.primitive_type.physical_type,
             PhysicalType::FixedLenByteArray(0)
@@ -909,7 +921,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_byte_range_returns_error() {
+    fn truncated_column_chunk_returns_error() {
         let buf = write_i64_parquet(5);
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -926,7 +938,6 @@ mod tests {
             0,
             desc.max_rep_level as u8,
             desc.max_def_level as u8,
-            "col",
             prim.field_info.repetition,
         );
 
@@ -944,17 +955,16 @@ mod tests {
             id: None,
         };
 
-        // Truncate the buffer so col_start + col_len > truncated.len()
-        let truncated = &buf[..col_start as usize + col_len as usize / 2];
-        let mut ctx = DecodeContext::new(truncated.as_ptr(), truncated.len() as u64);
+        // Truncate the column chunk so the page reader can't parse a full page.
+        let full = &buf[col_start as usize..col_start as usize + col_len as usize];
+        let truncated = &full[..full.len() / 2];
+        let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
         let mut bufs = ColumnChunkBuffers::new(allocator);
 
         let result = super::decode_column_chunk_with_params(
             &mut ctx,
             &mut bufs,
             truncated,
-            col_start as usize,
-            col_len as usize,
             compression,
             descriptor,
             num_values,
@@ -965,10 +975,66 @@ mod tests {
             0,
             true,
         );
-        assert!(
-            result.is_err(),
-            "expected error for out-of-bounds byte range"
+        assert!(result.is_err(), "expected error for truncated column chunk");
+    }
+
+    #[test]
+    fn invalid_byte_range_returns_error() {
+        let buf = write_i64_parquet(5);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let buf_len = buf.len() as u64;
+
+        let mut cursor = Cursor::new(&*buf);
+        let metadata = read_metadata_with_size(&mut cursor, buf_len).unwrap();
+        let schema_col = &metadata.schema_descr.columns()[0];
+        let desc = &schema_col.descriptor;
+        let prim = &desc.primitive_type;
+
+        let descriptor = super::reconstruct_descriptor(
+            2,
+            0,
+            desc.max_rep_level as u8,
+            desc.max_def_level as u8,
+            prim.field_info.repetition,
         );
+
+        let rg = &metadata.row_groups[0];
+        let chunk = &rg.columns()[0];
+        let (col_start, _) = chunk.byte_range();
+        let compression = chunk.compression();
+        let num_values = chunk.num_values();
+        let col_start = col_start as usize;
+        let alloc_ptr = &allocator as *const _;
+
+        // A stale or corrupt `_pm`/footer can claim a byte range past the
+        // parquet mmap, or one whose start+len overflows usize. Both must
+        // surface as Err, never slice-panic out of the JNI boundary.
+        for (start, len) in [
+            (col_start, buf.len()),  // start + len runs past end of file_data
+            (buf.len() + 1, 1),      // start alone is past end of file_data
+            (col_start, usize::MAX), // start + len overflows usize
+        ] {
+            let result = super::decode_single_timestamp_value(
+                alloc_ptr,
+                &buf,
+                start,
+                len,
+                compression,
+                descriptor.clone(),
+                num_values,
+                "ts",
+                0,
+                0,
+                5,
+            );
+            assert!(
+                result.is_err(),
+                "expected Err for out-of-bounds range start={} len={}",
+                start,
+                len,
+            );
+        }
     }
 
     #[test]

@@ -244,6 +244,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         return;
                     }
                     try {
+                        if (!beforeDroppedTableRemoved(tableToken)) {
+                            // Removal deferred (e.g. remote objects not reclaimed yet); retry on a later sweep.
+                            return;
+                        }
                         // Fully deregister the table
                         Path pathToDelete = Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken);
                         Path symLinkTarget = null;
@@ -570,6 +574,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private Path setWalPath(TableToken tableName, int walId) {
         return path.of(configuration.getDbRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId);
+    }
+
+    /**
+     * Hook invoked just before a dropped table's local directory is removed. Returning false defers
+     * the local removal to a later sweep, e.g. to first reclaim the table's remote objects. The OSS
+     * default removes now.
+     *
+     * @return true if the local table directory may be removed now
+     */
+    protected boolean beforeDroppedTableRemoved(TableToken tableToken) {
+        return true;
     }
 
     protected long getCurrentSeqPart(long lastAppliedTxn, int txnPartSize) {

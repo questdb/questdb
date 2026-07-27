@@ -58,6 +58,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -1820,9 +1821,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public ArrayView getArray(int col, int columnType) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                return cursor.getCoveredArray(includeIdx, columnType);
+                ArrayView array = cursor.getCoveredArray(includeIdx, columnType);
+                if (array != null) {
+                    return array;
+                }
+                // The sidecar reader returns a Java null when the sidecar it would read is not
+                // there to be read - a tombstoned or not-yet-opened slot publishes a zero end
+                // offset. That is a NULL array's worth of information, so hand out a NULL
+                // ArrayView, not nothing: getArray() has callers that dereference it straight
+                // away (PGUtils, the record sinks), and they have no null to check.
             }
-            return null;
+            return ArrayConstant.NULL;
         }
 
         @Override

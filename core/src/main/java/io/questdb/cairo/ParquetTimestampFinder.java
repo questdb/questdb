@@ -28,17 +28,19 @@ import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 
 public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCloseable {
     private final ParquetPartitionDecoder partitionDecoder; // the decoder is managed externally
-    private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+    private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
     private final DirectIntList timestampIdAndType = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT);
     private long maxTimestampApprox;
     private long minTimestampApprox;
@@ -59,7 +61,7 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
 
     @Override
     public void close() {
-        Misc.free(rowGroupBuffers);
+        setMemoryTracker(null);
         Misc.free(timestampIdAndType);
         clear();
     }
@@ -153,6 +155,13 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
         this.maxTimestampApprox = reader.getPartitionMaxTimestampFromMetadata(partitionIndex);
         tableToken = reader.getTableToken();
         return this;
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        // The native allocator is captured when RowGroupBuffers opens. Release any
+        // allocation charged to the previous query before binding a reused finder.
+        rowGroupBuffers.close();
+        rowGroupBuffers.setMemoryTracker(memoryTracker);
     }
 
     @Override

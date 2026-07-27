@@ -26,5 +26,6 @@ pub mod cairo;
 pub mod col_driver;
 pub mod col_type;
 pub mod error;
+pub mod memory_tracker;
 pub mod types;
 pub mod wal_lock;
