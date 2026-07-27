@@ -559,6 +559,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         liveViewSink.clear();
         final LiveViewRegistry liveViewRegistry = engine.getLiveViewRegistry();
         liveViewRegistry.getViewsForBaseTable(tableToken.getTableName(), liveViewSink);
+        if (liveViewSink.size() == 0) {
+            // No dependent views: nothing below can lower the floor, so skip the role read too.
+            return safeToPurgeTxn;
+        }
+        // Sample the dynamic read-only flag ONCE for the whole fan-out. Re-reading it per view lets a
+        // PRIMARY-to-REPLICA flip land between two iterations: the views already iterated contribute no
+        // frontier floor while the rest do, and the combined min can then sit ABOVE an earlier view's
+        // frontier - purging base WAL-E its next drain still reads. One sample makes the floor
+        // internally consistent. A sample that reads false is safe even if a demote lands immediately
+        // after: on a primary the frontier arm is a provable no-op (see below), so nothing was skipped.
+        final boolean readOnly = engine.isReadOnlyMode();
         for (int v = 0, n = liveViewSink.size(); v < n; v++) {
             final LiveViewInstance instance = liveViewSink.getQuick(v);
             if (instance.isDropped() || instance.isInvalid()) {
@@ -568,12 +579,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             if (lvConsumed > -1) {
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, lvConsumed);
             }
-            // Read-only replica only: lvConsumed tracks the PRIMARY's flush watermark, but the
+            // Read-only replica only: lvConsumed tracks this node's own flush watermark, but the
             // replica drains base WAL-E forward from refreshedUpToSeqTxn, which lags lvConsumed
             // while the lead trails the flushed point (Case B). Purging (refreshedUpToSeqTxn,
             // lvConsumed] would delete WAL-E a seeded drain still reads, so floor at the frontier.
             // No-op on a primary (lead leads lvConsumed); the cross-thread long read only min-combines.
-            if (engine.isReadOnlyMode()) {
+            if (readOnly) {
                 final long refreshedUpTo = instance.getRefreshedUpToSeqTxn();
                 if (refreshedUpTo > -1) {
                     safeToPurgeTxn = Math.min(safeToPurgeTxn, refreshedUpTo);

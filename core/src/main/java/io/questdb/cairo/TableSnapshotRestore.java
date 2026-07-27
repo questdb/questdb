@@ -344,6 +344,31 @@ public class TableSnapshotRestore implements QuietCloseable {
                         .$(", dst=").$(dstPath)
                         .I$();
             }
+
+            // Restore the sequencer-dir _lv marker for a live view. Distinct from the table-dir _lv
+            // that copyMetadataFiles restores: this is the copy that classifies a live view from
+            // on-disk state alone (enterprise replication stats it to answer a table's status while
+            // its token is unresolved, and the primary's sequencer-meta upload ships it as the view's
+            // replication-visible definition). Without it a restored live view reads back as a plain
+            // WAL table. Optional: only live views carry one, and a view whose definition the source
+            // could not capture is restored exactly as broken as it was checkpointed. Nested under
+            // the seq _meta arm because a live view is always WAL-backed, so a table with no
+            // sequencer metadata cannot have this marker either.
+            srcPath.trimTo(srcSeqLen).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            dstPath.trimTo(dstSeqLen).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            if (ff.exists(srcPath.$())) {
+                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                    throw CairoException.critical(ff.errno())
+                            .put("Recovery failed. Could not copy live view sequencer definition file [src=")
+                            .put(srcPath).put(", dst=").put(dstPath).put(']');
+                }
+                recoveredWalFiles.incrementAndGet();
+                LOG.info()
+                        .$("recovered ").$(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME)
+                        .$(" sequencer file [src=").$(srcPath)
+                        .$(", dst=").$(dstPath)
+                        .I$();
+            }
         }
     }
 

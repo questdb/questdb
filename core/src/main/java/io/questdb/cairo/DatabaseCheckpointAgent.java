@@ -603,8 +603,55 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             mem.putLong(lastTxn);
                                             mem.close(true, Vm.TRUNCATE_TO_POINTER);
 
-                                            // Record WAL table seqTxn for checkpoint listener
-                                            checkpointSeqTxns.put(tableToken.getDirName(), lastTxn);
+                                            if (tableToken.isLiveView()) {
+                                                // Carry the SEQUENCER-dir _lv marker. It is a distinct file
+                                                // from the table-dir _lv the live-view branch above copies,
+                                                // and it is the one that classifies a live view from on-disk
+                                                // state alone: enterprise replication stats
+                                                // <table>/txn_seq/_lv both to answer a table's replication
+                                                // status while its token is unresolved and to classify a
+                                                // downloaded table on a fresh replica, and the primary's
+                                                // sequencer-meta upload ships that copy as the view's
+                                                // replication-visible definition. Omitting it makes every
+                                                // restored live view read back as a plain WAL table, so its
+                                                // node-local WAL replicates as ordinary data and no node runs
+                                                // a local refresh. Copied here rather than in the live-view
+                                                // branch because the checkpoint's txn_seq dir only exists once
+                                                // the sequencer metadata dump above has created it.
+                                                //
+                                                // Exists-guarded like the table-dir sidecars: a view the
+                                                // catalogue could not load must not abort CHECKPOINT CREATE
+                                                // for the whole database.
+                                                final Path seqAuxPath = Path.PATH2.get();
+                                                seqAuxPath.of(configuration.getDbRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR)
+                                                        .concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+                                                if (ff.exists(seqAuxPath.$())) {
+                                                    path.trimTo(rootLen).concat(WalUtils.SEQ_DIR)
+                                                            .concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+                                                    if (ff.copy(seqAuxPath.$(), path.$()) < 0) {
+                                                        throw CairoException.critical(ff.errno())
+                                                                .put("could not copy live view sequencer definition file [view=")
+                                                                .put(tableToken).put(']');
+                                                    }
+                                                } else {
+                                                    LOG.info().$("live view sequencer definition file not found, skipping [view=")
+                                                            .$(tableToken).I$();
+                                                }
+                                                // Deliberately NO checkpointSeqTxns entry. That map's only
+                                                // consumer is onCheckpointReleased, which enterprise
+                                                // replication turns into an object-store cleanup cutoff
+                                                // ("clean every object up to this txn"). A live view holds
+                                                // node-local data: its WAL is never uploaded, so the store has
+                                                // no per-txn objects to clean up TO, while this lastTxn is the
+                                                // local seqTxn its own refresh keeps advancing. The cleaner
+                                                // reads a cutoff above the last object txn as inconsistent
+                                                // records and skips the table, so recording one buys nothing.
+                                                // A dropped live view is still reclaimed -- the cleaner's
+                                                // dropped-table arm needs no cutoff.
+                                            } else {
+                                                // Record WAL table seqTxn for checkpoint listener
+                                                checkpointSeqTxns.put(tableToken.getDirName(), lastTxn);
+                                            }
                                         }
 
                                         LogRecord logRecord = LOG.info().$("table included in the checkpoint [table=").$(tableToken)
