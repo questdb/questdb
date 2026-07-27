@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
@@ -55,15 +56,54 @@ public final class PartitionStateEvictor {
     }
 
     /**
+     * Copies every key in {@code survivingKeys} into {@code dst}, which must be empty on
+     * entry. {@code survivingKeySink} reads the key columns straight off
+     * {@code survivingKeys}' own {@link MapRecord} — map records lay value columns out
+     * first and key columns after them, so the sink targets the tail slice.
+     * <p>
+     * Unlike {@link MapRecord#copyToKey(MapKey)}, {@link MapKey#put(io.questdb.cairo.sql.Record, RecordSink)}
+     * writes through the per-column {@code RecordSinkSPI} putters that every {@link Map}
+     * implementation supports, so {@code dst} does NOT have to share an implementation
+     * with {@code survivingKeys}. That is what lets a caller mirror the anchor map's
+     * survivors into a probe built with a different implementation.
+     * <p>
+     * The copy deliberately uses {@link MapKey#createValue()} rather than the
+     * hash-carrying overload: hashes are implementation-specific (see
+     * {@link #rebuildKeepingMembers}), so {@code dst} must compute its own.
+     * <p>
+     * Only keys are read, but {@code createValue()} still materialises {@code dst}'s full
+     * value block per entry, so the probe costs the caller's value width per survivor. A
+     * value-less probe is not an option: the value layout is what makes {@code dst} select
+     * the same {@link Map} implementation as the map it will be probed against.
+     */
+    public static void copySurvivorKeys(Map survivingKeys, RecordSink survivingKeySink, Map dst) {
+        MapRecordCursor cursor = survivingKeys.getCursor();
+        MapRecord record = survivingKeys.getRecord();
+        while (cursor.hasNext()) {
+            MapKey dstKey = dst.withKey();
+            dstKey.put(record, survivingKeySink);
+            dstKey.createValue();
+        }
+    }
+
+    /**
      * Iterates {@code src} and copies each entry whose key is present in
      * {@code survivingKeys} into {@code dst}; entries absent from
-     * {@code survivingKeys} are dropped. {@code dst} must be empty on entry and
-     * built with the same key/value layout as {@code src}; {@code survivingKeys}
-     * must use the same key layout and {@link Map} implementation as {@code src}
-     * (the caller verifies this), because the membership probe copies {@code src}'s
-     * record key into a {@code survivingKeys} key via
-     * {@link MapRecord#copyToKey(MapKey)}, which casts to the concrete impl key.
-     * Returns the number of entries copied.
+     * {@code survivingKeys} are dropped. Returns the number of entries copied.
+     * <p>
+     * {@code dst} must be empty on entry; {@code survivingKeys} holds the survivor set and
+     * is read, never written. BOTH must use the same key layout AND the same {@link Map}
+     * implementation as {@code src}, because the membership probe and the copy both go
+     * through {@link MapRecord#copyToKey(MapKey)}, which casts to the concrete
+     * implementation's key. {@code dst} additionally reuses
+     * {@code src}'s {@link MapRecord#keyHashCode()} via {@link MapKey#createValue(long)},
+     * and hash functions differ per implementation (for a 4-byte key
+     * {@code Hash.hashInt64} zero-extends where {@code Hash.hashMem64} sign-extends), so a
+     * foreign hash would place entries that {@code findValue()} can never locate again.
+     * Do not relax either requirement.
+     * <p>
+     * A caller whose survivor set lives in a different implementation must mirror it into a
+     * matching probe first — see {@link #copySurvivorKeys}.
      * <p>
      * The live-view anchor runtime uses this to keep each anchored window
      * function's partition map in lockstep with the anchor map after a

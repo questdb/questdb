@@ -58,7 +58,8 @@ import org.junit.Test;
  */
 public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
 
-    // The anchor map is empty in these tests, so the sink is never invoked.
+    // The anchor map is empty in these tests, so neither the partition-key sink nor
+    // the anchor-key sink (used only by the frontier sweep) is ever invoked.
     private static final RecordSink NOOP_SINK = new RecordSink() {
         @Override
         public void copy(Record r, RecordSinkSPI w) {
@@ -79,7 +80,7 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
             try (
                     LiveViewWindow window = new LiveViewWindow(
                             configuration, "w", LongConstant.NULL, ColumnType.LONG,
-                            new SingleColumnType(ColumnType.LONG), anchorMap, NOOP_SINK, new ObjList<>(), false, null, null);
+                            new SingleColumnType(ColumnType.LONG), anchorMap, NOOP_SINK, NOOP_SINK, new ObjList<>(), false, null, null);
                     MemoryCARWImpl buf = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
             ) {
                 // A valid empty-map snapshot: prelude + partitionCount(0), no entries.
@@ -149,7 +150,7 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
             try (
                     LiveViewWindow window = new LiveViewWindow(
                             configuration, "w", LongConstant.NULL, ColumnType.LONG,
-                            new SingleColumnType(ColumnType.LONG), anchorMap, NOOP_SINK, new ObjList<>(), false, null, null);
+                            new SingleColumnType(ColumnType.LONG), anchorMap, NOOP_SINK, NOOP_SINK, new ObjList<>(), false, null, null);
                     MemoryCARWImpl buf = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
             ) {
                 window.snapshot(buf);

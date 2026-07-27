@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
@@ -603,13 +604,21 @@ public interface WindowFunction extends Function {
      * has fallen behind the retained window, so each function's map stays in
      * lockstep with the anchor map.
      * <p>
-     * {@code survivingKeys} is the rebuilt anchor map; it shares this function's
-     * partition-by key layout and {@link Map} implementation — the caller verifies
-     * the impl match before dispatching, so the membership probe
-     * ({@link io.questdb.griffin.engine.functions.window.PartitionStateEvictor#rebuildKeepingMembers})
-     * never casts across impls. Default no-op for functions without per-partition state.
+     * {@code survivingKeys} is the rebuilt anchor map. It shares this function's
+     * partition-by key layout, but NOT necessarily its {@link Map} implementation:
+     * {@code MapFactory.createUnorderedMap} selects on value size as well as key shape,
+     * and the anchor map's 10-byte value routinely lands on a different implementation
+     * than a function whose live-view value payload is larger. The membership probe in
+     * {@link io.questdb.griffin.engine.functions.window.PartitionStateEvictor#rebuildKeepingMembers}
+     * cannot cast across implementations, so an implementer that hits a mismatch mirrors
+     * the survivors into a matching probe with
+     * {@link io.questdb.griffin.engine.functions.window.PartitionStateEvictor#copySurvivorKeys}.
+     * <p>
+     * {@code survivingKeySink} reads the partition-by key columns off
+     * {@code survivingKeys}' own map record and is what makes that mirroring
+     * implementation-agnostic. Default no-op for functions without per-partition state.
      */
-    default void retainPartitions(Map survivingKeys) {
+    default void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
     }
 
     /*

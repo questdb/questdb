@@ -146,6 +146,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         // retainPartitions can charge the lazily-created compaction scratch too.
         private MemoryTracker memoryTracker;
         private long rowNumber;
+        // Reusable survivor probe for the frontier sweep, allocated only when the anchor
+        // map picked a different Map impl than this function's partition map. Built once
+        // and reused, like compactionScratch. Holds this function's full value layout,
+        // not just keys -- that layout is what makes it select the same impl.
+        private Map survivorProbe;
         // Single-writer (refresh worker), not volatile.
         private long tombstoneCount;
 
@@ -176,6 +181,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void close() {
             Misc.free(map);
             Misc.free(compactionScratch);
+            Misc.free(survivorProbe);
             Misc.freeObjList(partitionByRecord.getFunctions());
         }
 
@@ -190,7 +196,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void retainPartitions(Map survivingKeys) {
+        public void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
             // RowNumber implements WindowFunction directly (no BasePartitionedWindowFunction),
             // so it overrides retainPartitions itself. The reusable scratch ping-pongs
             // with map; only the first sweep allocates.
@@ -208,7 +214,26 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             } else {
                 compactionScratch.clear();
             }
-            PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, survivingKeys);
+            Map members = survivingKeys;
+            if (survivingKeys.getClass() != map.getClass()) {
+                // The anchor map picked a different Map impl (MapFactory selects on value
+                // size as well as key shape), and rebuildKeepingMembers cannot cast across
+                // impls. Mirror the survivors into a probe built from this function's own
+                // layout, which therefore matches. Allocated once, then reused and cleared.
+                if (survivorProbe == null) {
+                    survivorProbe = MapFactory.createUnorderedMap(configuration, keyColumnTypes, valueColumnTypes);
+                    if (memoryTracker != null) {
+                        survivorProbe.close();
+                        survivorProbe.setMemoryTracker(memoryTracker);
+                        survivorProbe.reopen();
+                    }
+                } else {
+                    survivorProbe.clear();
+                }
+                PartitionStateEvictor.copySurvivorKeys(survivingKeys, survivingKeySink, survivorProbe);
+                members = survivorProbe;
+            }
+            PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, members);
             Map old = map;
             map = compactionScratch;
             compactionScratch = old;
@@ -339,6 +364,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void reset() {
             map.close();
             compactionScratch = Misc.free(compactionScratch);
+            survivorProbe = Misc.free(survivorProbe);
             tombstoneCount = 0;
         }
 

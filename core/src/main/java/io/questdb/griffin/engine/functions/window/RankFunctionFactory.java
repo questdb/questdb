@@ -391,6 +391,11 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         // columns, compacted. This maps each compacted rank-map slot back to its base column index so
         // init() can populate the rank maps from the right symbol tables. Null on the cached path.
         private int[] streamingSymbolTableIndices;
+        // Reusable survivor probe for the frontier sweep, allocated only when the anchor
+        // map picked a different Map impl than this function's partition map. Built once
+        // and reused, like compactionScratch. Holds this function's full value layout,
+        // not just keys -- that layout is what makes it select the same impl.
+        private Map survivorProbe;
         // Live-view-only: count of partitions whose tombstone byte is set. Tracked
         // on the refresh-worker thread (single writer), read by 2b.1d's compaction
         // path. Not volatile.
@@ -426,6 +431,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             super.close();
             Misc.free(map);
             Misc.free(compactionScratch);
+            Misc.free(survivorProbe);
             Misc.freeObjList(partitionByRecord.getFunctions());
             Misc.freeObjList(rankMaps);
         }
@@ -441,7 +447,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void retainPartitions(Map survivingKeys) {
+        public void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
             // RankOverPartitionFunction implements WindowFunction directly (no
             // BasePartitionedWindowFunction), so it overrides retainPartitions itself.
             // The reusable scratch ping-pongs with map; only the first sweep allocates.
@@ -459,7 +465,26 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             } else {
                 compactionScratch.clear();
             }
-            PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, survivingKeys);
+            Map members = survivingKeys;
+            if (survivingKeys.getClass() != map.getClass()) {
+                // The anchor map picked a different Map impl (MapFactory selects on value
+                // size as well as key shape), and rebuildKeepingMembers cannot cast across
+                // impls. Mirror the survivors into a probe built from this function's own
+                // layout, which therefore matches. Allocated once, then reused and cleared.
+                if (survivorProbe == null) {
+                    survivorProbe = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+                    if (memoryTracker != null) {
+                        survivorProbe.close();
+                        survivorProbe.setMemoryTracker(memoryTracker);
+                        survivorProbe.reopen();
+                    }
+                } else {
+                    survivorProbe.clear();
+                }
+                PartitionStateEvictor.copySurvivorKeys(survivingKeys, survivingKeySink, survivorProbe);
+                members = survivorProbe;
+            }
+            PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, members);
             Map old = map;
             map = compactionScratch;
             compactionScratch = old;
@@ -770,6 +795,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         public void reset() {
             Misc.free(map);
             compactionScratch = Misc.free(compactionScratch);
+            survivorProbe = Misc.free(survivorProbe);
             Misc.freeObjListAndKeepObjects(rankMaps);
             rank = 0;
         }

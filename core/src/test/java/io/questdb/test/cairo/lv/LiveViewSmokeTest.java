@@ -12105,6 +12105,85 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFrontierSweepCompactsWhenFunctionMapImplDiffersFromAnchorMap() throws Exception {
+        // MapFactory.createUnorderedMap picks an implementation from the key shape AND the
+        // value size, so an anchored window function whose live-view value payload crosses
+        // cairo.sql.unordered.map.max.entry.size lands on a different Map implementation than
+        // the anchor map. Here the anchor value is 10 bytes (4 + 10 <= 32 -> Unordered4Map)
+        // while covar_samp's BIVAR_COLUMN_TYPES_LV is 49 bytes (4 + 49 > 32, and Unordered8Map
+        // rejects an INT key -> OrderedMap). The frontier sweep must still compact: a legitimate
+        // implementation mismatch cannot disable compaction for the view's whole life, or the
+        // anchor map and every partition map grow without bound.
+        setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        // Eight day-1 partitions, not six: the sweep gate needs stalePartitionCount >= both
+        // the threshold and half the map, and six would put stale(3) exactly on halfMapSize(3).
+        // Eight leaves stale(5) clear of halfMapSize(4), so a future change to the frontier
+        // accounting surfaces as its own failure rather than silently not sweeping here.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, sym, covar_samp(x, y) OVER w AS c FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, y, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 10, 1, 1), " +
+                        "('2026-08-01T01:00:00.000000Z', 20, 2, 2), " +
+                        "('2026-08-01T02:00:00.000000Z', 30, 3, 3), " +
+                        "('2026-08-01T03:00:00.000000Z', 40, 4, 4), " +
+                        "('2026-08-01T04:00:00.000000Z', 50, 5, 5), " +
+                        "('2026-08-01T05:00:00.000000Z', 60, 6, 6), " +
+                        "('2026-08-01T06:00:00.000000Z', 70, 7, 7), " +
+                        "('2026-08-01T07:00:00.000000Z', 80, 8, 8)");
+                execute("INSERT INTO base (ts, x, y, sym) VALUES " +
+                        "('2026-08-02T00:00:00.000000Z', 11, 1, 1), " +
+                        "('2026-08-02T01:00:00.000000Z', 21, 2, 2), " +
+                        "('2026-08-02T02:00:00.000000Z', 31, 3, 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewWindow window = engine.getLiveViewRegistry().getViewInstance("lv").getAnchorWindow();
+                Assert.assertNotNull(window);
+                Assert.assertEquals("no bucket has expired yet", 0L, window.getCompactionCount());
+                Assert.assertEquals(8L, window.getAnchorMapSize());
+
+                // A single day-3 row crosses the anchor and triggers the sweep. Keeping it alone
+                // in its own commit is what makes the next assertion discriminating: only sym 1 is
+                // re-created after the sweep, so a mirror that drops the survivors leaves covar_samp
+                // holding 1 entry while a correct one leaves 3. With syms 2 and 3 in the same commit
+                // they would re-create themselves and mask the difference entirely.
+                setCurrentMicros(600_000L);
+                execute("INSERT INTO base (ts, x, y, sym) VALUES ('2026-08-03T00:00:00.000000Z', 12, 1, 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(
+                        "the sweep must run even though covar_samp's partition map uses a "
+                                + "different Map implementation than the anchor map",
+                        1L,
+                        window.getCompactionCount()
+                );
+                Assert.assertEquals("syms 4-8 fell behind the frontier and were swept", 3L, window.getAnchorMapSize());
+                // The sweep having RUN is not enough: covar_samp's map is rebuilt by probing a
+                // mirrored survivor set, and a mirror that copies the wrong keys (or none) installs
+                // an empty map here while both assertions above still hold -- the anchor map
+                // ping-pongs and the counter ticks regardless of what the functions did.
+                Assert.assertEquals(
+                        "covar_samp's partition map must shrink in lockstep with the anchor map",
+                        3L,
+                        window.getFunctions().getQuick(0).getPartitionMap().size()
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testFrontierSweepSkipsBucketsWithoutExpiredPartitions() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {

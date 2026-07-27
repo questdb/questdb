@@ -329,6 +329,9 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
                 keyTypes,
                 MapFactory.createUnorderedMap(configuration, keyTypes, LiveViewWindow.anchorMapValueTypes()),
                 KEY_SINK,
+                // These tests never run a frontier sweep (the anchor is not monotone), so
+                // the anchor-key sink is never invoked.
+                KEY_SINK,
                 functions,
                 false,
                 null,
