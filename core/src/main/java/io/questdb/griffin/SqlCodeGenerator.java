@@ -9986,13 +9986,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (isFastPath) {
-                // For live-view compiles, collect the window functions whose frame is
-                // UNBOUNDED PRECEDING ... CURRENT ROW: the functions an anchored named
-                // WINDOW owns, plus the checkpoint-stateless calls the bare-unbounded reject
-                // admits over that frame, which keep no per-partition state and whose
-                // resetPartition is a no-op. So the live-view ANCHOR runtime resets only
-                // these and leaves any bounded ROWS/RANGE window declared in the same view
-                // untouched at anchor crossings.
+                // For live-view compiles, collect the subset of window functions the ANCHOR
+                // runtime dispatches resetPartition to. The membership rule is stated in
+                // full at the collection site below.
                 final boolean lvCompile = executionContext.isLiveViewCompile();
                 ObjList<WindowFunction> anchorableWindowFunctions = null;
                 for (int i = 0, size = functions.size(); i < size; i++) {
@@ -10022,9 +10018,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     baseMetadata
                             );
                         }
+                        // Membership is the frame shape AND the anchor's ownership of it.
+                        // The frame has to be UNBOUNDED PRECEDING ... CURRENT ROW, which is
+                        // what the ANCHOR's per-segment reset describes.
+                        //
+                        // The frame shape alone does not decide membership. A window that
+                        // declares no ANCHOR of its own keeps sliding across the anchored
+                        // window's bucket crossings, so resetting it there zeroes a frame
+                        // the user asked to run over the whole partition. Two spellings
+                        // reach this loop already reading as UNBOUNDED PRECEDING ...
+                        // CURRENT ROW without being anchored: an explicit
+                        // ROWS/RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW (a
+                        // non-default frame, so SqlParser's bare-unbounded reject does not
+                        // fire), and the same frame carrying EXCLUDE CURRENT ROW, whose
+                        // fold to a frame end of -1 happens later in
+                        // WindowContextImpl.getRowsHi(). Both keep per-partition state.
+                        // So a function joins the anchor's reset set only when the anchor
+                        // owns it - through its own ANCHOR clause, or through a named
+                        // WINDOW reference that resolved to an anchored definition
+                        // (copySpecFrom deliberately does not copy anchorKind onto the
+                        // reference, so resolvedWindowAnchored is what carries it) - or
+                        // when it keeps no per-partition state at all, which makes
+                        // resetPartition a no-op.
                         if (lvCompile
                                 && qc.getRowsLoKind() == WindowExpression.PRECEDING && qc.getRowsLoExpr() == null
-                                && qc.getRowsHiKind() == WindowExpression.CURRENT && qc.getRowsHiExpr() == null) {
+                                && qc.getRowsHiKind() == WindowExpression.CURRENT && qc.getRowsHiExpr() == null
+                                && (qc.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE
+                                || qc.isResolvedWindowAnchored()
+                                || windowFunction.isCheckpointStateless())) {
                             if (anchorableWindowFunctions == null) {
                                 anchorableWindowFunctions = new ObjList<>();
                             }

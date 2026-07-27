@@ -81,6 +81,14 @@ public class WalReader implements Closeable {
     // history each time - turning the per-commit symbol-map cost from O(events) into
     // O(new events).
     private long symbolMapsResumeOffset = -1;
+    // The directory the previous bind opened, which is what identifies a segment. The
+    // table name does not: the path is built from getDirName(), which is
+    // <name>~<tableId>, so DROP + CREATE of one name - or a blue/green rename swap -
+    // opens a different directory under an unchanged name, and a name-keyed identity
+    // would carry the previous table's symbol dictionary and event-file offset into the
+    // new one. Comparing the directory is free: TableToken holds it as a GcUtf8String
+    // whose toString() returns a cached String rather than materializing one.
+    private String tableDirName;
     private String tableName;
     private WalEventCursor walEventCursor;
     private String walName;
@@ -112,6 +120,8 @@ public class WalReader implements Closeable {
         // Invalidate the same-segment fast path: a reused instance must take the
         // full rebind in of() rather than matching a freed segment.
         segmentId = -1;
+        symbolMapsResumeOffset = -1;
+        tableDirName = null;
         LOG.debug().$("closed '").$safe(tableName).$('\'').$();
     }
 
@@ -240,68 +250,94 @@ public class WalReader implements Closeable {
         // per commit. Computed before the fields are reassigned; columnCount is
         // cross-checked after metadata.open in case the on-disk schema differs.
         final boolean sameTableWalSegment = this.walName != null
-                && this.tableName != null
+                && this.tableDirName != null
                 && this.segmentId == segmentId
-                && Chars.equals(this.tableName, tableToken.getTableName())
+                && Chars.equals(this.tableDirName, tableToken.getDirName())
                 && Chars.equals(this.walName, walName);
         final int prevColumnCount = this.columnCount;
+        final long symbolResumeFrom = this.symbolMapsResumeOffset;
 
-        this.tableName = tableToken.getTableName();
-        if (!sameTableWalSegment) {
-            this.walName = Chars.toString(walName);
+        // Retract the identity and the incremental resume point before the first call
+        // that can throw. From here every exit but the last statement is a throw, and a
+        // rebind that fails part-way has already moved this reader off whatever segment
+        // it held: republishing only at the end means the next bind cannot match a
+        // half-open one and take the incremental path with an offset that belongs to a
+        // different event file. segmentId = -1 is the same sentinel close() uses.
+        this.segmentId = -1;
+        this.symbolMapsResumeOffset = -1;
+
+        boolean bound = false;
+        try {
+            this.tableName = tableToken.getTableName();
+            this.tableDirName = tableToken.getDirName();
+            if (!sameTableWalSegment) {
+                this.walName = Chars.toString(walName);
+            }
+            this.rowCount = rowCount;
+
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(walName);
+            rootLen = path.size();
+
+            metadata.open(path.slash().put(segmentId), rootLen, tableToken);
+            columnCount = metadata.getColumnCount();
+            LOG.debug().$("open [table=").$(tableToken).I$();
+            int pathLen = path.size();
+            walEventCursor = walEventReader.of(path.slash().put(segmentId), -1);
+            path.trimTo(pathLen);
+            // Fold the segment's symbol diffs into the per-column maps. A same-segment
+            // rebind (same segment, only rowCount grew, same column count) folds ONLY the
+            // events appended since the last bind - resuming from the saved offset instead
+            // of clearing and rescanning the whole event history every base commit.
+            // openSymbolMaps returns the offset the walk stopped at (the trailing marker),
+            // which is where the next appended record will land - the resume point for the
+            // following bind.
+            final boolean incrementalSymbols = sameTableWalSegment
+                    && prevColumnCount == columnCount
+                    && symbolResumeFrom >= 0;
+            final long resumeOffset;
+            if (incrementalSymbols) {
+                walEventCursor.resumeFrom(symbolResumeFrom);
+                resumeOffset = openSymbolMaps(walEventCursor, configuration, false);
+            } else {
+                resumeOffset = openSymbolMaps(walEventCursor, configuration, true);
+            }
+            path.slash().put(segmentId);
+            // The symbol-map fold above leaves the event cursor at the trailing marker; its
+            // resume point is already captured in resumeOffset. Rewind it so
+            // getWalEventCursor() hands callers a cursor positioned at the first record.
+            walEventCursor.reset();
+
+            if (!sameTableWalSegment || prevColumnCount != columnCount) {
+                final int capacity = 2 * columnCount + 2;
+                // Different segment (or first bind): drop the prior segment's column
+                // mmaps; loadColumnAt() remaps on demand for this one.
+                Misc.freeObjList(columns);
+                columns.clear();
+                columns.setPos(capacity + 2);
+                columns.setQuick(0, NullMemoryCMR.INSTANCE);
+                columns.setQuick(1, NullMemoryCMR.INSTANCE);
+            }
+            // Same segment: keep the column list intact. dataCursor.of() below runs
+            // openSegment() -> loadColumnAt() for every column, and openOrCreateMemory
+            // remaps each retained mmap in place at the current rowCount.
+            dataCursor.of(this);
+
+            // Publish the identity and the resume point now that every step that can
+            // throw has succeeded.
+            this.segmentId = segmentId;
+            this.symbolMapsResumeOffset = resumeOffset;
+            bound = true;
+            return this;
+        } finally {
+            if (!bound) {
+                // A partial bind holds no usable segment. Drop the rest of the identity
+                // too, so the next bind rebuilds the column list and the dictionary
+                // instead of trusting a column count that describes the previous one.
+                this.tableDirName = null;
+                this.walName = null;
+                this.columnCount = 0;
+            }
         }
-        this.segmentId = segmentId;
-        this.rowCount = rowCount;
-
-        path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(walName);
-        rootLen = path.size();
-
-        metadata.open(path.slash().put(segmentId), rootLen, tableToken);
-        columnCount = metadata.getColumnCount();
-        LOG.debug().$("open [table=").$(tableToken).I$();
-        int pathLen = path.size();
-        walEventCursor = walEventReader.of(path.slash().put(segmentId), -1);
-        path.trimTo(pathLen);
-        // Fold the segment's symbol diffs into the per-column maps. A same-segment
-        // rebind (same segment, only rowCount grew, same column count) folds ONLY the
-        // events appended since the last bind - resuming from the saved offset instead
-        // of clearing and rescanning the whole event history every base commit. The
-        // saved offset is invalidated first so any mid-fold error, or a segment/column
-        // change, degrades to a full rebuild on the next bind. openSymbolMaps returns
-        // the offset the walk stopped at (the trailing marker), which is where the next
-        // appended record will land - the resume point for the following bind.
-        final boolean incrementalSymbols = sameTableWalSegment
-                && prevColumnCount == columnCount
-                && symbolMapsResumeOffset >= 0;
-        final long symbolResumeFrom = symbolMapsResumeOffset;
-        symbolMapsResumeOffset = -1;
-        if (incrementalSymbols) {
-            walEventCursor.resumeFrom(symbolResumeFrom);
-            symbolMapsResumeOffset = openSymbolMaps(walEventCursor, configuration, false);
-        } else {
-            symbolMapsResumeOffset = openSymbolMaps(walEventCursor, configuration, true);
-        }
-        path.slash().put(segmentId);
-        // The symbol-map fold above leaves the event cursor at the trailing marker; its
-        // resume point is already captured in symbolMapsResumeOffset. Rewind it so
-        // getWalEventCursor() hands callers a cursor positioned at the first record.
-        walEventCursor.reset();
-
-        if (!sameTableWalSegment || prevColumnCount != columnCount) {
-            final int capacity = 2 * columnCount + 2;
-            // Different segment (or first bind): drop the prior segment's column
-            // mmaps; loadColumnAt() remaps on demand for this one.
-            Misc.freeObjList(columns);
-            columns.clear();
-            columns.setPos(capacity + 2);
-            columns.setQuick(0, NullMemoryCMR.INSTANCE);
-            columns.setQuick(1, NullMemoryCMR.INSTANCE);
-        }
-        // Same segment: keep the column list intact. dataCursor.of() below runs
-        // openSegment() -> loadColumnAt() for every column, and openOrCreateMemory
-        // remaps each retained mmap in place at the current rowCount.
-        dataCursor.of(this);
-        return this;
     }
 
     public long openSegment() {

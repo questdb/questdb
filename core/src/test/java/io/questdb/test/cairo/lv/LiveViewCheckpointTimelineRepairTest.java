@@ -758,6 +758,51 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testLocalizedRepairResumeRebuildsTierWithoutFaulting() throws Exception {
+        // A multi-turn localized repair resumes through resumeSuspendedRepair, which
+        // rebuilds the in-memory tier outside a drain. The staging buffer it stages
+        // through is worker-wide and freed by refreshInstance's finally at the end of
+        // every cycle, so the resume has to reshape it for this view rather than assume
+        // a drain left one behind. When it does not, stageInMemoryWindowFromDisk throws
+        // an NPE that handleRefreshFailure counts as a flush retry; the repair itself
+        // still self-heals into a full recompute, which is why the sibling test above
+        // passes either way. Only the counters tell the two apart, and a sustained
+        // stream of late rows exhausts the retry budget and durably invalidates the view.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 'a', 100)");
+                drainWalQueue();
+
+                int turns = 0;
+                boolean parked = false;
+                while (turns < 64 && job.processNotificationsForTest()) {
+                    turns++;
+                    parked |= instance.getSuspendedRepair() != null;
+                }
+                drainWalQueue();
+
+                Assert.assertTrue("the replay must have yielded at least once", parked);
+                Assert.assertNull("the repair must finish", instance.getSuspendedRepair());
+                Assert.assertEquals(
+                        "resuming a parked repair must not fault the refresh cycle",
+                        0L,
+                        instance.getRefreshFaultCount()
+                );
+                Assert.assertEquals(
+                        "a faulting resume ticks the flush-retry budget towards a durable invalidation",
+                        0,
+                        instance.getFlushRetryCount()
+                );
+            }
+        });
+    }
+
+    @Test
     public void testLocalizedRepairYieldsAndResumesAcrossRefreshTurns() throws Exception {
         // The same localized repair as testLocalizedO3ReplaySplicesTheTimelineInPlace,
         // driven one base row per turn. The replay stops on its per-turn row budget,

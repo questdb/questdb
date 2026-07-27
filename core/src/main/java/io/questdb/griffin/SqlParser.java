@@ -1906,6 +1906,14 @@ public class SqlParser {
      * A named window no call references keeps the reject too. Vacuously, every one of
      * its zero calls is stateless, but admitting a definition on the strength of
      * having no user would relax more than the shape this carve-out proves.
+     * <p>
+     * The same unreferenced-definition rule covers anchored windows, for a different
+     * reason. An ANCHOR bounds the state of the calls over its window, so a definition
+     * no call references anchors nothing: the runtime would capture the anchor spec,
+     * find no function for {@code resetPartition} to dispatch to, and fail every refresh
+     * cycle until the flush-retry budget invalidates the view. Refusing it at CREATE
+     * reports the mistake where the user can still fix it, and keeps the runtime's
+     * "an anchored window always has at least one function" invariant load-bearing.
      */
     private static void rejectBareUnboundedWindows(IQueryModel queryModel) throws SqlException {
         final LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
@@ -1913,22 +1921,36 @@ public class SqlParser {
         // Named definitions a stateless call has vouched for. Collected during the
         // walk and read after it, because a definition is only cleared by its calls.
         final ObjList<WindowExpression> vouchedFor = new ObjList<>();
+        // Named definitions some call resolves to, whether or not that call clears the
+        // bare-unbounded rule. Read after the walk by the unreferenced-definition arms.
+        final ObjList<WindowExpression> referenced = new ObjList<>();
         for (int i = 0, n = columns.size(); i < n; i++) {
             QueryColumn qc = columns.getQuick(i);
             if (qc.isWindowExpression()) {
-                rejectBareUnboundedWindowCall(qc.getAst(), (WindowExpression) qc, named, vouchedFor);
+                rejectBareUnboundedWindowCall(qc.getAst(), (WindowExpression) qc, named, vouchedFor, referenced);
             }
             // Window calls nested in an arithmetic / function tree carry their OVER
             // clause on the function node itself; walk for those too.
-            walkForBareUnboundedWindow(qc.getAst(), named, vouchedFor);
+            walkForBareUnboundedWindow(qc.getAst(), named, vouchedFor, referenced);
         }
         ObjList<CharSequence> keys = named.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             WindowExpression w = named.get(keys.getQuick(i));
-            if (w != null
-                    && w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE
-                    && isBareUnboundedWindow(w)
-                    && vouchedFor.indexOf(w) < 0) {
+            if (w == null) {
+                continue;
+            }
+            if (w.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE) {
+                if (referenced.indexOf(w) < 0) {
+                    throw SqlException.$(positionOfWindow(w, null), "live view anchored WINDOW '")
+                            .put(keys.getQuick(i))
+                            .put("' is not referenced by any window function; an ANCHOR bounds the state of the calls over its window, so it has nothing to reset. A window inheriting from it, e.g. WINDOW w2 AS (")
+                            .put(keys.getQuick(i))
+                            .put(" ORDER BY ts), does not carry its ANCHOR either - the call has to name it directly, e.g. OVER ")
+                            .put(keys.getQuick(i));
+                }
+                continue;
+            }
+            if (isBareUnboundedWindow(w) && vouchedFor.indexOf(w) < 0) {
                 throw bareUnboundedWindowReject(positionOfWindow(w, null));
             }
         }
@@ -1942,20 +1964,21 @@ public class SqlParser {
     private static void walkForBareUnboundedWindow(
             ExpressionNode node,
             LowerCaseCharSequenceObjHashMap<WindowExpression> named,
-            ObjList<WindowExpression> vouchedFor
+            ObjList<WindowExpression> vouchedFor,
+            ObjList<WindowExpression> referenced
     ) throws SqlException {
         if (node == null) {
             return;
         }
         if (node.windowExpression != null) {
-            rejectBareUnboundedWindowCall(node, node.windowExpression, named, vouchedFor);
+            rejectBareUnboundedWindowCall(node, node.windowExpression, named, vouchedFor, referenced);
         }
         if (node.paramCount < 3) {
-            walkForBareUnboundedWindow(node.lhs, named, vouchedFor);
-            walkForBareUnboundedWindow(node.rhs, named, vouchedFor);
+            walkForBareUnboundedWindow(node.lhs, named, vouchedFor, referenced);
+            walkForBareUnboundedWindow(node.rhs, named, vouchedFor, referenced);
         } else if (node.args != null) {
             for (int i = 0, n = node.paramCount; i < n; i++) {
-                walkForBareUnboundedWindow(node.args.getQuick(i), named, vouchedFor);
+                walkForBareUnboundedWindow(node.args.getQuick(i), named, vouchedFor, referenced);
             }
         }
     }
@@ -1969,10 +1992,22 @@ public class SqlParser {
             ExpressionNode fn,
             WindowExpression window,
             LowerCaseCharSequenceObjHashMap<WindowExpression> named,
-            ObjList<WindowExpression> vouchedFor
+            ObjList<WindowExpression> vouchedFor,
+            ObjList<WindowExpression> referenced
     ) throws SqlException {
-        if (fn == null || fn.type != ExpressionNode.FUNCTION || fn.token == null
-                || isAnchoredWindow(window, named)) {
+        if (fn == null || fn.type != ExpressionNode.FUNCTION || fn.token == null) {
+            return;
+        }
+        // Record the definition this call resolves to before the anchored short-circuit
+        // below: an anchored definition is exempt from the bare-unbounded rule but still
+        // has to have a user, and this is the only walk that sees the calls.
+        if (window != null && window.isNamedWindowReference()) {
+            final WindowExpression def = named.get(window.getWindowName());
+            if (def != null && referenced.indexOf(def) < 0) {
+                referenced.add(def);
+            }
+        }
+        if (isAnchoredWindow(window, named)) {
             return;
         }
         // A named reference carries neither frame nor PARTITION BY of its own, so

@@ -7039,6 +7039,46 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * them as duplicates.
      */
     private void restageInMemoryTierFromDisk(LiveViewInstance instance, LiveViewInMemoryTier tier) {
+        // Reshape the worker-local staging buffer to THIS view before staging through it.
+        // Only the two drain entry points (incrementalRefresh, drainAppliedBase) allocate
+        // one, so the three rebuild paths that reach here outside a drain -
+        // resumeSuspendedRepair, retryPendingLiveViewApply and
+        // rederiveFromAppliedBaseAfterWalLoss - would otherwise stage through a null
+        // buffer. Allocating one unconditionally is not enough either: stagingColumnTypes
+        // is worker-wide and still describes whichever view this worker served last, and
+        // copyReaderRowsToStaging dispatches off it, so this view's disk columns would be
+        // read through another view's strides. ensureStagingAndTier reshapes both, and is
+        // a cheap shape-match no-op for the callers that already ran it this cycle.
+        //
+        // What decides who releases the buffer is not "outside a drain" but "outside
+        // refreshInstance", whose finally frees it at the end of every cycle.
+        // resumeSuspendedRepair and rederiveFromAppliedBaseAfterWalLoss still run inside
+        // refreshInstance and are covered by it; retryPendingLiveViewApply is a top-level
+        // helper reached from scanForLaggingViews, so it mirrors that free in its own
+        // finally - otherwise the buffer would outlive the latch that allocated it and
+        // strand this view's tracker charge past tryFreeRuntimeStateIfInvalid.
+        // A skipped restage marks the tier stale, exactly like the both-slots-pinned skip
+        // below: the published slot keeps rows this rebuild was supposed to replace, so a
+        // later publish must drop them rather than append onto them and re-stamp the slot
+        // with a matching seqTxn. The fence keeps reads correct until then.
+        final RecordCursorFactory compiledFactory = instance.getCompiledFactory();
+        if (compiledFactory == null) {
+            // A base-schema recompile frees the factory and deliberately keeps the tier,
+            // so this is reachable with a live tier. The next cycle recompiles and rebuilds.
+            instance.setTierStale(true);
+            return;
+        }
+        // unwrapWindowFactory is total here: ensureCompiledFactory unwraps the same object
+        // before caching it, so a non-null compiled factory has already survived this call.
+        final RecordMetadata outMetadata = unwrapWindowFactory(compiledFactory).getMetadata();
+        final int tsColIdx = outMetadata.getTimestampIndex();
+        if (tsColIdx < 0 || !ensureStagingAndTier(instance, outMetadata, tsColIdx)) {
+            // An output column type the tier cannot store: this view never populates the
+            // tier and its cursors read disk-only.
+            instance.setTierStale(true);
+            return;
+        }
+
         // Stage the recent IN MEMORY window from the applied LV table.
         // The reader's getSeqTxn() is the same coordinate a query's disk reader
         // reports, so stamping the slot with it makes the fence pass for an
@@ -7787,14 +7827,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", error=").$(t).I$();
             return false;
         } finally {
-            instance.unlockAfterRefresh();
-            instance.tryCloseIfDropped();
-            // Mirror the main refresh finally: if the view was invalidated concurrently while
-            // this helper held the refresh latch, the invalidator's own free lost the CAS and
-            // relies on the latch holder to free the runtime state (factory, maps, tier,
-            // tracker) once the latch is released. Without this, an invalid view strands that
-            // state until DROP or shutdown.
-            instance.tryFreeRuntimeStateIfInvalid();
+            // Mirror refreshInstance's cycle-scoped free. The tier rebuild above reaches
+            // restageInMemoryTierFromDisk, which reshapes the worker's staging buffer for
+            // this view - and this helper runs outside refreshInstance, so nothing else
+            // would ever release it. Leaving it bound keeps this view's refresh tracker
+            // charged past the latch, and lets tryFreeRuntimeStateIfInvalid below return
+            // that tracker to the pool with the buffer's pages still outstanding. Nested
+            // try for the same reason as the main cycle: Misc.free catches only
+            // IOException, so a close() assert must not skip the releases below and wedge
+            // the view's refresh latch.
+            try {
+                stagingBuffer = Misc.free(stagingBuffer);
+            } finally {
+                instance.unlockAfterRefresh();
+                instance.tryCloseIfDropped();
+                // Mirror the main refresh finally: if the view was invalidated concurrently while
+                // this helper held the refresh latch, the invalidator's own free lost the CAS and
+                // relies on the latch holder to free the runtime state (factory, maps, tier,
+                // tracker) once the latch is released. Without this, an invalid view strands that
+                // state until DROP or shutdown.
+                instance.tryFreeRuntimeStateIfInvalid();
+            }
         }
     }
 

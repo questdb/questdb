@@ -881,6 +881,15 @@ public final class LiveViewCheckpointFunctionCompiler {
      * it, and {@link #isDependencyComplete} checks that one exists. A factory with no
      * anchored function at all answers false: there is nothing for the anchor to be a
      * dependency contract over.
+     * <p>
+     * The containment is checked in both directions. Forward: every anchored function has
+     * to be in the subset, or the anchor does not in fact reset it. Reverse: every member
+     * of the subset has to be anchored or checkpoint-stateless, because a member that is
+     * neither carries per-partition state the anchor resets without owning - the segment
+     * then does not describe that function's state either, and the replay a repair builds
+     * on it would rehydrate the wrong values. {@code SqlCodeGenerator} already collects on
+     * exactly that rule; this is the checkpoint side refusing to plan over a subset that
+     * broke it.
      */
     private static boolean isAnchorSegmentLocal(
             ObjList<WindowFunction> windowFunctions,
@@ -888,6 +897,16 @@ public final class LiveViewCheckpointFunctionCompiler {
     ) {
         if (anchorableWindowFunctions == null) {
             return false;
+        }
+        for (int i = 0, n = anchorableWindowFunctions.size(); i < n; i++) {
+            final WindowFunction function = anchorableWindowFunctions.getQuick(i);
+            if (function.isCheckpointStateless()) {
+                continue;
+            }
+            final LiveViewCheckpointDependency dependency = function.checkpointDependency();
+            if (dependency == null || dependency.getKind() != DependencyKind.FIXED_ANCHOR_SEGMENT) {
+                return false;
+            }
         }
         int anchoredCount = 0;
         for (int i = 0, n = windowFunctions.size(); i < n; i++) {
