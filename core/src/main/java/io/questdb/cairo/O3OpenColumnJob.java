@@ -1340,9 +1340,33 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                 dstAuxOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
                 dstAuxFileOffset = dstAuxOffset;
+                // Sample the aux file's real length BEFORE mapRW extends it to dstAuxSize. Once mapped,
+                // the evidence is gone: the region past the old EOF reads back as zeros, which is
+                // indistinguishable from an entry that was written as zeros.
+                final long dstAuxFileLen = dstAuxOffset > 0 ? ff.length(Math.abs(activeFixFd)) : 0;
                 dstAuxAddr = mapRW(ff, Math.abs(activeFixFd), dstAuxSize, MemoryTag.MMAP_O3);
 
                 if (dstAuxOffset > 0) {
+                    // The last existing row's aux entry ends exactly at dstAuxOffset, so a file shorter
+                    // than that holds fewer rows than _txn/_cv claim for this partition and column. The
+                    // read below would then take its entry from beyond the old EOF: all zeros, which
+                    // trips an assertion inside the type driver under -ea, and with assertions off
+                    // silently yields data size 0 and resurfaces much later and much further away as
+                    // "Invalid column size" from whichever reader opens the partition next. Neither
+                    // names the column, the partition, or the shortfall. Fail here, where they are known.
+                    if (dstAuxFileLen < dstAuxOffset) {
+                        throw CairoException.critical(0)
+                                .put("aux vector is shorter than the partition row count [table=")
+                                .put(tableWriter.getTableToken().getTableName())
+                                .put(", partitionTimestamp=").put(partitionTimestamp)
+                                .put(", columnType=").put(ColumnType.nameOf(columnType))
+                                .put(", auxFd=").put(activeFixFd)
+                                .put(", auxFileLen=").put(dstAuxFileLen)
+                                .put(", requiredLen=").put(dstAuxOffset)
+                                .put(", srcDataMax=").put(srcDataMax)
+                                .put(", srcDataTop=").put(srcDataTop)
+                                .put(']');
+                    }
                     dstDataOffset = columnTypeDriver.getDataVectorSizeAt(dstAuxAddr, srcDataMax - 1 - srcDataTop);
                 } else {
                     dstDataOffset = 0;
