@@ -159,7 +159,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
                 setLastRef(offset, newChainEnd);
                 return;
             }
-        } while (offset > -1);
+        } while (offset != EMPTY);
 
         offset = allocateBlock();
         setParent(offset, parent);
@@ -190,8 +190,9 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         return (int) (rawOffset >> 2);
     }
 
+    // Compressed offsets are unsigned: values past the 8GB mark have the top bit set.
     private static long uncompressValueOffset(int offset) {
-        return ((long) offset) << 2;
+        return Integer.toUnsignedLong(offset) << 2;
     }
 
     private int appendNewValue(long rowId) {
@@ -205,14 +206,21 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
 
     private void checkValueCapacity() {
         if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
-            final long newHeapSize = valueHeapSize << 1;
+            final long required = valueHeapPos - valueHeapStart + CHAIN_VALUE_SIZE;
+            long newHeapSize = valueHeapSize << 1;
             if (newHeapSize > maxValueHeapSize) {
-                LimitOverflowException ex = LimitOverflowException.instance();
-                ex.put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LongTreeChain");
-                if (valueHeapConfigKey != null) {
-                    ex.put(" (raise ").put(valueHeapConfigKey).put(')');
+                if (required > maxValueHeapSize) {
+                    LimitOverflowException ex = LimitOverflowException.instance();
+                    ex.put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LongTreeChain");
+                    if (valueHeapConfigKey != null) {
+                        ex.put(" (raise ").put(valueHeapConfigKey).put(')');
+                    }
+                    throw ex;
                 }
-                throw ex;
+                // Doubling overshoots a cap that is rarely a power of two, so rejecting here
+                // would strand up to half of the configured budget. The value we have to fit
+                // still fits, so clamp to the cap instead.
+                newHeapSize = maxValueHeapSize;
             }
             long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
 

@@ -39,7 +39,9 @@ import java.io.Closeable;
  * <p>
  * For each long value also stores compressed offset for its parent (previous in the chain) value.
  * A compressed offset contains an offset to the address of the parent value in the heap memory
- * compressed to an int. Value addresses are 4-byte aligned.
+ * compressed to an int. Value addresses are 4-byte aligned. Compressed offsets are unsigned,
+ * with -1 reserved as the end-of-chain sentinel, so the chain end must be tested as
+ * {@code == -1}, never as {@code < 0}.
  */
 public class LongChain implements Closeable, Mutable, Reopenable {
     private static final long CHAIN_VALUE_SIZE = 12;
@@ -118,15 +120,23 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         return (int) (rawOffset >> 2);
     }
 
+    // Compressed offsets are unsigned: values past the 8GB mark have the top bit set.
     private static long uncompressOffset(int offset) {
-        return ((long) offset) << 2;
+        return Integer.toUnsignedLong(offset) << 2;
     }
 
     private void checkCapacity() {
         if (heapPos + CHAIN_VALUE_SIZE > heapLimit) {
-            final long newHeapSize = heapSize << 1;
+            final long required = heapPos - heapStart + CHAIN_VALUE_SIZE;
+            long newHeapSize = heapSize << 1;
             if (newHeapSize > maxHeapSize) {
-                throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in LongChain");
+                if (required > maxHeapSize) {
+                    throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in LongChain");
+                }
+                // Doubling overshoots a cap that is rarely a power of two, so rejecting here
+                // would strand up to half of the configured budget. The value we have to fit
+                // still fits, so clamp to the cap instead.
+                newHeapSize = maxHeapSize;
             }
             long newHeapPos = Unsafe.realloc(heapStart, heapSize, newHeapSize, MemoryTag.NATIVE_DEFAULT, memoryTracker);
 

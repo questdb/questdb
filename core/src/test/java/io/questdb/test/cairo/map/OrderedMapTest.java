@@ -49,6 +49,7 @@ import io.questdb.cairo.map.MapValueMergeFunction;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
@@ -78,6 +79,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Method;
 import java.util.HashMap;
 
 public class OrderedMapTest extends AbstractCairoTest {
@@ -1825,6 +1827,40 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOffsetCompressionRoundTripsAboveSignedIntRange() throws Exception {
+        // Compressed offsets are unsigned 32-bit. Offsets at or above (2^31 - 1) * 8 set the top
+        // bit of the raw int; reading them back as a signed int yielded a negative offset, which
+        // the probe loops then mistook for an empty slot. Pin the unsigned round-trip down.
+        final Method compressOffset = OrderedMap.class.getDeclaredMethod("compressOffset", long.class);
+        final Method decompressOffset = OrderedMap.class.getDeclaredMethod("decompressOffset", int.class);
+        compressOffset.setAccessible(true);
+        decompressOffset.setAccessible(true);
+
+        final long lastSignedOffset = (Integer.MAX_VALUE - 1L) << 3; // compresses to Integer.MAX_VALUE
+        final long firstUnsignedOffset = ((long) Integer.MAX_VALUE) << 3; // compresses to Integer.MIN_VALUE
+        final long maxHeapSize = (Integer.toUnsignedLong(-1) - 1) << 3; // (2^32 - 2) * 8
+        final long[] offsets = {
+                0,
+                8,
+                1L << 30,
+                lastSignedOffset,
+                firstUnsignedOffset,
+                1L << 34,
+                maxHeapSize - 8, // last offset an entry can start at
+        };
+        for (long offset : offsets) {
+            int rawOffset = (Integer) compressOffset.invoke(null, offset);
+            Assert.assertNotEquals("offset " + offset + " must not compress to the empty marker", 0, rawOffset);
+            Assert.assertEquals("offset " + offset, offset, ((Long) decompressOffset.invoke(null, rawOffset)).longValue());
+        }
+
+        // The upper half of the range is exactly what the signed reading got wrong.
+        Assert.assertTrue((Integer) compressOffset.invoke(null, lastSignedOffset) > 0);
+        Assert.assertTrue((Integer) compressOffset.invoke(null, firstUnsignedOffset) < 0);
+        Assert.assertTrue((Integer) compressOffset.invoke(null, maxHeapSize - 8) < 0);
+    }
+
+    @Test
     public void testRecordAsKey() throws Exception {
         assertMemoryLeak(() -> {
             final int N = 5000;
@@ -1882,6 +1918,179 @@ public class OrderedMapTest extends AbstractCairoTest {
                         mapCursor.toTop();
                         assertCursor2(rnd, binarySequence, keyColumnOffset, rnd2, mapCursor);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testResizeClampedHeapVarSizeKey() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // Same clamp as the fixed-size case, but reached through VarSizeKey.checkCapacity(),
+            // which resizes mid-key and has to shift startAddr/appendAddr by the realloc delta.
+            // A 4-char STRING key plus a LONG value is a 24-byte entry: the heap grows
+            // 32 -> 64 -> ... -> 2048, then clamps to 3064 instead of overshooting to 4096.
+            // 3064 bytes hold 127 entries; the pre-clamp 2048 held 85.
+            final long maxHeapSize = 3_064;
+            final int clampedEntries = 127;
+            final Rnd rnd = new Rnd();
+
+            try (
+                    OrderedMap map = new OrderedMap(
+                            32,
+                            new SingleColumnType(ColumnType.STRING),
+                            new SingleColumnType(ColumnType.LONG),
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE
+                    )
+            ) {
+                map.setMaxHeapSize(maxHeapSize);
+
+                // Fill to one entry short of the ceiling. The clamp happens well before that.
+                for (int i = 0; i < clampedEntries - 1; i++) {
+                    MapKey key = map.withKey();
+                    key.putStr(rnd.nextString(4));
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putLong(0, i);
+                }
+                Assert.assertEquals(maxHeapSize, map.getHeapSize());
+
+                // Every entry written into the clamped heap must still be readable.
+                rnd.reset();
+                for (int i = 0; i < clampedEntries - 1; i++) {
+                    MapKey key = map.withKey();
+                    key.putStr(rnd.nextString(4));
+                    MapValue value = key.findValue();
+                    Assert.assertNotNull(value);
+                    Assert.assertEquals(i, value.getLong(0));
+                }
+
+                // The last entry fits exactly, the one after it does not.
+                MapKey key = map.withKey();
+                key.putStr(rnd.nextString(4));
+                key.createValue().putLong(0, clampedEntries - 1);
+                Assert.assertEquals(clampedEntries, map.size());
+                Assert.assertEquals(24L * clampedEntries, map.getUsedHeapSize());
+
+                try {
+                    MapKey overflowing = map.withKey();
+                    overflowing.putStr(rnd.nextString(4));
+                    overflowing.createValue();
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 3064 memory exceeded in FastMap");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testResizeClampsHeapToMaxHeapSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // The heap ceiling is 16 bytes below 2^35, so it is never a power of two, while
+            // every doubling step is. Model that at KB scale: growing 32 -> 64 -> ... -> 2048,
+            // the next step (4096) overshoots the 3064-byte ceiling and must clamp to it
+            // rather than fail. 3064 bytes hold 191 16-byte entries; the pre-clamp 2048 held 128.
+            final long maxHeapSize = 3_064;
+            final int clampedEntries = 191;
+            final int preClampEntries = 128;
+
+            try (
+                    OrderedMap map = new OrderedMap(
+                            32,
+                            new SingleColumnType(ColumnType.LONG),
+                            new SingleColumnType(ColumnType.LONG),
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE
+                    )
+            ) {
+                map.setMaxHeapSize(maxHeapSize);
+
+                // Fill to one entry short of the ceiling. The clamp happens at 2048 -> 3064,
+                // so everything past entry 128 only exists because resize() clamped.
+                for (int i = 0; i < clampedEntries - 1; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i);
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putLong(0, i);
+                }
+                Assert.assertEquals(maxHeapSize, map.getHeapSize());
+                Assert.assertTrue("the clamp must have added capacity", map.size() > preClampEntries);
+                // A clamped heap is not a power of two - nothing downstream may assume it is.
+                Assert.assertNotEquals(maxHeapSize, Numbers.ceilPow2(maxHeapSize));
+
+                // Probing works over the clamped heap. It needs one entry of headroom at kPos,
+                // where withKey() stages the search key, so it has to run before the last insert.
+                for (int i = 0; i < clampedEntries - 1; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i);
+                    MapValue value = key.findValue();
+                    Assert.assertNotNull(value);
+                    Assert.assertEquals(i, value.getLong(0));
+                }
+
+                // The last entry fits exactly, the one after it does not.
+                MapKey lastKey = map.withKey();
+                lastKey.putLong(clampedEntries - 1);
+                lastKey.createValue().putLong(0, clampedEntries - 1);
+                Assert.assertEquals(clampedEntries, map.size());
+                Assert.assertEquals(16L * clampedEntries, map.getUsedHeapSize());
+
+                try {
+                    MapKey overflowing = map.withKey();
+                    overflowing.putLong(clampedEntries);
+                    overflowing.createValue();
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 3064 memory exceeded in FastMap");
+                }
+
+                // Cursor iteration over the clamped heap yields every entry, in insertion order.
+                int i = 0;
+                try (RecordCursor cursor = map.getCursor()) {
+                    MapRecord record = map.getRecord();
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(i, record.getLong(1));
+                        Assert.assertEquals(i, record.getValue().getLong(0));
+                        i++;
+                    }
+                }
+                Assert.assertEquals(clampedEntries, i);
+
+                // restoreInitialCapacity() must cope with the clamped, non-power-of-two heap.
+                map.restoreInitialCapacity();
+                Assert.assertEquals(32L, map.getHeapSize());
+                Assert.assertEquals(0, map.size());
+            }
+        });
+    }
+
+    @Test
+    public void testResizeThrowsWhenEntryExceedsMaxHeapSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // A single entry larger than the ceiling can never fit, clamp or no clamp.
+            try (
+                    OrderedMap map = new OrderedMap(
+                            32,
+                            new SingleColumnType(ColumnType.STRING),
+                            new SingleColumnType(ColumnType.LONG),
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE
+                    )
+            ) {
+                map.setMaxHeapSize(3_064);
+
+                try {
+                    MapKey key = map.withKey();
+                    key.putStr("a".repeat(4_000));
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 3064 memory exceeded in FastMap");
                 }
             }
         });

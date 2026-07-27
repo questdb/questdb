@@ -55,6 +55,7 @@ import io.questdb.std.bytes.Bytes;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
 
@@ -81,8 +82,9 @@ import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
  * <li>2. Off-heap memory for key-value pairs a.k.a. "key memory"</li>
  * </ul>
  * The offset list contains [compressed_offset, hash code 32 LSBs] pairs. An offset value contains
- * an offset to the address of a key-value pair in the key memory compressed to an int. Key-value
- * pair addresses are 8 byte aligned, so a FastMap is capable of holding up to 32GB of data.
+ * an offset to the address of a key-value pair in the key memory compressed to an int. Compressed
+ * offsets are unsigned: they are shifted by +1, so that 0 marks an empty slot, and 8 byte aligned,
+ * so a FastMap is capable of holding up to 32GB of data.
  * <p>
  * The offset list is used as a hash table with linear probing. So, a table resize allocates a new
  * offset list and copies offsets there while the key memory stays as is.
@@ -98,6 +100,9 @@ import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
  */
 public class OrderedMap implements Map, Reopenable {
     static final long VAR_KEY_HEADER_SIZE = 4;
+    // The largest byte offset a compressed offset can encode: offsets are unsigned 32-bit,
+    // shifted by +1 and 8-byte scaled, so this is (2^32 - 2) * 8. Note that it is 16 bytes
+    // below 2^35, i.e. not a power of two, hence resize() has to clamp to it.
     private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final int MIN_KEY_CAPACITY = 16;
 
@@ -127,6 +132,9 @@ public class OrderedMap implements Map, Reopenable {
     private long kPos;      // Current key-value memory pointer (contains searched key / pending key-value pair).
     private int keyCapacity;
     private int mask;
+    // Heap ceiling honoured by resize(). Always MAX_HEAP_SIZE in production; tests lower it
+    // to exercise the clamp without allocating 16GB.
+    private long maxHeapSize = MAX_HEAP_SIZE;
     // Per-query native memory tracker bound by the owning factory at cursor start.
     // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
     // degrade to the global-only overloads in that case.
@@ -135,6 +143,8 @@ public class OrderedMap implements Map, Reopenable {
     private int nResizes;
     // Holds a list of [compressed_offset, hash_code] pairs.
     // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory with 0.
+    // A compressed offset is an UNSIGNED 32-bit value, so slot emptiness must be tested as
+    // "raw offset == 0", never as "raw offset <= 0": offsets past 16GB have their top bit set.
     // Lowest 32 bits of hash code can be used to obtain an entry index since
     // maximum number of entries in the map is limited with 32-bit compressed offsets.
     private long offsetsAddr;
@@ -485,6 +495,18 @@ public class OrderedMap implements Map, Reopenable {
         rehash(Numbers.ceilPow2((int) requiredCapacity));
     }
 
+    /**
+     * Lowers the heap ceiling honoured by {@code resize()}, so that both the clamp and the
+     * limit-exceeded path can be exercised without allocating 16GB. The value must be positive,
+     * 8-byte aligned, since heap offsets are 8-byte scaled, and no greater than the natural
+     * ceiling imposed by compressed offsets.
+     */
+    @TestOnly
+    public void setMaxHeapSize(long maxHeapSize) {
+        assert maxHeapSize > 0 && (maxHeapSize & 7) == 0 && maxHeapSize <= MAX_HEAP_SIZE;
+        this.maxHeapSize = maxHeapSize;
+    }
+
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         this.memoryTracker = tracker;
@@ -513,8 +535,9 @@ public class OrderedMap implements Map, Reopenable {
         return (int) ((offset >> 3) + 1);
     }
 
+    // Callers must have established that rawOffset != 0, i.e. that the slot is occupied.
     private static long decompressOffset(int rawOffset) {
-        return ((long) rawOffset - 1) << 3;
+        return (Integer.toUnsignedLong(rawOffset) - 1) << 3;
     }
 
     private static void validateBatchAddressable(long sizeBytes) {
@@ -555,18 +578,19 @@ public class OrderedMap implements Map, Reopenable {
         OUTER:
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
             long srcP = srcMap.offsetsAddr + ((long) i << 3);
-            long offset = decompressOffset(Unsafe.getInt(srcP));
-            if (offset < 0) {
+            int srcRawOffset = Unsafe.getInt(srcP);
+            if (srcRawOffset == 0) {
                 continue;
             }
 
-            long srcStartAddr = srcMap.heapAddr + offset;
+            long srcStartAddr = srcMap.heapAddr + decompressOffset(srcRawOffset);
             int hashCodeLo = Unsafe.getInt(srcP + 4);
             int index = hashCodeLo & mask;
 
-            long destOffset;
+            int destRawOffset;
             long destP = offsetsAddr + ((long) index << 3);
-            while ((destOffset = decompressOffset(Unsafe.getInt(destP))) > -1) {
+            while ((destRawOffset = Unsafe.getInt(destP)) != 0) {
+                long destOffset = decompressOffset(destRawOffset);
                 if (
                         hashCodeLo == Unsafe.getInt(destP + 4)
                                 && Vect.memeq(heapAddr + destOffset, srcStartAddr, keySize)
@@ -607,19 +631,20 @@ public class OrderedMap implements Map, Reopenable {
         OUTER:
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
             long srcOffsetAddr = srcMap.offsetsAddr + ((long) i << 3);
-            long offset = decompressOffset(Unsafe.getInt(srcOffsetAddr));
-            if (offset < 0) {
+            int srcRawOffset = Unsafe.getInt(srcOffsetAddr);
+            if (srcRawOffset == 0) {
                 continue;
             }
 
-            long srcStartAddr = srcMap.heapAddr + offset;
+            long srcStartAddr = srcMap.heapAddr + decompressOffset(srcRawOffset);
             int srcKeySize = Unsafe.getInt(srcStartAddr);
             int hashCodeLo = Unsafe.getInt(srcOffsetAddr + 4);
             int index = hashCodeLo & mask;
 
-            long destOffset;
+            int destRawOffset;
             long destOffsetAddr = offsetsAddr + ((long) index << 3);
-            while ((destOffset = decompressOffset(Unsafe.getInt(destOffsetAddr))) > -1) {
+            while ((destRawOffset = Unsafe.getInt(destOffsetAddr)) != 0) {
+                long destOffset = decompressOffset(destRawOffset);
                 if (
                         hashCodeLo == Unsafe.getInt(destOffsetAddr + 4)
                                 && Unsafe.getInt(heapAddr + destOffset) == srcKeySize
@@ -662,7 +687,7 @@ public class OrderedMap implements Map, Reopenable {
         // Layout: [rawOffset (4 bytes) | hashCodeLo (4 bytes)]
         long slotValue = Unsafe.getLong(offsetAddr);
         int rawOffset = Numbers.decodeLowInt(slotValue);
-        while (rawOffset > 0) {
+        while (rawOffset != 0) {
             int storedHash = Numbers.decodeHighInt(slotValue);
             if (hashCodeLo == storedHash) {
                 long offset = decompressOffset(rawOffset);
@@ -800,7 +825,7 @@ public class OrderedMap implements Map, Reopenable {
         // Read offset and hash as a single 64-bit value to reduce memory accesses.
         long slotValue = Unsafe.getLong(offsetAddr);
         int rawOffset = Numbers.decodeLowInt(slotValue);
-        while (rawOffset > 0) {
+        while (rawOffset != 0) {
             int storedHash = Numbers.decodeHighInt(slotValue);
             if (hashCodeLo == storedHash) {
                 long offset = decompressOffset(rawOffset);
@@ -843,7 +868,7 @@ public class OrderedMap implements Map, Reopenable {
             int index = hashCodeLo & newMask;
 
             long newOffsetAddr = newOffsetsAddr + ((long) index << 3);
-            while (Unsafe.getInt(newOffsetAddr) > 0) {
+            while (Unsafe.getInt(newOffsetAddr) != 0) {
                 index = (index + 1) & newMask;
                 newOffsetAddr = newOffsetsAddr + ((long) index << 3);
             }
@@ -865,13 +890,21 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         nResizes++;
+        final long maxHeapSize = this.maxHeapSize;
+        final long target = appendAddr + entrySize - heapAddr;
+        if (target > maxHeapSize) {
+            throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in FastMap");
+        }
         long kCapacity = (heapLimit - heapAddr) << 1;
-        long target = appendAddr + entrySize - heapAddr;
         if (kCapacity < target) {
             kCapacity = Numbers.ceilPow2(target);
         }
-        if (kCapacity > MAX_HEAP_SIZE) {
-            throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
+        // Both the doubling and the ceilPow2 above yield a power of two, while the ceiling is
+        // 16 bytes below 2^35. Clamp rather than reject: the data we have to fit still does fit,
+        // and nothing downstream requires a power-of-two heap. Without the clamp the largest
+        // reachable heap would be 2^34, i.e. half of what compressed offsets can address.
+        if (kCapacity > maxHeapSize) {
+            kCapacity = maxHeapSize;
         }
         validateBatchAddressable(kCapacity);
         long kAddr = Unsafe.realloc(heapAddr, heapSize, kCapacity, heapMemoryTag, memoryTracker);

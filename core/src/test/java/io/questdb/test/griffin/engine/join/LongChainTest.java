@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.join.LongChain;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -31,6 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -69,6 +71,39 @@ public class LongChainTest {
                     }
                     Assert.assertEquals(N, count);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testHeapClampsToMaxHeapSize() throws Exception {
+        assertMemoryLeak(() -> {
+            // 64B page x 3 pages = a 192B budget, which is not a power of two. Doubling goes
+            // 64 -> 128 -> 256, and 256 overshoots, so rejecting there stranded a third of the
+            // configured budget. Clamping to 192 fits 16 12-byte values instead of 10.
+            try (LongChain chain = new LongChain(64, 3)) {
+                final LongList expected = new LongList();
+                int tail = -1;
+                try {
+                    for (int i = 0; i < 100; i++) {
+                        tail = chain.put(i, tail);
+                        expected.add(i);
+                    }
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 192 memory exceeded in LongChain");
+                }
+                Assert.assertEquals(16, expected.size());
+
+                // Everything written into the clamped heap must still read back, in reverse order.
+                expected.reverse();
+                LongChain.Cursor cursor = chain.getCursor(tail);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(expected.getQuick(count), cursor.next());
+                    count++;
+                }
+                Assert.assertEquals(expected.size(), count);
             }
         });
     }

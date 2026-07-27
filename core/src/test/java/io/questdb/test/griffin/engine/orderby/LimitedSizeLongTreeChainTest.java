@@ -126,6 +126,24 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyHeapClampsToMaxHeapSize() {
+        // A 200-byte key budget is not a power of two, while every doubling step is. The chain
+        // goes 64 -> 128 and then wants 256; rejecting there stranded a quarter of the budget
+        // at 5 blocks. Clamping to 200 fits 8 of the 24-byte blocks instead.
+        chain.close();
+        chain = new LimitedSizeLongTreeChain(
+                64,             // key page >= BLOCK_SIZE
+                200,            // key heap budget, deliberately not a power of two
+                128 * 1024,
+                Long.MAX_VALUE, // value heap uncapped
+                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+        );
+        chain.updateLimits(true, 1_000);
+        Assert.assertEquals(8, fillUntilOverflow("memory exceeded in RedBlackTree"));
+    }
+
+    @Test
     public void testKeyHeapOverflowNamesConfigKey() {
         // Tiny key-heap budget (one page) with an uncapped value heap: the red-black key heap
         // overflows and the message must name the sort.key config key. Pins the LimitedSize key
@@ -423,6 +441,24 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testValueHeapClampsToMaxHeapSize() {
+        // Same clamp on the value heap: a 96-byte budget is not a power of two, the chain goes
+        // 16 -> 32 -> 64 and then wants 128. Clamping to 96 fits 8 of the 12-byte chain values
+        // instead of the 5 that fitted before.
+        chain.close();
+        chain = new LimitedSizeLongTreeChain(
+                64,
+                Long.MAX_VALUE, // key heap uncapped
+                16,             // value page >= CHAIN_VALUE_SIZE
+                96,             // value heap budget, deliberately not a power of two
+                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+        );
+        chain.updateLimits(true, 1_000);
+        Assert.assertEquals(8, fillUntilOverflow("memory exceeded in LimitedSizeLongTreeChain"));
+    }
+
+    @Test
     public void testValueHeapOverflowNamesConfigKey() {
         // Tiny value-heap budget (one page) with an uncapped key heap: the rowid value chain
         // overflows and the message must name the sort.light.value config key. This branch is
@@ -468,6 +504,35 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         while (cursor.hasNext()) {
             chain.put(left, cursor, placeholder, comparator);
         }
+    }
+
+    /**
+     * Inserts distinct ascending values until one of the heaps runs out, and returns how many
+     * of them the chain accepted. Fails when no overflow happens at all.
+     */
+    private int fillUntilOverflow(String expectedMessage) {
+        final long[] values = new long[256];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i;
+        }
+        cursor = new TestRecordCursor(values);
+        left = (TestRecord) cursor.getRecord();
+        placeholder = (TestRecord) cursor.getRecordB();
+        comparator = new TestRecordComparator();
+        comparator.setLeft(left);
+
+        int inserted = 0;
+        while (cursor.hasNext()) {
+            try {
+                chain.put(left, cursor, placeholder, comparator);
+            } catch (LimitOverflowException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+                return inserted;
+            }
+            inserted++;
+        }
+        Assert.fail("expected LimitOverflowException");
+        return -1;
     }
 
     private void removeRowWithValue(long value) {

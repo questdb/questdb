@@ -36,7 +36,9 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Each block ref value stores compressed offsets. A compressed offset contains
  * an offset to the address of the referenced block in the heap memory
- * compressed to an int. Block addresses are 8-byte aligned.
+ * compressed to an int. Block addresses are 8-byte aligned. Compressed offsets are
+ * unsigned, with {@link #EMPTY} reserved as the sentinel, so emptiness must be tested
+ * as {@code == EMPTY}, never as {@code < 0}.
  */
 public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     protected static final byte BLACK = 0;
@@ -122,20 +124,28 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         return (int) (rawOffset >> 3);
     }
 
+    // Compressed offsets are unsigned: blocks past the 16GB mark have the top bit set.
     private static long uncompressKeyOffset(int offset) {
-        return ((long) offset) << 3;
+        return Integer.toUnsignedLong(offset) << 3;
     }
 
     private void checkKeyCapacity() {
         if (keyHeapPos + BLOCK_SIZE > keyHeapLimit) {
-            final long newHeapSize = keyHeapSize << 1;
+            final long required = keyHeapPos - keyHeapStart + BLOCK_SIZE;
+            long newHeapSize = keyHeapSize << 1;
             if (newHeapSize > maxKeyHeapSize) {
-                LimitOverflowException ex = LimitOverflowException.instance();
-                ex.put("limit of ").put(maxKeyHeapSize).put(" memory exceeded in RedBlackTree");
-                if (keyHeapConfigKey != null) {
-                    ex.put(" (raise ").put(keyHeapConfigKey).put(')');
+                if (required > maxKeyHeapSize) {
+                    LimitOverflowException ex = LimitOverflowException.instance();
+                    ex.put("limit of ").put(maxKeyHeapSize).put(" memory exceeded in RedBlackTree");
+                    if (keyHeapConfigKey != null) {
+                        ex.put(" (raise ").put(keyHeapConfigKey).put(')');
+                    }
+                    throw ex;
                 }
-                throw ex;
+                // Doubling overshoots a cap that is rarely a power of two, so rejecting here
+                // would strand up to half of the configured budget. The block we have to fit
+                // still fits, so clamp to the cap instead.
+                newHeapSize = maxKeyHeapSize;
             }
             long newHeapPos = Unsafe.realloc(keyHeapStart, keyHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
 
@@ -212,7 +222,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         do {
             parent = p;
             p = rightOf(p);
-        } while (p > -1);
+        } while (p != EMPTY);
         return parent;
     }
 
@@ -222,7 +232,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         do {
             parent = p;
             p = leftOf(p);
-        } while (p > -1);
+        } while (p != EMPTY);
         return parent;
     }
 
