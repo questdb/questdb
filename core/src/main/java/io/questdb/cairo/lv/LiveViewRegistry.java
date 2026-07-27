@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -195,6 +196,50 @@ public class LiveViewRegistry implements QuietCloseable {
                     list.unlockAfterWrite();
                 }
             }
+        }
+        return instance;
+    }
+
+    /**
+     * Re-keys a registered view from {@code oldName} to {@code updatedToken}'s name, and
+     * re-points the instance and its definition at the new token. Only the replication apply
+     * path renames a live view: a downloaded view whose real name is still taken registers
+     * under a pending temp name, and {@code CairoEngine.applyTableRename} moves it once the
+     * name frees up. Without the re-key the instance stays reachable only under the dead name -
+     * every later {@code getViewInstance(realName)} misses it, so a drop never tears it down
+     * and {@code WalPurgeJob} keeps clamping the base WAL floor to its frozen watermark.
+     * <p>
+     * The name map is re-keyed under the base-table fan-out write lock, like
+     * {@link #registerView} and {@link #removeView}, so a concurrent
+     * {@link #getViewsForBaseTable} reader never observes the two maps torn apart. The fan-out
+     * list holds instances, not names, so it needs no update.
+     *
+     * @return the renamed instance, or {@code null} when no view is registered under
+     * {@code oldName}
+     */
+    public LiveViewInstance renameView(CharSequence oldName, TableToken updatedToken) {
+        final LiveViewInstance instance = viewsByName.get(oldName);
+        if (instance == null) {
+            return null;
+        }
+        final LiveViewDefinition definition = instance.getDefinition();
+        if (definition == null) {
+            // A definition-less load-failure stub only ever lived in the name map
+            // (registerStubView), so there is no fan-out list to lock.
+            viewsByName.remove(oldName);
+            instance.updateToken(updatedToken);
+            viewsByName.put(updatedToken.getTableName(), instance);
+            return instance;
+        }
+        final DepList list = viewsByBaseTable.computeIfAbsent(definition.getBaseTableName(), createDepList);
+        list.lockForWrite();
+        try {
+            viewsByName.remove(oldName);
+            instance.updateToken(updatedToken);
+            definition.updateViewName(updatedToken.getTableName());
+            viewsByName.put(updatedToken.getTableName(), instance);
+        } finally {
+            list.unlockAfterWrite();
         }
         return instance;
     }

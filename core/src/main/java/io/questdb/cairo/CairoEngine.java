@@ -665,6 +665,31 @@ public class CairoEngine implements Closeable, WriterSource {
         if (updatedTableToken.isMatView()) {
             dependentViewGraph.updateToken(updatedTableToken);
         }
+        if (updatedTableToken.isLiveView()) {
+            // A live view is renamed only by the replication apply path: a downloaded view whose
+            // real name was taken registers under a pending temp name and moves here once the name
+            // frees up. The LV registry is keyed BY NAME, so without the re-key the instance stays
+            // reachable only under the dead name - a later drop's removeView(realName) misses it,
+            // so it is never marked dropped, never fenced and never freed, while WalPurgeJob keeps
+            // clamping the base WAL floor to its frozen lvConsumedSeqTxn for the life of the
+            // process. The dependents graph is re-keyed in the same pass because TableToken.equals
+            // compares the name too.
+            final LiveViewInstance renamed = liveViewRegistry.renameView(token.getTableName(), updatedTableToken);
+            if (renamed != null && renamed.getDefinition() != null) {
+                dependentViewGraph.updateLiveViewToken(updatedTableToken, renamed.getDefinition().getBaseTableName());
+            }
+        } else {
+            // The renamed object is somebody's base table. The primary's SQL rename invalidates
+            // dependent live views ("base table rename"), and _lv.s never replicates, so a replica
+            // that skipped this would keep serving an ACTIVE view whose definition still pins the
+            // pre-rename base - permanently diverging from the primary's invalid one. Skip the
+            // pending-temp-name resolution EntCheckWalTransactionsJob and registerTable drive:
+            // that rename publishes a newly downloaded table under its real name for the first
+            // time, so nothing was ever derived from the temp name.
+            if (TableUtils.isFinalTableName(token.getTableName(), configuration.getTempRenamePendingTablePrefix())) {
+                invalidateLiveViewsForBaseTable(token, "base table rename");
+            }
+        }
         enqueueCompileView(token);
         enqueueCompileView(updatedTableToken);
     }

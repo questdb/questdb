@@ -92,6 +92,15 @@ public class DependentViewGraph implements Mutable {
             final ViewDependencyList list = getOrCreateDependentViews(baseTableName);
             final ObjList<TableToken> dependents = list.lockForWrite();
             try {
+                // Idempotent, like addView's putIfAbsent: CREATE, the boot loader and the
+                // replica's reconstructLiveViewFiles all reach this for the same view.
+                // removeLiveView drops the first match only, so a duplicate entry would
+                // outlive the drop and keep the dead view in orderByDependentViews forever.
+                for (int i = 0, n = dependents.size(); i < n; i++) {
+                    if (Chars.equalsIgnoreCase(dependents.getQuick(i).getDirName(), liveViewToken.getDirName())) {
+                        return false;
+                    }
+                }
                 dependents.add(liveViewToken);
             } finally {
                 list.unlockAfterWrite();
@@ -217,6 +226,32 @@ public class DependentViewGraph implements Mutable {
                     dependentViews.unlockAfterWrite();
                 }
             }
+        }
+    }
+
+    /**
+     * Swaps a renamed live view's token in its base's dependent list. The graph caches no LV
+     * definition (see {@link #addLiveView}), so the base table name comes from the caller.
+     * {@link TableToken#equals} compares the table name too, so a list entry left on the old
+     * name would make {@link #removeLiveView} silently miss on a later drop and leave the LV
+     * dangling in {@link #orderByDependentViews} forever. Idempotent - a missing entry is
+     * ignored, mirroring the mat-view path.
+     */
+    public void updateLiveViewToken(@NotNull TableToken updatedToken, @NotNull CharSequence baseTableName) {
+        final ViewDependencyList dependents = dependentViewsByTableName.get(baseTableName);
+        if (dependents == null) {
+            return;
+        }
+        final ObjList<TableToken> list = dependents.lockForWrite();
+        try {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                if (Chars.equalsIgnoreCase(list.get(i).getDirName(), updatedToken.getDirName())) {
+                    list.set(i, updatedToken);
+                    return;
+                }
+            }
+        } finally {
+            dependents.unlockAfterWrite();
         }
     }
 

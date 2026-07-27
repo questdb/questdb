@@ -119,7 +119,11 @@ public class LiveViewDefinition {
     // The START FROM mode the user wrote at CREATE: one of START_FROM_NOW,
     // START_FROM_BEGINNING, START_FROM_TIMESTAMP.
     private final byte startFromKind;
-    private final String viewName;
+    // Not final: a replica can register a downloaded live view under a pending temp name when its
+    // real name is still taken, and CairoEngine.applyTableRename later moves it to the real one.
+    // Volatile: the rename runs on the WAL transfer / CheckWalTransactions thread while refresh
+    // workers and the catalogue cursor read it.
+    private volatile String viewName;
     private final String viewSql;
     // The resolved START FROM boundary, in base-table timestamp units. This is the live
     // view's membership rule and its only one: a base row belongs to the view iff its
@@ -577,6 +581,17 @@ public class LiveViewDefinition {
      */
     public void resolveBaseTableToken(TableToken baseTableToken) {
         this.baseTableToken = baseTableToken;
+    }
+
+    /**
+     * Re-points the definition at the view's new name after a rename. Only the replication
+     * apply path renames a live view: a downloaded view whose real name is still taken
+     * registers under a pending temp name, and {@code CairoEngine.applyTableRename} moves it
+     * once the name frees up. Called from the registry's rename, which keys both maps under
+     * the same write lock.
+     */
+    public void updateViewName(String viewName) {
+        this.viewName = viewName;
     }
 
     /**

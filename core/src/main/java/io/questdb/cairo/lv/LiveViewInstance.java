@@ -369,8 +369,11 @@ public class LiveViewInstance implements QuietCloseable {
     // (recovered by replaying base WAL forward on restart); mutated under the
     // refresh latch only, like the other refresh-worker-only fields.
     private long leadRowCount;
-    // Live-view's own table token. Populated at construction.
-    private final TableToken liveViewToken;
+    // Live-view's own table token. Populated at construction. Not final: a replica can register a
+    // downloaded view under a pending temp name and rename it to the real one later (see
+    // updateToken). Volatile so every reader sees the published token rather than a stale name
+    // that verifyTableToken would reject.
+    private volatile TableToken liveViewToken;
     // Cumulative count of base rows the in-order drain physically visited while skipping the
     // sub-floor prefix through TimestampLowerBoundCursor. A wholly sub-floor commit is dropped
     // in O(1) (its max ts is below the boundary) without visiting any row, so this stays 0 for
@@ -2106,6 +2109,19 @@ public class LiveViewInstance implements QuietCloseable {
         if (!refreshLatch.compareAndSet(true, false)) {
             throw new IllegalStateException("refresh latch is not held");
         }
+    }
+
+    /**
+     * Re-points the instance at the view's renamed token. The replication apply path is the only
+     * renamer: a downloaded view whose real name is still taken registers under a pending temp
+     * name, and {@code CairoEngine.applyTableRename} moves it once the name frees up. Only the
+     * name changes - the dirName and table id are stable - but every path that opens the view
+     * goes through {@code verifyTableToken}, which rejects a token whose name no longer resolves,
+     * so the instance must carry the current one. Callers go through
+     * {@link LiveViewRegistry#renameView}, which re-keys the name map in the same step.
+     */
+    public void updateToken(TableToken updatedToken) {
+        this.liveViewToken = updatedToken;
     }
 
     /**
