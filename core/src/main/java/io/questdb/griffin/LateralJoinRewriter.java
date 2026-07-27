@@ -32,6 +32,7 @@ import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
@@ -70,6 +71,8 @@ class LateralJoinRewriter implements Mutable {
     private static final byte TERMINATE_DESCEND = 3;
     private static final byte TERMINATE_HERE = 1;
     private static final byte TERMINATE_SKIP = 0;
+    private final LowerCaseCharSequenceHashSet carrierAliases;
+    private final LowerCaseCharSequenceIntHashMap carrierAliasSequenceMap;
     private final ObjList<IQueryModel> carrierChain;
     private final CharacterStore characterStore;
     private final ObjList<ExpressionNode> correlatedPreds = new ObjList<>();
@@ -100,6 +103,8 @@ class LateralJoinRewriter implements Mutable {
 
     LateralJoinRewriter(
             CharacterStore characterStore,
+            LowerCaseCharSequenceHashSet tempCarrierAliases,
+            LowerCaseCharSequenceIntHashMap tempCarrierAliasSequenceMap,
             ObjectPool<ExpressionNode> expressionNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
@@ -117,6 +122,8 @@ class LateralJoinRewriter implements Mutable {
             ObjList<IQueryModel> tempCarrierChain,
             ObjList<QueryColumn> tempTemplateBuffer
     ) {
+        this.carrierAliases = tempCarrierAliases;
+        this.carrierAliasSequenceMap = tempCarrierAliasSequenceMap;
         this.characterStore = characterStore;
         this.expressionNodePool = expressionNodePool;
         this.queryColumnPool = queryColumnPool;
@@ -473,6 +480,8 @@ class LateralJoinRewriter implements Mutable {
     }
 
     private void buildCountTemplates(IQueryModel body, int depth) throws SqlException {
+        carrierAliases.clear();
+        carrierAliasSequenceMap.clear();
         carrierChain.clear();
         IQueryModel current = body;
         boolean hasAggregateTail = false;
@@ -488,6 +497,15 @@ class LateralJoinRewriter implements Mutable {
         }
         if (!hasAggregateTail) {
             return;
+        }
+        for (int i = 0, n = carrierChain.size(); i < n; i++) {
+            ObjList<CharSequence> aliases = carrierChain.getQuick(i).getAliasToColumnMap().keys();
+            for (int j = 0, m = aliases.size(); j < m; j++) {
+                CharSequence alias = aliases.getQuick(j);
+                if (alias != null) {
+                    carrierAliases.add(alias);
+                }
+            }
         }
         int layers = carrierChain.size();
         ObjList<QueryColumn> columns = carrierChain.getQuick(0).getBottomUpColumns();
@@ -1644,7 +1662,16 @@ class LateralJoinRewriter implements Mutable {
         }
         characterStore.newEntry();
         characterStore.put(COUNT_CARRIER_PREFIX).put(carrierId++);
-        CharSequence alias = characterStore.toImmutable();
+        CharSequence baseAlias = characterStore.toImmutable();
+        CharSequence alias = SqlUtil.createColumnAlias(
+                characterStore,
+                baseAlias,
+                -1,
+                carrierAliases,
+                carrierAliasSequenceMap,
+                false
+        );
+        carrierAliases.add(alias);
         addCarrierColumn(aggModel, alias, ExpressionNode.deepClone(expressionNodePool, aggNode));
         for (int li = carrierChain.size() - 2; li >= 0; li--) {
             addCarrierColumn(carrierChain.getQuick(li), alias, expressionNodePool.next().of(

@@ -291,6 +291,8 @@ public class SqlOptimiser implements Mutable {
         this.maxRecursion = configuration.getSqlWindowMaxRecursion();
         this.lateralJoinRewriter = new LateralJoinRewriter(
                 characterStore,
+                pivotAliasMap,
+                pivotAliasSequenceMap,
                 expressionNodePool,
                 queryColumnPool,
                 queryModelPool,

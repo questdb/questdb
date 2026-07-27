@@ -1676,6 +1676,53 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftLateralCountCarrierAliasCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT)");
+            execute("CREATE TABLE trades (order_id INT)");
+            execute("INSERT INTO orders VALUES (1), (2)");
+            execute("INSERT INTO trades VALUES (1)");
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic, sub."__qdb_count_carrier__0"
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic, count(*) AS "__qdb_count_carrier__0"
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id	arithmetic	__qdb_count_carrier__0
+                            1	3	1
+                            2	2	0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic, sub."__qdb_count_carrier__0"
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT c.arithmetic, c.cnt AS "__qdb_count_carrier__0"
+                        FROM (
+                            SELECT count(*) + 2 AS arithmetic, count(*) AS cnt
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) c
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id	arithmetic	__qdb_count_carrier__0
+                            1	3	1
+                            2	2	0
+                            """);
+        });
+    }
+
+    @Test
     public void testLeftLateralCountCase() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
