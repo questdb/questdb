@@ -590,14 +590,20 @@ public interface CairoConfiguration {
      */
     long getSqlAsOfAdaptiveBackScanBudget();
 
-    /** When true, the optimiser may auto-select asof_index / asof_memoized for single-symbol ASOF. */
+    /**
+     * When true, the optimiser may auto-select asof_index / asof_memoized for single-symbol ASOF.
+     */
     boolean isSqlAsOfAutoAlgoEnabled();
 
-    /** Max master/slave row ratio (in basis points, /10000) below which asof_index is auto-selected. */
+    /**
+     * Max master/slave row ratio (in basis points, /10000) below which asof_index is auto-selected.
+     */
     int getSqlAsOfIndexMaxMasterBp();
 
-    /** Equal-timestamp run length past which the memoized ASOF cursor abandons memoization for a
-     * resilient Dense forward scan (guards the dense-timestamp cliff). */
+    /**
+     * Equal-timestamp run length past which the memoized ASOF cursor abandons memoization for a
+     * resilient Dense forward scan (guards the dense-timestamp cliff).
+     */
     int getSqlAsOfMemoizedDenseRunThreshold();
 
     int getQueryRegistryPoolSize();
