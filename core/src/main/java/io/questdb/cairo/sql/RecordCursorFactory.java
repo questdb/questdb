@@ -42,6 +42,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -136,6 +137,19 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default boolean fragmentedSymbolTables() {
         return false;
+    }
+
+    /**
+     * Returns the atom holding this factory's shared, per-worker execution state, if any.
+     * Parallel factories keep the atom on the factory, so it outlives the cursor and stays
+     * observable after the frame sequence has been awaited. Tests use it to assert that a
+     * reduce phase released everything it acquired.
+     *
+     * @return the atom, or null if the factory drives no parallel execution state
+     */
+    @TestOnly
+    default @Nullable StatefulAtom getAtom() {
+        return null;
     }
 
     /**

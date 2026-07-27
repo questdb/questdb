@@ -2096,6 +2096,58 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOpenParquetMetadataOpensSidecarOnceAndReleasesResolver() throws Exception {
+        // Opening a parquet partition must open its _pm sidecar exactly once:
+        // the committed size is read from the same fd that is then mmapped,
+        // not via a size-reading open followed by a second open to map.
+        AtomicInteger pmOpenCount = new AtomicInteger();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, "_pm")) {
+                    pmOpenCount.incrementAndGet();
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, b LONG, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, b, ts) VALUES
+                            (1, 100, '2020-01-01T01:00:00.000Z'),
+                            (2, 200, '2020-01-01T02:00:00.000Z'),
+                            (3, 300, '2020-01-02T01:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                // Close the partition so the next openPartition() runs the full
+                // openPartition0() path that maps the _pm sidecar.
+                reader.closePartitionByIndex(0);
+
+                pmOpenCount.set(0);
+                reader.openPartition(0);
+                Assert.assertEquals(1, pmOpenCount.get());
+                Assert.assertFalse(
+                        "the temporary footer resolver must not outlive the _pm open operation",
+                        reader.isParquetMetaReaderOpen()
+                );
+            }
+        });
+    }
+
+    @Test
     public void testOver2GFile() throws Exception {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)

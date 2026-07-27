@@ -8402,6 +8402,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         sampleFromFunc = null;
                         sampleToFunc = null;
                         return new SampleByFirstLastRecordCursorFactory(
+                                configuration,
                                 factory,
                                 timestampSampler,
                                 projectionMetadata,

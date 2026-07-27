@@ -120,7 +120,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             this.frameAddressCache = new PageFrameAddressCache();
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
-            this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
+            this.workStealingStrategy = configuration.getFactoryProvider()
+                    .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
             this.reduceQueue = messageBus.getUnorderedPageFrameReduceQueue();
             this.reducePubSeq = messageBus.getUnorderedPageFrameReducePubSeq();
@@ -138,10 +139,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         }
         // Wait for all queued frames to complete.
         while (!doneLatch.done(queuedCount)) {
-            stealWork();
-            // Restore the circuit breaker delegate after work-stealing, since
-            // consumeQueue may have re-initialized it for a foreign sequence.
-            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+            if (stealWork()) {
+                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+            }
             Os.pause();
         }
     }
@@ -226,8 +226,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
                     } else if (cursor == -1) {
                         // Queue full.
                         if (workStealingStrategy.shouldSteal(localCount)) {
-                            stealWork();
-                            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+                            if (stealWork()) {
+                                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+                            }
                             continue;
                         }
                         // Reduce locally as fallback.
@@ -244,23 +245,26 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         }
 
         // Phase 2: Wait for all queued frames to complete.
+        final SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         while (!doneLatch.done(queued)) {
             if (!isActive()) {
                 break;
             }
             if (!isUninterruptible) {
-                workStealCircuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
-            stealWork();
-            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+            if (stealWork()) {
+                workStealCircuitBreaker.init(circuitBreaker);
+            }
             Os.pause();
         }
 
         // If we exited early due to cancellation, still wait for in-flight tasks
         // to complete to avoid data races with setError().
         while (!doneLatch.done(queued)) {
-            stealWork();
-            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+            if (stealWork()) {
+                workStealCircuitBreaker.init(circuitBreaker);
+            }
             Os.pause();
         }
 
@@ -336,6 +340,17 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         return frameCursor;
     }
 
+    /**
+     * Returns the single work-stealing strategy this sequence uses for every phase. There is one
+     * strategy instance per query: the reduce phase already bound its counter to this same object,
+     * and a post-aggregation caller rebinds its own counter through {@code of()} before calling
+     * {@code shouldSteal}. This getter returns that instance as-is; it does not unwrap anything.
+     * <p>
+     * A latch-gated test strategy (see {@code SlotGatedWorkStealingStrategy}) is a subclass, so it is
+     * returned here too. Such a test must ensure the acquire latch reaches zero during reduce, before
+     * post-aggregation calls {@code shouldSteal} on this same instance; otherwise that phase parks on
+     * a gate nothing will open.
+     */
     public WorkStealingStrategy getWorkStealingStrategy() {
         return workStealingStrategy;
     }
@@ -527,12 +542,13 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         }
     }
 
-    private void stealWork() {
+    private boolean stealWork() {
         // N.B. consumeQueue may process a task from any UnorderedPageFrameSequence,
-        // not just this one, which will re-initialize localRecord for the foreign
-        // sequence's symbol table. Callers must not assume localRecord state is
-        // preserved across this call.
-        UnorderedPageFrameReduceJob.consumeQueue(
+        // not just this one, which will re-initialize localRecord and the circuit
+        // breaker wrapper for the foreign sequence. Callers must not assume their
+        // state is preserved across this call and must re-init the wrapper when
+        // this method returns true (a task was consumed).
+        return !UnorderedPageFrameReduceJob.consumeQueue(
                 reduceQueue,
                 reduceSubSeq,
                 localRecord,
