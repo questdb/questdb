@@ -60,6 +60,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int FILE_TOO_SMALL = METADATA_VERSION_MISMATCH - 1;
     public static final int SEQUENCER_METADATA_OPEN_FAILED = FILE_TOO_SMALL - 1;
     private static final int TABLE_SUSPENDED = SEQUENCER_METADATA_OPEN_FAILED - 1;
+    public static final int PARTITION_SNAPSHOT_STALE = TABLE_SUSPENDED - 1;
+    public static final int PARTITION_SNAPSHOT_ID_MISSING = PARTITION_SNAPSHOT_STALE - 1;
     public static final int NON_CRITICAL = -1;
     // Single source of truth for the write-refusal message a read-only node emits. Both a static
     // read-only OSS instance and an enterprise node acting as a read-only replica reach this
@@ -216,6 +218,26 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
      */
     public static CairoException readOnlyAccess() {
         return authorization().setReadOnlyAccessRefusal().put(READ_ONLY_ACCESS_MESSAGE);
+    }
+
+    /**
+     * Rethrows a failure after a best-effort Cairo/SQL resource cleanup has attempted every
+     * close. Unchecked failures retain their identity. The checked branch handles defensive
+     * cases such as a sneaky checked exception escaping a Closeable implementation.
+     */
+    public static void rethrowCleanupFailure(@Nullable Throwable failure) {
+        switch (failure) {
+            case null -> {
+                return;
+            }
+            case RuntimeException runtimeException -> throw runtimeException;
+            case Error error -> throw error;
+            default -> {
+                final CairoException exception = nonCritical().put("resource cleanup failed");
+                exception.initCause(failure);
+                throw exception;
+            }
+        }
     }
 
     /**
