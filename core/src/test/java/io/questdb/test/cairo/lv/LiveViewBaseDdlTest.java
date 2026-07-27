@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -447,6 +448,58 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                 applyTransparentAlterThenData(job, viewSql, "ALTER TABLE base ALTER COLUMN sym SYMBOL CAPACITY 256", 5);
                 applyTransparentAlterThenData(job, viewSql, "ALTER TABLE base SET PARAM maxUncommittedRows = 100", 6);
                 applyTransparentAlterThenData(job, viewSql, "ALTER TABLE base SET PARAM o3MaxLag = 5s", 7);
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRebaseWalBaseTableInvalidatesDependentLiveView() throws Exception {
+        // REBASE WAL mints a new base directory and restarts the sequencer near zero, while the
+        // view keeps the watermark it reached against the OLD sequencer. refreshViewsForBaseTable
+        // gates on `seqTxn > instance.getLastProcessedSeqTxn()`, so that gate drops every post-rebase
+        // commit and nothing ever marks the view INVALID - permanent staleness behind a
+        // healthy-looking live_views(). Mat views already force a full refresh of their dependents
+        // at the same point (matViewStateStore.enqueueInvalidateDependentViews, "base table
+        // rebase"); the identical reasoning applies to live views.
+        //
+        // REBASE WAL requires suspension to block writes.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, sym, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x, g) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 'a', 1.0, 'g1'), " +
+                        "('2026-01-01T00:00:02.000000Z', 'b', 2.0, 'g1')");
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance preRebase = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("the LV must be registered before the rebase", preRebase);
+                Assert.assertFalse("the LV must be valid before the rebase", preRebase.isInvalid());
+
+                final TableToken oldBase = engine.verifyTableName("base");
+
+                execute("ALTER TABLE base SUSPEND WAL");
+                execute("ALTER TABLE base REBASE WAL");
+                drainWalQueue();
+                drainJob(job);
+
+                // Sanity: the rebase really did mint a new directory and table id, so the view's
+                // watermark genuinely no longer maps onto the base it is bound to.
+                final TableToken newBase = engine.verifyTableName("base");
+                Assert.assertNotEquals(oldBase.getDirName(), newBase.getDirName());
+                Assert.assertNotEquals(oldBase.getTableId(), newBase.getTableId());
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("the LV must still be registered after the base rebase", instance);
+                Assert.assertTrue("REBASE WAL on the base must invalidate the dependent LV", instance.isInvalid());
+                Assert.assertTrue(
+                        "wrong invalidation reason [reason=" + instance.getInvalidationReason() + ']',
+                        Chars.contains(instance.getInvalidationReason(), "base table rebase")
+                );
             }
 
             execute("DROP LIVE VIEW lv");
