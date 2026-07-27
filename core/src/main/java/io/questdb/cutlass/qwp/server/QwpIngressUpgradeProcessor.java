@@ -990,7 +990,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * Enters the RFC 6455 close-handshake wait after a fatal CLOSE frame has
      * been fully sent, when that CLOSE carries the exactly-once contract of a
      * role-change close: durable-ack mode, a role-change close initiated
-     * (marked immediately before the ROLE_CHANGE frame is emitted, whether it
+     * (marked immediately before the role-change CLOSE frame is emitted, whether it
      * deferred awaiting upload coverage or completed on the first attempt
      * because the uploader had already caught up), and the final durable ack
      * (flushed immediately before the CLOSE) covering every committed seqTxn.
@@ -1042,7 +1042,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * {@code IODispatcherLinux.epollOp} asks for EPOLLOUT on
      * {@link Socket#wantsTlsWrite()} precisely to flush it later). FIN ahead of
      * that tail would make the later {@code tlsIO} write fail and leave the peer
-     * with a truncated TLS stream instead of the ROLE_CHANGE code and the final
+     * with a truncated TLS stream instead of the role-change close code and the final
      * durable ack. {@link #halfCloseWriteSide} therefore defers the half-close
      * while a TLS write is pending and the recv-driven re-entry retries it, so
      * the delivered CLOSE stays intact and the connection still gets its FIN.
@@ -1725,37 +1725,39 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             int low = Unsafe.getByte(payload + 1) & 0xFF;
             closeCode = (high << 8) | low;
         }
-        // While the close-echo wait is armed, our ROLE_CHANGE CLOSE is already
-        // on the wire. Only a CLOSE echoing that exact code completes the
-        // role-change close handshake: the client can have learned the code
-        // only from our CLOSE frame, so in-order TCP delivery proves it
-        // consumed everything sent before it -- the final durable ack
+        // While the close-echo wait is armed, our role-change CLOSE is already
+        // on the wire, and any inbound CLOSE completes the handshake. The
+        // client sends nothing after its own CLOSE, so this frame is the last
+        // thing it will ever send: in-order TCP delivery proves it consumed
+        // everything we sent before receiving it -- the final durable ack
         // included; its replay window is trimmed and the reconnect cannot
-        // duplicate. Any other code is NOT the echo: it is a voluntary client
-        // CLOSE that crossed our CLOSE on the wire (e.g. a client close()
-        // already queued in the kernel when the wait was armed -- the recv
-        // buffer discards at wait-arming time cannot reach kernel-queued
-        // bytes). The RFC 6455 handshake is still complete (both sides have
-        // sent and received a CLOSE, and the client sends nothing after its
-        // CLOSE, so no genuine echo can ever follow), but delivery of the
-        // final durable ack is unconfirmed -- surface the same operator alarm
-        // as the echo-wait expiry. Either way skip the close response (our
-        // CLOSE is on the wire; a second one would violate the protocol) and
-        // let the caller tear the connection down through
-        // gracefulCloseAndDisconnect, which half-closes and runs a bounded
-        // best-effort drain of whatever trails the peer's CLOSE so the fd
-        // close emits FIN rather than an RST that would destroy our unread
-        // tail. The drain is bounded by GRACEFUL_CLOSE_DRAIN_READ_BUDGET and
+        // duplicate.
+        // <p>
+        // The role-change CLOSE carries NORMAL_CLOSURE, so this cannot tell a
+        // genuine echo apart from a voluntary client CLOSE that crossed ours
+        // on the wire (a client close() already queued in the kernel when the
+        // wait was armed -- the recv buffer discards at wait-arming time
+        // cannot reach kernel-queued bytes). Both are treated as completion.
+        // The crossed case leaves final durable ack delivery unproven, but it
+        // needs the producer to close in the same instant as the demote, and
+        // buying the distinction costs a private-use close code that deployed
+        // client fleets classify as a poison strike -- see
+        // WebSocketCloseCode.ROLE_CHANGE. A capability negotiation can restore
+        // the proof later without breaking those fleets.
+        // <p>
+        // Either way skip the close response (our CLOSE is on the wire; a
+        // second one would violate the protocol) and let the caller tear the
+        // connection down through gracefulCloseAndDisconnect, which
+        // half-closes and runs a bounded best-effort drain of whatever trails
+        // the peer's CLOSE so the fd close emits FIN rather than an RST that
+        // would destroy our unread tail. The drain is bounded by
+        // GRACEFUL_CLOSE_DRAIN_READ_BUDGET and
         // GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET, so a peer that keeps the kernel
         // receive buffer non-empty past those budgets still gets an RST -- the
         // helper trades that residual case for a prompt teardown.
         if (state.isAwaitingCloseEcho()) {
-            if (closeCode == WebSocketCloseCode.ROLE_CHANGE) {
-                LOG.info().$("close echo received, role-change close handshake complete [fd=").$(context.getFd()).I$();
-            } else {
-                LOG.error().$("client CLOSE crossed role-change CLOSE, not an echo; final durable ack delivery unconfirmed, client replay may duplicate [fd=")
-                        .$(context.getFd()).$(", code=").$(closeCode).I$();
-            }
+            LOG.info().$("close echo received, role-change close handshake complete [fd=")
+                    .$(context.getFd()).$(", code=").$(closeCode).I$();
             return;
         }
         LOG.info().$("WebSocket close [fd=").$(context.getFd()).$(", code=").$(closeCode).I$();
@@ -1968,7 +1970,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * cumulative ack past the silently refused frame that armed the deferral)
      * and the client's durable-ack keepalive PINGs ({@link #handlePing}). Once the registry
      * covers the connection's pending seqTxns, sendFatalClose flushes the final
-     * durable ack, emits the ROLE_CHANGE close code, and then -- rather than closing the fd
+     * durable ack, emits the role-change close code, and then -- rather than closing the fd
      * and racing the client's receive path -- holds the connection open in the
      * RFC 6455 close-handshake wait ({@link #beginCloseEchoWaitIfEligible})
      * until the client's CLOSE echo (or FIN) confirms the ack was consumed:
@@ -2079,25 +2081,29 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // or oversized frame arriving in that window routes straight to
         // sendFatalClose with its own protocol-error code, and would inherit
         // role-change semantics it never earned -- arming the echo wait on a
-        // 1002/1003 close (whose echo can never match ROLE_CHANGE, firing the
-        // false "client replay may duplicate" alarm) or taking the prompt
-        // role-change teardown instead of the fatal-close drain.
+        // 1002/1003 close, which would treat that protocol-error teardown as a
+        // completed role-change handshake, or taking the prompt role-change
+        // teardown instead of the fatal-close drain.
         // <p>
         // Setting it here loses nothing: both consumers run only after a CLOSE
         // has actually been written (finishServerFatalClose), this is the sole
-        // emission site for ROLE_CHANGE, and the mark still precedes the
-        // throwing send -- so it is in place for the onFatalCloseBlocked unwind
-        // and the sendDeferredFatalClose resume path.
+        // emission site for the role-change CLOSE, and the mark still precedes
+        // the throwing send -- so it is in place for the onFatalCloseBlocked
+        // unwind and the sendDeferredFatalClose resume path.
         state.initiateRoleChangeClose();
-        // ROLE_CHANGE (private-use 4001), not NORMAL_CLOSURE: the client
-        // echoes the received code (RFC 6455 s5.5.1), and only a code the
-        // client could not have known before reading our CLOSE lets
-        // handleClose distinguish the genuine echo from a voluntary client
-        // CLOSE that crossed this frame on the wire.
+        // NORMAL_CLOSURE, not the private-use ROLE_CHANGE (4001): a store-and-
+        // forward client classifies close codes behaviourally and deployed
+        // fleets treat only NORMAL_CLOSURE and GOING_AWAY as orderly. A code
+        // outside that set costs a poison strike per demote, escalating to a
+        // PROTOCOL_VIOLATION terminal that quarantines the store-and-forward
+        // slot holding exactly the rows this handoff protects. 4001 would only
+        // buy a sharper log line in handleClose; it changes no action there.
+        // See WebSocketCloseCode.ROLE_CHANGE for the capability negotiation a
+        // future server needs before putting it on the wire.
         sendFatalClose(
                 context,
                 state,
-                WebSocketCloseCode.ROLE_CHANGE,
+                WebSocketCloseCode.NORMAL_CLOSURE,
                 state.isRoleChangeCloseDeferred() ? state.getRoleChangeCloseReason() : reason,
                 isDurableProgressFlushed,
                 isDurableProgressCollected
@@ -2311,10 +2317,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // wedged-but-chatty peer free CPU: payloads can approach the
                 // configured receive-buffer size (2 MiB by default) and
                 // repeat for the lifetime of the wait. CLOSE frames are the
-                // exception: handleClose must read the close code to tell the
-                // genuine ROLE_CHANGE echo from a voluntary client CLOSE that
-                // crossed our CLOSE on the wire, and RFC 6455 caps control
-                // frame payloads at 125 bytes, so their unmask is O(1).
+                // exception: handleClose reads the close code for the operator
+                // log line, and RFC 6455 caps control frame payloads at 125
+                // bytes, so their unmask is O(1).
                 if (frameParser.isMasked()
                         && (!state.isAwaitingCloseEcho() || opcode == WebSocketOpcode.CLOSE)) {
                     frameParser.unmaskPayload(payloadPtr, payloadLen);

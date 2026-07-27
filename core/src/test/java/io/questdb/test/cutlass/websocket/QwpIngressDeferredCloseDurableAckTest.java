@@ -225,7 +225,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     // CLOSE and must not have completed it during resumeSend.
                     completeCloseEcho(processor, context, nf, postCloseEcho.length);
 
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     buffers.close();
@@ -528,7 +528,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     Assert.assertEquals("resumeSend must discard the pre-CLOSE suffix", 0, state.getRecvBufferLen());
                     completeCloseEcho(processor, context, nf, postCloseEcho.length);
 
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     buffers.close();
@@ -639,12 +639,12 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     );
 
                     // Behavioural lock (green before and after the fix): the
-                    // close still carries the reconnect-eligible ROLE_CHANGE code.
+                    // close still carries the reconnect-eligible NORMAL_CLOSURE code.
                     int closeIdx = indexOfCloseFrame(rawSocket.sentFrames);
                     Assert.assertTrue("CLOSE frame must be sent", closeIdx >= 0);
                     Assert.assertEquals(
                             "CLOSE frame must carry the reconnect-eligible close code",
-                            WebSocketCloseCode.ROLE_CHANGE /* 4001 */, closeCode(rawSocket.sentFrames.getQuick(closeIdx))
+                            WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */, closeCode(rawSocket.sentFrames.getQuick(closeIdx))
                     );
 
                     // RED until fixed: handlePing's inline completion
@@ -775,7 +775,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     Assert.assertTrue("CLOSE frame must be sent", closeIdx >= 0);
                     Assert.assertEquals(
                             "CLOSE frame must carry the reconnect-eligible close code",
-                            WebSocketCloseCode.ROLE_CHANGE /* 4001 */, closeCode(rawSocket.sentFrames.getQuick(closeIdx))
+                            WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */, closeCode(rawSocket.sentFrames.getQuick(closeIdx))
                     );
                     // The alarm fires at T1 (watermark still lagging), before
                     // the CLOSE-triggered flip -- the operator still sees the
@@ -879,7 +879,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     // Behavioural lock (green before and after the fix): the
                     // close is clean -- final durable ack precedes the
                     // reconnect-eligible CLOSE, replay window empty.
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
 
                     // RED until fixed: the grace-expired branch claims
@@ -996,7 +996,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
 
                     // The exactly-once handshake holds on this exit: the
                     // final durable ack precedes the reconnect-eligible CLOSE.
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
 
                     // A within-grace close is clean by construction: the
@@ -1147,7 +1147,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     Assert.assertTrue("test setup: a role-change CLOSE must be on the wire", closeIdx >= 0);
                     Assert.assertEquals(
                             "test setup: the close must be the reconnect-eligible role-change close",
-                            WebSocketCloseCode.ROLE_CHANGE /* 4001 */,
+                            WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */,
                             closeCode(rawSocket.sentFrames.getQuick(closeIdx))
                     );
                     Assert.assertFalse(
@@ -1189,18 +1189,16 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
      * {@code sendFatalClose} with its own code -- here PROTOCOL_ERROR from a
      * fragmenting intermediary, the case {@code rejectFragmentedFrame}'s own
      * diagnostic anticipates. If the role-change mark were set when the
-     * deferral armed rather than when the ROLE_CHANGE frame is emitted, it
+     * deferral armed rather than when the role-change CLOSE frame is emitted, it
      * would still be true here (it survives every per-message clear, resetting
      * only on disconnect) and this unrelated close would inherit the
      * exactly-once machinery it never earned:
      * <ul>
      *   <li>{@code beginCloseEchoWaitIfEligible} would arm the five-second
-     *       echo wait on a 1002 close, and no client echo can ever satisfy it
-     *       -- the echo carries 1002, not ROLE_CHANGE -- so
-     *       {@code handleClose} fires the
-     *       "client replay may duplicate" operator alarm on a connection with
-     *       no data-loss risk whatsoever, devaluing the exact signal this
-     *       change introduces for the real one;</li>
+     *       echo wait on a 1002 close, so a protocol-error teardown would be
+     *       reported as a completed role-change handshake and would linger for
+     *       the five-second wait on a connection with no data-loss risk
+     *       whatsoever;</li>
      *   <li>with pending durable work instead, {@code finishServerFatalClose}
      *       would take the role-change prompt-teardown branch and skip the
      *       fatal-close drain that keeps the fd close from turning abortive.</li>
@@ -1259,7 +1257,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     );
 
                     // A deferral is a PROMISE of a role-change close, not one:
-                    // no ROLE_CHANGE frame exists yet, and the clock never
+                    // no role-change CLOSE frame exists yet, and the clock never
                     // moves off zero, so this window stays open for the whole
                     // grace budget. Nothing in it may be treated as a
                     // role-change close.
@@ -1314,9 +1312,10 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     );
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                     Assert.assertFalse(
-                            "a protocol-error close must not enter the role-change close-echo wait: its echo"
-                                    + " carries 1002, never ROLE_CHANGE, so the wait can only end in the"
-                                    + " duplicate-risk alarm or a five-second linger on a dead connection",
+                            "a protocol-error close must not enter the role-change close-echo wait: it"
+                                    + " delivers no final durable ack, so the wait would report a completed"
+                                    + " role-change handshake that never happened, or linger five seconds"
+                                    + " on a dead connection",
                             state.isAwaitingCloseEcho()
                     );
 
@@ -1417,7 +1416,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     // Phase D: the client's CLOSE echo completes the handshake.
                     completeCloseEcho(processor, context, nf, closeEcho.length);
 
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     buffers.close();
@@ -1447,7 +1446,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
      * <p>
      * Phase C also pins the ORDER: the half-close must follow the CLOSE
      * frame's send. FIN ahead of it makes the CLOSE write fail with EPIPE on a
-     * real socket, so the peer would read neither the ROLE_CHANGE code nor the
+     * real socket, so the peer would read neither the role-change close code nor the
      * final durable ack -- and no fixture would notice, because every one of
      * them writes through {@code BlockingRecordingRawSocket}, which never
      * touches a socket.
@@ -1503,7 +1502,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
 
                     // Phase B: in-place demote. seq=1 is gate-rejected;
                     // sendFatalClose flushes the final durable ack, emits the
-                    // ROLE_CHANGE CLOSE, and arms the echo wait.
+                    // role-change CLOSE, and arms the echo wait.
                     readOnly.set(true);
                     drive(processor, context, nf, frame1.length);
                     Assert.assertTrue(
@@ -1527,7 +1526,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     Assert.assertEquals(
                             "TRUNCATED CLOSE: the arming half-close must follow the CLOSE frame's send. Reversed,"
                                     + " the CLOSE write fails with EPIPE on a real socket and the peer reads neither"
-                                    + " the ROLE_CHANGE code nor the final durable ack this wait exists to deliver",
+                                    + " the role-change close code nor the final durable ack this wait exists to deliver",
                             WebSocketOpcode.CLOSE, nf.lastSentOpcodeAtFirstShutdownWrite()
                     );
                     Assert.assertEquals(
@@ -1555,7 +1554,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                             1, nf.shutdownWriteCalls()
                     );
 
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     buffers.close();
@@ -1682,7 +1681,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
      * (which is why {@code IODispatcherLinux.epollOp} ORs EPOLLOUT in on
      * {@code wantsTlsWrite()}). FIN ahead of that tail makes the flush fail with
      * EPIPE, the dispatcher disconnects with {@code DISCONNECT_SRC_TLS_ERROR},
-     * and the peer reads a truncated TLS stream instead of the ROLE_CHANGE code
+     * and the peer reads a truncated TLS stream instead of the role-change close code
      * and the final durable ack -- the exact delivery this wait exists to
      * guarantee.
      * <p>
@@ -1735,7 +1734,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     Assert.assertEquals(
                             "TRUNCATED CLOSE: FIN must not overtake the CLOSE record's unflushed ciphertext."
                                     + " The later tlsIO write would fail with EPIPE and the peer would read a"
-                                    + " truncated TLS stream instead of the ROLE_CHANGE code and the final"
+                                    + " truncated TLS stream instead of the role-change close code and the final"
                                     + " durable ack -- destroying the delivery this wait exists to confirm",
                             0, nf.shutdownWriteCalls()
                     );
@@ -1777,7 +1776,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                             1, nf.shutdownWriteCalls()
                     );
 
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     buffers.close();
@@ -1880,14 +1879,12 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                             framesAtClose, rawSocket.sentFrames.size()
                     );
 
-                    // Phase F: the echo completes the handshake -- and is
-                    // reported as delivery confirmation, not as a crossed
-                    // voluntary close. This pins the positive branch of the
-                    // ROLE_CHANGE code match AND the CLOSE exemption from the
-                    // echo-wait unmask skip: were the echo's masked payload
-                    // left unread or misread, the genuine echo would land in
-                    // the mismatch branch and raise a false duplicate alarm
-                    // on every clean demote. The flood models the client that
+                    // Phase F: the echo completes the handshake and is
+                    // reported as delivery confirmation. This pins the CLOSE
+                    // exemption from the echo-wait unmask skip: the close code
+                    // must still be readable for the operator log line, so a
+                    // CLOSE whose masked payload went unread would report a
+                    // garbage code on every clean demote. The flood models the client that
                     // keeps pumping data behind its echo: every recv after the
                     // echo returns a full buffer, so our receive queue is
                     // non-empty at teardown time and only a draining teardown
@@ -1933,7 +1930,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                             nf.floodReadsObserved() - floodReadsBeforeEcho
                     );
 
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
 
                     // Only seq=0's row may exist: the refused frame that armed
@@ -2044,7 +2041,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     // delivery confirmation exposes the client to replay
                     // duplicates.
                     capture.assertLogged("close echo wait expired");
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                 } finally {
                     buffers.close();
                 }
@@ -2146,7 +2143,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     // Phase F: the echo completes the handshake.
                     completeCloseEcho(processor, context, nf, closeEcho.length);
 
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
 
                     // Only seq=0's row may exist: everything after the CLOSE
@@ -2254,7 +2251,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     }
 
                     capture.assertLogged("close echo wait expired");
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     // Even on the expiry path the rejected frame must not
                     // have emitted a reject CLOSE of its own.
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
@@ -2988,7 +2985,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     }
 
                     // The unmask skip exempts CLOSE frames: the echo's code
-                    // must be readable for the ROLE_CHANGE match, so the
+                    // must be readable for the operator log line, so the
                     // client's masked CLOSE echo still completes the
                     // handshake.
                     completeCloseEcho(processor, context, nf, closeEcho.length);
@@ -3161,7 +3158,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     }
 
                     capture.assertLogged("close echo wait expired");
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     buffers.close();
@@ -3300,7 +3297,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                             QwpIngressUpgradeProcessor.GRACEFUL_CLOSE_DRAIN_READ_BUDGET,
                             nf.floodReadsObserved() - floodReadsBeforeExpiry
                     );
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     buffers.close();
@@ -3674,7 +3671,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                             nf.floodBytesServed() - floodBytesBeforeExpiry
                                     <= QwpIngressUpgradeProcessor.GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET + bigRecvSize
                     );
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     Unsafe.free(recvBuf, bigRecvSize, MemoryTag.NATIVE_DEFAULT);
@@ -3780,7 +3777,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                             4 + QwpIngressUpgradeProcessor.GRACEFUL_CLOSE_DRAIN_READ_BUDGET,
                             nf.floodReadsObserved()
                     );
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     buffers.close();
@@ -3885,7 +3882,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                             "no frame may follow the role-change CLOSE",
                             framesAtClose, rawSocket.sentFrames.size()
                     );
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     buffers.close();
@@ -3987,7 +3984,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     // complete the handshake.
                     completeCloseEcho(processor, context, nf, postCloseEcho.length);
 
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     buffers.close();
@@ -4103,30 +4100,34 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
-     * The stale-CLOSE misidentification finding: a voluntary client CLOSE
-     * (NORMAL_CLOSURE, what {@code WebSocketClient.close()} sends before
-     * disconnecting) is already queued in the kernel when the demote arms
-     * the close-echo wait. The wait-arming discards can only drop bytes
-     * already copied into the user-space recv buffer; the older client
-     * CLOSE arrives intact on the NEXT recv. It must NOT be accepted as the
-     * echo: the client sent it before ever seeing the server's CLOSE, so it
-     * proves nothing about delivery of the [final durable ack][CLOSE] tail.
-     * Pre-fix, {@code handleClose} accepted any CLOSE opcode as the echo and
-     * logged a delivery confirmation that never happened; post-fix the code
-     * mismatch (1000 != ROLE_CHANGE) surfaces the duplicate-risk alarm
-     * instead. Either way the connection tears down -- crossing closes
-     * complete the RFC 6455 handshake and the client sends nothing more.
+     * The stale-CLOSE case: a voluntary client CLOSE (NORMAL_CLOSURE, what
+     * {@code WebSocketClient.close()} sends before disconnecting) is already
+     * queued in the kernel when the demote arms the close-echo wait. The
+     * wait-arming discards can only drop bytes already copied into the
+     * user-space recv buffer; the older client CLOSE arrives intact on the
+     * NEXT recv.
      * <p>
-     * Phase C also pins HOW that teardown happens. This is the branch that
-     * already reports the final durable ack as unconfirmed, so an abortive
-     * close here turns "unconfirmed" into "lost": the crossed CLOSE must
-     * route through {@code gracefulCloseAndDisconnect} -- one
+     * KNOWN GAP -- this CLOSE is accepted as the echo even though the client
+     * sent it before ever seeing the server's CLOSE, so it proves nothing
+     * about delivery of the [final durable ack][CLOSE] tail. The role-change
+     * CLOSE carries NORMAL_CLOSURE, which is exactly what a voluntary client
+     * close sends, so {@code handleClose} cannot tell the two apart. A
+     * private-use code (see {@code WebSocketCloseCode#ROLE_CHANGE}) would
+     * restore the distinction, but deployed store-and-forward fleets classify
+     * any code outside NORMAL_CLOSURE/GOING_AWAY as a poison strike and
+     * quarantine the slot, so the discrimination stays unavailable until a
+     * capability negotiation gates it. The residual risk is narrow: it needs
+     * the producer to close in the same instant as the demote.
+     * <p>
+     * What this test still pins is the teardown ROUTING. The crossed CLOSE
+     * must route through {@code gracefulCloseAndDisconnect} -- one
      * {@code shutdown(SHUT_WR)} plus the bounded pre-close drain -- and not
      * through a bare {@code ServerDisconnectException} that closes the fd
-     * over the concurrent writer's unread bytes and RSTs the peer.
+     * over the concurrent writer's unread bytes and RSTs the peer, which
+     * would destroy the very tail whose delivery is already unproven here.
      */
     @Test
-    public void testStaleClientCloseQueuedBeforeDemoteMustNotConfirmEcho() throws Exception {
+    public void testStaleClientCloseQueuedBeforeDemoteTearsDownGracefully() throws Exception {
         final LogCapture capture = new LogCapture();
         assertMemoryLeak(() -> {
             final AtomicBoolean readOnly = new AtomicBoolean(false);
@@ -4207,11 +4208,14 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                         } catch (ServerDisconnectException expected) {
                         }
                         drainLogQueue(capture, "sentinel: stale client close done");
-                        capture.assertNotLogged("role-change close handshake complete");
-                        // the unique prefix pins the mismatch branch
-                        // specifically -- two other alarms share the
-                        // "client replay may duplicate" suffix
-                        capture.assertLogged("client CLOSE crossed role-change CLOSE");
+                        // The crossed CLOSE is indistinguishable from a genuine
+                        // echo (both carry NORMAL_CLOSURE), so it completes the
+                        // wait. Pinned so the KNOWN GAP in the javadoc stays
+                        // visible: if a future capability negotiation puts a
+                        // distinct role-change code on the wire, this assertion
+                        // flips back to assertNotLogged plus a crossed-close
+                        // alarm.
+                        capture.assertLogged("role-change close handshake complete");
                     } finally {
                         capture.stop();
                     }
@@ -4237,7 +4241,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                             nf.floodReadsObserved() - floodReadsBeforeCrossedClose
                     );
 
-                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.ROLE_CHANGE /* 4001 */);
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     buffers.close();
@@ -4294,24 +4298,29 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
-     * A client CLOSE echo: the server's ROLE_CHANGE close code (4001),
-     * big-endian payload, masked like every client frame. What
-     * {@code WebSocketClient} sends on receipt of the server's CLOSE
-     * (RFC 6455 s5.5.1 echoes the received code verbatim), before
-     * dispatching the close to its handler. Only this code completes the
-     * close-echo wait: the client can have learned it only by reading the
-     * server's CLOSE frame, which is what makes the echo delivery proof.
+     * A client CLOSE echo: the server's role-change close code
+     * (NORMAL_CLOSURE, 1000), big-endian payload, masked like every client
+     * frame. What {@code WebSocketClient} sends on receipt of the server's
+     * CLOSE (RFC 6455 s5.5.1 echoes the received code verbatim), before
+     * dispatching the close to its handler.
+     * <p>
+     * Byte-identical to {@link #clientCloseFrame()} by design: the role-change
+     * CLOSE carries the same code a voluntary client close sends, so the
+     * server cannot tell them apart. Kept as a separate helper because the
+     * call sites mean different things, and because a capability-gated
+     * role-change code would make them differ again.
      */
     private static byte[] closeEchoFrame() {
-        return createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x0F, (byte) 0xA1});
+        return createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x03, (byte) 0xE8});
     }
 
     /**
      * A voluntary client CLOSE: NORMAL_CLOSURE (1000), big-endian payload,
      * masked like every client frame. What {@code WebSocketClient.close()}
-     * sends before disconnecting -- NOT an echo of the server's ROLE_CHANGE
-     * CLOSE and carrying no delivery proof, so it must never complete the
-     * close-echo wait.
+     * sends before disconnecting. Carries no delivery proof, but is
+     * byte-identical to {@link #closeEchoFrame()} and so completes the
+     * close-echo wait anyway -- see the KNOWN GAP on
+     * {@code testStaleClientCloseQueuedBeforeDemoteTearsDownGracefully}.
      */
     private static byte[] clientCloseFrame() {
         return createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x03, (byte) 0xE8});

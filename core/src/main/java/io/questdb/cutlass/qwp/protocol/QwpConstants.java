@@ -162,7 +162,7 @@ public final class QwpConstants {
     /**
      * Status: Reserved. Node cannot accept writes (read-only replica /
      * demoting primary). Servers currently signal this state with a
-     * reconnect-eligible {@code ROLE_CHANGE} (4001) close instead of a NACK (see
+     * reconnect-eligible {@code NORMAL_CLOSURE} close instead of a NACK (see
      * the role-change close in {@code QwpIngressProcessorState}); the byte is
      * reserved so a future server can NACK it mid-stream once deployed client
      * fleets classify it as retriable-with-endpoint-rotation rather than

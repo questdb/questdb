@@ -475,8 +475,8 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
                     recvBuf, recvBufferSize
             )) {
                 QwpIngressProcessorState state = setupState(httpConfig, context);
-                // The ROLE_CHANGE CLOSE is on the wire; the connection now
-                // only waits for the echo that proves the client read it.
+                // The role-change CLOSE is on the wire; the connection now
+                // only waits for the client's CLOSE to complete the handshake.
                 state.initiateRoleChangeClose();
                 state.beginCloseEchoWait();
                 Assert.assertTrue(state.isAwaitingCloseEcho());
@@ -1748,14 +1748,17 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
     }
 
     /**
-     * The client's CLOSE echo of the server's ROLE_CHANGE close code, masked
-     * like every client frame. Only this code completes the close-echo wait:
-     * the client can have learned it only by reading the server's CLOSE.
+     * The client's CLOSE echo of the server's role-change close code
+     * (NORMAL_CLOSURE), masked like every client frame. Any inbound CLOSE
+     * completes the wait -- the role-change close carries the same code a
+     * voluntary client close sends, so the two are indistinguishable. See
+     * {@code WebSocketCloseCode#ROLE_CHANGE} for the capability negotiation a
+     * distinguishable code would need.
      */
     private static byte[] roleChangeCloseEchoFrame() {
         return createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{
-                (byte) (WebSocketCloseCode.ROLE_CHANGE >>> 8),
-                (byte) WebSocketCloseCode.ROLE_CHANGE
+                (byte) (WebSocketCloseCode.NORMAL_CLOSURE >>> 8),
+                (byte) WebSocketCloseCode.NORMAL_CLOSURE
         });
     }
 

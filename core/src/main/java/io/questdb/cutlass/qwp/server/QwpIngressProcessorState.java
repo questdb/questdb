@@ -245,7 +245,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // events (gate-rejected frames, keepalive PINGs) until the durable-upload
     // registry covers pendingDurableSeqTxns or the grace budget expires.
     private long roleChangeCloseDeferredDeadline = -1;
-    // Set immediately before the ROLE_CHANGE CLOSE frame is emitted, whether or
+    // Set immediately before the role-change CLOSE frame is emitted, whether or
     // not the close deferred first. Close-echo eligibility must depend on WHAT
     // the close delivers (the final durable ack flushed immediately before the
     // CLOSE frame), not on WHETHER uploads happened to still lag at the first
@@ -667,9 +667,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * or completed on the first attempt (coverage already in place). This --
      * not {@link #isRoleChangeCloseDeferred()} -- is the close-echo
      * eligibility predicate: the CLOSE frame carries the final durable ack in
-     * both cases. False for the whole deferral window: until the ROLE_CHANGE
-     * frame is actually on its way, no other fatal close may be treated as a
-     * role-change close.
+     * both cases. False for the whole deferral window: until the role-change
+     * CLOSE frame is actually on its way, no other fatal close may be treated
+     * as a role-change close.
      */
     public boolean isRoleChangeCloseInitiated() {
         return roleChangeCloseInitiated;
@@ -677,7 +677,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     /**
      * Marks this connection as closing due to a role change (in-place
-     * PRIMARY-&gt;REPLICA demote). Called immediately before the ROLE_CHANGE
+     * PRIMARY-&gt;REPLICA demote). Called immediately before the role-change
      * CLOSE is handed to {@code sendFatalClose} -- never while the close is
      * only deferred -- so the mark cannot outlive a window in which no CLOSE
      * exists. Idempotent; survives per-message state clears and parked-close
@@ -1174,7 +1174,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     // gate rejects only ROLE_REPLICA / ROLE_PRIMARY_CATCHUP, and a statically
                     // read-only node keeps reporting its upgrade-eligible role (STANDALONE on
                     // OSS) forever. A store-and-forward client treats the resulting
-                    // ROLE_CHANGE close as orderly (no NACK, no poison strike, no typed
+                    // NORMAL_CLOSURE close as orderly (no NACK, no poison strike, no typed
                     // terminal) and would reconnect-replay in a silent infinite loop, its
                     // producer never learning of the misconfiguration. Answer with the typed
                     // SECURITY_ERROR NACK instead: the client latches it as terminal and
