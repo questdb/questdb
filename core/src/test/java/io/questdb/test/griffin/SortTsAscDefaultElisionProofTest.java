@@ -54,17 +54,17 @@ public class SortTsAscDefaultElisionProofTest extends AbstractCairoTest {
             assertQuery("(SELECT timestamp, count() c FROM t group by timestamp) timestamp(timestamp) order by timestamp asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                        Encode sort light
-                          keys: [timestamp]
-                            SelectedRecord
-                                Async Group By workers: 1
-                                  keys: [timestamp]
-                                  values: [count(*)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                        """);
+                            Encode sort light
+                              keys: [timestamp]
+                                SelectedRecord
+                                    Async Group By workers: 1
+                                      keys: [timestamp]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
         });
     }
 
@@ -75,16 +75,16 @@ public class SortTsAscDefaultElisionProofTest extends AbstractCairoTest {
             assertQuery("(SELECT timestamp, x FROM t order by x asc limit 30) timestamp(timestamp) order by timestamp asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                        Encode sort light
-                          keys: [timestamp]
-                            SelectedRecord
-                                Async Top K lo: 30 workers: 1
-                                  filter: null
-                                  keys: [x]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                        """);
+                            Encode sort light
+                              keys: [timestamp]
+                                SelectedRecord
+                                    Async Top K lo: 30 workers: 1
+                                      filter: null
+                                      keys: [x]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
         });
     }
 
@@ -95,15 +95,15 @@ public class SortTsAscDefaultElisionProofTest extends AbstractCairoTest {
             assertQuery("(SELECT timestamp, x FROM t order by x asc) timestamp(timestamp) order by timestamp asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                        Encode sort light
-                          keys: [timestamp]
-                            SelectedRecord
-                                Encode sort light
-                                  keys: [x]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                        """);
+                            Encode sort light
+                              keys: [timestamp]
+                                SelectedRecord
+                                    Encode sort light
+                                      keys: [x]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
         });
     }
 
@@ -114,17 +114,17 @@ public class SortTsAscDefaultElisionProofTest extends AbstractCairoTest {
             assertQuery("(SELECT timestamp FROM t UNION ALL SELECT timestamp FROM t2) timestamp(timestamp) order by timestamp asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                        Encode sort
-                          keys: [timestamp]
-                            SelectedRecord
-                                Union All
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t2
-                        """);
+                            Encode sort
+                              keys: [timestamp]
+                                SelectedRecord
+                                    Union All
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
+                            """);
         });
     }
 
@@ -135,17 +135,17 @@ public class SortTsAscDefaultElisionProofTest extends AbstractCairoTest {
             assertQuery("(SELECT timestamp FROM t UNION SELECT timestamp FROM t2) timestamp(timestamp) order by timestamp asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                        Encode sort
-                          keys: [timestamp]
-                            SelectedRecord
-                                Union
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t2
-                        """);
+                            Encode sort
+                              keys: [timestamp]
+                                SelectedRecord
+                                    Union
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
+                            """);
         });
     }
 
@@ -156,15 +156,15 @@ public class SortTsAscDefaultElisionProofTest extends AbstractCairoTest {
             assertQuery("(SELECT ts, si FROM ai WHERE ts >= 0::timestamp and ts < 100::timestamp order by si) timestamp(ts) order by ts asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                        Encode sort light
-                          keys: [ts]
-                            SelectedRecord
-                                SortedSymbolIndex
-                                    Index forward scan on: si
-                                      symbolOrder: asc
-                                    Interval forward scan on: ai
-                                      intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.000099Z")]
-                        """);
+                            Encode sort light
+                              keys: [ts]
+                                SelectedRecord
+                                    SortedSymbolIndex
+                                        Index forward scan on: si
+                                          symbolOrder: asc
+                                        Interval forward scan on: ai
+                                          intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.000099Z")]
+                            """);
         });
     }
 }

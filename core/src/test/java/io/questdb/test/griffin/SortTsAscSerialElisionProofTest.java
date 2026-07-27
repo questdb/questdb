@@ -60,16 +60,16 @@ public class SortTsAscSerialElisionProofTest extends AbstractCairoTest {
             assertQuery("(SELECT timestamp, count() c FROM t group by timestamp) timestamp(timestamp) order by timestamp asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                        Encode sort light
-                          keys: [timestamp]
-                            SelectedRecord
-                                GroupBy vectorized: false
-                                  keys: [timestamp]
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                        """);
+                            Encode sort light
+                              keys: [timestamp]
+                                SelectedRecord
+                                    GroupBy vectorized: false
+                                      keys: [timestamp]
+                                      values: [count(*)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
         });
     }
 
@@ -80,18 +80,18 @@ public class SortTsAscSerialElisionProofTest extends AbstractCairoTest {
             assertQuery("(SELECT timestamp, count() c FROM t group by timestamp order by c asc limit 30) timestamp(timestamp) order by timestamp asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                        Encode sort light
-                          keys: [timestamp]
-                            SelectedRecord
-                                Long Top K lo: 30
-                                  keys: [c asc]
-                                    GroupBy vectorized: false
-                                      keys: [timestamp]
-                                      values: [count(*)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
-                        """);
+                            Encode sort light
+                              keys: [timestamp]
+                                SelectedRecord
+                                    Long Top K lo: 30
+                                      keys: [c asc]
+                                        GroupBy vectorized: false
+                                          keys: [timestamp]
+                                          values: [count(*)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                            """);
         });
     }
 
@@ -103,15 +103,15 @@ public class SortTsAscSerialElisionProofTest extends AbstractCairoTest {
             assertQuery("(SELECT timestamp, x FROM t order by x asc limit 30) timestamp(timestamp) order by timestamp asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                        Encode sort light
-                          keys: [timestamp]
-                            SelectedRecord
-                                Encode sort light lo: 30
-                                  keys: [x]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                        """);
+                            Encode sort light
+                              keys: [timestamp]
+                                SelectedRecord
+                                    Encode sort light lo: 30
+                                      keys: [x]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
         });
     }
 
@@ -123,15 +123,15 @@ public class SortTsAscSerialElisionProofTest extends AbstractCairoTest {
             assertQuery("(SELECT timestamp, x FROM t order by x asc limit 30) timestamp(timestamp) order by timestamp asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                        Sort light
-                          keys: [timestamp]
-                            SelectedRecord
-                                Sort light lo: 30
-                                  keys: [x]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                        """);
+                            Sort light
+                              keys: [timestamp]
+                                SelectedRecord
+                                    Sort light lo: 30
+                                      keys: [x]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
         });
     }
 
@@ -143,19 +143,19 @@ public class SortTsAscSerialElisionProofTest extends AbstractCairoTest {
             assertQuery("(SELECT timestamp, x FROM (SELECT timestamp, x FROM t UNION ALL SELECT timestamp, x FROM t2) order by x asc) timestamp(timestamp) order by timestamp asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                        Sort light
-                          keys: [timestamp]
-                            SelectedRecord
-                                Sort
-                                  keys: [x]
-                                    Union All
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t2
-                        """);
+                            Sort light
+                              keys: [timestamp]
+                                SelectedRecord
+                                    Sort
+                                      keys: [x]
+                                        Union All
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
+                            """);
         });
     }
 }
