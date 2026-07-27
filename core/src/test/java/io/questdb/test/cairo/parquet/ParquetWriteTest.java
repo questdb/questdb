@@ -6072,6 +6072,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             File tableDir = new File(root, tableToken.getDirName());
             final long parquetMetaSizeBefore = parquetMetaLength(tableDir);
             Assert.assertTrue(parquetMetaSizeBefore > 0);
+            Assert.assertEquals(
+                    "committed header must match the pre-update file size",
+                    parquetMetaSizeBefore,
+                    parquetMetaHeaderSize(tableDir)
+            );
 
             // Arm the failure and run an in-place O3 update (merges into rg0).
             armed.set(true);
@@ -6096,6 +6101,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "_pm must not be truncated on rollback [before=" + parquetMetaSizeBefore + ", after=" + parquetMetaSizeAfterFailure + "]",
                     parquetMetaSizeAfterFailure > parquetMetaSizeBefore
+            );
+            Assert.assertEquals(
+                    "index-build failure must leave the committed header unpublished",
+                    parquetMetaSizeBefore,
+                    parquetMetaHeaderSize(tableDir)
             );
 
             // The committed snapshot is still readable: the header was never

@@ -282,8 +282,6 @@ public class NetworkFacadeImpl implements NetworkFacade {
         if (fd == -1) {
             return true;
         }
-
-        final int nRead = Net.peek(fd, buffer, bufferSize);
-        return nRead < 0;
+        return Net.isPeerDisconnected(fd);
     }
 }

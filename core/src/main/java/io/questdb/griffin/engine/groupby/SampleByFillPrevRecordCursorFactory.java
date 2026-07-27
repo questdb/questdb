@@ -33,12 +33,13 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
-    private final SampleByFillPrevRecordCursor cursor;
+    private SampleByFillPrevRecordCursor cursor;
 
     public SampleByFillPrevRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -71,28 +72,42 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
                 valueTypes,
                 groupByMetadata,
                 groupByFunctions,
-                recordFunctions
-        );
-        final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        cursor = new SampleByFillPrevRecordCursor(
-                configuration,
-                map,
-                mapSink,
-                groupByFunctions,
-                updater,
                 recordFunctions,
-                timestampIndex,
-                timestampType,
-                timestampSampler,
                 timezoneNameFunc,
-                timezoneNameFuncPos,
                 offsetFunc,
-                offsetFuncPos,
                 sampleFromFunc,
-                sampleFromFuncPos,
-                sampleToFunc,
-                sampleToFuncPos
+                sampleToFunc
         );
+        try {
+            final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            cursor = new SampleByFillPrevRecordCursor(
+                    configuration,
+                    map,
+                    mapSink,
+                    groupByFunctions,
+                    updater,
+                    recordFunctions,
+                    timestampIndex,
+                    timestampType,
+                    timestampSampler,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos,
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
+            );
+        } catch (Throwable th) {
+            // The superclass already adopted the record functions, base factory, map, and
+            // temporal parameter functions; the unreturned partial object would strand them.
+            // close() frees everything except the map, which _close() reaches only through the
+            // cursor - not constructed yet - so free it directly.
+            Misc.free(map, th);
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override
@@ -102,6 +117,13 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", groupByFunctions, true);
         sink.child(base);
+    }
+
+    @Override
+    protected AbstractNoRecordSampleByCursor detachRawCursor() {
+        final SampleByFillPrevRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        return cursor;
     }
 
     @Override
