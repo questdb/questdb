@@ -836,32 +836,18 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Returns {@code true} if any of this view's dependency columns is either missing
-     * from the post-change writer metadata — dropped or renamed away — or still
-     * present under the same name but with a different {@code TYPE} than the view
-     * compiled against. Callers use this to decide whether a base-table schema change
-     * must invalidate the view.
+     * Returns the name of the first dependency column that is either missing from the
+     * post-change writer metadata — dropped or renamed away — or still present under the
+     * same name but with a different {@code TYPE} than the view compiled against, or
+     * {@code null} when every dependency still resolves. The invalidation site calls this
+     * directly, rather than a boolean sibling, because it names the offending column in
+     * {@code invalidation_reason}.
      * <p>
      * The type check closes a memory-safety hole: the cached compiled factory derives
      * each column's stride from its compile-time type, so a referenced column whose
      * type changed (e.g. INT-&gt;LONG, LONG-&gt;INT, INT-&gt;VARCHAR) would otherwise
      * keep being read through the stale stride — wrong results on a widening change,
      * an out-of-bounds native read on a narrowing or fixed&lt;-&gt;var-size change.
-     * <p>
-     * An empty dependency set returns {@code false} (defensive: we don't know what the
-     * view reads, so we leave invalidation to the broader path).
-     */
-    public boolean dependsOnMissingOrRetypedColumn(@NotNull RecordMetadata baseMetadata) {
-        return findFirstMissingOrRetypedColumn(baseMetadata) != null;
-    }
-
-    /**
-     * Returns the name of the first dependency column that is either missing from the
-     * post-change writer metadata — dropped or renamed away — or still present under the
-     * same name but with a different {@code TYPE} than the view compiled against, or
-     * {@code null} when every dependency still resolves. Backs
-     * {@link #dependsOnMissingOrRetypedColumn(RecordMetadata)} and lets the invalidation
-     * site name the offending column in {@code invalidation_reason}.
      * <p>
      * Returns the interned dependency name straight from the definition, so it allocates
      * nothing on the schema-change path. An empty dependency set returns {@code null}

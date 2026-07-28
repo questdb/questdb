@@ -347,6 +347,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // commit00() only takes the global metadata-cache write lock when the flag flips.
     private boolean hasNotifiedParquetPartitions;
     private boolean hasPostingIndexers;
+    // True once housekeeping's TTL pass has evicted a partition since the last WAL
+    // apply counter reset. The eviction runs INSIDE a DATA commit, so its row loss
+    // is invisible to the skip/dedup outcome that commit otherwise reports; the
+    // apply worker ORs this into the live-view dedup-base divergence signal. Set on
+    // the applying thread only, which is also the only thread that reads it.
+    private boolean hasTtlEvictedPartitionsSinceLastCommit;
     private int indexCount;
     private boolean isInCtorRecovery;
     private int lastErrno;
@@ -1597,6 +1603,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         physicallyWrittenRowsSinceLastCommit.reset();
         dedupRowsRemovedSinceLastCommit.reset();
+        hasTtlEvictedPartitionsSinceLastCommit = false;
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
@@ -2670,6 +2677,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return o3MasterRef > -1;
     }
 
+    /**
+     * Reports whether housekeeping's TTL pass evicted a partition since the last
+     * {@link #resetWalApplyCounters()}. {@code enforceTtl} runs inside the commit,
+     * after the WAL rows have been applied, so a DATA commit that both appends rows
+     * and expires the oldest partition reports no skip and no dedup while the applied
+     * base no longer matches the raw WAL stream. The apply worker ORs this into the
+     * live-view dedup-base divergence signal, which is what stops a coupled view from
+     * routing over rows the base has dropped.
+     */
+    public boolean hasTtlEvictedPartitionsSinceLastCommit() {
+        return hasTtlEvictedPartitionsSinceLastCommit;
+    }
+
     @Override
     public void ic(long o3MaxLag) {
         commit(o3MaxLag);
@@ -3402,6 +3422,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void resetWalApplyCounters() {
         physicallyWrittenRowsSinceLastCommit.reset();
         dedupRowsRemovedSinceLastCommit.reset();
+        hasTtlEvictedPartitionsSinceLastCommit = false;
     }
 
     @Override
@@ -6991,6 +7012,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } while (txWriter.getPartitionCount() > 1);
 
         if (evicted) {
+            // Raise the divergence flag BEFORE the commit: a throw inside it leaves
+            // partitions partially dropped, and over-reporting divergence only costs
+            // the live view its raw-WAL fast path, while under-reporting routes it
+            // over rows the applied base no longer holds.
+            hasTtlEvictedPartitionsSinceLastCommit = true;
             commitRemovePartitionOperation();
         }
     }

@@ -105,6 +105,26 @@ public final class WindowExpression extends QueryColumn {
     private WindowExpression() {
     }
 
+    /**
+     * SQL keyword for a {@code TIME_UNIT_*} code, so a message can name the unit the
+     * user wrote instead of the internal char ({@code 'T'} for milliseconds,
+     * {@code 'u'} for microseconds). Callers that render a frame bound prefix it with
+     * a space themselves. A unit code of 0 means the bound carries no unit at all,
+     * which has no keyword; callers must not reach here with it.
+     */
+    public static CharSequence timeUnitName(char timeUnit) {
+        return switch (timeUnit) {
+            case TIME_UNIT_NANOSECOND -> "nanosecond";
+            case TIME_UNIT_MICROSECOND -> "microsecond";
+            case TIME_UNIT_MILLISECOND -> "millisecond";
+            case TIME_UNIT_SECOND -> "second";
+            case TIME_UNIT_MINUTE -> "minute";
+            case TIME_UNIT_HOUR -> "hour";
+            case TIME_UNIT_DAY -> "day";
+            default -> "[unknown unit]";
+        };
+    }
+
     public void addOrderBy(ExpressionNode node, int direction) {
         orderBy.add(node);
         orderByDirection.add(direction);

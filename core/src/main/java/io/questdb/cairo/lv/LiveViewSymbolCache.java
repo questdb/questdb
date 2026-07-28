@@ -86,14 +86,30 @@ import io.questdb.std.QuietCloseable;
  * filled it, never a stale null at an in-bounds id (which a plain {@link ObjList},
  * storing the array with no fence, would expose as a transient spurious miss).
  * <p>
- * Memory: {@link #idToString} retains an immutable string and the reverse index
- * retains one immutable chain node per lead assignment; the reverse map also
- * retains one key per distinct value. They are never cleared before close because
- * a pinned cursor can keep resolving an older slot. For a SYMBOL column - low
- * cardinality by design - this is bounded like the symbol history itself; it is a
- * known RAM cost for a very high cardinality column, which should not be typed SYMBOL.
+ * Memory: {@link #idToString} retains an immutable string per lead assignment and
+ * the reverse map retains one key per distinct value. Neither is cleared before
+ * close, because a cursor pinned on an older slot holds a disk reader whose
+ * committed count predates the flush that committed those ids, so it resolves them
+ * through {@link #newSymbolValueOf} rather than from disk - the cache cannot tell
+ * how far back the oldest such reader sits. The id space itself advances once per
+ * assignment, so both grow with the number of assignments, not with cardinality.
+ * <p>
+ * The reverse index, in contrast, IS pruned: {@link #pruneReverseIndex} drops chain
+ * nodes a live slot can no longer reach, which bounds both the node count and the
+ * {@link #newSymbolKeyOf} walk. Without it a view taking repeated O3 replays - each
+ * re-assigning the same values a fresh id - grows one permanent node per assignment
+ * and makes every lookup walk them all.
  */
 public class LiveViewSymbolCache implements QuietCloseable {
+    // Assignments a column must accumulate before pruneReverseIndex walks its
+    // reverse map at all. Keeps a small map (the common case: a handful of lead
+    // values per flush window) from being walked twice per refresh cycle for
+    // nothing.
+    private static final int PRUNE_MIN_ASSIGNMENTS = 1024;
+    // Per output column, assignments made since the last successful prune. Gates
+    // pruneReverseIndex to at most one map walk per that many assignments, which
+    // keeps pruning O(1) amortized per assignment. Writer-side only.
+    private final IntList assignmentsSincePrune;
     // Per output column, null for non-SYMBOL columns. Read by cursor overlays;
     // append-only, indexed by absolute LV-table symbol id (null gaps for ids
     // that only ever existed as committed values, which resolve via disk).
@@ -121,6 +137,7 @@ public class LiveViewSymbolCache implements QuietCloseable {
         this.stringToIds = new ObjList<>(n);
         this.windowNewToId = new ObjList<>(n);
         this.nextNewId = new IntList(n);
+        this.assignmentsSincePrune = new IntList(n);
         for (int i = 0; i < n; i++) {
             if (ColumnType.tagOf(columnTypes.getQuick(i)) == ColumnType.SYMBOL) {
                 idToString.add(new ConcurrentCharSequenceList());
@@ -133,6 +150,7 @@ public class LiveViewSymbolCache implements QuietCloseable {
                 windowNewToId.add(null);
             }
             nextNewId.add(0);
+            assignmentsSincePrune.add(0);
         }
     }
 
@@ -248,6 +266,7 @@ public class LiveViewSymbolCache implements QuietCloseable {
         idToString.getQuick(col).extendAndSet(id, s);
         final ConcurrentHashMap<SymbolIdChain> reverseMap = stringToIds.getQuick(col);
         reverseMap.put(s, new SymbolIdChain(id, reverseMap.get(s)));
+        assignmentsSincePrune.setQuick(col, assignmentsSincePrune.getQuick(col) + 1);
         return id;
     }
 
@@ -322,6 +341,56 @@ public class LiveViewSymbolCache implements QuietCloseable {
     }
 
     /**
+     * Drops the reverse-index chain nodes no live slot can reach for {@code col}.
+     * {@code minLiveHorizonId} is the LOWEST symbol horizon stamped on any tier
+     * slot: the smallest {@code toId} {@link #newSymbolKeyOf} can be called with
+     * while those slots stay pinnable.
+     * <p>
+     * That walk returns at the first node below {@code toId}, so for the oldest
+     * reachable {@code toId} only one node below {@code minLiveHorizonId} - the
+     * newest - can ever be the answer, and every node older than it is dead. This
+     * keeps all nodes at or above the horizon plus that one, and truncates the rest.
+     * A view whose O3 replays re-assign the same values over and over therefore
+     * retains one node per distinct value plus the live band, instead of one node
+     * per assignment for the view's whole life.
+     * <p>
+     * Writer-side only, and safe against a concurrent {@link #newSymbolKeyOf}: a
+     * reader bounded by {@code toId >= minLiveHorizonId} stops at or above the
+     * retained node and never dereferences the truncated tail, and one that already
+     * loaded a tail reference reads immutable, still-valid nodes.
+     * <p>
+     * Gated: returns without walking unless the column has taken at least
+     * {@link #PRUNE_MIN_ASSIGNMENTS} assignments since the last prune AND at least
+     * as many as the reverse map holds keys, which bounds the amortized cost at
+     * O(1) per assignment. Allocates one iterator per walk.
+     */
+    public void pruneReverseIndex(int col, int minLiveHorizonId) {
+        if (minLiveHorizonId <= 0) {
+            // No slot carries a horizon yet (a freshly cleared slot reports 0), so
+            // there is no id band a reader has provably moved past.
+            return;
+        }
+        final ConcurrentHashMap<SymbolIdChain> reverseMap = stringToIds.getQuick(col);
+        if (reverseMap == null) {
+            return;
+        }
+        final int assignments = assignmentsSincePrune.getQuick(col);
+        if (assignments < PRUNE_MIN_ASSIGNMENTS || assignments < reverseMap.size()) {
+            return;
+        }
+        for (SymbolIdChain head : reverseMap.values()) {
+            SymbolIdChain node = head;
+            while (node != null && node.id >= minLiveHorizonId) {
+                node = node.previous;
+            }
+            if (node != null && node.previous != null) {
+                node.previous = null;
+            }
+        }
+        assignmentsSincePrune.setQuick(col, 0);
+    }
+
+    /**
      * Number of SYMBOL output columns the cache holds an {@code id -> string} list
      * for. The tier iterates these to stamp each column's symbol horizon onto a
      * slot at publish (see {@link #symbolColumnIndexAt}).
@@ -347,7 +416,12 @@ public class LiveViewSymbolCache implements QuietCloseable {
 
     private static final class SymbolIdChain {
         private final int id;
-        private final SymbolIdChain previous;
+        // Newest-first link to the same value's previous assignment. Written twice:
+        // at construction, and by pruneReverseIndex when it truncates a tail no live
+        // slot can reach. Volatile so a reader that loads this node sees either the
+        // full tail or the truncation, never a torn intermediate; both answer
+        // newSymbolKeyOf identically, since the walk stops before the truncated tail.
+        private volatile SymbolIdChain previous;
 
         private SymbolIdChain(int id, SymbolIdChain previous) {
             this.id = id;

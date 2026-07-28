@@ -70,11 +70,13 @@ public class LiveViewDefinition {
     // back-compat read path. Bump this only for a post-release incompatible
     // change, and add explicit per-version read handling then.
     public static final int LIVE_VIEW_DEFINITION_FORMAT_VERSION = 1;
-    // _lv.drop is the durable "DROP in progress" sentinel. dropLiveView creates
-    // it (and fsyncs it) before any in-memory or on-disk teardown so a crash
-    // mid-drop leaves an unambiguous signal for the startup loader to reap.
-    // Sits in the LV directory alongside _lv and _lv.s; its mere existence is
-    // the signal, the file contents are unused.
+    // _lv.drop is the "DROP in progress" sentinel. dropLiveView creates it (and
+    // fsyncs it) before any in-memory or on-disk teardown so a crash mid-drop
+    // leaves an unambiguous signal for the startup loader to reap. Sits in the LV
+    // directory alongside _lv and _lv.s; its mere existence is the signal, the
+    // file contents are unused. The fsync covers the file, not the directory
+    // entry that names it, so the ordering holds across a process crash but not
+    // across a power loss -- see TableUtils.writeLiveViewDropSentinel.
     public static final String LIVE_VIEW_DROP_SENTINEL_FILE_NAME = "_lv.drop";
     // START FROM modes, as persisted in the CORE block. The mode the user wrote is kept
     // alongside the boundary it resolved to: NOW and an explicit timestamp both persist a

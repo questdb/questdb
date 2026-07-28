@@ -51,7 +51,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // caps hours long before the multiply does, so the ceiling names 2^31 - 1 hours.
             assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 4294967296 HOUR PRECEDING) FROM tab")
                     .noLeakCheck()
-                    .fails(90, "RANGE frame end is out of range for the designated timestamp [width=4294967296h, max=2147483647h]");
+                    .fails(74, "RANGE frame end is out of range for the designated timestamp [width=4294967296 hour, max=2147483647 hour]");
         });
     }
 
@@ -64,7 +64,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // the frame rather than the start.
             assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 300000 DAY PRECEDING) FROM tab")
                     .noLeakCheck()
-                    .fails(85, "RANGE frame end is out of range for the designated timestamp [width=300000d, max=106751d]");
+                    .fails(74, "RANGE frame end is out of range for the designated timestamp [width=300000 day, max=106751 day]");
         });
     }
 
@@ -79,7 +79,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // one: the query returned rows over the narrower frame.
             assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 20000000000000 SECOND PRECEDING) FROM tab")
                     .noLeakCheck()
-                    .fails(96, "RANGE frame end is out of range for the designated timestamp [width=20000000000000s, max=9223372036854s]");
+                    .fails(74, "RANGE frame end is out of range for the designated timestamp [width=20000000000000 second, max=9223372036854 second]");
         });
     }
 
@@ -93,7 +93,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // did not write. The width is now named instead.
             assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 9223372036855 SECOND PRECEDING) FROM tab")
                     .noLeakCheck()
-                    .fails(95, "RANGE frame end is out of range for the designated timestamp [width=9223372036855s, max=9223372036854s]");
+                    .fails(74, "RANGE frame end is out of range for the designated timestamp [width=9223372036855 second, max=9223372036854 second]");
         });
     }
 
@@ -106,7 +106,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // the frame silently became CURRENT ROW and every window read one row.
             assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 4294967296 DAY PRECEDING AND CURRENT ROW) FROM tab")
                     .noLeakCheck()
-                    .fails(65, "RANGE frame start is out of range for the designated timestamp [width=4294967296d, max=106751d]");
+                    .fails(50, "RANGE frame start is out of range for the designated timestamp [width=4294967296 day, max=106751 day]");
         });
     }
 
@@ -120,7 +120,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // Nothing caught this one: the query returned rows over the narrower frame.
             assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 300000 DAY PRECEDING AND CURRENT ROW) FROM tab")
                     .noLeakCheck()
-                    .fails(61, "RANGE frame start is out of range for the designated timestamp [width=300000d, max=106751d]");
+                    .fails(50, "RANGE frame start is out of range for the designated timestamp [width=300000 day, max=106751 day]");
         });
     }
 
@@ -134,7 +134,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // user did not write. The width is now named instead.
             assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 200000 DAY PRECEDING AND CURRENT ROW) FROM tab")
                     .noLeakCheck()
-                    .fails(61, "RANGE frame start is out of range for the designated timestamp [width=200000d, max=106751d]");
+                    .fails(50, "RANGE frame start is out of range for the designated timestamp [width=200000 day, max=106751 day]");
         });
     }
 
@@ -158,7 +158,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 106751992 DAY PRECEDING AND CURRENT ROW) FROM tab")
                     .noLeakCheck()
-                    .fails(64, "RANGE frame start is out of range for the designated timestamp [width=106751992d, max=106751991d]");
+                    .fails(50, "RANGE frame start is out of range for the designated timestamp [width=106751992 day, max=106751991 day]");
         });
     }
 
@@ -196,7 +196,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 106751992 DAY PRECEDING) FROM tab")
                     .noLeakCheck()
-                    .fails(88, "RANGE frame end is out of range for the designated timestamp [width=106751992d, max=106751991d]");
+                    .fails(74, "RANGE frame end is out of range for the designated timestamp [width=106751992 day, max=106751991 day]");
         });
     }
 
@@ -220,7 +220,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 106752 DAY PRECEDING AND CURRENT ROW) FROM tab")
                     .noLeakCheck()
-                    .fails(61, "RANGE frame start is out of range for the designated timestamp [width=106752d, max=106751d]");
+                    .fails(50, "RANGE frame start is out of range for the designated timestamp [width=106752 day, max=106751 day]");
         });
     }
 
@@ -256,7 +256,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 106752 DAY PRECEDING) FROM tab")
                     .noLeakCheck()
-                    .fails(85, "RANGE frame end is out of range for the designated timestamp [width=106752d, max=106751d]");
+                    .fails(74, "RANGE frame end is out of range for the designated timestamp [width=106752 day, max=106751 day]");
         });
     }
 }

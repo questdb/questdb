@@ -30,11 +30,19 @@ import org.jetbrains.annotations.NotNull;
 /**
  * A stable {@link LiveViewStateStore} that forwards every call to a swappable inner delegate.
  * <p>
- * The engine installs one instance of this wrapper for its whole life and never replaces the field.
  * Because {@link LiveViewRefreshJob} caches the result of {@code engine.getLiveViewStateStore()} at
  * construction, swapping the engine field directly would strand that cached reference on the stale
  * store; forwarding through a stable wrapper would make a single delegate write visible to every
  * cached holder at once.
+ * <p>
+ * That is the wrapper's purpose, not a contract the engine currently honours: {@code CairoEngine.load()}
+ * reassigns the {@code liveViewStateStore} field itself, on live views and mat views alike. It is
+ * harmless today because every {@code LiveViewRefreshJob} is constructed after {@code load()} - the
+ * worker pool depends on the engine component, and the components start in one serial topological
+ * pass - and because a job stranded on a stale real store still refreshes: its
+ * {@code isRefreshEnabled()} is unconditionally true and the lagging-view scan reads the registry,
+ * a final engine field {@code load()} never touches. The cost of a second {@code load()} is
+ * notification latency, not stopped refresh.
  * <p>
  * <b>Nothing swaps it today.</b> Under symmetric local refresh a live view is node-local derived
  * data that every node refreshes for itself, so a role switch is continuation rather than

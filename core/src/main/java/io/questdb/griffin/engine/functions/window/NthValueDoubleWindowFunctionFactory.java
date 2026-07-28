@@ -536,9 +536,12 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         // list of [capacity, startOffset] pairs marking free space within memory.
-        // Populated both by expandRingBuffer (slab being grown out of) and by
-        // retainPartitions (slabs of tombstoned partitions). expandRingBuffer
-        // pops a pair whose capacity matches the target post-double capacity.
+        // Populated by expandRingBuffer alone (the slab being grown out of);
+        // expandRingBuffer pops a pair whose capacity matches the target
+        // post-double capacity. NOT populated by retainPartitions: the frontier
+        // sweep rebuilds the partition Map but leaves the evicted partitions'
+        // slabs stranded in the arena, so the arena still grows with lifetime
+        // partition cardinality. See PartitionStateEvictor.
         protected final LongList freeList = new LongList();
         protected final int initialBufferSize;
         protected final ArrayColumnTypes keyColumnTypes;

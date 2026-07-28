@@ -264,16 +264,6 @@ final class LiveViewCheckpointSegmentDirectoryNode {
     }
 
     /**
-     * Repoints child {@code i} at a new subtree, keeping its minimum key.
-     */
-    void setChildRef(int i, long segmentId, long offset, long length) {
-        assert !leaf;
-        childSegmentId[i] = segmentId;
-        childOffset[i] = offset;
-        childLength[i] = length;
-    }
-
-    /**
      * Serializes this node into a fresh page of the {@code writer}, filling
      * {@code out} with a reference to it.
      */

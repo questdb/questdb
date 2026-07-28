@@ -4566,7 +4566,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     EXCLUDE PREVAILING
                     """)
                     .noLeakCheck()
-                    .fails(79, "RANGE frame start is out of range for the designated timestamp [width=300000d, max=106751d]");
+                    .fails(79, "RANGE frame start is out of range for the designated timestamp [width=300000 day, max=106751 day]");
 
             // Without a WHERE there is no pushed interval model, so the interval-pruning
             // conversion never runs and only the join site is covered. This variant pushes one,
@@ -4581,7 +4581,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     WHERE m.ts > '2024-01-01T00:00:00.000000000Z'
                     """)
                     .noLeakCheck()
-                    .fails(79, "RANGE frame start is out of range for the designated timestamp [width=300000d, max=106751d]");
+                    .fails(79, "RANGE frame start is out of range for the designated timestamp [width=300000 day, max=106751 day]");
         });
     }
 

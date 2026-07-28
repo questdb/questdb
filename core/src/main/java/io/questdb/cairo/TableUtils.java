@@ -2894,6 +2894,15 @@ public final class TableUtils {
      * the reap branch in {@code CairoEngine.buildViewGraphs}; a tmp+rename scheme would instead lose a
      * crash-before-rename drop intent. Existence-only is the stronger durability contract here, not an
      * oversight.
+     * <p>
+     * What the fsync does NOT cover: the sentinel's parent directory entry. POSIX does not make a
+     * newly linked name durable until the containing directory is itself fsynced, and
+     * {@link FilesFacade} has no directory-fsync primitive (nothing in the engine does this today).
+     * So the guarantee this call actually provides is ordering across a PROCESS crash, not across a
+     * power loss: after a power loss the sentinel can be absent even though the drop had already
+     * begun, and the startup loader then sees a directory holding an {@code _lv} with no
+     * {@code _lv.drop} and re-registers it as a healthy live view. Callers should read the "durable"
+     * in the surrounding comments as that weaker property.
      */
     public static void writeLiveViewDropSentinel(CairoConfiguration configuration, TableToken token) {
         final FilesFacade ff = configuration.getFilesFacade();

@@ -46,6 +46,15 @@ import java.io.Closeable;
  * as ZigZag LEB128. The double encoding is a bit-exact Gorilla-style XOR stream
  * over raw IEEE-754 bits. Both adaptive selectors retain raw 64-bit storage
  * unless encoding saves at least 6.25% and at least 16 bytes.</p>
+ *
+ * <p>What the decoders validate is FRAMING, not content. The varint paths reject
+ * non-canonical encodings, overflow and truncation, so they happen to catch many
+ * corrupt inputs; the {@code *_RAW_64} paths check the stored length and then
+ * {@code memcpy}, so a flipped bit inside a stored accumulator decodes as a
+ * perfectly legal value. Neither is an integrity check: like every other data
+ * payload in the engine, these pages carry no checksum (the CRC32s live on the
+ * metadata pages and superblock slots - see {@link LiveViewCheckpointLayout}).
+ * Read a successful decode as "well-formed", never as "uncorrupted".</p>
  */
 public final class LiveViewCheckpointStateCodec {
 

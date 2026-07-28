@@ -209,7 +209,6 @@ public final class LiveViewCheckpointCompaction {
                             true,
                             result.getRootsRewritten(),
                             targetSegmentId,
-                            targetBytes,
                             result.getGeneration()
                     );
                 }
@@ -255,24 +254,21 @@ public final class LiveViewCheckpointCompaction {
      * qualified and every other field is unset.
      */
     public static final class Result {
-        static final Result NOTHING = new Result(false, 0, -1, 0, -1);
+        static final Result NOTHING = new Result(false, 0, -1, -1);
         private final long generation;
         private final boolean published;
         private final int rootsRewritten;
-        private final long targetSegmentBytes;
         private final long targetSegmentId;
 
         Result(
                 boolean published,
                 int rootsRewritten,
                 long targetSegmentId,
-                long targetSegmentBytes,
                 long generation
         ) {
             this.published = published;
             this.rootsRewritten = rootsRewritten;
             this.targetSegmentId = targetSegmentId;
-            this.targetSegmentBytes = targetSegmentBytes;
             this.generation = generation;
         }
 
@@ -282,10 +278,6 @@ public final class LiveViewCheckpointCompaction {
 
         public int getRootsRewritten() {
             return rootsRewritten;
-        }
-
-        public long getTargetSegmentBytes() {
-            return targetSegmentBytes;
         }
 
         public long getTargetSegmentId() {

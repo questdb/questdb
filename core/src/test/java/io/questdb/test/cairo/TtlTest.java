@@ -25,7 +25,10 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assume;
 import org.junit.Test;
@@ -36,6 +39,7 @@ import java.util.Arrays;
 import java.util.Collection;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 @RunWith(Parameterized.class)
@@ -786,6 +790,53 @@ public class TtlTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("name\n1970-12-02\n");
+    }
+
+    @Test
+    public void testTtlEvictionDivergesTheDedupBaseSignal() throws Exception {
+        Assume.assumeTrue(walMode == WalMode.WITH_WAL);
+
+        // enforceTtl runs in the commit's own housekeeping, after the WAL rows land, so
+        // a DATA commit that appends a row AND expires a partition skips nothing and
+        // dedups nothing - the two outcomes the dedup-base divergence signal used to be
+        // derived from. A live view coupled to this base reads that signal to decide
+        // whether it may refresh straight off the raw WAL stream; unless the eviction
+        // marks the range diverged, it routes over rows the applied base has dropped.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY" + wal);
+            execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00')");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("tango");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            final long coveredAfterAppend = tracker.getDedupSignalCoveredSeqTxn();
+            assertTrue("the append must have been recorded", coveredAfterAppend > 0);
+            assertEquals(
+                    "a plain appending commit matches its raw WAL stream",
+                    Numbers.LONG_NULL,
+                    tracker.getDedupSignalDivergenceSeqTxn()
+            );
+
+            // Lands in a new partition and pushes the first one one microsecond past its TTL.
+            execute("INSERT INTO tango VALUES ('1970-01-02T01:00:00')");
+            drainWalQueue();
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts
+                            1970-01-02T01:00:00.000000Z
+                            """);
+
+            final long covered = tracker.getDedupSignalCoveredSeqTxn();
+            assertEquals("the evicting commit must have been recorded", coveredAfterAppend + 1, covered);
+            assertEquals(
+                    "TTL dropped a partition the raw WAL stream still carries",
+                    covered,
+                    tracker.getDedupSignalDivergenceSeqTxn()
+            );
+        });
     }
 
     @Test

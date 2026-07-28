@@ -112,6 +112,16 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class LiveViewInMemReadBenchmark {
 
+    // IN MEMORY growth slack, well below the 16 MiB default. The slack is what the
+    // compaction gate amortises an eviction pass against: it only compacts once the
+    // overlap holds more than growthBudget / approxRowSizeBytes rows AND the row at
+    // that index has aged out of the window. This projection is 24 bytes wide, so
+    // the default budget needs 699_050 aged-out overlap rows - more than the 100_000
+    // arm ever holds, and more than the 1_000_000 arm ever ages out under a
+    // half-span window. At 1 MiB the gate clears at 43_690 rows and the seamSplit
+    // shape actually splits; without it both shapes measure the same fully resident
+    // tier and the split arm reports a phantom win.
+    private static final long GROWTH_BUDGET_BYTES = 1024 * 1024;
     // The trailing rows refreshed but held un-flushed (the in-RAM lead) in the
     // modeA arm. Small relative to `rows` and well inside the IN MEMORY window in
     // either shape, so it is always resident.
@@ -149,6 +159,11 @@ public class LiveViewInMemReadBenchmark {
     public void setup() throws Exception {
         dbRoot = Files.createTempDirectory("lvInMemReadBench-");
         final CairoConfiguration configuration = new DefaultCairoConfiguration(dbRoot.toString()) {
+            @Override
+            public long getLiveViewInMemoryBufferGrowthBytes() {
+                return GROWTH_BUDGET_BYTES;
+            }
+
             @Override
             public boolean isDevModeEnabled() {
                 return true;
@@ -233,8 +248,12 @@ public class LiveViewInMemReadBenchmark {
         if (!seamSplit && slot.rowCount() != rows) {
             throw new IllegalStateException("tier not fully populated: expected " + rows + ", got " + slot.rowCount());
         }
-        if (seamSplit && slot.rowCount() <= 0) {
-            throw new IllegalStateException("seam-split tier was not populated");
+        if (seamSplit && (slot.rowCount() <= 0 || slot.rowCount() >= rows)) {
+            // A resident count equal to `rows` means nothing aged out and the arm is a
+            // duplicate of `whole` measuring a phantom disk band, which is what a
+            // populated-only check missed.
+            throw new IllegalStateException(
+                    "seam-split tier must hold a strict subset: expected 0 < resident < " + rows + ", got " + slot.rowCount());
         }
         if (modeA && slot.leadRowCount() != LEAD_ROWS) {
             throw new IllegalStateException("expected an un-flushed lead of " + LEAD_ROWS + ", got " + slot.leadRowCount());
@@ -246,8 +265,16 @@ public class LiveViewInMemReadBenchmark {
         if ("diskOnly".equals(routing)) {
             // Mismatch both slot stamps so the seqTxn fence never engages: the
             // cursor falls back to the disk-only path on every getCursor.
-            tier.getSlot(0).setLvSeqTxn(tier.getSlot(0).lvSeqTxn() + 1_000_000L);
-            tier.getSlot(1).setLvSeqTxn(tier.getSlot(1).lvSeqTxn() + 1_000_000L);
+            //
+            // Stamp them BELOW the disk seqTxn, not above. isSlotNewerThanDisk is
+            // slotSeqTxn > diskSeqTxn, so stamping above makes the staleness
+            // predicate permanently true and getCursor burns all
+            // MAX_STALE_DISK_RETRIES re-opens - nine cursor opens, nine slot
+            // pin/release cycles and nine tier column-mapping walks per timed scan,
+            // charged to the baseline arm alone. Below the disk seqTxn the fence
+            // still misses on the first open and the retry never engages.
+            tier.getSlot(0).setLvSeqTxn(tier.getSlot(0).lvSeqTxn() - 1_000_000L);
+            tier.getSlot(1).setLvSeqTxn(tier.getSlot(1).lvSeqTxn() - 1_000_000L);
         }
 
         // Cache the compiled plan so the timed method measures the read, not the

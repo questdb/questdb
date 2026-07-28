@@ -786,9 +786,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 final long dedupRowsRemoved = writer.getDedupRowsRemovedSinceLastCommit();
                 engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, lastCommittedRows, dedupRowsRemoved);
                 // Dedup-base signal: a DATA batch matches its raw WAL stream only if it skipped
-                // nothing (a skipped DATA commit's rows never materialise) and deduped nothing
-                // (a dedup replaced/removed a row the raw append would keep). Either diverges.
-                lastCommitDiverged = skipped || dedupRowsRemoved > 0;
+                // nothing (a skipped DATA commit's rows never materialise), deduped nothing
+                // (a dedup replaced/removed a row the raw append would keep) and expired nothing
+                // (the commit's own housekeeping runs enforceTtl, which drops whole partitions
+                // the raw stream still carries). Any of the three diverges.
+                lastCommitDiverged = skipped || dedupRowsRemoved > 0 || writer.hasTtlEvictedPartitionsSinceLastCommit();
 
                 if (writer.getTableToken().isMatView()) {
                     for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {

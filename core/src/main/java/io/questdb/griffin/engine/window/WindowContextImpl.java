@@ -99,8 +99,9 @@ public class WindowContextImpl implements WindowContext, Mutable {
         final long width = bound == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(bound);
         if (width > maxUnitValue) {
             throw SqlException.$(position, "RANGE frame ").put(boundName)
-                    .put(" is out of range for the designated timestamp [width=").put(width).put(unit)
-                    .put(", max=").put(maxUnitValue).put(unit)
+                    .put(" is out of range for the designated timestamp [width=").put(width)
+                    .put(' ').put(WindowExpression.timeUnitName(unit))
+                    .put(", max=").put(maxUnitValue).put(' ').put(WindowExpression.timeUnitName(unit))
                     .put(']');
         }
         return driver.from(bound, unit);
@@ -252,9 +253,11 @@ public class WindowContextImpl implements WindowContext, Mutable {
             int framingMode,
             long rowsLo,
             char rowsLoUint,
+            int rowsLoExprPos,
             int rowsLoKindPos,
             long rowsHi,
             char rowsHiUint,
+            int rowsHiExprPos,
             int rowsHiKindPos,
             int exclusionKind,
             int exclusionKindPos,
@@ -266,11 +269,16 @@ public class WindowContextImpl implements WindowContext, Mutable {
         // Both bounds convert before any field is written: the caller clears the context after
         // the function it configures, not after a configuration that failed, so a rejected
         // bound must leave the context as it found it rather than half-configured.
+        //
+        // The reject reports at the bound EXPRESSION's position, not the frame kind's: the
+        // width is what does not fit, and the kind position sits on the PRECEDING / FOLLOWING
+        // keyword the parser consumed after it. The kind position stays the one validate()
+        // reports at, since those messages are about the kind.
         final long convertedRowsLo = rowsLoUint != 0 && ColumnType.isTimestamp(timestampType)
-                ? toTimestampUnits(timestampType, rowsLo, rowsLoUint, rowsLoKindPos, "start")
+                ? toTimestampUnits(timestampType, rowsLo, rowsLoUint, rowsLoExprPos, "start")
                 : rowsLo;
         final long convertedRowsHi = rowsHiUint != 0 && ColumnType.isTimestamp(timestampType)
-                ? toTimestampUnits(timestampType, rowsHi, rowsHiUint, rowsHiKindPos, "end")
+                ? toTimestampUnits(timestampType, rowsHi, rowsHiUint, rowsHiExprPos, "end")
                 : rowsHi;
         this.empty = false;
         this.partitionByRecord = partitionByRecord;

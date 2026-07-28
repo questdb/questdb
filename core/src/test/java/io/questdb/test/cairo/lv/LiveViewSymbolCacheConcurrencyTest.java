@@ -428,6 +428,78 @@ public class LiveViewSymbolCacheConcurrencyTest {
     }
 
     @Test
+    public void testPruneReverseIndexDropsBandsNoLiveSlotCanReach() {
+        // A view taking repeated O3 replays re-assigns the same values a fresh id on
+        // every replay, and each assignment prepends a chain node that used to live
+        // for the view's lifetime. Once every slot's horizon has moved past a band,
+        // only the newest node below the lowest horizon can still be an answer, so
+        // pruneReverseIndex keeps that one and drops the rest.
+        final IntList columnTypes = new IntList();
+        columnTypes.add(ColumnType.SYMBOL);
+        try (LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes)) {
+            final int rounds = 600;
+            for (int i = 0; i < rounds; i++) {
+                // onO3 clears the interning window, so the next intern of the same
+                // value assigns it a new id rather than reusing the window entry.
+                cache.onO3();
+                Assert.assertEquals(2 * i, cache.intern(COL, "a", NOT_FOUND_READER));
+                Assert.assertEquals(2 * i + 1, cache.intern(COL, "b", NOT_FOUND_READER));
+            }
+            final int liveHorizon = cache.newSymbolMaxIdExclusive(COL);
+            Assert.assertEquals(2 * rounds, liveHorizon);
+
+            // Before the prune every historical band still resolves.
+            Assert.assertEquals(48, cache.newSymbolKeyOf(COL, "a", 0, 50));
+            Assert.assertEquals(98, cache.newSymbolKeyOf(COL, "a", 0, 100));
+
+            cache.pruneReverseIndex(COL, 100);
+
+            // The oldest reachable band (toId == 100) is unchanged, and so is the
+            // live band - pruning may not move any answer a slot can still ask for.
+            Assert.assertEquals(98, cache.newSymbolKeyOf(COL, "a", 0, 100));
+            Assert.assertEquals(99, cache.newSymbolKeyOf(COL, "b", 0, 100));
+            Assert.assertEquals(liveHorizon - 2, cache.newSymbolKeyOf(COL, "a", 0, liveHorizon));
+            Assert.assertEquals(liveHorizon - 1, cache.newSymbolKeyOf(COL, "b", 0, liveHorizon));
+
+            // Everything older than that one retained node is gone. No live slot can
+            // reach this band by construction: 50 is below the horizon passed in.
+            Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(COL, "a", 0, 50));
+            Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(COL, "b", 0, 50));
+
+            // A second prune at the same horizon is a no-op: the gate counts
+            // assignments since the last prune, and there have been none.
+            cache.pruneReverseIndex(COL, 100);
+            Assert.assertEquals(98, cache.newSymbolKeyOf(COL, "a", 0, 100));
+        }
+    }
+
+    @Test
+    public void testPruneReverseIndexRetainsHistoryUntilItPaysForItself() {
+        // Two reasons pruneReverseIndex declines to walk, both of which must leave
+        // every band resolvable: a column that has not taken enough assignments to
+        // amortize the walk, and a horizon of 0 - which is what a slot that has
+        // never published reports, so the writer cannot yet prove any reader moved on.
+        final IntList columnTypes = new IntList();
+        columnTypes.add(ColumnType.SYMBOL);
+        try (LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes)) {
+            for (int i = 0; i < 10; i++) {
+                cache.onO3();
+                Assert.assertEquals(i, cache.intern(COL, "a", NOT_FOUND_READER));
+            }
+            cache.pruneReverseIndex(COL, 8);
+            Assert.assertEquals("too few assignments to amortize a walk", 3, cache.newSymbolKeyOf(COL, "a", 0, 4));
+
+            // Enough assignments now, but a zero horizon still prunes nothing.
+            for (int i = 10; i < 2_000; i++) {
+                cache.onO3();
+                Assert.assertEquals(i, cache.intern(COL, "a", NOT_FOUND_READER));
+            }
+            cache.pruneReverseIndex(COL, 0);
+            Assert.assertEquals("a slot that never published bounds nothing", 3, cache.newSymbolKeyOf(COL, "a", 0, 4));
+        }
+    }
+
+    @Test
     public void testOverlayBoundsKeyScanToSlotHorizon() {
         // Deterministic guard that the overlay bounds its key lookup to the pinned
         // slot's symbol horizon, not the cache's live list size. A value a later

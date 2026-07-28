@@ -475,12 +475,21 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      * sentinel-release / publish CAS, so the snapshot is exact (the sole interner
      * is not growing the lists at this instant) and a reader that pins the slot
      * sees a stable, in-bounds horizon. A non-SYMBOL schema makes this a no-op.
+     * <p>
+     * Prunes the cache's reverse index in the same pass. Once both slots carry a
+     * horizon, the lower of the two is the oldest id band any reader can still ask
+     * for - a reader only ever resolves against the slot it pinned - so everything
+     * the chains hold below it, bar one node per value, is dead. Both reads are on
+     * the writer thread, the only thread that stamps them.
      */
     private void stampSymbolHorizon(int slotIdx) {
         final LiveViewInMemoryBuffer slot = slots[slotIdx];
+        final LiveViewInMemoryBuffer other = slots[1 - slotIdx];
         for (int i = 0, n = symbolCache.symbolColumnCount(); i < n; i++) {
             final int col = symbolCache.symbolColumnIndexAt(i);
-            slot.setNewSymbolMaxId(col, symbolCache.newSymbolMaxIdExclusive(col));
+            final int horizon = symbolCache.newSymbolMaxIdExclusive(col);
+            slot.setNewSymbolMaxId(col, horizon);
+            symbolCache.pruneReverseIndex(col, Math.min(horizon, other.newSymbolMaxId(col)));
         }
     }
 

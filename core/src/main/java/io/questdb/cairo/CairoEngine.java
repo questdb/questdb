@@ -818,8 +818,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 if (tableToken.isLiveView()) {
                     if (TableUtils.isLiveViewDropSentinelFileExists(configuration, path, tableToken.getDirName())) {
-                        // dropLiveView wrote the durable _lv.drop sentinel before
-                        // any in-memory or on-disk teardown, then crashed.
+                        // dropLiveView wrote the _lv.drop sentinel before any
+                        // in-memory or on-disk teardown, then crashed.
                         // Finish the drop now so the directory does not survive
                         // and re-register as a healthy LV. Best-effort: a
                         // failure here only delays cleanup; the sentinel stays
@@ -1825,13 +1825,15 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void dropLiveView(CharSequence name, SecurityContext securityContext) {
-        // Stamp the durable _lv.drop sentinel before tearing anything down.
-        // A crash between any of the steps below leaves a queryable-but-no-
-        // longer-registered LV directory; the sentinel lets the startup loader
-        // tell that case apart from a healthy LV and finish the drop on the
-        // next start (see buildViewGraphs LV branch). The sentinel write runs
-        // first so the signal is durable before any in-memory state or on-disk
-        // file mutates.
+        // Stamp the _lv.drop sentinel before tearing anything down. A crash
+        // between any of the steps below leaves a queryable-but-no-longer-
+        // registered LV directory; the sentinel lets the startup loader tell
+        // that case apart from a healthy LV and finish the drop on the next
+        // start (see buildViewGraphs LV branch). The sentinel write runs first
+        // so the signal is on disk before any in-memory state or on-disk file
+        // mutates - ordering that holds across a process crash, but not across
+        // a power loss, since nothing fsyncs the parent directory entry (see
+        // TableUtils.writeLiveViewDropSentinel).
         final TableToken token = tableNameRegistry.getTableToken(name);
         if (token != null && !token.isLiveView()) {
             // dropLiveView only authorizes and only unwinds live-view state when the
@@ -3749,10 +3751,6 @@ public class CairoEngine implements Closeable, WriterSource {
             cachedWindowFunctions = null;
         }
         if (cachedWindowFunctions != null) {
-            // Surface the lead() case with a specific message before the generic
-            // reject -- lead() is the most common cause and the user benefit of
-            // "use lag()" is high.
-            rejectLeadIfPresent(cachedWindowFunctions, position);
             throw SqlException.$(position, "live view select may only use window functions that support incremental refresh; " +
                     "this query requires caching or multi-pass evaluation");
         }
@@ -3762,7 +3760,6 @@ public class CairoEngine implements Closeable, WriterSource {
         // incremental refresh only handles window functions that emit a value per input row
         // without looking ahead or buffering state across multiple passes
         ObjList<WindowFunction> fns = wf.getWindowFunctions();
-        rejectLeadIfPresent(fns, position);
         for (int i = 0, n = fns.size(); i < n; i++) {
             validateLiveViewWindowFunction(fns.getQuick(i), position);
         }
@@ -3872,19 +3869,6 @@ public class CairoEngine implements Closeable, WriterSource {
         if (!Chars.equalsIgnoreCase(timestampName, baseTimestampName)) {
             throw SqlException.$(position, "live view select cannot override the designated timestamp; expected '")
                     .put(baseTimestampName).put("', got '").put(timestampName).put('\'');
-        }
-    }
-
-    /**
-     * Throws an asserted-wording reject if any function in {@code fns} is {@code lead()}.
-     * lead() needs rows the streaming append-only path has not yet seen; live views
-     * reject it independently of the underlying factory shape.
-     */
-    private static void rejectLeadIfPresent(ObjList<WindowFunction> fns, int position) throws SqlException {
-        for (int i = 0, n = fns.size(); i < n; i++) {
-            if ("lead".equals(fns.getQuick(i).getName())) {
-                throw SqlException.$(position, "lead() is not supported in live views; use lag() for lookback");
-            }
         }
     }
 

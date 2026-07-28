@@ -92,6 +92,16 @@ public final class PartitionStateEvictor {
      * The live-view anchor runtime uses this to keep each anchored window
      * function's partition map in lockstep with the anchor map after a
      * frontier-gated sweep drops partitions whose bucket has fallen behind.
+     * <p>
+     * Scope limit worth knowing about: this reclaims MAP entries only. A ROWS or RANGE
+     * frame function also holds one ring slab per partition in its own {@code MemoryARW}
+     * arena, and a dropped partition's slab is not returned to that function's free list -
+     * the survivor-driven walk never visits an evicted entry, and no {@link Map} API
+     * exposes one. The arena therefore keeps growing with the view's LIFETIME partition
+     * cardinality, and since it is charged to the per-view refresh tracker, a long-lived
+     * high-churn anchored view eventually breaches the limit. Fixing it needs a per-class
+     * (startOffset, capacity) value-layout hook plus free-list-aware initial allocation
+     * across every ring function - see the PR notes.
      */
     public static long rebuildKeepingMembers(Map src, Map dst, Map survivingKeys, RecordSink survivingKeySink) {
         MapRecordCursor cursor = survivingKeys.getCursor();
