@@ -4947,6 +4947,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
+    // An alias-qualified column in the sub-query WHERE (x.i) must not trigger the direct-table rewrite:
+    // it would drop the sub-query that defines `x`, leaving the prefix unresolvable and failing to
+    // compile. The query stays on the LatestBy light plan instead.
+    @Test
+    public void testLatestOnAliasQualifiedFilterSubqueryStaysLight() throws Exception {
+        assertQuery("select * from (select * from a x where x.i > 0) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("LatestBy light");
+    }
+
+    // The same case without an explicit alias - the column is qualified by the table's own name (a.i).
+    // It must also stay on the LatestBy light plan rather than fail to compile.
+    @Test
+    public void testLatestOnTableQualifiedFilterSubqueryStaysLight() throws Exception {
+        assertQuery("select * from (select * from a where a.i > 0) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("LatestBy light");
+    }
+
     @Test
     public void testLatestOn3() throws Exception {
         assertQuery("select * from a latest on ts partition by s")

@@ -2359,22 +2359,22 @@ public class SqlOptimiser implements Mutable {
      *
      * @param model the starting model.
      */
-    // Hoist a bare single-table sub-query up into the model that carries LATEST ON, so the LATEST ON
-    // becomes a direct table read (structurally identical to the same-level query) and codegen reaches
-    // the indexed generateLatestByTableQuery fast path instead of LatestBy light + full scan.
+    // Rewrites `LATEST ON` over a `SELECT * FROM t [WHERE ...]` sub-query so it reads table `t`
+    // directly, dropping the sub-query wrapper. Reading the table directly compiles to the indexed
+    // generateLatestByTableQuery path (one index seek per key) instead of LatestBy light (a full
+    // scan), and returns the same rows in the same column order.
     //
-    // Fires only when it is provably equivalent to the same-level query AND wins big:
-    //   - the LATEST ON model itself carries no JOINs: with joins present, latest-by applies to the
-    //     join output, while the hoisted form would apply it to the table BEFORE the join - a
-    //     different result whenever the join multiplies rows per key;
-    //   - the LATEST ON model directly nests a bare `SELECT * FROM t [WHERE ...]` table read
-    //     (no projection/rename, joins, aggregation, distinct, window, sampleBy, union, order by,
-    //     limit, or its own latest by);
-    //   - LATEST ON targets that table's DESIGNATED timestamp (the fast path keys off
-    //     metadata.getTimestampIndex(); a non-designated timestamp would silently use the wrong one);
-    //   - every PARTITION BY column is an indexed SYMBOL (the only case where the direct-table
-    //     latest-by beats LatestBy light - index seek per key vs full scan).
-    // Any other shape is left exactly as-is (same plan and same output).
+    // Only rewrites when doing so is provably equivalent and actually faster:
+    //   - the LATEST ON model has no JOIN: with a join, LATEST ON applies to the join output, but the
+    //     rewritten form would apply it to the table before the join - a different result when the
+    //     join produces more than one row per key;
+    //   - the model nests a plain `SELECT * FROM t [WHERE ...]` and nothing else (no projection/rename,
+    //     join, aggregation, distinct, window, sampleBy, union, order by, limit, or its own LATEST ON);
+    //   - LATEST ON is on the table's designated timestamp: the indexed path always uses
+    //     metadata.getTimestampIndex(), so any other timestamp would give wrong results;
+    //   - every PARTITION BY column is an indexed SYMBOL - the only case where reading the table
+    //     directly (index seek per key) beats LatestBy light (full scan).
+    // Every other query is left unchanged.
     private void pushLatestByToTableModel(@Nullable IQueryModel model, SqlExecutionContext executionContext) {
         if (model == null || !model.isOptimisable()) {
             return;
@@ -2385,18 +2385,22 @@ public class SqlOptimiser implements Mutable {
                 && model.getJoinModels().size() < 2) {
             final IQueryModel table = findHoistableTableModel(model.getNestedModel());
             final ExpressionNode onTs = model.getTimestamp();
+            final ExpressionNode tableWhere = table != null ? table.getWhereClause() : null;
+            final ExpressionNode modelWhere = model.getWhereClause();
             if (table != null
                     && onTs != null
+                    // Skip if the table's WHERE has a qualified column like `x.v`: the rewrite drops the
+                    // sub-query that defined `x`, so the prefix no longer resolves and the query fails to
+                    // compile. (The LATEST ON model's own WHERE keeps its aliases, so it needs no such check.)
+                    && !hasDottedLiteral(tableWhere)
                     && isHoistValid(model.getNestedModel(), table, onTs, model.getLatestBy(), executionContext)) {
-                // fold the bare table read up into this model, dropping the intervening identity
-                // pass-through projection(s): now LATEST ON reads the table directly (same structure as
-                // the same-level query), so codegen uses the indexed fast path and output column order
-                // is unchanged. The table's WHERE (if any) simply ANDs with this model's WHERE.
+                // Move the table read into this model and drop the pass-through SELECT * layer(s) in
+                // between: LATEST ON now reads the table directly and reaches the indexed path, with the
+                // same output columns in the same order. The table's WHERE, if any, is ANDed with this
+                // model's WHERE.
                 model.setTableNameExpr(table.getTableNameExpr());
                 model.setTableId(table.getTableId());
                 model.setMetadataVersion(table.getMetadataVersion());
-                final ExpressionNode tableWhere = table.getWhereClause();
-                final ExpressionNode modelWhere = model.getWhereClause();
                 final ExpressionNode combinedWhere = tableWhere == null
                         ? modelWhere
                         : modelWhere == null
@@ -2414,10 +2418,10 @@ public class SqlOptimiser implements Mutable {
         pushLatestByToTableModel(model.getUnionModel(), executionContext);
     }
 
-    // Locate the bare table read that a LATEST ON model nests, reachable only through pass-through
-    // projections (a sub-query's expanded `SELECT *`). Returns the bare `SELECT * FROM t [WHERE ...]`
-    // table model, or null if any intervening model could change the row set or ordering. The stricter
-    // column-identity/count check is done in isHoistValid (it needs table metadata).
+    // Finds the plain table read nested under a LATEST ON model, reachable only through pass-through
+    // SELECT * layers. Returns the `SELECT * FROM t [WHERE ...]` model, or null if any layer in between
+    // could change which rows are returned or their order. isHoistValid runs the stricter
+    // column-identity and column-count checks, which need the table metadata.
     private IQueryModel findHoistableTableModel(IQueryModel m) {
         while (m != null) {
             if (!m.isOptimisable()
@@ -2437,7 +2441,7 @@ public class SqlOptimiser implements Mutable {
                 return null;
             }
             if (m.getTableNameExpr() != null) {
-                // the bare table read: no explicit projection, real table (not a function)
+                // the plain table read: no explicit projection, a real table (not a function)
                 if (m.getTableNameFunction() != null
                         || m.getTableNameExpr().type == FUNCTION
                         || m.getBottomUpColumns().size() != 0) {
@@ -2445,8 +2449,8 @@ public class SqlOptimiser implements Mutable {
                 }
                 return m;
             }
-            // intervening model: must be a pure projection with no WHERE (a filter here would be
-            // dropped by folding). Identity/full-column verification happens in isHoistValid.
+            // a layer in between: must be a plain projection with no WHERE - a filter here would be
+            // lost when the layer is dropped. isHoistValid checks it is a full identity projection.
             if (m.getWhereClause() != null) {
                 return null;
             }
@@ -2455,18 +2459,42 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
-    // Metadata-aware validation for the hoist. Opens the base table's metadata once and checks:
-    //   1) LATEST ON targets the table's DESIGNATED timestamp. This must be checked against the table
-    //      METADATA, not the table model's timestamp token: a sub-query can redesignate the timestamp
-    //      (e.g. `(SELECT * FROM t timestamp(ts2))`), which leaves the model token as ts2 while the
-    //      folded direct-table read still requires the metadata designated timestamp - firing there
-    //      would turn a valid query into a compile error;
-    //   2) every LATEST ON PARTITION BY column is an indexed SYMBOL on the table (the only case that
-    //      wins big - index seek per key vs full scan - and keeps the rewrite surgical); and
-    //   3) every intervening projection between the LATEST ON model and the table is a FULL identity
-    //      (each column a bare un-aliased reference, exposing exactly the table's columns), so folding
-    //      those layers away cannot change which columns (or how many) the query exposes.
-    // Any resolution failure conservatively returns false (no rewrite).
+    // True if any column reference in the tree is qualified with a table/alias prefix, like `x.v`
+    // (an unquoted '.' in a LITERAL token). A null tree returns false.
+    private boolean hasDottedLiteral(ExpressionNode node) {
+        sqlNodeStack.clear();
+        // pre-order iterative tree traversal
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.type == LITERAL && Chars.indexOfLastUnquoted(node.token, '.') != -1) {
+                    return true;
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.add(node.args.getQuick(i));
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
+    }
+
+    // Opens the table's metadata once and checks the three conditions the rewrite needs:
+    //   1) LATEST ON is on the table's designated timestamp. This is checked against the metadata, not
+    //      the model's timestamp token: a sub-query can set a different timestamp (e.g.
+    //      `(SELECT * FROM t timestamp(ts2))`), which leaves the token as ts2 while the direct table
+    //      read still uses the metadata's designated timestamp - rewriting there would break a valid
+    //      query;
+    //   2) every PARTITION BY column is an indexed SYMBOL on the table - the only case that pays off
+    //      (index seek per key vs full scan);
+    //   3) every projection layer between the LATEST ON model and the table exposes exactly the table's
+    //      columns, each as a plain un-aliased reference, so dropping those layers cannot change which
+    //      columns the query returns.
+    // Returns false (no rewrite) if the table or its metadata cannot be resolved.
     private boolean isHoistValid(IQueryModel nested, IQueryModel table, ExpressionNode onTs, ObjList<ExpressionNode> latestBy, SqlExecutionContext executionContext) {
         final ExpressionNode tableNameExpr = table.getTableNameExpr();
         if (tableNameExpr == null) {
@@ -2477,7 +2505,7 @@ public class SqlOptimiser implements Mutable {
             return false;
         }
         try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
-            // (1) LATEST ON must be on the table's DESIGNATED timestamp (per metadata, not model token)
+            // (1) LATEST ON must be on the table's designated timestamp (per metadata, not model token)
             final int tsIdx = metadata.getTimestampIndex();
             if (tsIdx < 0 || !Chars.equalsIgnoreCase(onTs.token, metadata.getColumnName(tsIdx))) {
                 return false;
@@ -2495,7 +2523,7 @@ public class SqlOptimiser implements Mutable {
                     return false;
                 }
             }
-            // (2) each intervening projection is a full identity over all table columns
+            // (3) each projection layer exposes exactly the table's columns, each a plain reference
             final int columnCount = metadata.getColumnCount();
             for (IQueryModel m = nested; m != null && m != table; m = m.getNestedModel()) {
                 final ObjList<QueryColumn> cols = m.getBottomUpColumns();
