@@ -32,6 +32,7 @@ import io.questdb.client.SenderError;
 import io.questdb.client.SenderErrorHandler;
 import io.questdb.client.SenderProgressHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.client.std.Files;
 import io.questdb.client.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
@@ -365,13 +366,13 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
                 ObjList<String> empty = new ObjList<>();
-                sender.startOrphanDrainers(empty, 4, 1024, 4096);
+                sender.startOrphanDrainers(empty, 4, 1024, 4096, Files.DIR_MODE_DEFAULT);
                 Assert.assertEquals("empty path list must not allocate drainers",
                         0, sender.getActiveBackgroundDrainers());
 
                 ObjList<String> withOne = new ObjList<>();
                 withOne.add("/nonexistent/slot");
-                sender.startOrphanDrainers(withOne, 0, 1024, 4096);
+                sender.startOrphanDrainers(withOne, 0, 1024, 4096, Files.DIR_MODE_DEFAULT);
                 Assert.assertEquals("maxBackgroundDrainers=0 must not allocate drainers",
                         0, sender.getActiveBackgroundDrainers());
 
