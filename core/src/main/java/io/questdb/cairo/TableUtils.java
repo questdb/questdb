@@ -2649,8 +2649,10 @@ public final class TableUtils {
     }
 
     /**
-     * Replaces {@code dst}'s CONTENT with {@code src}'s, in place. The destination keeps its identity, so
-     * anything already holding it open or mapped observes the new bytes, and it never stops existing.
+     * Replaces {@code dst}'s CONTENT with {@code src}'s. On POSIX this happens IN PLACE, so the destination
+     * keeps its identity -- anything already holding it open or mapped observes the new bytes, and it never
+     * stops existing. Windows cannot do that safely and takes an unlink-then-copy route instead; see the
+     * branch at the top of the method for why, and for what that costs.
      * <p>
      * {@link FilesFacade#copy(LPSZ, LPSZ)} cannot do this portably. It is a whole-file copy that is only
      * defined when the destination is ABSENT: on POSIX it is {@code creat(O_TRUNC)} and silently replaces
@@ -2668,6 +2670,29 @@ public final class TableUtils {
      * out so a durability failure cannot leak them.
      */
     public static void replaceFileContent(FilesFacade ff, LPSZ src, LPSZ dst, int fileOpenOpts) {
+        if (Os.isWindows()) {
+            // Windows takes the long-established unlink-then-copy route instead (the same one
+            // TableWriter#copyOverwrite has used here for years), because the in-place variant below is not
+            // safe on it: a file cannot be shrunk while a mapping of it is live, and touching such a mapping
+            // afterwards is an access violation that takes the process down rather than throwing. That is
+            // not theoretical -- the in-place version crashed the forked JVM during ACL table creation on
+            // all three windows agents (exit code 55), where the previous build had merely failed a test.
+            //
+            // The trade is deliberate and narrow: this loses the destination's identity, so a live mapping
+            // sees the OLD bytes rather than the new ones, and there is a window in which the file is
+            // absent. Neither is a regression on Windows, where ff.copy simply refused the whole operation
+            // before. removeQuiet fails outright on an open or mapped file, so a destination someone is
+            // actually holding fail-stops here rather than being silently replaced.
+            if (!ff.removeQuiet(dst)) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not remove copy destination [dst=").put(dst).put(']');
+            }
+            if (ff.copy(src, dst) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not copy file [src=").put(src).put(", dst=").put(dst).put(']');
+            }
+            return;
+        }
         final long srcFd = openRO(ff, src, LOG);
         try {
             final long size = ff.length(srcFd);
