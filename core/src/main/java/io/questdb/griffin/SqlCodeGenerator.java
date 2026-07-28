@@ -9854,7 +9854,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int timestampIdx = base.getMetadata().getTimestampIndex();
                     int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
 
-                    if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
+                    // The loop below walks both orders positionally, so the model's has to be at
+                    // least as long as the window's. It cannot dismiss a window order the model
+                    // does not cover anyway: a longer window order asks for a finer sort than the
+                    // model delivers. Bound on the key list itself, which is what gets indexed.
+                    if (base.followedOrderByAdvice() && osz > 0 && osz <= orderHash.keys().size()) {
                         dismissOrder = true;
                         for (int j = 0; j < osz; j++) {
                             ExpressionNode node = ac.getOrderBy().getQuick(j);
@@ -10101,7 +10105,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int timestampIdx = base.getMetadata().getTimestampIndex();
                     int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
 
-                    if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
+                    // The loop below walks both orders positionally, so the model's has to be at
+                    // least as long as the window's. It cannot dismiss a window order the model
+                    // does not cover anyway: a longer window order asks for a finer sort than the
+                    // model delivers. Bound on the key list itself, which is what gets indexed.
+                    if (base.followedOrderByAdvice() && osz > 0 && osz <= orderHash.keys().size()) {
                         dismissOrder = true;
                         for (int j = 0; j < osz; j++) {
                             ExpressionNode node = ac.getOrderBy().getQuick(j);

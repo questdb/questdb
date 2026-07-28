@@ -21962,6 +21962,55 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowOrderByLongerThanModelOrderBy() throws Exception {
+        // When the base factory follows order-by advice, the generator compares the window's
+        // ORDER BY against the model's term by term. It bounded that loop on the window's size
+        // while indexing the model's key list, so a window ORDER BY with more terms than the
+        // model's read past the end and threw a raw ArrayIndexOutOfBoundsException out of the
+        // compiler. The two lists are independent, so a longer window order simply cannot match.
+        //
+        // The generator carries the same comparison twice and both copies had it. The first is
+        // evaluated for every window column before the pass-count check, so before the fix both
+        // queries below threw there. The second is reached because a non-dismissed order also
+        // rules out the streaming path, so the generator falls through to the cached one and
+        // re-evaluates the same comparison: reverting only that copy makes both queries throw
+        // again, at the second site.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (sym SYMBOL INDEX, l LONG, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                      ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                      ('b', 2, '2024-01-01T00:00:01.000000Z'),
+                      ('a', 3, '2024-01-01T00:00:02.000000Z'),
+                      ('b', 4, '2024-01-01T00:00:03.000000Z')""");
+
+            assertQuery("SELECT sym, l, rank() OVER (ORDER BY sym, ts, l) rnk FROM tab" +
+                    " WHERE ts IN '2024-01-01' ORDER BY sym, ts")
+                    .expectSize()
+                    .withPlanContaining("CachedWindow")
+                    .returns("""
+                            sym\tl\trnk
+                            a\t1\t1
+                            a\t3\t2
+                            b\t2\t3
+                            b\t4\t4
+                            """);
+
+            assertQuery("SELECT sym, l, avg(l) OVER (ORDER BY sym, ts, l) avg FROM tab" +
+                    " WHERE ts IN '2024-01-01' ORDER BY sym, ts")
+                    .expectSize()
+                    .returns("""
+                            sym\tl\tavg
+                            a\t1\t1.0
+                            a\t3\t2.0
+                            b\t2\t2.0
+                            b\t4\t2.5
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowRank() throws Exception {
         // Test rank() window function with ties
         assertQuery("SELECT val, rank() OVER (ORDER BY val) AS rnk FROM x")
