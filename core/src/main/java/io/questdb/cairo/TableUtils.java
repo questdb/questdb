@@ -2869,6 +2869,32 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Writes the durable {@code _lv.drop} sentinel into the live view's directory and fsyncs it
+     * before returning. Idempotent: a repeated DROP that finds an existing sentinel re-opens, fsyncs
+     * and closes - the file's existence is the signal, not its contents. Failure throws
+     * {@link CairoException} with the path, so a caller that stamps the sentinel first aborts before
+     * any teardown and leaves the view queryable.
+     * <p>
+     * Unlike the checkpoint segment writers, this deliberately does NOT tmp+rename. Recovery keys off
+     * existence alone, so a zero-byte or partially written {@code _lv.drop} still correctly triggers
+     * the reap branch in {@code CairoEngine.buildViewGraphs}; a tmp+rename scheme would instead lose a
+     * crash-before-rename drop intent. Existence-only is the stronger durability contract here, not an
+     * oversight.
+     */
+    public static void writeLiveViewDropSentinel(CairoConfiguration configuration, TableToken token) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewDefinition.LIVE_VIEW_DROP_SENTINEL_FILE_NAME).$();
+            long fd = openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
+            try {
+                ff.fsync(fd);
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
     public static void writeLongOrFail(FilesFacade ff, long fd, long offset, long value, long tempMem8b, Path path) {
         Unsafe.putLong(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {

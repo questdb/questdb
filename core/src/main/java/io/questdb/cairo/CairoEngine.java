@@ -819,7 +819,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         // and the next start retries.
                         LOG.info().$("reaping live view with _lv.drop sentinel [view=").$(tableToken).I$();
                         try {
-                            dropTableOrViewOrMatView(path, tableToken);
+                            reapLiveView(path, tableToken);
                         } catch (Throwable th) {
                             LOG.error().$("could not reap dropped live view [view=").$(tableToken)
                                     .$(", msg=").$safe(th.getMessage()).I$();
@@ -837,7 +837,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         // Best-effort: a failure here only delays cleanup.
                         LOG.info().$("reaping half-created live view [view=").$(tableToken).I$();
                         try {
-                            dropTableOrViewOrMatView(path, tableToken);
+                            reapLiveView(path, tableToken);
                         } catch (Throwable th) {
                             LOG.error().$("could not reap half-created live view [view=").$(tableToken)
                                     .$(", msg=").$safe(th.getMessage()).I$();
@@ -1827,7 +1827,7 @@ public class CairoEngine implements Closeable, WriterSource {
             // already authorizes, but a future direct caller cannot bypass the ACL.
             // Runs before the sentinel so a denied drop mutates nothing.
             securityContext.authorizeLiveViewDrop(token);
-            writeLiveViewDropSentinel(token);
+            TableUtils.writeLiveViewDropSentinel(configuration, token);
         }
         // Look the instance up WITHOUT unregistering it yet. Marking dropped and fencing the
         // refresh worker must happen while the view is still registry-visible: a concurrent
@@ -4744,31 +4744,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return token;
     }
 
-    // Writes the durable _lv.drop sentinel into the live view's directory and
-    // fsyncs it before returning. Idempotent: a repeated DROP that finds an
-    // existing sentinel re-opens, fsyncs and closes - the file's existence is
-    // the signal, not its contents. Failure throws CairoException with the
-    // path; the caller's DROP aborts before any teardown so the LV remains
-    // queryable.
-    //
-    // Unlike the checkpoint segment writers, this deliberately does NOT tmp+rename. Recovery
-    // keys off existence alone, so a zero-byte or partially written _lv.drop
-    // still correctly triggers the reap branch; a tmp+rename scheme would
-    // instead lose a crash-before-rename drop intent. Existence-only is the
-    // stronger durability contract here, not an oversight.
-    private void writeLiveViewDropSentinel(TableToken token) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        try (Path path = new Path()) {
-            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewDefinition.LIVE_VIEW_DROP_SENTINEL_FILE_NAME).$();
-            long fd = TableUtils.openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
-            try {
-                ff.fsync(fd);
-            } finally {
-                ff.close(fd);
-            }
-        }
-    }
-
     /**
      * Role gate for REBASE WAL. OSS has no replica concept, so the {@code INTO} (replica) variant is
      * rejected here; the enterprise engine overrides this to require a read-only replica for the
@@ -4837,6 +4812,23 @@ public class CairoEngine implements Closeable, WriterSource {
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
         return new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString());
+    }
+
+    /**
+     * Boot-time reap of a live view directory {@link #buildViewGraphs()} refuses to load: one
+     * carrying the {@code _lv.drop} sentinel, and one whose {@code _lv} definition is gone. Exists as
+     * its own seam purely so a subclass can tell these two call sites apart from a client
+     * {@code DROP}: they run once, inside the boot scan, over data no client is waiting on, and they
+     * reclaim a directory this node can neither load nor recreate under its own name.
+     * <p>
+     * A live view is node-local derived data (every node refreshes and flushes its own copy), so a
+     * deployment that fences client-visible WAL drops on a read-only node - QuestDB Enterprise
+     * fences them to keep a demoting primary from acking a drop it will never replicate - must still
+     * let these two through, or the shapes below are never reaped on such a node and
+     * {@code buildViewGraphs} logs the same failure on every start, forever.
+     */
+    protected void reapLiveView(@Transient Path path, TableToken tableToken) {
+        dropTableOrViewOrMatView(path, tableToken);
     }
 
 }
