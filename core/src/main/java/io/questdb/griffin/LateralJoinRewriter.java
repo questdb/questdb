@@ -65,6 +65,12 @@ class LateralJoinRewriter implements Mutable {
     private static final int CORRELATED_JOIN_ON = CORRELATED_LIMIT << 1;
 
     private static final String COUNT_DRIVER_PREFIX = "__qdb_count_driver__";
+    // sentinel for a LIMIT term that is not a compile-time constant; a bare
+    // CONSTANT token is unsigned so a real limit can never collide with it
+    private static final long LIMIT_NOT_CONSTANT = Long.MIN_VALUE;
+    private static final int LIMIT_DROPS_ROW = 1;
+    private static final int LIMIT_KEEPS_ROW = 0;
+    private static final int LIMIT_UNPROVABLE = 2;
     private static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
     private static final byte TERMINATE_AT_NESTED = 2;
     private static final byte TERMINATE_DESCEND = 3;
@@ -91,6 +97,11 @@ class LateralJoinRewriter implements Mutable {
     private final ArrayDeque<ExpressionNode> sqlNodeStack2;
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private final ObjList<IQueryModel> wrapperKeyLayers = new ObjList<>();
+    // guard for the lateral body currently being decorrelated; see accumulateScalarCountGuard
+    private ExpressionNode scalarCountGuard;
+    // set when a run-time LIMIT reads an outer column: such a guard cannot be
+    // evaluated in the outer projection, so a scalar-count body must be rejected
+    private ExpressionNode scalarCountGuardBlocker;
     private boolean hasCorrelation;
     private int outerRefId;
 
@@ -130,6 +141,8 @@ class LateralJoinRewriter implements Mutable {
 
     @Override
     public void clear() {
+        scalarCountGuard = null;
+        scalarCountGuardBlocker = null;
         correlatedPreds.clear();
         innerJoinCorrelated.clear();
         innerJoinNonCorrelated.clear();
@@ -909,6 +922,21 @@ class LateralJoinRewriter implements Mutable {
             return current;
         }
 
+        // compensateLimit turns LIMIT into `__lateral_rn <= limit`, which is a
+        // contradiction for a negative limit. QuestDB's negative-limit semantics
+        // (last |N| rows) cannot be expressed by that filter, so reject instead of
+        // silently emptying the body.
+        rejectNegativeLateralLimit(limitLo);
+        rejectNegativeLateralLimit(limitHi);
+
+        // Captured before rewriteOuterRefs turns outer refs into body-local aliases.
+        // It must be a deep copy: rewriteOuterRefs rewrites operator nodes IN PLACE, so
+        // holding the reference alone would hand the guard a rewritten alias.
+        final ExpressionNode originalLimitLo = limitLo == null
+                ? null : ExpressionNode.deepClone(expressionNodePool, limitLo);
+        final ExpressionNode originalLimitHi = limitHi == null
+                ? null : ExpressionNode.deepClone(expressionNodePool, limitHi);
+
         if (limitHi != null && hasCorrelatedExprAtDepth(limitHi, depth)) {
             limitHi = rewriteOuterRefs(limitHi, outerToInnerAlias, depth);
         }
@@ -1011,6 +1039,17 @@ class LateralJoinRewriter implements Mutable {
         } else {
             rnFilter = createBinaryOp("<=", rnRef, limitHi != null ? limitHi : limitLo);
         }
+
+        // A scalar-count body emits exactly one row per group, so __lateral_rn is
+        // always 1 there. Evaluating this very filter at row 1 therefore answers
+        // "did the LIMIT keep the aggregate row?", which is exactly the condition
+        // under which coalesce(count, 0) may be applied. Deriving the guard from the
+        // filter itself means the two can never disagree, for any LIMIT form.
+        accumulateScalarCountGuard(
+                originalLimitLo,
+                originalLimitHi,
+                hasColumnRef(originalLimitLo) || hasColumnRef(originalLimitHi)
+        );
 
         IQueryModel filterModel = queryModelPool.next();
         filterModel.setNestedModel(current);
@@ -1347,6 +1386,8 @@ class LateralJoinRewriter implements Mutable {
                 // Push down outer refs
                 boolean isPerSidePush = canPerSidePush(topInner, depth);
                 boolean isScalarCountBody = isLeft && hasScalarCountBody(topInner);
+                scalarCountGuard = null;
+                scalarCountGuardBlocker = null;
                 CharSequence perSideCloneAlias = null;
                 if (isPerSidePush) {
                     perSideCloneAlias = pushDownPerSidePush(
@@ -1416,7 +1457,9 @@ class LateralJoinRewriter implements Mutable {
                 if (isScalarCountBody && markScalarCountColumns(topInner)) {
                     IQueryModel selectModel = (model.getBottomUpColumns().size() > 0 || parent == null)
                             ? model : parent;
+                    rejectCorrelatedScalarCountLimit();
                     selectModel.setLateralCountCoalesceRequired(true);
+                    selectModel.setLateralCountCoalesceGuard(scalarCountGuard);
                 }
             } else if (joinModel.getNestedModel() != null) {
                 decorrelate(joinModel.getNestedModel(), lateralDepth, null);
@@ -1717,19 +1760,31 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
-    private boolean hasScalarCountBody(IQueryModel model) {
+    private boolean hasScalarCountBody(IQueryModel model) throws SqlException {
         IQueryModel current = model;
         while (current != null && current.getUnionModel() == null) {
             ExpressionNode limitHi = current.getLimitHi();
             ExpressionNode limitLo = current.getLimitLo();
-            if (limitHi != null
-                    || !isPositiveConstantLimit(limitLo)
-                    || current.getGroupBy().size() > 0
+            // report a provable negative with the specific message, ahead of the
+            // generic unprovable one - compensateLimit would reject it regardless
+            rejectNegativeLateralLimit(limitLo);
+            rejectNegativeLateralLimit(limitHi);
+            switch (classifyLateralLimit(limitLo, limitHi)) {
+                case LIMIT_DROPS_ROW:
+                    // body provably yields no rows: NULL fill is correct, no coalesce
+                    return false;
+                default:
+                    // LIMIT_UNPROVABLE is decided at execution time by the guard
+                    break;
+            }
+            if (current.getGroupBy().size() > 0
                     || current.getSampleBy() != null
                     || current.getLatestBy().size() > 0) {
                 return false;
             }
             if (hasAggregateFunctions(current)) {
+                // a run-time valued LIMIT no longer disqualifies the body: the
+                // compensation is guarded by accumulateScalarCountGuard instead
                 IQueryModel input = current.getNestedModel();
                 while (input != null) {
                     if (input.isNestedModelIsSubQuery()) {
@@ -1865,17 +1920,134 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
-    private boolean isPositiveConstantLimit(ExpressionNode limit) {
+    // Classifies what a LIMIT does to a body that produces exactly one row
+    // (a bare scalar count). The single row sits at position 1, and QuestDB's
+    // LIMIT lo,hi selects the half-open row range (lo, hi].
+    private static int classifyLateralLimit(ExpressionNode limitLo, ExpressionNode limitHi) {
+        if (limitLo == null && limitHi == null) {
+            return LIMIT_KEEPS_ROW;
+        }
+        final long lo = constLimitValue(limitLo);
+        final long hi = constLimitValue(limitHi);
+        if (lo == LIMIT_NOT_CONSTANT || hi == LIMIT_NOT_CONSTANT) {
+            return LIMIT_UNPROVABLE;
+        }
+        if (limitHi == null) {
+            // negative limit keeps the last |lo| rows, which for a one-row body is the row
+            return lo == 0 ? LIMIT_DROPS_ROW : LIMIT_KEEPS_ROW;
+        }
+        if (limitLo == null) {
+            return hi == 0 ? LIMIT_DROPS_ROW : LIMIT_KEEPS_ROW;
+        }
+        if (lo < 0 || hi < 0) {
+            // negative two-sided windows are rejected by compensateLimit
+            return LIMIT_UNPROVABLE;
+        }
+        return (lo <= 0 && hi >= 1) ? LIMIT_KEEPS_ROW : LIMIT_DROPS_ROW;
+    }
+
+    // QuestDB parses `LIMIT -N` as unary minus applied to a CONSTANT, never as a
+    // CONSTANT carrying a signed token, so the sign must be folded explicitly.
+    // Same node shape SqlOptimiser relies on for its negative-limit rewrite.
+    private static long constLimitValue(ExpressionNode limit) {
         if (limit == null) {
-            return true;
+            return 0;
+        }
+        if (limit.type == ExpressionNode.OPERATION
+                && limit.paramCount == 1
+                && limit.lhs == null
+                && limit.rhs != null
+                && Chars.equals(limit.token, '-')) {
+            final long v = constLimitValue(limit.rhs);
+            return v == LIMIT_NOT_CONSTANT ? LIMIT_NOT_CONSTANT : -v;
         }
         if (limit.type != ExpressionNode.CONSTANT) {
-            return false;
+            return LIMIT_NOT_CONSTANT;
         }
         try {
-            return Numbers.parseLong(limit.token) > 0;
+            // a bare CONSTANT token is unsigned, so this can never return the sentinel
+            return Numbers.parseLong(limit.token);
         } catch (NumericException ignored) {
+            return LIMIT_NOT_CONSTANT;
+        }
+    }
+
+    // Builds the row-1 evaluation of the row_number filter for one body layer and
+    // ANDs it into the guard for the lateral body currently being rewritten.
+    private void accumulateScalarCountGuard(ExpressionNode limitLo, ExpressionNode limitHi, boolean readsColumn) {
+        if (limitLo == null && limitHi == null) {
+            return;
+        }
+        if (classifyLateralLimit(limitLo, limitHi) != LIMIT_UNPROVABLE) {
+            // compile-time decidable: hasScalarCountBody already folded it, no guard needed
+            return;
+        }
+        if (readsColumn) {
+            // the guard lives in the outer projection, which carries only the query's
+            // own columns; a LIMIT reading any column cannot be evaluated there
+            if (scalarCountGuardBlocker == null) {
+                scalarCountGuardBlocker = limitLo != null ? limitLo : limitHi;
+            }
+            return;
+        }
+        ExpressionNode layerGuard;
+        if (limitHi != null && limitLo != null) {
+            layerGuard = createBinaryOp("and",
+                    createBinaryOp(">", rowOneConstant(), ExpressionNode.deepClone(expressionNodePool, limitLo)),
+                    createBinaryOp("<=", rowOneConstant(), ExpressionNode.deepClone(expressionNodePool, limitHi)));
+        } else {
+            layerGuard = createBinaryOp("<=", rowOneConstant(),
+                    ExpressionNode.deepClone(expressionNodePool, limitHi != null ? limitHi : limitLo));
+        }
+        scalarCountGuard = scalarCountGuard == null
+                ? layerGuard
+                : createBinaryOp("and", scalarCountGuard, layerGuard);
+    }
+
+    private void rejectCorrelatedScalarCountLimit() throws SqlException {
+        if (scalarCountGuardBlocker != null) {
+            throw SqlException.position(scalarCountGuardBlocker.position)
+                    .put("LIMIT referencing an outer column is not supported over a scalar count ")
+                    .put("in a correlated lateral sub-query; use a constant or bind variable");
+        }
+    }
+
+    // True when the expression reads a column. Constants, bind variables and
+    // functions/operators over them evaluate identically in the outer projection;
+    // anything naming a column does not, so such a LIMIT cannot be guarded there.
+    private boolean hasColumnRef(ExpressionNode node) {
+        if (node == null) {
             return false;
+        }
+        sqlNodeStack.clear();
+        sqlNodeStack.push(node);
+        while (!sqlNodeStack.isEmpty()) {
+            ExpressionNode n = sqlNodeStack.pop();
+            if (n.type == ExpressionNode.LITERAL) {
+                return true;
+            }
+            if (n.lhs != null) {
+                sqlNodeStack.push(n.lhs);
+            }
+            if (n.rhs != null) {
+                sqlNodeStack.push(n.rhs);
+            }
+            for (int i = 0, m = n.args.size(); i < m; i++) {
+                sqlNodeStack.push(n.args.getQuick(i));
+            }
+        }
+        return false;
+    }
+
+    private ExpressionNode rowOneConstant() {
+        return expressionNodePool.next().of(ExpressionNode.CONSTANT, "1", 0, 0);
+    }
+
+    private static void rejectNegativeLateralLimit(ExpressionNode limit) throws SqlException {
+        final long v = constLimitValue(limit);
+        if (v != LIMIT_NOT_CONSTANT && v < 0) {
+            throw SqlException.position(limit.position)
+                    .put("negative LIMIT is not supported in a correlated lateral sub-query");
         }
     }
 
@@ -2298,12 +2470,16 @@ class LateralJoinRewriter implements Mutable {
         int aliasSaveBase = saveAndRemapOuterToInnerAlias(cloneAlias);
 
         boolean isScalarCountBody = isLeftJoin && hasScalarCountBody(jmNested);
+        scalarCountGuard = null;
+        scalarCountGuardBlocker = null;
         pushDownOuterRefs(
                 null, jmNested, outerToInnerAlias, isLeftJoin,
                 clonedOuterRef, jm, depth
         );
         if (isScalarCountBody && markScalarCountColumns(jmNested)) {
+            rejectCorrelatedScalarCountLimit();
             localCountModel.setLateralCountCoalesceRequired(true);
+            localCountModel.setLateralCountCoalesceGuard(scalarCountGuard);
             if (jm.getJoinType() == IQueryModel.JOIN_CROSS || jm.getJoinType() == IQueryModel.JOIN_INNER) {
                 jm.setJoinType(IQueryModel.JOIN_LEFT_OUTER);
             }
@@ -2423,6 +2599,8 @@ class LateralJoinRewriter implements Mutable {
             }
 
             boolean isScalarCountBody = isLeftJoin && hasScalarCountBody(branchNested);
+            scalarCountGuard = null;
+            scalarCountGuardBlocker = null;
             pushDownOuterRefs(
                     null, branchNested, outerToInnerAlias, isLeftJoin,
                     clonedOuterRef, branch, depth
@@ -2464,7 +2642,9 @@ class LateralJoinRewriter implements Mutable {
                         || branch.getJoinType() == IQueryModel.JOIN_INNER) {
                     branch.setJoinType(IQueryModel.JOIN_LEFT_OUTER);
                 }
+                rejectCorrelatedScalarCountLimit();
                 topInner.setLateralCountCoalesceRequired(true);
+                topInner.setLateralCountCoalesceGuard(scalarCountGuard);
             }
             IQueryModel branchTop = branch.getNestedModel();
             ObjList<CharSequence> oKeys = outerToInnerAlias.keys();

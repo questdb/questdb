@@ -481,6 +481,17 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isLateralCountCoalesceRequired();
 
+    /**
+     * Boolean guard deciding, at execution time, whether the lateral scalar-count
+     * compensation applies. Non-null only when the lateral body carried a LIMIT whose
+     * value is not known at compile time (a bind variable). The guard mirrors the
+     * row_number filter generated for that LIMIT evaluated at row 1, so the
+     * compensation can never disagree with whether the body kept its aggregate row.
+     * Kept as an expression rather than a folded decision because a bind variable is
+     * only runtime-constant: its value may differ between executions of a cached plan.
+     */
+    ExpressionNode getLateralCountCoalesceGuard();
+
     boolean isNestedModelIsSubQuery();
 
     boolean isOptimisable();
@@ -586,6 +597,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setJoinKeywordPosition(int position);
 
     void setJoinType(int joinType);
+
+    void setLateralCountCoalesceGuard(ExpressionNode guard);
 
     void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired);
 

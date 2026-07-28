@@ -2532,6 +2532,164 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // Regression: a row-preserving LIMIT must keep the coalesce(count, 0) compensation
+    // so a no-match outer row still yields 0 rather than NULL. Covers non-literal forms
+    // (1+1, abs(1)) which the head revision silently dropped the compensation for.
+    @Test
+    public void testLateralScalarCountNonLiteralPositiveLimitKeepsCoalesce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            for (String limit : new String[]{"LIMIT 1", "LIMIT 2", "LIMIT 1+1", "LIMIT abs(1)", "LIMIT 0,1", ""}) {
+                assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                        + "(SELECT count() c FROM t2 WHERE t2.k = t1.k " + limit + ") l ON true ORDER BY t1.k")
+                        .noLeakCheck()
+                        .returns("""
+                                k\tc
+                                1\t2
+                                2\t1
+                                3\t0
+                                """);
+            }
+        });
+    }
+
+    // A limit that provably removes the single aggregate row must NOT be
+    // compensated - NULL fill is the correct answer there.
+    @Test
+    public void testLateralScalarCountRowDroppingLimitYieldsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            for (String limit : new String[]{"LIMIT 0", "LIMIT 1-1", "LIMIT 1,2"}) {
+                assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                        + "(SELECT count() c FROM t2 WHERE t2.k = t1.k " + limit + ") l ON true ORDER BY t1.k")
+                        .noLeakCheck()
+                        .returns("""
+                                k\tc
+                                1\tnull
+                                2\tnull
+                                3\tnull
+                                """);
+            }
+        });
+    }
+
+    // QuestDB's negative LIMIT means "last |N| rows", which compensateLimit cannot
+    // express (it emits `__lateral_rn <= limit`, a contradiction for N < 0). It used
+    // to silently empty the lateral body; it must now be rejected.
+    @Test
+    public void testLateralNegativeLimitRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            // scalar-count body
+            assertException("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true",
+                    93, "negative LIMIT is not supported in a correlated lateral sub-query");
+            // plain row body - same defect, no count involved
+            assertException("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
+                            + "(SELECT t2.k x FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true",
+                    90, "negative LIMIT is not supported in a correlated lateral sub-query");
+            // an UNCORRELATED body is not decorrelated, so negative LIMIT still works
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT t2.k x FROM t2 LIMIT -1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t2
+                            2\t2
+                            3\t2
+                            """);
+            // a non-lateral negative LIMIT is untouched
+            assertQuery("SELECT k FROM t2 LIMIT -1").noLeakCheck().expectSize().returns("""
+                    k
+                    2
+                    """);
+        });
+    }
+
+    // A bind variable is only runtime-constant: a cached plan may be re-executed with a
+    // different value, so whether the aggregate row survives the LIMIT cannot be folded
+    // at compile time. It is emitted as a SQL guard and re-evaluated per execution.
+    @Test
+    public void testLateralScalarCountBindVariableLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true ORDER BY t1.k";
+
+            // row-preserving value: no-match outer row must still yield 0
+            bindVariableService.setLong("lim", 2);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // LIMIT 0 empties the body, so NULL - and this must be observed on the SAME
+            // statement, proving the decision is not baked into the compiled plan
+            bindVariableService.setLong("lim", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\tnull
+                    2\tnull
+                    3\tnull
+                    """);
+
+            // and back again, to rule out a one-way latch
+            bindVariableService.setLong("lim", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+        });
+    }
+
+    // A LIMIT reading an outer column cannot be guarded: the guard is evaluated in the
+    // outer projection, where the body-local rewrite of that reference does not resolve.
+    @Test
+    public void testLateralScalarCountOuterColumnLimitRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1,2), (2,2), (3,2)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            assertException("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true",
+                    93, "LIMIT referencing an outer column is not supported over a scalar count");
+
+            // the same LIMIT over a NON-count body stays supported
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT t2.k x FROM t2 WHERE t2.k = t1.k ORDER BY t2.k LIMIT t1.n) l ON true ORDER BY t1.k, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t1
+                            1\t1
+                            2\t2
+                            3\tnull
+                            """);
+        });
+    }
+
     @Test
     public void testNestedLateralLeftCountLimitCardinality() throws Exception {
         assertMemoryLeak(() -> {
@@ -2669,7 +2827,11 @@ public class LateralJoinTest extends AbstractCairoTest {
                             2\tnull\tnull
                             """);
 
-            assertQuery("""
+            // LIMIT reading an outer column (t0.a) cannot be guarded: the guard is
+            // evaluated in the outer projection, which does not carry that column.
+            // Answering NULL unconditionally would be wrong whenever the window keeps
+            // the row (a = 0 gives LIMIT 0,1, where a no-match outer row must yield 0).
+            assertException("""
                     SELECT t0.a, l1.k, l1.cnt
                     FROM t0
                     LEFT JOIN LATERAL (
@@ -2683,13 +2845,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                         ) l2
                     ) l1
                     ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tk\tcnt
-                            1\tnull\tnull
-                            2\tnull\tnull
-                            """);
+                    """, 202, "LIMIT referencing an outer column is not supported over a scalar count");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.cnt

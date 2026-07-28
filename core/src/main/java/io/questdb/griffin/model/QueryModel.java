@@ -141,6 +141,7 @@ public class QueryModel implements IQueryModel {
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
     private boolean isCteModel;
+    private ExpressionNode lateralCountCoalesceGuard;
     private boolean isLateralCountCoalesceRequired;
     // LateralJoinRewriter marks the final lateral output so SqlOptimiser can hide
     // synthesized alignment columns after wildcard expansion assigns final aliases.
@@ -454,6 +455,7 @@ public class QueryModel implements IQueryModel {
         isUpdateModel = false;
         isCteModel = false;
         isLateralCountCoalesceRequired = false;
+        lateralCountCoalesceGuard = null;
         isOuterRefWildcardExcluded = false;
         modelType = ExecutionModel.QUERY;
         updateSetColumns.clear();
@@ -1312,6 +1314,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getLateralCountCoalesceGuard() {
+        return lateralCountCoalesceGuard;
+    }
+
+    @Override
     public boolean isLateralCountCoalesceRequired() {
         return isLateralCountCoalesceRequired;
     }
@@ -1741,6 +1748,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setJoinType(int joinType) {
         this.joinType = joinType;
+    }
+
+    @Override
+    public void setLateralCountCoalesceGuard(ExpressionNode guard) {
+        this.lateralCountCoalesceGuard = guard;
     }
 
     @Override

@@ -5618,7 +5618,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private boolean materializeLateralCountCarrier(IQueryModel sourceModel, IQueryModel carrierModel) throws SqlException {
+    private boolean materializeLateralCountCarrier(IQueryModel sourceModel, IQueryModel carrierModel, ExpressionNode guard) throws SqlException {
         boolean hasMaterializedCount = false;
         ObjList<QueryColumn> columns = sourceModel.getBottomUpColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -5634,13 +5634,13 @@ public class SqlOptimiser implements Mutable {
                 sourceColumn.setLateralScalarCount(false);
                 carrierColumn.setLateralScalarCount(true);
             }
-            hasMaterializedCount |= materializeLateralCountColumn(carrierColumn);
+            hasMaterializedCount |= materializeLateralCountColumn(carrierColumn, guard);
             carrierModel.addBottomUpColumn(carrierColumn);
         }
         return hasMaterializedCount;
     }
 
-    private boolean materializeLateralCountColumn(QueryColumn column) {
+    private boolean materializeLateralCountColumn(QueryColumn column, ExpressionNode guard) {
         if (!column.isLateralScalarCount()) {
             return false;
         }
@@ -5657,9 +5657,25 @@ public class SqlOptimiser implements Mutable {
                 ExpressionNode.CONSTANT, "0", 0, ast.position
         );
         coalesce.lhs = ast;
+
+        ExpressionNode result = coalesce;
+        if (guard != null) {
+            // The lateral body carried a LIMIT whose value is only known per execution
+            // (a bind variable), so whether the aggregate row survived it cannot be
+            // folded at compile time - a cached plan may be re-executed with a different
+            // value. Emit the decision as SQL instead:
+            //   case when <guard> then coalesce(count, 0) else null end
+            // guard false means the LIMIT dropped the row, and NULL is then correct.
+            ExpressionNode caseNode = expressionNodePool.next().of(FUNCTION, "case", 0, ast.position);
+            caseNode.paramCount = 3;
+            caseNode.args.add(expressionNodePool.next().of(ExpressionNode.CONSTANT, "null", 0, ast.position));
+            caseNode.args.add(coalesce);
+            caseNode.args.add(ExpressionNode.deepClone(expressionNodePool, guard));
+            result = caseNode;
+        }
         column.of(
                 column.getAlias(),
-                coalesce,
+                result,
                 column.isIncludeIntoWildcard(),
                 column.getColumnType()
         );
@@ -10516,7 +10532,8 @@ public class SqlOptimiser implements Mutable {
                     : (isHorizonJoin ? horizonJoinModel : translatingModel);
             hasLateralCountCarrier = materializeLateralCountCarrier(
                     activeTranslatingModel,
-                    lateralCountModel
+                    lateralCountModel,
+                    model.getLateralCountCoalesceGuard()
             );
             isLateralCountCarrierOnTranslatingModel = activeTranslatingModel == translatingModel
                     && hasLateralCountCarrier;
@@ -11508,7 +11525,10 @@ public class SqlOptimiser implements Mutable {
                 }
             } catch (NonLiteralException ignore) {
                 allPushed = false;
-                LOG.debug().$("skipping filter push-down into set operation branch: column resolves to expression, not literal [filter=").$(node).$(", branch=").$(branch.getTableName()).I$();
+                // evaluate before acquiring the log ring slot: a throwing argument would
+                // unwind past I$() and leak the slot, wedging the ring for all producers
+                final CharSequence branchTableName = branch.getTableName();
+                LOG.debug().$("skipping filter push-down into set operation branch: column resolves to expression, not literal [filter=").$(node).$(", branch=").$(branchTableName).I$();
             }
             branch = branch.getUnionModel();
         }
@@ -12275,8 +12295,12 @@ public class SqlOptimiser implements Mutable {
             }
             if (oldModel.isLateralCountCoalesceRequired()) {
                 newModel.setLateralCountCoalesceRequired(true);
+                // the guard must travel with the flag, otherwise a run-time LIMIT would
+                // silently fall back to unconditional compensation
+                newModel.setLateralCountCoalesceGuard(oldModel.getLateralCountCoalesceGuard());
                 if (oldModel.isOptimisable()) {
                     oldModel.setLateralCountCoalesceRequired(false);
+                    oldModel.setLateralCountCoalesceGuard(null);
                 }
             }
         }
