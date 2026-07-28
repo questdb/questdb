@@ -5091,7 +5091,7 @@ public class MatViewTest extends AbstractCairoTest {
             // test that attempt to rename a mat view which has not been created/registered yet, throws CairoException
             // this is a valid use case during replication, sometimes registering a mat view is in a race with renaming
             // it from its temp name to its real name
-            final TableToken noMatViewToken = new TableToken("price_1h_temp", "price_1h~2", null, 2, false, true, true, false, false, false);
+            final TableToken noMatViewToken = new TableToken("price_1h_temp", "price_1h~2", null, 2, TableToken.Type.MAT_VIEW, true, false, false, false);
             final TableToken noUpdatedToken = noMatViewToken.renamed("price_1h");
 
             try {

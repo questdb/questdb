@@ -25,9 +25,10 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -55,7 +56,20 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
 
     public LiveViewRefreshSqlExecutionContext(CairoEngine engine, int sharedQueryWorkerCount) {
         super(engine, sharedQueryWorkerCount);
-        this.securityContext = AllowAllSecurityContext.INSTANCE;
+        // Refresh reads the base table and writes the view's own table, nothing else,
+        // so the context grants exactly that - mirroring MatViewRefreshSqlExecutionContext.
+        // The view's rows reach its table through the LV writer rather than through SQL,
+        // so no refresh path exercises authorizeInsert today; the arm keeps the context
+        // correct for a path that later does, instead of leaving every write authorized.
+        this.securityContext = new ReadOnlySecurityContext() {
+            @Override
+            public void authorizeInsert(TableToken tableToken) {
+                final LiveViewInstance instance = refreshingInstance;
+                if (instance == null || !tableToken.equals(instance.getLiveViewToken())) {
+                    throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+                }
+            }
+        };
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
     }
 

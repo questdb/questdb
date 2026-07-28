@@ -600,6 +600,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     public ExpressionNode parseExpression(CharSequence expression) throws SqlException {
         clear();
         lexer.of(expression);
+        // Stamp the flag rather than inherit whatever the last parse() left behind.
+        // Both callers hand in a live view's stored ANCHOR EXPRESSION, which is a
+        // scalar expression and carries no ANCHOR clause of its own, so the clause
+        // stays refused here exactly as it is for any other bare expression.
+        parser.setAnchorAllowed(false);
         return parser.expr(lexer, (IQueryModel) null, this);
     }
 
@@ -2999,7 +3004,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // define operation to make sure we generate correct errors in case of syntax check failure
                 final TableToken tt = executionContext.getTableTokenIfExists(viewName);
                 if (tt != null && !tt.isView()) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "view name expected, got table or materialized view name");
+                    throw SqlException.$(lexer.lastTokenPosition(), "view name expected, got ").put(tt.getType().keyword()).put(" name");
                 }
                 dropOperationBuilder.clear();
                 dropOperationBuilder.setOperationCode(OperationCodes.DROP_VIEW);
@@ -3080,7 +3085,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // define operation to make sure we generate correct errors in case of syntax check failure
                 final TableToken tt = executionContext.getTableTokenIfExists(matViewName);
                 if (tt != null && !tt.isMatView()) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table or view name");
+                    throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got ").put(tt.getType().keyword()).put(" name");
                 }
                 dropOperationBuilder.clear();
                 dropOperationBuilder.setOperationCode(OperationCodes.DROP_MAT_VIEW);
@@ -4877,7 +4882,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.matViewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
         if (!tableToken.isMatView()) {
-            throw SqlException.$(op.getEntityNamePosition(), "materialized view name expected, got table name");
+            throw SqlException.$(op.getEntityNamePosition(), "materialized view name expected, got ").put(tableToken.getType().keyword()).put(" name");
         }
         sqlExecutionContext.getSecurityContext().authorizeMatViewDrop(tableToken);
 
@@ -4947,7 +4952,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.viewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
         if (!tableToken.isView()) {
-            throw SqlException.$(op.getEntityNamePosition(), "view name expected, got table name");
+            throw SqlException.$(op.getEntityNamePosition(), "view name expected, got ").put(tableToken.getType().keyword()).put(" name");
         }
         if (tableToken.isSystem()) {
             throw SqlException.$(op.getEntityNamePosition(), "cannot drop a system view");

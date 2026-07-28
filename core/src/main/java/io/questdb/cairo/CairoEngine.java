@@ -215,9 +215,9 @@ public class CairoEngine implements Closeable, WriterSource {
     private final CopyImportContext copyImportContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final DataID dataID;
+    private final DependentViewGraph dependentViewGraph;
     private final FunctionFactoryCache ffCache;
     private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
-    private final DependentViewGraph dependentViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
     // volatile: assigned by completeInit() on the orchestrator thread, read by worker threads
@@ -2841,6 +2841,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 // free to the worker's finally hook (latch CAS fails here).
                 instance.tryFreeRuntimeStateIfInvalid();
             }
+        } finally {
+            // The sink is carrier-local and outlives the call, so instances left in
+            // it stay reachable - including views a concurrent DROP retires - until
+            // the next invalidation overwrites the list. Release them here instead.
+            sink.clear();
         }
     }
 
@@ -4317,7 +4322,13 @@ public class CairoEngine implements Closeable, WriterSource {
 
     private TableToken rebaseWalTable0(TableToken oldToken, String suppliedDir, boolean replicaVariant) {
         assertRebaseRole(replicaVariant);
-        if (!oldToken.isWal() || oldToken.isView()) {
+        // Live views are refused alongside plain views. A live view is a WAL table, so
+        // isView() - which is Type.VIEW exactly - let one through to a rebase that mints
+        // a new dir and table id while its registry entry, refresh state and _lv files
+        // still describe the old one; only the SQL layer stood in the way. Mat views
+        // stay allowed: ALTER MATERIALIZED VIEW ... REBASE WAL is supported and carries
+        // its own dependent-invalidation path (MatViewTest#testRebaseWalMaterializedView).
+        if (!oldToken.isWal() || oldToken.isView() || oldToken.isLiveView()) {
             throw CairoException.nonCritical().put("REBASE WAL is supported only for WAL tables [table=").put(oldToken.getTableName()).put(']');
         }
         if (!tableSequencerAPI.getTxnTracker(oldToken).isHardSuspended()) {
@@ -4363,9 +4374,12 @@ public class CairoEngine implements Closeable, WriterSource {
             newTableId = (int) tableIdGenerator.getNextId();
             newDirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, newTableId, true);
         }
+        // Carry the kind across verbatim. The boolean form this used to take could not
+        // spell LIVE_VIEW, so it would have handed a rebased live view back as a plain
+        // table; a mat view, which the guard above does admit, keeps its kind either way.
         TableToken newToken = new TableToken(
                 tableName, newDirName, configuration.getDbLogName(), newTableId,
-                oldToken.isView(), oldToken.isMatView(), true,
+                oldToken.getType(), true,
                 oldToken.isSystem(), oldToken.isProtected(), oldToken.isPublic()
         );
 

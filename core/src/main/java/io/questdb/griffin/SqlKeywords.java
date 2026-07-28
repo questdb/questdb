@@ -910,15 +910,6 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 't';
     }
 
-    public static boolean isFlushKeyword(CharSequence tok) {
-        return tok.length() == 5
-                && (tok.charAt(0) | 32) == 'f'
-                && (tok.charAt(1) | 32) == 'l'
-                && (tok.charAt(2) | 32) == 'u'
-                && (tok.charAt(3) | 32) == 's'
-                && (tok.charAt(4) | 32) == 'h';
-    }
-
     public static boolean isFloat4Keyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'f'
@@ -948,6 +939,15 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'o'
                 && (tok.charAt(3) | 32) == 'a'
                 && (tok.charAt(4) | 32) == 't';
+    }
+
+    public static boolean isFlushKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'f'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'u'
+                && (tok.charAt(3) | 32) == 's'
+                && (tok.charAt(4) | 32) == 'h';
     }
 
     public static boolean isFollowingKeyword(CharSequence tok) {

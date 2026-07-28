@@ -599,8 +599,11 @@ public class WalUtils {
             // First data record scanning back is not a LIVE_VIEW_DATA block: an older
             // block would under-clamp, so abort safely.
             return -1;
-        } catch (Throwable th) {
+        } catch (Exception e) {
             // WAL-e missing / purged / unreadable: cannot recover the in-band value.
+            // Exception rather than Throwable - an OOM or a linkage failure here is
+            // not a missing WAL-e file, and swallowing it into a safe-abort return
+            // would hide it from the caller.
             return -1;
         }
     }

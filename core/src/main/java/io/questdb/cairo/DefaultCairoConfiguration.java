@@ -567,6 +567,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewRefreshMemoryLimitBytes() {
+        return 0;
+    }
+
+    @Override
     public int getLiveViewRefreshTurnMaxCommits() {
         return 64;
     }
@@ -644,11 +649,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMatViewRefreshMaxClusters() {
         return 32;
-    }
-
-    @Override
-    public long getLiveViewRefreshMemoryLimitBytes() {
-        return 0;
     }
 
     @Override

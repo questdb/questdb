@@ -49,6 +49,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -248,6 +249,11 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private final LiveViewsListCursor cursor = new LiveViewsListCursor();
 
         @Override
+        public void close() {
+            Misc.free(cursor);
+        }
+
+        @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
@@ -279,6 +285,16 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
             @Override
             public void close() {
+                // The factory is cached and outlives the query, so anything the last
+                // scan touched stays reachable until the next one replaces it. Drop
+                // the engine, the query's circuit breaker and every LiveViewInstance
+                // the walk collected - the instances in particular can be dropped
+                // views the registry has already retired.
+                viewInstances.clear();
+                record.clear();
+                circuitBreaker = null;
+                engine = null;
+                viewIndex = 0;
             }
 
             @Override
@@ -319,9 +335,19 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             }
 
             private static class LiveViewsRecord implements Record {
+                private long[] checkpointRepair;
+                private long[] checkpointTimeline;
                 private LiveViewDefinition definition;
                 private CairoEngine engine;
                 private LiveViewInstance instance;
+
+                public void clear() {
+                    checkpointRepair = null;
+                    checkpointTimeline = null;
+                    definition = null;
+                    engine = null;
+                    instance = null;
+                }
 
                 @Override
                 public boolean getBool(int col) {
@@ -329,7 +355,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         return false;
                     }
                     if (col == COLUMN_CHECKPOINT_REPAIR_IN_PROGRESS) {
-                        return instance.getCheckpointRepair()[LiveViewInstance.CHECKPOINT_REPAIR_IN_PROGRESS] != 0;
+                        return checkpointRepair[LiveViewInstance.CHECKPOINT_REPAIR_IN_PROGRESS] != 0;
                     }
                     return false;
                 }
@@ -343,13 +369,12 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     // write, so 0 means every root paid for its own complete
                     // image. NULL rather than 0 while no generation exists, which
                     // is a different statement from "shares nothing".
-                    final long[] timeline = instance.getCheckpointTimeline();
-                    final long logical = timeline[LiveViewInstance.CHECKPOINT_TIMELINE_LOGICAL_BYTES];
-                    if (timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                    final long logical = checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_LOGICAL_BYTES];
+                    if (checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
                             || logical <= 0) {
                         return Double.NaN;
                     }
-                    final long physical = timeline[LiveViewInstance.CHECKPOINT_TIMELINE_PHYSICAL_BYTES];
+                    final long physical = checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_PHYSICAL_BYTES];
                     return (double) Math.max(0, logical - physical) / logical;
                 }
 
@@ -425,58 +450,52 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // with the previous generation's byte totals. Every field
                         // is NULL for a view holding no published generation.
                         case COLUMN_CHECKPOINT_TIMELINE_GENERATION ->
-                                instance.getCheckpointTimeline()[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION];
+                                checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION];
                         case COLUMN_CHECKPOINT_TIMELINE_ENTRIES -> {
-                            final long[] timeline = instance.getCheckpointTimeline();
-                            yield timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                            yield checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
                                     ? Numbers.LONG_NULL
-                                    : timeline[LiveViewInstance.CHECKPOINT_TIMELINE_ENTRIES];
+                                    : checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_ENTRIES];
                         }
                         case COLUMN_CHECKPOINT_TIMELINE_NORMALIZED_BASE_SEQTXN ->
-                                instance.getCheckpointTimeline()[LiveViewInstance.CHECKPOINT_TIMELINE_NORMALIZED_BASE_SEQ_TXN];
+                                checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_NORMALIZED_BASE_SEQ_TXN];
                         case COLUMN_CHECKPOINT_TIMELINE_LOGICAL_BYTES -> {
-                            final long[] timeline = instance.getCheckpointTimeline();
-                            yield timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                            yield checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
                                     ? Numbers.LONG_NULL
-                                    : timeline[LiveViewInstance.CHECKPOINT_TIMELINE_LOGICAL_BYTES];
+                                    : checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_LOGICAL_BYTES];
                         }
                         case COLUMN_CHECKPOINT_TIMELINE_PHYSICAL_BYTES -> {
-                            final long[] timeline = instance.getCheckpointTimeline();
-                            yield timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                            yield checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
                                     ? Numbers.LONG_NULL
-                                    : timeline[LiveViewInstance.CHECKPOINT_TIMELINE_PHYSICAL_BYTES];
+                                    : checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_PHYSICAL_BYTES];
                         }
                         case COLUMN_CHECKPOINT_TIMELINE_SHARED_BYTES -> {
                             // Logical minus physical, floored at zero: a timeline
                             // whose metadata outweighs the state it describes
                             // shares nothing rather than a negative amount.
-                            final long[] timeline = instance.getCheckpointTimeline();
-                            if (timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL) {
+                            if (checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL) {
                                 yield Numbers.LONG_NULL;
                             }
                             yield Math.max(
                                     0,
-                                    timeline[LiveViewInstance.CHECKPOINT_TIMELINE_LOGICAL_BYTES]
-                                            - timeline[LiveViewInstance.CHECKPOINT_TIMELINE_PHYSICAL_BYTES]
+                                    checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_LOGICAL_BYTES]
+                                            - checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_PHYSICAL_BYTES]
                             );
                         }
                         case COLUMN_CHECKPOINT_TIMELINE_ROW_POSITION_DELTA_BYTES -> {
-                            final long[] timeline = instance.getCheckpointTimeline();
-                            yield timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                            yield checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
                                     ? Numbers.LONG_NULL
-                                    : timeline[LiveViewInstance.CHECKPOINT_TIMELINE_ROW_POSITION_DELTA_BYTES];
+                                    : checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_ROW_POSITION_DELTA_BYTES];
                         }
                         case COLUMN_CHECKPOINT_OLDEST_PINNED_GENERATION ->
-                                instance.getCheckpointTimeline()[LiveViewInstance.CHECKPOINT_TIMELINE_OLDEST_RETAINED_GENERATION];
+                                checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_OLDEST_RETAINED_GENERATION];
                         case COLUMN_CHECKPOINT_GC_LAG_GENERATIONS -> {
                             // Generations the purge floor sits behind the current
                             // one. The A/B pair keeps the previous generation as
                             // its recovery fallback, so 1 is the healthy value and
                             // a growing figure means retirement has stalled.
-                            final long[] timeline = instance.getCheckpointTimeline();
-                            final long current = timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION];
+                            final long current = checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION];
                             final long oldest =
-                                    timeline[LiveViewInstance.CHECKPOINT_TIMELINE_OLDEST_RETAINED_GENERATION];
+                                    checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_OLDEST_RETAINED_GENERATION];
                             yield current == Numbers.LONG_NULL || oldest == Numbers.LONG_NULL
                                     ? Numbers.LONG_NULL
                                     : Math.max(0, current - oldest);
@@ -491,10 +510,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_CHECKPOINT_LAST_WRITE_MICROS -> instance.getHeadCheckpointWriteMicros();
                         case COLUMN_CHECKPOINT_LAST_RESTORE_MICROS -> instance.getHeadCheckpointRestoreMicros();
                         case COLUMN_CHECKPOINT_LAST_WRITE_NEW_BYTES -> {
-                            final long[] timeline = instance.getCheckpointTimeline();
-                            yield timeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
+                            yield checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
                                     ? Numbers.LONG_NULL
-                                    : timeline[LiveViewInstance.CHECKPOINT_TIMELINE_LAST_WRITE_NEW_BYTES];
+                                    : checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_LAST_WRITE_NEW_BYTES];
                         }
                         case COLUMN_CHECKPOINT_LAST_LOOKUP_DEPTH -> instance.getCheckpointLastLookupDepth();
                         // Bounds of a localized repair suspended across refresh
@@ -503,13 +521,13 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // converges only at EOF, which is a tag rather than a
                         // timestamp.
                         case COLUMN_CHECKPOINT_REPAIR_CORRECTION_TIMESTAMP -> toMicros(
-                                instance.getCheckpointRepair()[LiveViewInstance.CHECKPOINT_REPAIR_CORRECTION_TS]
+                                checkpointRepair[LiveViewInstance.CHECKPOINT_REPAIR_CORRECTION_TS]
                         );
                         case COLUMN_CHECKPOINT_REPAIR_LOW_TIMESTAMP -> toMicros(
-                                instance.getCheckpointRepair()[LiveViewInstance.CHECKPOINT_REPAIR_LOW_TS]
+                                checkpointRepair[LiveViewInstance.CHECKPOINT_REPAIR_LOW_TS]
                         );
                         case COLUMN_CHECKPOINT_REPAIR_HIGH_TIMESTAMP -> toMicros(
-                                instance.getCheckpointRepair()[LiveViewInstance.CHECKPOINT_REPAIR_HIGH_TS]
+                                checkpointRepair[LiveViewInstance.CHECKPOINT_REPAIR_HIGH_TS]
                         );
                         case COLUMN_CHECKPOINT_REPAIR_ROOTS_VERSIONED -> instance.getCheckpointRepairRootsVersioned();
                         case COLUMN_CHECKPOINT_REPAIR_NEW_BYTES -> instance.getCheckpointRepairNewBytes();
@@ -557,7 +575,10 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // below the late row. In-memory counter, resets on restart.
                         // Disjoint from o3_resume_replay_rows.
                         case COLUMN_O3_BOUNDARY_REPLAY_ROWS -> instance.getO3BoundaryReplayRows();
-                        default -> 0;
+                        // Every numeric column the metadata declares has an arm above.
+                        // A column added without one reads as NULL rather than as 0,
+                        // which for the TIMESTAMP columns would render 1970-01-01.
+                        default -> Numbers.LONG_NULL;
                     };
                 }
 
@@ -616,6 +637,13 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     this.engine = engine;
                     this.instance = instance;
                     this.definition = instance.getDefinition();
+                    // Snapshot both tuples once per row. The writer publishes each of
+                    // them by replacing the whole array, so one read per row gives the
+                    // columns a consistent view; a read per column would let a fresh
+                    // generation number pair with the previous generation's byte
+                    // totals, which is what the column comments promise it cannot.
+                    this.checkpointRepair = instance.getCheckpointRepair();
+                    this.checkpointTimeline = instance.getCheckpointTimeline();
                 }
 
                 /**

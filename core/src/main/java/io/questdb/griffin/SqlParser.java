@@ -6918,6 +6918,16 @@ public class SqlParser {
         return viewSql;
     }
 
+    /**
+     * Arms or disarms the live-view-only ANCHOR clause for the next expression parse.
+     * {@link #parse} stamps it per statement; a caller that parses a bare expression
+     * without going through {@code parse} stamps it here rather than inheriting the
+     * previous statement's value.
+     */
+    void setAnchorAllowed(boolean anchorAllowed) {
+        expressionParser.setAnchorAllowed(anchorAllowed);
+    }
+
     public interface ReplacingVisitor {
         ExpressionNode visit(ExpressionNode node) throws SqlException;
     }

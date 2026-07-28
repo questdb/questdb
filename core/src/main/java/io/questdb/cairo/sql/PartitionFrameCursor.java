@@ -56,6 +56,10 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
      * list means the cursor's rows are exactly the table rows whose timestamp falls in one
      * of these intervals, so a caller holding rows of its own can apply the same filter to
      * them and stay row-for-row consistent with the scan.
+     * <p>
+     * The list belongs to the cursor and is not a copy: an implementation may re-point or
+     * rewrite it on the next {@code of()} / {@code getCursor()}. Read it, or copy it, before
+     * reopening the cursor.
      */
     default @Nullable LongList getIntervals() {
         return null;

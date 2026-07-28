@@ -161,11 +161,6 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public ExpressionNode parseExpression(CharSequence expression) throws SqlException {
-            return delegate.parseExpression(expression);
-        }
-
-        @Override
         public RecordCursorFactory generateSelectWithRetries(
                 IQueryModel queryModel,
                 @Nullable InsertModel insertModel,
@@ -213,6 +208,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         public void goodbye() {
             entry = null;
             pool = null;
+        }
+
+        @Override
+        public ExpressionNode parseExpression(CharSequence expression) throws SqlException {
+            return delegate.parseExpression(expression);
         }
 
         @Override

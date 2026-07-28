@@ -101,6 +101,18 @@ public class LiveViewTest extends AbstractLiveViewTest {
         }
     }
 
+    private void assertRebaseWalReachesSuspensionCheck(TableToken token) {
+        try {
+            engine.rebaseWalTable(token);
+            Assert.fail("REBASE WAL must still require suspension for a " + token.getType().keyword());
+        } catch (CairoException e) {
+            Assert.assertTrue(
+                    "[kind=" + token.getType().keyword() + "] the kind guard must not fire, got: " + e.getFlyweightMessage(),
+                    Chars.contains(e.getFlyweightMessage(), "REBASE WAL requires the table to be suspended first")
+            );
+        }
+    }
+
     private void assertMutationRejected(String sql, String expectedMessageFragment) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -1118,7 +1130,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
     public void testRejectDropViewOnLiveView() throws Exception {
         assertMutationRejected(
                 "DROP VIEW lv",
-                "view name expected, got table or materialized view name"
+                "view name expected, got live view name"
         );
     }
 
@@ -1126,8 +1138,82 @@ public class LiveViewTest extends AbstractLiveViewTest {
     public void testRejectDropMaterializedViewOnLiveView() throws Exception {
         assertMutationRejected(
                 "DROP MATERIALIZED VIEW lv",
-                "materialized view name expected, got table or view name"
+                "materialized view name expected, got live view name"
         );
+    }
+
+    @Test
+    public void testRebaseWalRejectsLiveViewToken() throws Exception {
+        // rebaseWalTable0's kind guard read isView(), which is Type.VIEW exactly, and a
+        // live view is a WAL table of a different kind - so it walked past the guard and
+        // only the SQL layer stood between it and a rebase that mints a new dir and table
+        // id under a registry entry, refresh state and _lv files that still name the old
+        // one. Asserting the message rather than "it threw" is what separates the guard
+        // from the suspension check below it, which is where the token used to land.
+        //
+        // Mat views must keep working: rebasing one is supported
+        // (MatViewTest#testRebaseWalMaterializedView), so the plain table and the mat view
+        // both have to reach that suspension check rather than the kind guard.
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            execute("CREATE MATERIALIZED VIEW mv AS (" +
+                    "SELECT ts, avg(val) AS av FROM base SAMPLE BY 1h) PARTITION BY DAY");
+
+            final TableToken lvToken = engine.verifyTableName("lv");
+            Assert.assertEquals(TableToken.Type.LIVE_VIEW, lvToken.getType());
+            Assert.assertTrue("a live view is a WAL table, which is what made the old guard miss it", lvToken.isWal());
+            try {
+                engine.rebaseWalTable(lvToken);
+                Assert.fail("REBASE WAL must be refused for a live view");
+            } catch (CairoException e) {
+                Assert.assertTrue(
+                        "expected the kind guard, got: " + e.getFlyweightMessage(),
+                        Chars.contains(e.getFlyweightMessage(), "REBASE WAL is supported only for WAL tables")
+                );
+            }
+
+            final TableToken mvToken = engine.verifyTableName("mv");
+            Assert.assertEquals(TableToken.Type.MAT_VIEW, mvToken.getType());
+            assertRebaseWalReachesSuspensionCheck(mvToken);
+            assertRebaseWalReachesSuspensionCheck(engine.verifyTableName("base"));
+
+            execute("DROP MATERIALIZED VIEW mv");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLiveViewsRendersUnsetTimestampsAsNull() throws Exception {
+        // A view that has never refreshed holds no checkpoint generation and, under
+        // START FROM BEGINNING, no lower bound either. Every one of these columns must
+        // read NULL - a 0 would render as 1970-01-01 on the TIMESTAMP ones and as a
+        // legitimate-looking count on the rest. The query runs twice so the second pass
+        // goes through the cached factory after the cursor released the first walk's
+        // state.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM BEGINNING AS " +
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            final String query = "SELECT view_name, view_lower_bound_timestamp, checkpoint_timeline_generation, " +
+                    "checkpoint_timeline_entries, checkpoint_repair_correction_timestamp, " +
+                    "checkpoint_repair_high_timestamp, checkpoint_last_write_micros " +
+                    "FROM live_views() WHERE view_name = 'lv'";
+            // A NULL TIMESTAMP prints as an empty field, a NULL LONG as "null".
+            final String expected = """
+                    view_name\tview_lower_bound_timestamp\tcheckpoint_timeline_generation\tcheckpoint_timeline_entries\tcheckpoint_repair_correction_timestamp\tcheckpoint_repair_high_timestamp\tcheckpoint_last_write_micros
+                    lv\t\tnull\tnull\t\t\tnull
+                    """;
+            // noCircuitBreakerCheck / noLeakCheck as everywhere else this catalogue is
+            // asserted: it walks the in-memory registry and performs no per-row checks.
+            assertQuery(query).noLeakCheck().noRandomAccess().noCircuitBreakerCheck().returns(expected);
+            assertQuery(query).noLeakCheck().noRandomAccess().noCircuitBreakerCheck().returns(expected);
+
+            execute("DROP LIVE VIEW lv");
+        });
     }
 
     @Test

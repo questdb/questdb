@@ -185,8 +185,8 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_ND_ARRAY_DBG2, "NATIVE_ND_ARRAY_DBG2");
         tagNameMap.extendAndSet(NATIVE_PATH_THREAD_LOCAL, "NATIVE_PATH_THREAD_LOCAL");
         tagNameMap.extendAndSet(NATIVE_PARQUET_EXPORTER, "NATIVE_PARQUET_EXPORTER");
+        tagNameMap.extendAndSet(NATIVE_LIVE_VIEW_IN_MEM, "NATIVE_LIVE_VIEW_IN_MEM");
         tagNameMap.extendAndSet(NATIVE_MEMORY_TRACKER, "NATIVE_MEMORY_TRACKER");
         tagNameMap.extendAndSet(MMAP_PARQUET_METADATA_READER, "MMAP_PARQUET_METADATA_READER");
-        tagNameMap.extendAndSet(NATIVE_LIVE_VIEW_IN_MEM, "NATIVE_LIVE_VIEW_IN_MEM");
     }
 }
