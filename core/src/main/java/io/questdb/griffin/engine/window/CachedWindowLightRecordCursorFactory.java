@@ -59,7 +59,6 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     private final ObjList<ObjList<WindowFunction>> orderedFunctions;
     private final int orderedGroupCount;
     private final ObjList<IntList> sortKeys;
-    private final IntList sourceMap;
     private final ObjList<WindowFunction> unordered2PassFunctions;
     @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
@@ -86,7 +85,6 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         DirectLongList baseRowIds = null;
         try {
             this.base = base;
-            this.sourceMap = sourceMap;
             this.orderedGroupCount = sortKeys.size();
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;

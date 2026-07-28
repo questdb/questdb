@@ -33,12 +33,10 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 
 public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final BitSet materializedColumns = new BitSet();
     private RecordCursorFactory base;
     private SortKeyMaterializingRecordCursor cursor;
 
@@ -53,9 +51,6 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
         assert base.recordCursorSupportsRandomAccess()
                 : "SortKeyMaterializingRecordCursorFactory requires a base factory that supports random access";
         this.base = base;
-        for (int i = 0, n = materializedColIndices.size(); i < n; i++) {
-            materializedColumns.set(materializedColIndices.getQuick(i));
-        }
         this.cursor = new SortKeyMaterializingRecordCursor(
                 metadata.getColumnCount(),
                 materializedColIndices,

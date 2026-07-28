@@ -761,7 +761,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             try {
                 backfillNodes.forEach(backfillNodeConsumer);
                 backfillNodes.clear();
-                    } catch (SqlWrapperException e) {
+            } catch (SqlWrapperException e) {
                 throw e.wrappedException;
             }
         }
@@ -3736,10 +3736,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // Pre-pass: remember whether any FLOAT / DOUBLE source is present anywhere in
                     // the predicate. See NarrowI64WidenDetector.
                     i64WidenConstants.clear();
-        intWidthNullElements.clear();
-        i64WidenLeaves.clear();
-        narrowKeptConstants.clear();
-                                            // The type and wide-lane memo caches are NOT cleared here. They are pure
+                    intWidthNullElements.clear();
+                    i64WidenLeaves.clear();
+                    narrowKeptConstants.clear();
+                    // The type and wide-lane memo caches are NOT cleared here. They are pure
                     // functions of a node's subtree keyed by node identity, so an entry stays valid
                     // for every predicate of the same filter, and serialize()'s whole-tree wide-lane
                     // pre-pass has already filled them. Dropping them per predicate re-ran the type

@@ -437,6 +437,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.reset();
+        // The execution context outlives a test method, and setJitMode() is not part of
+        // reset(). A test that switches the mode and then fails leaves it switched for every
+        // test that runs after it, which surfaces as "JIT was not enabled" on an unrelated
+        // test and hides the failure that actually caused it.
+        sqlExecutionContext.setJitMode(configuration.getSqlJitMode());
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
         sqlExecutionContext.setParallelTopKEnabled(configuration.isSqlParallelTopKEnabled());

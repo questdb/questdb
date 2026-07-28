@@ -51,8 +51,9 @@ public class CastIntToDateFunctionFactory implements FunctionFactory {
 
         @Override
         public long getDate(Record rec) {
-            // IntFunction.getDate() delegates to getLong() and widens, so this cast widens too
-            // and agrees with ::TIMESTAMP over the same expression.
+            // IntFunction.getDate() is Numbers.intToLong(getInt()), and so is getLong(), so this
+            // cast wraps an overflowing INT arithmetic and maps INT_NULL onto LONG_NULL - the
+            // same value ::TIMESTAMP reads over the same expression. See CastIntToTimestamp.
             return arg.getLong(rec);
         }
     }
