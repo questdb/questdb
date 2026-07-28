@@ -369,16 +369,20 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("SELECT v, event_time FROM ws_named_explicit_ts")
                     .noLeakCheck()
-                    .returnsOnce("v\tevent_time\n42\t1970-01-01T00:00:01.000000Z\n");
+                    .timestamp("event_time")
+                    .expectSize()
+                    .returns("v\tevent_time\n42\t1970-01-01T00:00:01.000000Z\n");
             assertQuery("SELECT \"column\" FROM table_columns('ws_named_explicit_ts') ORDER BY \"column\"")
                     .noLeakCheck()
-                    .returnsOnce("column\nevent_time\nv\n");
+                    .returns("column\nevent_time\nv\n");
             assertQuery("SELECT \"column\" FROM table_columns('ws_named_server_ts') ORDER BY \"column\"")
                     .noLeakCheck()
-                    .returnsOnce("column\ningested_at\nv\n");
+                    .returns("column\ningested_at\nv\n");
             assertQuery("SELECT count() FROM ws_named_server_ts WHERE ingested_at >= '2025-01-01'")
                     .noLeakCheck()
-                    .returnsOnce("count\n1\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
         });
     }
 
@@ -399,10 +403,12 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("SELECT v, actual_ts FROM ws_existing_named_ts")
                     .noLeakCheck()
-                    .returnsOnce("v\tactual_ts\n7\t1970-01-01T00:00:02.000000Z\n");
+                    .timestamp("actual_ts")
+                    .expectSize()
+                    .returns("v\tactual_ts\n7\t1970-01-01T00:00:02.000000Z\n");
             assertQuery("SELECT \"column\" FROM table_columns('ws_existing_named_ts') ORDER BY \"column\"")
                     .noLeakCheck()
-                    .returnsOnce("column\nactual_ts\nv\n");
+                    .returns("column\nactual_ts\nv\n");
         });
     }
 
@@ -434,7 +440,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("SELECT v FROM ws_valid_after_named_ts_rejection")
                     .noLeakCheck()
-                    .returnsOnce("v\n1\n");
+                    .expectSize()
+                    .returns("v\n1\n");
         });
     }
 

@@ -63,6 +63,28 @@ public class QwpMessageCursorTableOptionsTest {
     }
 
     @Test
+    public void testMissingTableOptionsBlockIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] tableData = tableBlocks("a", "b");
+            byte[] optionBlock = emptyBlock();
+            ByteArrayOutputStream payload = new ByteArrayOutputStream();
+            writeBytes(payload, tableData);
+            writeBytes(payload, optionBlock);
+            writeIntLE(payload, optionBlock.length);
+
+            withCursor(message(2, payload.toByteArray()), cursor -> {
+                try {
+                    cursor.ofAddress();
+                    Assert.fail("expected missing table options block");
+                } catch (QwpParseException e) {
+                    Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+                    Assert.assertEquals("missing table options block [tableIndex=1]", e.getMessage());
+                }
+            });
+        });
+    }
+
+    @Test
     public void testMultiTableMixedOptions() throws Exception {
         assertMemoryLeak(() -> {
             byte[] message = validMessage(
@@ -113,6 +135,29 @@ public class QwpMessageCursorTableOptionsTest {
                     }
                 }
         ));
+    }
+
+    @Test
+    public void testUnexpectedBytesAfterTableOptionsBlocksAreRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] tableData = tableBlocks("t");
+            byte[] optionBlock = emptyBlock();
+            ByteArrayOutputStream payload = new ByteArrayOutputStream();
+            writeBytes(payload, tableData);
+            writeBytes(payload, optionBlock);
+            payload.write(0x7f);
+            writeIntLE(payload, optionBlock.length + 1);
+
+            withCursor(message(1, payload.toByteArray()), cursor -> {
+                try {
+                    cursor.ofAddress();
+                    Assert.fail("expected unexpected bytes after table options blocks");
+                } catch (QwpParseException e) {
+                    Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+                    Assert.assertEquals("unexpected bytes after table options blocks: 1", e.getMessage());
+                }
+            });
+        });
     }
 
     @Test

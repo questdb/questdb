@@ -834,7 +834,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 drainWalQueue();
                 assertQuery("select v from compat_unknown_flags")
                         .noLeakCheck()
-                        .returnsOnce("v\n42\n");
+                        .expectSize()
+                        .returns("v\n42\n");
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -1950,6 +1951,43 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetTableUpdateDetailsRejectsDesignatedTimestampNameCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            final String tableName = "colliding_designated_timestamp";
+            final ObjList<QwpColumnDef> schema = new ObjList<>();
+            schema.add(new QwpColumnDef("v", QwpConstants.TYPE_LONG));
+            schema.add(new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP));
+
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            new Utf8String(tableName),
+                            schema,
+                            null,
+                            new Utf8String("v"),
+                            1
+                    );
+                    Assert.fail("should have rejected designated timestamp name collision");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isSchemaMismatch());
+                    Assert.assertEquals(
+                            "designated timestamp column name collides with schema column: v",
+                            e.getFlyweightMessage().toString()
+                    );
+                }
+                Assert.assertEquals(0, getCacheSize(cache));
+                Assert.assertNull(engine.getTableTokenIfExists(tableName));
+            }
+        });
+    }
+
+    @Test
     public void testGetTableUpdateDetailsRejectsInvalidDeferredArrayColumnName() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -1979,6 +2017,77 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertNull(engine.getTableTokenIfExists(tableName));
             } finally {
                 Unsafe.free(addr, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsRejectsInvalidDesignatedTimestampName() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            final String tableName = "invalid_designated_timestamp";
+            final ObjList<QwpColumnDef> schema = new ObjList<>();
+            schema.add(new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP));
+
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            new Utf8String(tableName),
+                            schema,
+                            null,
+                            new Utf8String("bad/name"),
+                            1
+                    );
+                    Assert.fail("should have rejected invalid designated timestamp name");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isSchemaMismatch());
+                    Assert.assertEquals(
+                            "invalid designated timestamp column name: bad/name",
+                            e.getFlyweightMessage().toString()
+                    );
+                }
+                Assert.assertEquals(0, getCacheSize(cache));
+                Assert.assertNull(engine.getTableTokenIfExists(tableName));
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsRejectsMalformedDesignatedTimestampName() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            final String tableName = "malformed_designated_timestamp";
+            final ObjList<QwpColumnDef> schema = new ObjList<>();
+            schema.add(new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP));
+
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            new Utf8String(tableName),
+                            schema,
+                            null,
+                            new Utf8String(new byte[]{(byte) 0x80}, false),
+                            1
+                    );
+                    Assert.fail("should have rejected malformed UTF-8");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isSchemaMismatch());
+                    Assert.assertEquals(
+                            "invalid UTF-8 in designated timestamp column name",
+                            e.getFlyweightMessage().toString()
+                    );
+                }
+                Assert.assertNull(engine.getTableTokenIfExists(tableName));
             }
         });
     }

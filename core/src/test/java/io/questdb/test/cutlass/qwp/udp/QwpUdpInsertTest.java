@@ -166,10 +166,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             drainWalQueue();
             assertQuery("SELECT v, event_time FROM qwp_udp_named_ts")
                     .noLeakCheck()
-                    .returnsOnce("v\tevent_time\n42\t1970-01-01T00:00:01.000000Z\n");
+                    .timestamp("event_time")
+                    .expectSize()
+                    .returns("v\tevent_time\n42\t1970-01-01T00:00:01.000000Z\n");
             assertQuery("SELECT \"column\" FROM table_columns('qwp_udp_named_ts') ORDER BY \"column\"")
                     .noLeakCheck()
-                    .returnsOnce("column\nevent_time\nv\n");
+                    .returns("column\nevent_time\nv\n");
         });
     }
 
