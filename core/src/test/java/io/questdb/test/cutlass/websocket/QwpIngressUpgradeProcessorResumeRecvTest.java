@@ -1751,9 +1751,15 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
      * The client's CLOSE echo of the server's role-change close code
      * (NORMAL_CLOSURE), masked like every client frame. Any inbound CLOSE
      * completes the wait -- the role-change close carries the same code a
-     * voluntary client close sends, so the two are indistinguishable. See
-     * {@code WebSocketCloseCode#ROLE_CHANGE} for the capability negotiation a
-     * distinguishable code would need.
+     * voluntary client close sends, so the two are indistinguishable.
+     * <p>
+     * Distinguishing them would need a private-use close code, and that
+     * cannot be emitted unilaterally: deployed store-and-forward clients
+     * treat only NORMAL_CLOSURE and GOING_AWAY as orderly, so a code outside
+     * that set counts a head-of-line poison strike per demote and quarantines
+     * the slot holding the un-acked rows -- turning a routine transient demote
+     * into a producer-fatal error. It would therefore require a negotiated
+     * capability with NORMAL_CLOSURE as the fallback.
      */
     private static byte[] roleChangeCloseEchoFrame() {
         return createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{

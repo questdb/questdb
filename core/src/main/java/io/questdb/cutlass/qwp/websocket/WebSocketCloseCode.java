@@ -44,25 +44,6 @@ public final class WebSocketCloseCode {
      */
     public static final int PROTOCOL_ERROR = 1002;
     /**
-     * Role-change close (4001). RESERVED -- the server does NOT emit this code.
-     * QWP application-defined code in the RFC 6455 Section 7.4.2 private-use
-     * range, held for a future server that closes a demoting primary with a
-     * distinct code so the client's CLOSE echo (RFC 6455 Section 5.5.1 echoes
-     * the received code) proves the client actually read the server's CLOSE
-     * rather than having sent a voluntary CLOSE that crossed it on the wire.
-     * <p>
-     * The role-change close currently carries {@link #NORMAL_CLOSURE} instead.
-     * A store-and-forward client classifies close codes behaviourally, and
-     * deployed fleets treat only NORMAL_CLOSURE and GOING_AWAY as orderly: a
-     * code outside that set counts a head-of-line poison strike per demote,
-     * escalates to a typed PROTOCOL_VIOLATION terminal, and quarantines the
-     * store-and-forward slot holding the un-acked rows -- turning a routine
-     * transient demote into a producer-fatal error. Emitting 4001 therefore
-     * requires a negotiated capability with NORMAL_CLOSURE as the fallback,
-     * the same staging QwpConstants applies to its reserved NACK byte.
-     */
-    public static final int ROLE_CHANGE = 4001;
-    /**
      * Unsupported data (1003).
      * The endpoint received a type of data it cannot accept
      * (e.g., a binary-only endpoint received a text message).

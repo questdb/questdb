@@ -56,33 +56,22 @@ import io.questdb.std.str.Utf8s;
  */
 public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware {
     static final int SEND_STATE_READY = 0;
-    // Bounded grace the server waits for the client's CLOSE echo after sending
-    // a role-change CLOSE whose final durable ack must not be lost. Closing the
-    // fd immediately after the CLOSE frame races the client's receive path: an
-    // abortive close (RST, triggered by in-flight client data frames the server
-    // has not read) discards the client's unread receive buffer -- destroying
-    // the very [durable ack][CLOSE] tail the deferral existed to deliver, and
-    // forcing a full-corpus replay (duplicates on tables without dedup keys).
-    // RFC 6455 s5.5.1 close handshake instead: hold the fd open, keep reading
-    // (and discarding) inbound frames so no RST fires, until the client's CLOSE
-    // echo proves it consumed the stream up to our CLOSE -- including the final
-    // durable ack immediately before it.
+    // Bounded grace the server waits for the client's CLOSE echo after sending a
+    // role-change CLOSE whose final durable ack must not be lost. Closing the fd
+    // immediately races the client's receive path: an abortive close (RST,
+    // triggered by unread in-flight client frames) discards the client's unread
+    // [durable ack][CLOSE] tail, forcing a full-corpus replay. RFC 6455 s5.5.1
+    // instead: hold the fd open and keep reading until the echo proves the
+    // client consumed the stream up to our CLOSE.
     //
     // Like ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS below, this is NOT a wall-clock
-    // teardown bound: expiry is polled only on inbound recv re-entry. A
-    // conformant client echoes the CLOSE immediately (WebSocketClient does so
-    // before even dispatching the close to its handler), so the wait is one
-    // round trip; the budget is a stall guard against a wedged-but-chatty peer.
-    // beginCloseEchoWaitIfEligible half-closes the write side when it arms the
-    // wait -- unless the socket still owes the peer ciphertext of the CLOSE
-    // record, in which case it records hasPendingCloseEchoHalfClose below and
-    // the next recv-driven re-entry issues the FIN once that tail has drained.
-    // So a peer that reads the CLOSE and then falls silent still gets an
-    // EOF to react to, and a peer that closes on that EOF completes the wait
-    // with an inbound event. Any peer that answers neither the CLOSE nor the FIN
-    // escapes this budget entirely: a crashed host or a blackholing partition,
-    // but equally a live client that reads the EOF and simply keeps its own write
-    // side open. The transport reaper collects all of them.
+    // teardown bound -- expiry is polled only on inbound recv re-entry, so it is
+    // a stall guard against a wedged-but-chatty peer. beginCloseEchoWaitIfEligible
+    // half-closes the write side when it arms the wait (deferred while the socket
+    // still owes TLS ciphertext, see hasPendingCloseEchoHalfClose), so a peer
+    // that reads the CLOSE and falls silent still gets an EOF to react to. A peer
+    // that answers neither the CLOSE nor the FIN escapes this budget entirely and
+    // is left to the transport reaper.
     public static final long CLOSE_ECHO_WAIT_GRACE_MICROS = 5_000_000;
     // Bounded grace a role-change close may be deferred while
     // committed-but-not-yet-durably-uploaded work drains. The demote cascade
@@ -91,17 +80,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // committed work by the in-flight upload latency; closing inside that lag loses
     // the final durable ack forever and forces a duplicate-producing client replay.
     //
-    // NOTE: this budget is NOT a wall-clock teardown bound. Completion -- coverage
-    // OR expiry -- is evaluated ONLY on inbound, recv-driven re-entry: a gate-refused
-    // data frame (handleBinaryMessage) or the client's durable-ack keepalive PING
-    // (handlePing). There is no server-side timer and resumeSend does not re-poll, so
-    // the deadline is measured in MicrosecondClock ticks but enforced only while the
-    // client is live enough to poll. A conformant durable-ack client PINGs and
-    // completes in milliseconds (the demote drain's uploads land that fast); a fully
-    // silent client lingers deferred until the transport idle reaper tears the
-    // connection down via onConnectionClosed (best-effort final durable-ack flush,
-    // no CLOSE frame). 10s is a stall guard for the live-client path, not a
-    // guaranteed deadline.
+    // NOTE: not a wall-clock teardown bound. Completion -- coverage OR expiry --
+    // is evaluated ONLY on inbound, recv-driven re-entry: a gate-refused data
+    // frame (handleBinaryMessage) or the client's durable-ack keepalive PING
+    // (handlePing). A conformant client completes in milliseconds; a fully silent
+    // client lingers deferred until the transport idle reaper tears the
+    // connection down via onConnectionClosed (best-effort final flush, no CLOSE
+    // frame). 10s is a stall guard for the live-client path.
     public static final long ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS = 10_000_000;
     // Budget for the post-CLOSE read-drain (gracefulCloseAndDrain in
     // QwpIngressUpgradeProcessor): after a server-initiated fatal CLOSE + FIN the
@@ -119,25 +104,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     static final int SEND_STATE_RESUME_ACK_THEN_CLOSE = 7;
     static final int SEND_STATE_RESUME_ACK_THEN_ERROR = 3;
     static final int SEND_STATE_RESUME_CLOSE = 6;
-    // Parked close RESPONSE to a client-initiated CLOSE. Kept distinct from
-    // SEND_STATE_RESUME_CLOSE (a parked server-initiated fatal CLOSE): the
-    // resume path for a close response must tear the connection down
-    // unconditionally -- the client's CLOSE is already consumed, so the RFC
-    // 6455 handshake completes the instant the response tail flushes and no
-    // close-echo wait may be armed (no echo can ever arrive). Conflating the
-    // two frame kinds in one state made the resume branch arm the echo wait
-    // for a handshake that was already complete.
+    // Parked close RESPONSE to a client-initiated CLOSE. Distinct from
+    // SEND_STATE_RESUME_CLOSE (a parked server-initiated fatal CLOSE): this
+    // resume path must tear the connection down unconditionally -- the client's
+    // CLOSE is already consumed, so the handshake completes the instant the tail
+    // flushes and no close-echo wait may be armed.
     static final int SEND_STATE_RESUME_CLOSE_RESPONSE = 11;
-    // Continuations for a client-initiated CLOSE that arrived while (or
-    // whose pre-close ack flush left) an ack/durable-ack send parked. The
-    // parked frame carries the client's LAST cumulative/durable ack --
-    // dropping it (the old swallow-then-ServerDisconnect behaviour) makes a
-    // store-and-forward client replay committed work after reconnect
-    // (duplicates on tables without dedup keys). The resume path finishes
-    // the ack, emits the close response with the code stored in
-    // pendingCloseResponseCode, then disconnects -- mirroring the
-    // ACK_THEN_CLOSE pair, but for the client-initiated close handshake
-    // where no close-echo wait may ever be armed.
+    // Continuation for a client-initiated CLOSE that arrived while an
+    // ack/durable-ack send was parked. The parked frame carries the client's LAST
+    // cumulative/durable ack -- dropping it makes a store-and-forward client
+    // replay committed work after reconnect. The resume path finishes the ack,
+    // emits the close response with pendingCloseResponseCode, then disconnects.
     static final int SEND_STATE_RESUME_ACK_THEN_CLOSE_RESPONSE = 12;
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE = 13;
     static final int SEND_STATE_RESUME_DRAIN_THEN_CLOSE = 10;
@@ -212,32 +189,22 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // reconnect-eligible code instead of sending a SECURITY_ERROR that a
     // store-and-forward client would treat as a terminal HALT.
     private boolean roleChangeClosePending;
-    // Deadline (MicrosecondClock ticks) for the close-echo wait after a
-    // role-change CLOSE frame carrying the deferral's final durable ack has been
-    // fully sent, or -1 when no echo wait is in progress. While set, the
-    // connection exists only to observe the client's CLOSE echo (or FIN):
-    // inbound data frames are discarded without touching the engine, PINGs are
-    // not answered (no frames may follow our CLOSE), and no further acks are
-    // flushed. Survives per-message clear()/clearMessageState(); reset only on
-    // onDisconnected().
+    // Deadline (MicrosecondClock ticks) for the close-echo wait, or -1 when no
+    // wait is in progress. While set, the connection exists only to observe the
+    // client's CLOSE echo (or FIN): inbound data frames are discarded, PINGs are
+    // not answered, and no further acks are flushed. Survives per-message clears;
+    // reset only on onDisconnected().
     private long closeEchoDeadline = -1;
-    // Set when WebSocket frame sync is lost during the close-echo wait: an
-    // inbound frame's declared payload exceeds the recv buffer, so the frame
-    // can never be parsed to completion and the client's CLOSE echo can never
-    // be recognised. While set, the recv path must not parse buffered bytes
-    // (they are mid-frame garbage; a re-parse could misread a byte as a fake
-    // CLOSE opcode and tear the wait down prematurely) and instead
-    // read-and-discards inbound bytes to keep the socket drained until the
-    // echo grace expires or the peer's FIN arrives. Reset only on
-    // onDisconnected(), like closeEchoDeadline.
+    // Set when frame sync is lost during the close-echo wait: an inbound frame's
+    // declared payload exceeds the recv buffer, so the echo can never be
+    // recognised. While set the recv path must not parse buffered bytes (a
+    // re-parse could misread mid-frame garbage as a fake CLOSE opcode) and
+    // read-and-discards instead. Reset only on onDisconnected().
     private boolean hasLostCloseEchoSync;
-    // Set when the arming half-close of the close-echo wait could not go out
-    // because the TLS socket still held ciphertext of the CLOSE record: FIN ahead
-    // of that tail would truncate the record the wait exists to deliver. While
-    // set, every recv-driven re-entry retries the half-close (see
-    // QwpIngressUpgradeProcessor.halfCloseWriteSide) so the connection still gets
-    // its FIN once the tail drains. Always false for a plain socket, which never
-    // buffers ciphertext. Reset only on onDisconnected(), like closeEchoDeadline.
+    // Set when the arming half-close could not go out because the TLS socket still
+    // held ciphertext of the CLOSE record (FIN would truncate it). While set,
+    // every recv-driven re-entry retries the half-close. Always false for a plain
+    // socket. Reset only on onDisconnected().
     private boolean hasPendingCloseEchoHalfClose;
     // Deadline (MicrosecondClock ticks) for a deferred role-change close, or -1
     // when no deferral is in progress. Unlike roleChangeClosePending this survives
@@ -246,18 +213,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // registry covers pendingDurableSeqTxns or the grace budget expires.
     private long roleChangeCloseDeferredDeadline = -1;
     // Set immediately before the role-change CLOSE frame is emitted, whether or
-    // not the close deferred first. Close-echo eligibility must depend on WHAT
-    // the close delivers (the final durable ack flushed immediately before the
-    // CLOSE frame), not on WHETHER uploads happened to still lag at the first
-    // rejected frame: when the uploader catches up in the gap between the last
-    // committed batch and the demote's first rejection, the deferral is never
-    // armed yet sendFatalClose still emits the client's FIRST durable ack right
-    // before the CLOSE -- the same delivery contract the echo wait exists to
-    // confirm. It must NOT be set while a deferral is merely armed: the mark
-    // survives per-message clear()/clearMessageState() and parked-close resumes
-    // (reset only on onDisconnected()), so an early set would keep it true for
-    // the whole upload grace budget with no CLOSE on the wire, and any
-    // unrelated fatal close in that window would inherit role-change semantics.
+    // not the close deferred first: eligibility depends on WHAT the close
+    // delivers (the final durable ack flushed right before the CLOSE), not on
+    // whether uploads happened to lag at the first rejected frame. It must NOT be
+    // set while a deferral is merely armed -- the mark survives per-message
+    // clears and parked-close resumes, so an early set would keep it true for the
+    // whole grace budget with no CLOSE on the wire, and any unrelated fatal close
+    // in that window would inherit role-change semantics.
     private boolean roleChangeCloseInitiated;
     // Lowest sequence number consumed from the wire but neither committed nor
     // answered with an error response. Only the role-change close path can
@@ -556,13 +518,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     /**
      * True when this connection has committed seqTxns whose durable-upload
-     * coverage has not yet been fully acked (the {@code pendingDurableSeqTxns}
-     * map is non-empty). Unlike {@link #isDurableWorkFullyUploaded}, this reads
-     * only local state -- it never queries the registry -- so it is immune to
-     * the registry advancing concurrently under a demote drain. Once every
-     * pending table is pruned by {@link #onDurableAckSent}, a durable ack sent
-     * right now would carry nothing new: the final ack the client will consume
-     * already covers all of this connection's work.
+     * coverage has not yet been fully acked. Unlike
+     * {@link #isDurableWorkFullyUploaded} this reads only local state, so it is
+     * immune to the registry advancing concurrently under a demote drain.
      */
     public boolean hasPendingDurableWork() {
         return pendingDurableSeqTxns.size() > 0;
@@ -662,14 +620,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * True once this connection has emitted (or is in the act of emitting) its
-     * role-change CLOSE, whether that close deferred awaiting upload coverage
-     * or completed on the first attempt (coverage already in place). This --
-     * not {@link #isRoleChangeCloseDeferred()} -- is the close-echo
-     * eligibility predicate: the CLOSE frame carries the final durable ack in
-     * both cases. False for the whole deferral window: until the role-change
-     * CLOSE frame is actually on its way, no other fatal close may be treated
-     * as a role-change close.
+     * True once this connection has emitted (or is emitting) its role-change
+     * CLOSE, whether that close deferred awaiting upload coverage or completed
+     * on the first attempt. This -- not {@link #isRoleChangeCloseDeferred()} --
+     * is the close-echo eligibility predicate: the CLOSE frame carries the final
+     * durable ack in both cases. False for the whole deferral window.
      */
     public boolean isRoleChangeCloseInitiated() {
         return roleChangeCloseInitiated;
@@ -678,10 +633,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     /**
      * Marks this connection as closing due to a role change (in-place
      * PRIMARY-&gt;REPLICA demote). Called immediately before the role-change
-     * CLOSE is handed to {@code sendFatalClose} -- never while the close is
-     * only deferred -- so the mark cannot outlive a window in which no CLOSE
-     * exists. Idempotent; survives per-message state clears and parked-close
-     * resumes, reset only on {@code onDisconnected()}.
+     * CLOSE is handed to {@code sendFatalClose} -- never while the close is only
+     * deferred. Idempotent; reset only on {@code onDisconnected()}.
      */
     public void initiateRoleChangeClose() {
         roleChangeCloseInitiated = true;
@@ -873,13 +826,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * Records that a client-initiated CLOSE arrived while its pre-response
-     * ack flush left an ack/durable-ack send parked. Stores the normalized
-     * close code for the response the resume path will emit after the parked
-     * ack drains, and chains the send state so the ack frame -- the client's
-     * LAST cumulative/durable ack -- is not lost to the teardown. The caller
-     * must propagate the write backpressure so the framework parks the
-     * connection for write instead of disconnecting.
+     * Records that a client-initiated CLOSE arrived while its pre-response ack
+     * flush left a send parked. Stores the normalized close code for the resume
+     * path and chains the send state so the ack frame -- the client's LAST
+     * cumulative/durable ack -- is not lost to the teardown. The caller must
+     * propagate the write backpressure.
      */
     public void onClientCloseBlockedBehindAck(int responseCode) {
         assert sendState == SEND_STATE_RESUME_ACK || sendState == SEND_STATE_RESUME_DURABLE_ACK
@@ -1108,12 +1059,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * Completes a resumed fatal CLOSE send that was previously blocked.
-     * Returns to READY so the recv-side drains (buffered-frame dispatch, the
-     * close-echo wait's echo/expiry handling) keep working while the
-     * connection is held open awaiting the client's CLOSE echo. Safe even
-     * when the caller proceeds to tear the connection down instead: READY is
-     * exactly the state every other completed-send path leaves behind.
+     * Completes a resumed fatal CLOSE send that was previously blocked. Returns
+     * to READY so the recv-side drains keep working while the connection is held
+     * open awaiting the client's CLOSE echo.
      */
     public void onResumeCloseComplete() {
         sendState = SEND_STATE_READY;
@@ -1289,12 +1237,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * Re-parks the client-close response continuation behind an
-     * ack/durable-ack send that blocked during the resume path's pre-response
-     * flush ({@code QwpIngressUpgradeProcessor#finishClientCloseResponse}).
-     * The response code is already stored from the original
-     * {@link #onClientCloseBlockedBehindAck(int)} call, so this performs only
-     * the state transition -- the client-close mirror of
+     * Re-parks the client-close response continuation behind an ack send that
+     * blocked during the resume path's pre-response flush. The response code is
+     * already stored by {@link #onClientCloseBlockedBehindAck(int)}, so this is
+     * the state transition only -- the mirror of
      * {@link #reArmDeferredFatalClose()}.
      */
     public void reArmClientCloseResponse() {

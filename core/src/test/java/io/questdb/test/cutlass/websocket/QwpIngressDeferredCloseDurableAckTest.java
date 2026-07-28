@@ -144,9 +144,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, ping, preCloseSuffix, postCloseEcho);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -261,9 +258,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, textFrame);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -340,9 +334,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, clientClose);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -458,9 +449,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, ping1, frame1, ping2, preCloseSuffix, postCloseEcho);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -573,9 +561,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, ping);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -703,9 +688,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, ping);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -821,9 +803,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, closeEcho);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -939,9 +918,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, closeEcho);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -1094,9 +1070,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2);
 
                 PhasedNetworkFacade nf = new ShutdownableNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 BlockingRecordingRawSocket rawSocket = buffers.socket;
@@ -1230,9 +1203,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, fragLeader);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 BlockingRecordingRawSocket rawSocket = buffers.socket;
@@ -1372,9 +1342,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, closeEcho);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -1481,9 +1448,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 // below observe shutdown(SHUT_WR), which the plain facade would
                 // fail on the synthetic fd.
                 ShutdownableNetworkFacade nf = new ShutdownableNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 BlockingRecordingRawSocket rawSocket = buffers.socket;
@@ -1830,9 +1794,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 // assertions in phase F observe shutdown(SHUT_WR), which the
                 // plain facade would fail on the synthetic fd.
                 ShutdownableNetworkFacade nf = new ShutdownableNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -1984,9 +1945,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, ping);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -2089,9 +2047,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, fragLeader, fragTail, textFrame, closeEcho);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -2196,9 +2151,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, textFrame);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -2305,9 +2257,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, oversizedHeader, oversizedBody);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -2479,22 +2428,9 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
             };
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
             PhasedNetworkFacade nf = new PhasedNetworkFacade(stream);
-            long recvBuf = 0;
-            long sendBuf = 0;
-            final BlockingRecordingRawSocket rawSocket;
-            try {
-                recvBuf = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_DEFAULT);
-                sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-                rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
-            } catch (Throwable t) {
-                if (recvBuf != 0) {
-                    Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
-                }
-                if (sendBuf != 0) {
-                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-                }
-                throw t;
-            }
+            NativeSocketBuffers buffers = new NativeSocketBuffers(recvBufferSize);
+            long recvBuf = buffers.recvBuffer;
+            BlockingRecordingRawSocket rawSocket = buffers.socket;
             try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, recvBufferSize)) {
                 QwpIngressProcessorState state = setupState(httpConfig, context, engine);
                 state.beginCloseEchoWait();
@@ -2518,8 +2454,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                         state.getRecvBufferLen()
                 );
             } finally {
-                Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                buffers.close();
             }
         });
     }
@@ -2548,22 +2483,9 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
             };
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
             PhasedNetworkFacade nf = new PhasedNetworkFacade(largeFrame);
-            long recvBuf = 0;
-            long sendBuf = 0;
-            final BlockingRecordingRawSocket rawSocket;
-            try {
-                recvBuf = Unsafe.malloc(largeFrame.length, MemoryTag.NATIVE_DEFAULT);
-                sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-                rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
-            } catch (Throwable t) {
-                if (recvBuf != 0) {
-                    Unsafe.free(recvBuf, largeFrame.length, MemoryTag.NATIVE_DEFAULT);
-                }
-                if (sendBuf != 0) {
-                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-                }
-                throw t;
-            }
+            NativeSocketBuffers buffers = new NativeSocketBuffers(largeFrame.length);
+            long recvBuf = buffers.recvBuffer;
+            BlockingRecordingRawSocket rawSocket = buffers.socket;
             try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, largeFrame.length)) {
                 QwpIngressProcessorState state = setupState(httpConfig, context, engine);
                 state.beginCloseEchoWait();
@@ -2582,15 +2504,15 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 Assert.assertEquals("the partial frame must remain buffered", byteBudget, state.getRecvBufferLen());
                 Assert.assertTrue("the byte-budget yield must preserve the echo wait", state.isAwaitingCloseEcho());
             } finally {
-                Unsafe.free(recvBuf, largeFrame.length, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                buffers.close();
             }
         });
     }
 
     /**
-     * The fairness twin of
-     * {@link #testCloseEchoWaitLegalLargeFrameAdmittedInOneTurn}: a peer
+     * The complete-frame counterpart of
+     * {@link #testCloseEchoWaitParserValidFloodBoundedByByteBudget}, which
+     * bounds a single oversized frame: a peer
      * flooding COMPLETE minimum-size frames must still be cut off at
      * {@link QwpIngressUpgradeProcessor#CLOSE_ECHO_FRAME_BYTE_BUDGET} bytes
      * per worker turn -- at six bytes a masked frame that is 43_690 header
@@ -2607,7 +2529,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
      * reaper collected the connection.
      */
     @Test
-    public void testCloseEchoWaitParserValidFloodBoundedByReadBudget() throws Exception {
+    public void testCloseEchoWaitCompleteFrameFloodBoundedByByteBudget() throws Exception {
         assertMemoryLeak(() -> {
             final int byteBudget = QwpIngressUpgradeProcessor.CLOSE_ECHO_FRAME_BYTE_BUDGET;
             byte[] emptyPing = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
@@ -2628,22 +2550,9 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
             };
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
             PhasedNetworkFacade nf = new PhasedNetworkFacade(flood);
-            long recvBuf = 0;
-            long sendBuf = 0;
-            final BlockingRecordingRawSocket rawSocket;
-            try {
-                recvBuf = Unsafe.malloc(flood.length, MemoryTag.NATIVE_DEFAULT);
-                sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-                rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
-            } catch (Throwable t) {
-                if (recvBuf != 0) {
-                    Unsafe.free(recvBuf, flood.length, MemoryTag.NATIVE_DEFAULT);
-                }
-                if (sendBuf != 0) {
-                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-                }
-                throw t;
-            }
+            NativeSocketBuffers buffers = new NativeSocketBuffers(flood.length);
+            long recvBuf = buffers.recvBuffer;
+            BlockingRecordingRawSocket rawSocket = buffers.socket;
             try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, flood.length)) {
                 QwpIngressProcessorState state = setupState(httpConfig, context, engine);
                 state.beginCloseEchoWait();
@@ -2669,22 +2578,21 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
 
                 completeCloseEcho(processor, context, nf, flood.length - byteBudget);
             } finally {
-                Unsafe.free(recvBuf, flood.length, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                buffers.close();
             }
         });
     }
 
     /**
-     * Slowloris during the echo wait: a peer trickling a LEGAL-size frame
-     * (declared payload within recv buffer capacity) byte-by-byte re-enters
-     * the frame loop on every recv without ever completing a frame. Both
-     * incomplete-frame exits (STATE_NEED_PAYLOAD within capacity,
-     * STATE_NEED_MORE) used to break out without polling the echo deadline,
-     * so the nominally five-second wait stayed alive indefinitely while the
-     * active socket also dodged the idle reaper. The expiry must be polled on
-     * every receive re-entry: the first re-entry past the deadline tears the
-     * connection down.
+     * A control frame arriving ahead of the data frame must not consume the
+     * receive's durable poll: with a PING pipelined in front of a BINARY
+     * message, the BINARY commit must still poll its pending table exactly
+     * once and emit its durable ACK in the same receive. Gating the poll on
+     * "first frame of the turn" rather than "a message was committed" would
+     * let a zero-payload PING absorb it and defer the ACK by a dispatch.
+     * <p>
+     * The complement is {@link #testPartialFrameTrickleDoesNotPollDurableRegistry}:
+     * frames that make no durable progress must NOT poll.
      */
     @Test
     public void testPingBeforeBinaryDoesNotSuppressDurablePoll() throws Exception {
@@ -2788,6 +2696,17 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Slowloris during the echo wait: a peer trickling a LEGAL-size frame
+     * (declared payload within recv buffer capacity) byte-by-byte re-enters
+     * the frame loop on every recv without ever completing a frame. Both
+     * incomplete-frame exits (STATE_NEED_PAYLOAD within capacity,
+     * STATE_NEED_MORE) used to break out without polling the echo deadline,
+     * so the nominally five-second wait stayed alive indefinitely while the
+     * active socket also dodged the idle reaper. The expiry must be polled on
+     * every receive re-entry: the first re-entry past the deadline tears the
+     * connection down.
+     */
     @Test
     public void testCloseEchoWaitPartialFrameSlowlorisBoundedByEchoGrace() throws Exception {
         assertMemoryLeak(() -> {
@@ -2817,9 +2736,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, partialFrame);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -2930,9 +2846,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, bigMasked, closeEcho);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -3054,9 +2967,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, oversizedHeader, oversizedBody);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -3216,9 +3126,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, oversizedHeader);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -3357,9 +3264,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, oversizedHeader, reuseFrame, textFrame);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -3474,9 +3378,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, strayPing);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -3584,25 +3485,9 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, oversizedHeader);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
-                long recvBuf = 0;
-                long sendBuf = 0;
-                final BlockingRecordingRawSocket rawSocket;
-                try {
-                    recvBuf = Unsafe.malloc(bigRecvSize, MemoryTag.NATIVE_DEFAULT);
-                    sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-                    rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
-                } catch (Throwable t) {
-                    if (recvBuf != 0) {
-                        Unsafe.free(recvBuf, bigRecvSize, MemoryTag.NATIVE_DEFAULT);
-                    }
-                    if (sendBuf != 0) {
-                        Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-                    }
-                    throw t;
-                }
+                NativeSocketBuffers buffers = new NativeSocketBuffers(bigRecvSize);
+                long recvBuf = buffers.recvBuffer;
+                BlockingRecordingRawSocket rawSocket = buffers.socket;
                 try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, bigRecvSize)) {
                     QwpIngressProcessorState state = setupClockedState(httpConfig, context, demotableEngine, nowMicros);
 
@@ -3674,8 +3559,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, WebSocketCloseCode.NORMAL_CLOSURE /* 1000 */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
-                    Unsafe.free(recvBuf, bigRecvSize, MemoryTag.NATIVE_DEFAULT);
-                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    buffers.close();
                 }
             }
         });
@@ -3723,9 +3607,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, oversizedHeader);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -3829,9 +3710,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, frame2, oversizedHeader);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -3923,9 +3801,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, ping, preCloseSuffix, postCloseEcho);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -4026,9 +3901,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] wire = concat(frame0, frame1, clientClose);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 long sendBuf = buffers.sendBuffer;
@@ -4112,7 +3984,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
      * about delivery of the [final durable ack][CLOSE] tail. The role-change
      * CLOSE carries NORMAL_CLOSURE, which is exactly what a voluntary client
      * close sends, so {@code handleClose} cannot tell the two apart. A
-     * private-use code (see {@code WebSocketCloseCode#ROLE_CHANGE}) would
+     * private-use code (see design/qwp-nack-policy-v2.md) would
      * restore the distinction, but deployed store-and-forward fleets classify
      * any code outside NORMAL_CLOSURE/GOING_AWAY as a poison strike and
      * quarantine the slot, so the discrimination stays unavailable until a
@@ -4150,9 +4022,6 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 // assertions in phase C observe shutdown(SHUT_WR), which the
                 // plain facade would fail on the synthetic fd.
                 ShutdownableNetworkFacade nf = new ShutdownableNetworkFacade(wire);
-                // Unsafe.malloc is fallible: guard the paired allocations so a failed
-                // second malloc (or scaffolding construction) cannot strand the first --
-                // assertMemoryLeak can detect but not free an address lost by setup.
                 NativeSocketBuffers buffers = new NativeSocketBuffers();
                 long recvBuf = buffers.recvBuffer;
                 BlockingRecordingRawSocket rawSocket = buffers.socket;
@@ -4634,24 +4503,36 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
      * Owns the paired native receive/send buffers and recording raw socket
      * shared by the integration fixtures. Constructor rollback and close keep
      * allocation error paths identical across every test.
+     * <p>
+     * The rollback matters because {@code Unsafe.malloc} is fallible: a failed
+     * second malloc (or scaffolding construction) must not strand the first --
+     * {@code assertMemoryLeak} can detect but not free an address lost by setup.
+     * Tests needing a recv buffer other than {@link #RECV_BUFFER_SIZE} pass the
+     * size rather than hand-inlining the same guard.
      */
     private static final class NativeSocketBuffers implements AutoCloseable {
         private final long recvBuffer;
+        private final int recvBufferSize;
         private final BlockingRecordingRawSocket socket;
         private final long sendBuffer;
 
         private NativeSocketBuffers() {
+            this(RECV_BUFFER_SIZE);
+        }
+
+        private NativeSocketBuffers(int recvBufferSize) {
+            this.recvBufferSize = recvBufferSize;
             long recv = 0L;
             long send = 0L;
             try {
-                recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                recv = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_DEFAULT);
                 send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                 recvBuffer = recv;
                 sendBuffer = send;
                 socket = new BlockingRecordingRawSocket(send, SEND_BUFFER_SIZE);
             } catch (Throwable t) {
                 if (recv != 0L) {
-                    Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(recv, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
                 }
                 if (send != 0L) {
                     Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -4662,7 +4543,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
 
         @Override
         public void close() {
-            Unsafe.free(recvBuffer, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(sendBuffer, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
     }
