@@ -862,7 +862,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\tv
                             1\t4
                             2\t3
-                            3\tnull
+                            3\t2
                             """);
 
             bindVariableService.clear();
@@ -1152,6 +1152,237 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t4\t6
                             2\t3\t5
                             3\t2\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticConstantColumnCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'LSE', '2024-01-01T00:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.c, sub.z, sub.oid
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS c, 5 AS z, o.id AS oid FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc\tz\toid
+                            1\t1\t5\t1
+                            2\t0\t5\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticImplicitKeyNotCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'LSE', '2024-01-01T00:10:00.000000Z')
+                    """);
+
+            // the body groups by venue, so an unmatched outer row yields no inner row at all
+            assertQuery("""
+                    SELECT o.id, sub.k, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT venue AS k, count(*) + 2 AS c FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tk\tc
+                            1\tLSE\t3
+                            2\t\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.k, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT venue AS k, approx_count_distinct(order_id) AS c FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tk\tc
+                            1\tLSE\t1
+                            2\t\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS c FROM trades WHERE order_id = o.id SAMPLE BY 1h
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t3
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticNestedBodyDoesNotExplode() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'LSE', '2024-01-01T00:10:00.000000Z')
+                    """);
+
+            StringBuilder body = new StringBuilder("SELECT count(*) AS v0 FROM trades WHERE order_id = o.id");
+            for (int i = 1; i <= 24; i++) {
+                body.insert(0, "SELECT v" + (i - 1) + " + v" + (i - 1) + " AS v" + i + " FROM (").append(')');
+            }
+            // the template budget degrades to uncompensated NULL instead of expanding 2^24 nodes
+            assertQuery("SELECT o.id, sub.v24 FROM orders o LEFT JOIN LATERAL (" + body + ") sub ORDER BY o.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv24
+                            1\t16777216
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testScalarAggregateBodyExcludesWindowJoinBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE instruments (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (instrument_id INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO instruments VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, 'A', '2024-01-01T00:01:00.000000Z'),
+                    (1, 11.0, 'A', '2024-01-01T00:02:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    (9.5, 'A', '2024-01-01T00:00:30.000000Z')
+                    """);
+
+            // the WINDOW JOIN aggregates per driving row, so instrument 2 keeps no row at all
+            assertQuery("""
+                    SELECT i.id, sub.c
+                    FROM instruments i
+                    JOIN LATERAL (
+                        SELECT count(*) AS c
+                        FROM trades t
+                        WINDOW JOIN quotes q ON tag
+                            RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                        WHERE t.instrument_id = i.id
+                    ) sub
+                    ORDER BY i.id, sub.c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testScalarCountBodyPreservesCrossLateralRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'LSE', '2024-01-01T00:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.cnt
+                    FROM orders o
+                    CROSS JOIN LATERAL (
+                        SELECT count(*) AS cnt FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.m
+                    FROM orders o
+                    CROSS JOIN LATERAL (
+                        SELECT max(ts) AS m FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tm
+                            1\t2024-01-01T00:10:00.000000Z
+                            2\t
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.m
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT max(ts) AS m FROM trades WHERE order_id = o.id
+                    ) sub ON true
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tm
+                            1\t2024-01-01T00:10:00.000000Z
+                            2\t
                             """);
         });
     }
@@ -1632,6 +1863,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                         FROM trades
                         WHERE order_id = o.id
                     ) sub
+                    WHERE sub.arithmetic - o.id = 1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            2\t3
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
                     WHERE sub.arithmetic = 2 OR o.ts > '2024-06-01'
                     ORDER BY o.id
                     """)
@@ -1926,9 +2174,9 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """)
                     .noLeakCheck()
                     .returns("""
-                            id	arithmetic	__qdb_count_carrier__0
-                            1	3	1
-                            2	2	0
+                            id\tarithmetic\t__qdb_count_carrier__0
+                            1\t3\t1
+                            2\t2\t0
                             """);
 
             assertQuery("""
@@ -1946,9 +2194,9 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """)
                     .noLeakCheck()
                     .returns("""
-                            id	arithmetic	__qdb_count_carrier__0
-                            1	3	1
-                            2	2	0
+                            id\tarithmetic\t__qdb_count_carrier__0
+                            1\t3\t1
+                            2\t2\t0
                             """);
         });
     }
@@ -2185,10 +2433,10 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .timestamp("timestamp")
                     .noRandomAccess()
                     .returns("""
-                            timestamp	symbol	price	symbol1	c
-                            2024-01-01T00:00:00.000000Z	EUR/USD	1.1	EUR/USD	1
-                            2024-01-01T01:00:00.000000Z	EUR/USD	1.2		0
-                            2024-01-01T02:00:00.000000Z	GBP/USD	1.3		0
+                            timestamp\tsymbol\tprice\tsymbol1\tc
+                            2024-01-01T00:00:00.000000Z\tEUR/USD\t1.1\tEUR/USD\t1
+                            2024-01-01T01:00:00.000000Z\tEUR/USD\t1.2\t\tnull
+                            2024-01-01T02:00:00.000000Z\tGBP/USD\t1.3\t\tnull
                             """);
         });
     }
@@ -5163,7 +5411,12 @@ public class LateralJoinTest extends AbstractCairoTest {
         }
 
         QueryColumn template = new QueryColumn().of("cnt", null);
-        wrapper.addLateralCountTemplate(template);
+        try {
+            wrapper.addLateralCountTemplate(template);
+            Assert.fail("QueryModelWrapper must remain read-only");
+        } catch (UnsupportedOperationException ignored) {
+        }
+        model.addLateralCountTemplate(template);
         Assert.assertEquals(1, model.getLateralCountTemplates().size());
         Assert.assertSame(template, wrapper.getLateralCountTemplates().getQuick(0));
 
@@ -6110,7 +6363,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id	n	avg_mid
                             1	1	100.0
                             2	1	200.0
-                            3	0	null
+                            3	null	null
                             """);
         });
     }
@@ -7982,7 +8235,8 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // SAMPLE BY with count: order 3 has no trades → LEFT JOIN fills count with 0
+            // a SAMPLE BY body is keyed, so order 3 produces no row at all and the
+            // LEFT JOIN null-extends every column rather than compensating cnt to 0
             assertQuery("""
                     SELECT o.id, t.ts, t.cnt, t.total
                     FROM orders o
@@ -8000,7 +8254,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t2024-01-01T00:00:00.000000Z\t1\t10.0
                             1\t2024-01-01T00:30:00.000000Z\t1\t20.0
                             2\t2024-01-01T01:00:00.000000Z\t1\t30.0
-                            3\t\t0\tnull
+                            3\t\tnull\tnull
                             """);
         });
     }
@@ -8407,7 +8661,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 2, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // order 3 has no trades → INNER JOIN drops it
+            // the body is a scalar aggregate, so it yields one row per outer row
             assertQuery("""
                     SELECT o.id, t.cnt
                     FROM orders o
@@ -8419,6 +8673,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\tcnt
                             1\t2
                             2\t1
+                            3\t0
                             """);
         });
     }
@@ -9541,7 +9796,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1\t10
                             1\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:30:00.000000Z\t1\t20
                             2\t2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t1\t30
-                            3\t2024-01-01T02:00:00.000000Z\t\t0\tnull
+                            3\t2024-01-01T02:00:00.000000Z\t\tnull\tnull
                             """);
         });
     }
@@ -12656,47 +12911,50 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .withPlan("""
                             Encode sort
                               keys: [id]
-                                SelectedRecord
-                                    Hash Join Light
-                                      condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
-                                      symbolKeyJoin: true
-                                        Hash Join Light
-                                          condition: t2.t1_id=t1.id
-                                            Async JIT Filter workers: 1
-                                              filter: status='ACTIVE'
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
+                                VirtualRecord
+                                  functions: [id,category,coalesce(cnt,0)]
+                                    SelectedRecord
+                                        Hash Left Outer Join Light
+                                          condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
+                                          symbolKeyJoin: true
+                                          filter: true
+                                            Hash Join Light
+                                              condition: t2.t1_id=t1.id
+                                                Async JIT Filter workers: 1
+                                                  filter: status='ACTIVE'
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t1
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
                                             Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t2
-                                        Hash
-                                            GroupBy vectorized: false
-                                              keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
-                                              values: [count(*)]
-                                                Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
-                                                    Hash Join Light
-                                                      condition: __qdb_outer_ref__0_category=t3.b
-                                                      symbolKeyJoin: true
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t3
-                                                        Hash
-                                                            GroupBy vectorized: false
-                                                              keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
-                                                                SelectedRecord
-                                                                    Hash Join Light
-                                                                      condition: t2.t1_id=t1.id
-                                                                        Async JIT Filter workers: 1
-                                                                          filter: status='ACTIVE'
-                                                                            PageFrame
-                                                                                Row forward scan
-                                                                                Frame forward scan on: t1
-                                                                        Hash
-                                                                            PageFrame
-                                                                                Row forward scan
-                                                                                Frame forward scan on: t2
+                                                GroupBy vectorized: false
+                                                  keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
+                                                  values: [count(*)]
+                                                    Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_category=t3.b
+                                                          symbolKeyJoin: true
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: t3
+                                                            Hash
+                                                                GroupBy vectorized: false
+                                                                  keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
+                                                                    SelectedRecord
+                                                                        Hash Join Light
+                                                                          condition: t2.t1_id=t1.id
+                                                                            Async JIT Filter workers: 1
+                                                                              filter: status='ACTIVE'
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: t1
+                                                                            Hash
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: t2
                             """)
                     .returns("""
                             id\tcategory\tcnt
@@ -12750,42 +13008,45 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .withPlan("""
                             Encode sort
                               keys: [id]
-                                SelectedRecord
-                                    Hash Join Light
-                                      condition: sub.__qdb_outer_ref__0_val=t2.val and sub.__qdb_outer_ref__0_id=t1.id
-                                        Filter filter: t2.val<t1.val
-                                            Hash Join Light
-                                              condition: t2.t1_id=t1.id
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
+                                VirtualRecord
+                                  functions: [id,t2_val,coalesce(cnt,0)]
+                                    SelectedRecord
+                                        Hash Left Outer Join Light
+                                          condition: sub.__qdb_outer_ref__0_val=t2.val and sub.__qdb_outer_ref__0_id=t1.id
+                                          filter: true
+                                            Filter filter: t2.val<t1.val
+                                                Hash Join Light
+                                                  condition: t2.t1_id=t1.id
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t2
-                                        Hash
-                                            GroupBy vectorized: false
-                                              keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
-                                              values: [count(*)]
-                                                Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
-                                                    Hash Join Light
-                                                      condition: __qdb_outer_ref__0_val=t3.b
+                                                        Frame forward scan on: t1
+                                                    Hash
                                                         PageFrame
                                                             Row forward scan
-                                                            Frame forward scan on: t3
-                                                        Hash
-                                                            GroupBy vectorized: false
-                                                              keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
-                                                                SelectedRecord
-                                                                    Hash Join Light
-                                                                      condition: t2.t1_id=t1.id
-                                                                        PageFrame
-                                                                            Row forward scan
-                                                                            Frame forward scan on: t1
-                                                                        Hash
+                                                            Frame forward scan on: t2
+                                            Hash
+                                                GroupBy vectorized: false
+                                                  keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
+                                                  values: [count(*)]
+                                                    Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_val=t3.b
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: t3
+                                                            Hash
+                                                                GroupBy vectorized: false
+                                                                  keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
+                                                                    SelectedRecord
+                                                                        Hash Join Light
+                                                                          condition: t2.t1_id=t1.id
                                                                             PageFrame
                                                                                 Row forward scan
-                                                                                Frame forward scan on: t2
+                                                                                Frame forward scan on: t1
+                                                                            Hash
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: t2
                             """)
                     .returns("""
                             id\tt2_val\tcnt

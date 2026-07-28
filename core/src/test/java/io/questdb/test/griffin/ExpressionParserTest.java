@@ -819,7 +819,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCountStarWhitespace() throws SqlException {
-        x("* count", "count( * )");
+        x("* count 5 coalesce", "coalesce(count( * ), 5)");
     }
 
     @Test

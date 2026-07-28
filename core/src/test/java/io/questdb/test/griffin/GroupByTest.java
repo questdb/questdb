@@ -838,6 +838,31 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountStarInWindowSpec() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x AS a, x AS b FROM long_sequence(3))");
+            assertExceptionNoLeakCheck(
+                    "SELECT row_number() OVER (PARTITION BY count(*)) FROM t",
+                    7,
+                    "aggregate functions in partition by are not supported",
+                    false
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT row_number() OVER (PARTITION BY 2 * count(*)) FROM t",
+                    43,
+                    "Aggregate function cannot be passed as an argument",
+                    false
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT row_number() OVER w FROM t WINDOW w AS (PARTITION BY 2 * count(*))",
+                    64,
+                    "Aggregate function cannot be passed as an argument",
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testCountStarInExpressions() throws Exception {
         assertQuery("SELECT count(*) + count(*) AS s, coalesce(count(*), 5) AS c, 2 * count(*) AS d FROM t")
                 .ddl("CREATE TABLE t AS (SELECT x AS v FROM long_sequence(3))")

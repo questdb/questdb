@@ -119,7 +119,7 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void addLateralCountTemplate(QueryColumn template) {
-        delegate.addLateralCountTemplate(template);
+        throw new UnsupportedOperationException();
     }
 
     @Override

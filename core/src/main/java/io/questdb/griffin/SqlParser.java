@@ -3157,6 +3157,7 @@ public class SqlParser {
                 WindowExpression windowSpec = windowExpressionPool.next();
                 windowSpec.clear();
                 expressionParser.parseWindowSpec(lexer, windowSpec, sqlParserCallback, model.getDecls());
+                rewriteWindowExpression(windowSpec);
 
                 // Validate base window reference (window inheritance):
                 // the base must be defined earlier in the same WINDOW clause (no forward references)
@@ -5024,6 +5025,7 @@ public class SqlParser {
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             @Nullable CharSequence exprTargetVariableName
     ) throws SqlException {
+        rewriteWindowExpressions(parent);
         traversalAlgo.traverse(parent, rewriteCountRef);
         traversalAlgo.traverse(parent, rewriteCaseRef);
         traversalAlgo.traverse(parent, rewriteConcatRef);
@@ -5121,6 +5123,50 @@ public class SqlParser {
 
         // At this point, we know that the expression is compatible with our rewrite.
         node.lhs = innerCastNode.lhs;
+    }
+
+    private void rewriteWindowExpression(WindowExpression windowExpression) throws SqlException {
+        final ObjList<ExpressionNode> partitionBy = windowExpression.getPartitionBy();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            rewriteWindowSubExpression(partitionBy.getQuick(i));
+        }
+        final ObjList<ExpressionNode> orderBy = windowExpression.getOrderBy();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            rewriteWindowSubExpression(orderBy.getQuick(i));
+        }
+        rewriteWindowSubExpression(windowExpression.getRowsLoExpr());
+        rewriteWindowSubExpression(windowExpression.getRowsHiExpr());
+    }
+
+    // PostOrderTreeTraversalAlgo never descends into ExpressionNode.windowExpression.
+    private void rewriteWindowExpressions(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null) {
+            rewriteWindowExpression(node.windowExpression);
+        }
+        if (node.paramCount < 3) {
+            rewriteWindowExpressions(node.lhs);
+            rewriteWindowExpressions(node.rhs);
+        } else {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                rewriteWindowExpressions(node.args.getQuick(i));
+            }
+        }
+    }
+
+    private void rewriteWindowSubExpression(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        rewriteWindowExpressions(node);
+        traversalAlgo.traverse(node, rewriteCountRef);
+        traversalAlgo.traverse(node, rewriteCaseRef);
+        traversalAlgo.traverse(node, rewriteConcatRef);
+        traversalAlgo.traverse(node, rewritePgCastRef);
+        traversalAlgo.traverse(node, rewriteJsonExtractCastRef);
+        traversalAlgo.traverse(node, rewritePgNumericRef);
     }
 
     @NotNull
