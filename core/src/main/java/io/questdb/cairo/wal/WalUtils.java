@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DurableEpochManifest;
+import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetadata;
@@ -580,6 +581,10 @@ public class WalUtils {
                 || Chars.equals(name, TableUtils.TXN_SCOREBOARD_FILE_NAME)
                 || Chars.equals(name, TableUtils.SNAPSHOT_FILE_NAME)
                 || Chars.startsWith(name, DurableEpochManifest.FILE_NAME)
+                // The SOURCE's restore-enrolment marker states something about the SOURCE's files, not the
+                // clone's. Copied in, it would let a clone whose own baseline never landed silently re-enrol
+                // rather than refuse -- the one thing an explicit, per-caller marker exists to prevent.
+                || Chars.equals(name, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME)
                 || Chars.contains(name, TableUtils.EPOCH_COPY_SUFFIX)) {
             return false;
         }
