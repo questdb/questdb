@@ -2979,9 +2979,22 @@ public final class TableUtils {
 
     private static boolean isOlderThanTtl(TimestampDriver timestampDriver, long partitionBoundary, long maxTimestamp, int ttl) {
         // TTL < 0 means it's in months
-        return ttl > 0
-                ? maxTimestamp - partitionBoundary >= timestampDriver.fromHours(ttl)
-                : timestampDriver.monthsBetween(partitionBoundary, maxTimestamp) >= -ttl;
+        if (ttl <= 0) {
+            return timestampDriver.monthsBetween(partitionBoundary, maxTimestamp) >= -ttl;
+        }
+        // The parser admits hour counts far past what a nanosecond timestamp can express:
+        // CommonUtils.toHoursOrMonths range-checks DAYS and WEEKS but passes the HOUR unit
+        // through untouched, and PartitionBy.validateTtlGranularity waives granularity for
+        // PARTITION BY HOUR, so anything up to TTL 2_147_483_647 HOURS reaches here - against this
+        // driver's getMaxUnitValue('h') of 2_562_047. fromHours() multiplies unchecked, so the
+        // product wraps: TTL 106_752 DAYS, the smallest DAYS value that trips it, gives
+        // 2_562_048 * 3_600_000_000_000 = Long.MAX_VALUE + 763_145_224_193 -> a negative span
+        // that every partition compares older than, dropping the whole table on the next
+        // commit. A TTL the timestamp type cannot express must expire nothing instead.
+        if (ttl > timestampDriver.getMaxUnitValue('h')) {
+            return false;
+        }
+        return maxTimestamp - partitionBoundary >= timestampDriver.fromHours(ttl);
     }
 
     // Utility method for debugging. This method is not used in production.

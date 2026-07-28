@@ -336,6 +336,7 @@ import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
+import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
@@ -5723,14 +5724,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
                                 final WindowJoinContext context = slaveModel.getWindowJoinContext();
-                                final TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
+                                // Convert through the same guard the plain RANGE frame uses: from()
+                                // neither checks its multiply for overflow nor its int narrowing for
+                                // width, so an out-of-range bound would silently become a different
+                                // frame instead of an error.
+                                final int masterTimestampType = masterMetadata.getTimestampType();
+                                final TimestampDriver timestampDriver = getTimestampDriver(masterTimestampType);
                                 long hi = context.getHi();
                                 if (!context.isDynamicHi() && context.getHiExprTimeUnit() != 0) {
-                                    hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
+                                    hi = WindowContextImpl.toTimestampUnits(
+                                            masterTimestampType, hi, context.getHiExprTimeUnit(), context.getHiExprPos(), "end");
                                 }
                                 long lo = context.getLo();
                                 if (!context.isDynamicLo() && context.getLoExprTimeUnit() != 0) {
-                                    lo = timestampDriver.from(lo, context.getLoExprTimeUnit());
+                                    lo = WindowContextImpl.toTimestampUnits(
+                                            masterTimestampType, lo, context.getLoExprTimeUnit(), context.getLoExprPos(), "start");
                                 }
 
                                 // Compile dynamic bound functions against master metadata.
@@ -10771,13 +10779,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // TODO: In theory, we can apply similar optimizations for ASOF, SPLICE and LT joins
             if (model.getJoinType() == IQueryModel.JOIN_WINDOW && pushedIntervalModel != null) {
                 WindowJoinContext windowJoinContext = model.getWindowJoinContext();
-                // Dynamic per-row bounds have no compile-time maximum, so they cannot safely narrow
-                // the slave scan derived from the master's static intervals.
-                if (!windowJoinContext.isDynamicLo() && !windowJoinContext.isDynamicHi()) {
-                    TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
+                // Two preconditions. Dynamic per-row bounds have no compile-time maximum, so they
+                // cannot safely narrow the slave scan derived from the master's static intervals.
+                // And RuntimeIntervalModelBuilder.merge() drops the whole merge when the master
+                // model's timestamp type differs from this builder's, so converting under a
+                // mismatch would compute bounds nobody consumes - and, because the per-type
+                // ceilings differ, could only reject a frame the join site accepts. Apply
+                // merge()'s own type precondition here and skip the block outright.
+                final int slaveTimestampType = reader.getMetadata().getTimestampType();
+                if (!windowJoinContext.isDynamicLo() && !windowJoinContext.isDynamicHi()
+                        && ((RuntimeIntervalModel) pushedIntervalModel).getTimestampDriver().getTimestampType()
+                        == slaveTimestampType) {
+                    // These bounds narrow the slave scan interval, so an unchecked conversion drops
+                    // rows before evaluation rather than merely widening a frame. Guard them the
+                    // same way, against the timestamp the interval is expressed in.
                     long hi = windowJoinContext.getHi();
                     if (windowJoinContext.getHiExprTimeUnit() != 0) {
-                        hi = driver.from(hi, windowJoinContext.getHiExprTimeUnit());
+                        hi = WindowContextImpl.toTimestampUnits(
+                                slaveTimestampType, hi, windowJoinContext.getHiExprTimeUnit(), windowJoinContext.getHiExprPos(), "end");
                     }
                     long lo;
                     if (windowJoinContext.isIncludePrevailing()) {
@@ -10785,7 +10804,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else {
                         lo = windowJoinContext.getLo();
                         if (windowJoinContext.getLoExprTimeUnit() != 0) {
-                            lo = driver.from(lo, windowJoinContext.getLoExprTimeUnit());
+                            lo = WindowContextImpl.toTimestampUnits(
+                                    slaveTimestampType, lo, windowJoinContext.getLoExprTimeUnit(), windowJoinContext.getLoExprPos(), "start");
                         }
                     }
                     intrinsicModel.mergeIntervalModel((RuntimeIntervalModel) pushedIntervalModel, lo, hi);

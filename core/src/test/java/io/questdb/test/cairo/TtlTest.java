@@ -56,6 +56,34 @@ public class TtlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterSetTtlBeyondNanosRangeKeepsAllPartitions() throws Exception {
+        // The ALTER form of testDayTtlBeyondNanosRangeKeepsAllPartitions: one DDL statement
+        // used to wipe every non-active partition of a nanosecond-timestamp table.
+        execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY" + wal);
+        execute("""
+                INSERT INTO tango VALUES
+                ('2024-01-01T00:00:00.000000000Z'),
+                ('2024-01-02T00:00:00.000000000Z'),
+                ('2024-01-03T00:00:00.000000000Z')
+                """);
+        drainWalQueue();
+        execute("ALTER TABLE tango SET TTL 106_752 DAYS");
+        execute("INSERT INTO tango VALUES ('2024-01-03T01:00:00.000000000Z')");
+        drainWalQueue();
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        ts
+                        2024-01-01T00:00:00.000000000Z
+                        2024-01-02T00:00:00.000000000Z
+                        2024-01-03T00:00:00.000000000Z
+                        2024-01-03T01:00:00.000000000Z
+                        """);
+    }
+
+    @Test
     public void testAlterSyntaxInvalid() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
         try {
@@ -239,6 +267,70 @@ public class TtlTest extends AbstractCairoTest {
                         ts
                         1970-01-01T23:00:00.000000Z
                         1970-01-02T01:00:00.000000Z
+                        """);
+    }
+
+    @Test
+    public void testDayTtlBeyondMicrosRangeKeepsAllPartitions() throws Exception {
+        // Control for the nanos case. CommonUtils.toHoursOrMonths caps DAYS at
+        // Integer.MAX_VALUE / 24 = 89_478_485, so this is the widest DAYS TTL the parser
+        // accepts; micros' getMaxUnitValue('h') is Integer.MAX_VALUE, above the 2_147_483_640
+        // hours it converts to, so it still converts exactly. The saturation branch is
+        // unreachable on a microsecond table and nothing here may change.
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 89_478_485 DAYS" + wal);
+        execute("""
+                INSERT INTO tango VALUES
+                ('2024-01-01T00:00:00.000000Z'),
+                ('2024-01-02T00:00:00.000000Z'),
+                ('2024-01-03T00:00:00.000000Z')
+                """);
+        drainWalQueue();
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        ts
+                        2024-01-01T00:00:00.000000Z
+                        2024-01-02T00:00:00.000000Z
+                        2024-01-03T00:00:00.000000Z
+                        """);
+    }
+
+    @Test
+    public void testDayTtlBeyondNanosRangeKeepsAllPartitions() throws Exception {
+        // 106_752 DAYS is 2_562_048 hours, exactly one past NanosTimestampDriver's
+        // getMaxUnitValue('h') ceiling of 2_562_047 - the smallest DAYS value that trips it.
+        // CommonUtils.toHoursOrMonths caps DAYS at Integer.MAX_VALUE / 24, so the DDL is
+        // accepted, and the unchecked `hours * Nanos.HOUR_NANOS` in
+        // NanosTimestampDriver.fromHours then wraps:
+        //   2_562_048 * 3_600_000_000_000 = 9_223_372_800_000_000_000 (Long.MAX_VALUE + 763_145_224_193)
+        //                                 -> -9_223_371_273_709_551_616
+        // isOlderThanTtl then evaluates `maxTimestamp - partitionBoundary >= <negative>`, which
+        // is always true, so every non-active partition is dropped on the next commit - silent
+        // total data loss from one DDL statement.
+        //
+        // A TTL longer than the timestamp type can express must expire nothing instead. The
+        // nanosecond domain spans ~584 years, but the largest age a positive long of nanos can
+        // hold is ~292 years, so an age past the ceiling cannot be computed as a difference at
+        // all - `maxTimestamp - partitionBoundary` wraps before it ever gets there.
+        execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY TTL 106_752 DAYS" + wal);
+        execute("""
+                INSERT INTO tango VALUES
+                ('2024-01-01T00:00:00.000000000Z'),
+                ('2024-01-02T00:00:00.000000000Z'),
+                ('2024-01-03T00:00:00.000000000Z')
+                """);
+        drainWalQueue();
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        ts
+                        2024-01-01T00:00:00.000000000Z
+                        2024-01-02T00:00:00.000000000Z
+                        2024-01-03T00:00:00.000000000Z
                         """);
     }
 
@@ -605,6 +697,33 @@ public class TtlTest extends AbstractCairoTest {
                         ts
                         1970-01-01T01:00:00.000000Z
                         1970-01-01T02:00:00.000000Z
+                        """);
+    }
+
+    @Test
+    public void testHourTtlBeyondNanosRangeKeepsAllPartitions() throws Exception {
+        // The DAYS cap is not what makes an over-range TTL reachable, so do not rely on it: the
+        // HOUR unit is range-checked nowhere. CommonUtils.toHoursOrMonths returns the value
+        // unchanged for HOUR, and PartitionBy.validateTtlGranularity waives granularity for
+        // PARTITION BY HOUR, so the parser's own Integer.MAX_VALUE ceiling is the only limit -
+        // 838x past NanosTimestampDriver's getMaxUnitValue('h') of 2_562_047.
+        execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_647 HOURS" + wal);
+        execute("""
+                INSERT INTO tango VALUES
+                ('1970-01-01T00:00:00.000000000Z'),
+                ('1970-01-01T01:00:00.000000000Z'),
+                ('1970-01-01T02:00:00.000000000Z')
+                """);
+        drainWalQueue();
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        ts
+                        1970-01-01T00:00:00.000000000Z
+                        1970-01-01T01:00:00.000000000Z
+                        1970-01-01T02:00:00.000000000Z
                         """);
     }
 
