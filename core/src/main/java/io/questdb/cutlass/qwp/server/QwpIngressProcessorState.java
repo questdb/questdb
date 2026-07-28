@@ -893,13 +893,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
         } catch (QwpParseException e) {
             LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$(e.getFlyweightMessage()).$();
-            reject(
-                    e.getErrorCode() == QwpParseException.ErrorCode.SCHEMA_MISMATCH
-                            ? Status.SCHEMA_MISMATCH
-                            : Status.PARSE_ERROR,
-                    e.getFlyweightMessage(),
-                    fd
-            );
+            reject(statusForParseError(e.getErrorCode()), e.getFlyweightMessage(), fd);
         } catch (CommitFailedException e) {
             LOG.error().$('[').$(fd).$("] commit failed: ").$(e.getMessage()).$();
             tudCache.setDistressed();
@@ -1018,6 +1012,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     public boolean shouldSendAck(int batchSize) {
         return sendState == SEND_STATE_READY
                 && highestProcessedSequence - lastAckedSequence >= batchSize;
+    }
+
+    /**
+     * Maps a parse failure to the wire status a client classifies on. Extracted so the
+     * routing is unit-testable without driving a whole connection.
+     */
+    public static Status statusForParseError(QwpParseException.ErrorCode errorCode) {
+        return switch (errorCode) {
+            case SCHEMA_MISMATCH -> Status.SCHEMA_MISMATCH;
+            case DELTA_DICT_GAP -> Status.DICTIONARY_GAP;
+            default -> Status.PARSE_ERROR;
+        };
     }
 
     /**
@@ -1195,6 +1201,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         SCHEMA_MISMATCH,
         SECURITY_ERROR,
         INTERNAL_ERROR,
-        NOT_ACCEPTING_WRITES
+        NOT_ACCEPTING_WRITES,
+        DICTIONARY_GAP
     }
 }

@@ -52,6 +52,12 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_SYMBOL_DICTIONARY
  */
 public class QwpMessageCursor implements Mutable {
 
+    // Entries an in-flight delta is about to overwrite, so the finally can put them
+    // back. setPos alone restores only the list's length, so without this an overlap
+    // delta -- the shape of every full-dict frame and every orphan-adoption replay --
+    // leaves its partial writes in place after a mid-frame throw. Reused across
+    // messages; the common append-only delta leaves it empty.
+    private final ObjList<String> dictRollbackScratch = new ObjList<>();
     private final QwpMessageHeader messageHeader = new QwpMessageHeader();
     private final QwpTableBlockCursor tableBlockCursor;
     private final QwpVarint.DecodeResult varintResult = new QwpVarint.DecodeResult();
@@ -59,12 +65,6 @@ public class QwpMessageCursor implements Mutable {
     private long currentTableAddress;
     private int currentTableIndex;
     private boolean deltaSymbolDictEnabled;
-    // Entries an in-flight delta is about to overwrite, so the finally can put them
-    // back. setPos alone restores only the list's length, so without this an overlap
-    // delta -- the shape of every full-dict frame and every orphan-adoption replay --
-    // leaves its partial writes in place after a mid-frame throw. Reused across
-    // messages; the common append-only delta leaves it empty.
-    private final ObjList<String> dictRollbackScratch = new ObjList<>();
     private boolean gorillaEnabled;
     // Message state
     private long payloadAddress;
@@ -249,23 +249,25 @@ public class QwpMessageCursor implements Mutable {
         }
         int requiredSize = (int) requiredSizeLong;
         // A delta must extend the dictionary contiguously. A deltaStartId past
-        // the current size leaves ids [size, deltaStartId) undefined, and the
-        // pre-sizing below would fill them with nulls -- which INFLATES size()
-        // and so silently defeats the idx >= dictLimit guard in
+        // the current size leaves ids [size, deltaStartId) undefined, and
+        // extendPos does not null-fill them -- so a gapped frame would expose
+        // whatever STALE strings a prior delta left in those slots, not nulls.
+        // That silently defeats the idx >= dictLimit guard in
         // QwpSymbolColumnCursor.of(): a row referencing one of those ids passes
-        // the bounds check and then reads back null, landing a NULL symbol
-        // instead of failing the frame. Reject the gap here, where it is still
+        // the bounds check and reads back a misattributed symbol instead of
+        // failing the frame. Reject the gap here, where it is still
         // attributable, rather than letting it become unattributable data.
         //
         // Only a client bug or a torn store-and-forward dictionary can produce
         // one: the ingestion client refuses to send a frame whose delta starts
-        // above the coverage it has registered. PARSE_ERROR is the right
-        // outcome for it -- a gapped frame is deterministic under replay, so
-        // retrying it cannot help; the sender must re-register from an id the
-        // server actually holds.
+        // above the coverage it has registered. Its own error code, DELTA_DICT_GAP,
+        // keeps it out of PARSE_ERROR: the verdict depends on this connection's
+        // dictionary coverage -- server state, not the frame's bytes -- so the
+        // identical frame succeeds once the sender has re-registered from an id
+        // the server actually holds, making the gap retriable rather than terminal.
         if (deltaStartId > connectionSymbolDict.size()) {
             throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX,
+                    QwpParseException.ErrorCode.DELTA_DICT_GAP,
                     "delta symbol dictionary gap: deltaStartId " + deltaStartId
                             + " exceeds dictionary size " + connectionSymbolDict.size()
             );

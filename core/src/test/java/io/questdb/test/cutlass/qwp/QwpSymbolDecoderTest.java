@@ -33,6 +33,7 @@ import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
+import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
@@ -148,12 +149,48 @@ public class QwpSymbolDecoderTest {
                 decodeDeltaDict(cursor, dict, 3, "sym_d"); // id 2 was never defined
                 Assert.fail("Expected QwpParseException for a gapped delta symbol dictionary");
             } catch (QwpParseException e) {
-                Assert.assertEquals(QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX, e.getErrorCode());
+                Assert.assertEquals(QwpParseException.ErrorCode.DELTA_DICT_GAP, e.getErrorCode());
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("delta symbol dictionary gap"));
             }
             // The rejected frame must not have grown the dictionary on its way out.
             Assert.assertEquals(2, dict.size());
         });
+    }
+
+    @Test
+    public void testDeltaSymbolDictGapUsesItsOwnErrorCode() throws Exception {
+        // The gap verdict depends on connectionSymbolDict.size() -- server state, not
+        // frame bytes -- so it must not share an error code with the row-index bounds
+        // check in QwpSymbolColumnCursor, whose terminal classification rests on
+        // "malformed bytes never parse". The identical frame succeeds after a catch-up.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b"));
+            try {
+                decodeDeltaDict(cursor, dict, 3, "sym_d");
+                Assert.fail("Expected a gap rejection");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.DELTA_DICT_GAP, e.getErrorCode());
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("delta symbol dictionary gap"));
+            }
+            Assert.assertEquals(2, dict.size());
+        });
+    }
+
+    @Test
+    public void testParseErrorRoutingDiscriminatesTheGap() {
+        // A malformed row index must stay terminal; only the gap becomes retriable.
+        Assert.assertEquals(QwpIngressProcessorState.Status.DICTIONARY_GAP,
+                QwpIngressProcessorState.statusForParseError(
+                        QwpParseException.ErrorCode.DELTA_DICT_GAP));
+        Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR,
+                QwpIngressProcessorState.statusForParseError(
+                        QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX));
+        Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH,
+                QwpIngressProcessorState.statusForParseError(
+                        QwpParseException.ErrorCode.SCHEMA_MISMATCH));
+        Assert.assertEquals(0x0D, STATUS_DICTIONARY_GAP);
     }
 
     @Test
@@ -237,8 +274,8 @@ public class QwpSymbolDecoderTest {
             decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b");
 
             // deltaStartId == size() (a legal contiguous append), but declares 5 entries
-            // while carrying only 1 -- the entry loop throws on the second, after the
-            // pre-sizing has already grown the dictionary with nulls.
+            // while carrying only 1 -- the entry loop throws on the second, after
+            // extendPos has already grown the dictionary without filling the new slots.
             try {
                 decodeDeltaDictDeclaring(cursor, dict, 2, 5, "sym_c");
                 Assert.fail("Expected a truncated-entry parse error");
@@ -298,8 +335,8 @@ public class QwpSymbolDecoderTest {
         // clear, so slots above the restored size can still hold a failed frame's
         // strings. A later delta extending into that range must not read them as a
         // "previous value": that raises symbolDictRedefined and forces a spurious
-        // symbolCache.clear() on a healthy frame. Passes today (the code null-fills);
-        // it is the regression guard for the extendPos change below.
+        // symbolCache.clear() on a healthy frame. This is the regression guard for
+        // that non-null-filling extendPos behaviour.
         assertMemoryLeak(() -> {
             QwpMessageCursor cursor = new QwpMessageCursor();
             ObjList<String> dict = new ObjList<>();
