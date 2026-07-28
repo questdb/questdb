@@ -184,6 +184,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private boolean applyAheadInsertOnly;
     private final ApplyWal2TableJob applyJob;
     private final BlockFileWriter blockFileWriter;
+    // Sits directly under the window cursor on the two repair replays that
+    // re-version logical roots, so each boundary freezes between two rows rather
+    // than inside one. See BoundaryFreezingCursor for why the replay's own row
+    // loop is one row too late to freeze from.
+    private final BoundaryFreezingCursor boundaryFreezingCursor = new BoundaryFreezingCursor();
     // Flyweight record over an in-mem tier buffer row, used by the flush path to
     // feed the compiled copier when materialising the un-flushed lead into the LV
     // WAL. Reused across rows; rebound via of() before each copy.
@@ -4364,12 +4369,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             filteringCursor.of(source, filter, executionContext);
                             source = filteringCursor;
                         }
+                        if (timelineCapture != null) {
+                            // Below the anchor dispatch on purpose: a boundary this
+                            // replay crosses must freeze before the crossing row
+                            // resets any partition, not after.
+                            boundaryFreezingCursor.of(
+                                    source,
+                                    timelineCapture,
+                                    repairBoundaries,
+                                    null,
+                                    windowFactory.getWindowFunctions(),
+                                    anchorWindow,
+                                    session,
+                                    capturedBoundaries,
+                                    pageFrameFactory.getMetadata().getTimestampIndex()
+                            );
+                            boundaryFreezingCursor.setRowPosition(durableRowsBelowFloor + appendedRows);
+                            source = boundaryFreezingCursor;
+                        }
                         if (anchorWindow != null) {
                             anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                             source = anchorDispatchingCursor;
                         }
                         try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
-                            final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
                             Record outRecord = windowCursor.getRecord();
                             // Designated timestamp of the group the replay is inside, and
                             // how many of its rows are already folded into the window
@@ -4400,24 +4422,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // out.
                                 circuitBreaker.statefulThrowExceptionIfTripped();
                                 long ts = outRecord.getTimestamp(cursorTimestampIndex);
-                                // Segment the replay at the logical boundaries it crosses.
-                                // The cursor has already folded this row into the window
-                                // state, so a boundary strictly below it is exactly "all
-                                // qualifying rows at or below B" - freeze there, before
-                                // this row is emitted. A boundary at ts itself waits for
-                                // the next row, which is what admits its complete
-                                // timestamp tie.
-                                while (capturedBoundaries < repairBoundaries.size()
-                                        && repairBoundaries.getQuick(capturedBoundaries).maxTimestamp < ts) {
-                                    timelineCapture.capture(
-                                            repairBoundaries.getQuick(capturedBoundaries),
-                                            functions,
-                                            anchorWindow,
-                                            durableRowsBelowFloor + appendedRows
-                                    );
-                                    capturedBoundaries++;
-                                    session.recordProgress(capturedBoundaries);
-                                }
+                                // Segmenting the replay at the logical boundaries it
+                                // crosses happens one level down, in
+                                // boundaryFreezingCursor: hasNext() above has already
+                                // folded this row into the window state, so freezing a
+                                // boundary below it from here would carry this row into
+                                // a root that must not hold it.
                                 if (ts == groupTs) {
                                     groupFoldedRows++;
                                 } else {
@@ -4447,6 +4457,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     copier.copy(executionContext, outRecord, row);
                                     row.append();
                                     appendedRows++;
+                                    if (timelineCapture != null) {
+                                        // Keep the freeze cursor's row position in step:
+                                        // the next boundary it freezes sits below the row
+                                        // after this one, so it carries this row's position.
+                                        boundaryFreezingCursor.setRowPosition(durableRowsBelowFloor + appendedRows);
+                                    }
                                 }
                                 if (mayYield && session != null && isRepairReplayBudgetSpent(scannedRows)) {
                                     // Out of budget. This row is folded and, if it qualified,
@@ -4465,15 +4481,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // ends on is their state too - and it is bounded above by H,
                             // which every one of them is below. A turn that yielded owes
                             // them the rows it has not read yet, so it freezes none.
-                            while (!yielded && capturedBoundaries < repairBoundaries.size()) {
-                                timelineCapture.capture(
-                                        repairBoundaries.getQuick(capturedBoundaries),
-                                        functions,
-                                        anchorWindow,
-                                        durableRowsBelowFloor + appendedRows
-                                );
-                                capturedBoundaries++;
-                                session.recordProgress(capturedBoundaries);
+                            if (!yielded && timelineCapture != null) {
+                                boundaryFreezingCursor.freezeRemaining();
+                            }
+                            if (timelineCapture != null) {
+                                capturedBoundaries = boundaryFreezingCursor.getCaptured();
                             }
                             // Capture base rows scanned before the cursor chain closes
                             // (FilteringRecordCursor.close() resets its counter). No
@@ -4604,6 +4616,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             replayCompleted = true;
         } finally {
+            // Drops the boundary schedule, the capture and the runtime this turn
+            // handed the freeze cursor. Its freeze counter is already read back
+            // into capturedBoundaries, and a resumed turn re-arms it from there.
+            boundaryFreezingCursor.clear();
             if (readerAttached) {
                 executionContext.clearReader();
                 engine.attachReader(reader);
@@ -5850,13 +5866,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final Function filter = filterFactory.getFilter();
             final PageFrameRecordCursorFactory pageFrameFactory =
                     (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
-            final int cursorTimestampIndex = windowFactory.getMetadata().getTimestampIndex();
             // Start strictly above the predecessor: its restored state already covers
             // every row at or below its timestamp, so the frame it holds is the warm-up
             // the replay resumes from. Stop at the ceiling - every corrupt boundary is
             // at or below it.
             final long scanLowTs = Math.max(viewLowerBoundTimestamp, predecessorMaxTs + 1);
-            int captured = 0;
             try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
                     executionContext,
                     scanLowTs,
@@ -5867,41 +5881,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     filteringCursor.of(source, filter, executionContext);
                     source = filteringCursor;
                 }
+                // Below the anchor dispatch, and below the window cursor whose
+                // hasNext() folds a row before the loop below ever sees it: a
+                // boundary has to freeze between two rows, never inside one.
+                boundaryFreezingCursor.of(
+                        source,
+                        capture,
+                        boundaries,
+                        positions,
+                        functions,
+                        anchorWindow,
+                        null,
+                        0,
+                        pageFrameFactory.getMetadata().getTimestampIndex()
+                );
+                source = boundaryFreezingCursor;
                 if (anchorWindow != null) {
                     anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                     source = anchorDispatchingCursor;
                 }
                 try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
-                    final Record outRecord = windowCursor.getRecord();
                     while (windowCursor.hasNext()) {
-                        final long ts = outRecord.getTimestamp(cursorTimestampIndex);
-                        // The cursor has already folded this row, so a boundary strictly
-                        // below it holds exactly the qualifying rows at or below its
-                        // timestamp - freeze there. A boundary at ts itself waits for the
-                        // next row, which admits its complete timestamp tie.
-                        while (captured < boundaries.size()
-                                && boundaries.getQuick(captured).maxTimestamp < ts) {
-                            capture.capture(
-                                    boundaries.getQuick(captured),
-                                    functions,
-                                    anchorWindow,
-                                    positions.getQuick(captured)
-                            );
-                            captured++;
-                        }
+                        // The heal emits nothing - the live-view table is already
+                        // correct - so every row here is warm-up. The freeze cursor
+                        // under this one has already segmented the window state at
+                        // any boundary the row crossed, which is the whole point of
+                        // walking them.
                     }
                     // Boundaries at or above the last row the replay saw: no qualifying
                     // row sits between them and it, so the state the replay ends on is
                     // theirs. The ceiling is the highest, so this drains the rest.
-                    while (captured < boundaries.size()) {
-                        capture.capture(
-                                boundaries.getQuick(captured),
-                                functions,
-                                anchorWindow,
-                                positions.getQuick(captured)
-                        );
-                        captured++;
-                    }
+                    boundaryFreezingCursor.freezeRemaining();
                 }
             }
             executionContext.clearReader();
@@ -5945,6 +5955,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", error=").$(t).I$();
             return false;
         } finally {
+            boundaryFreezingCursor.clear();
             if (readerAttached) {
                 executionContext.clearReader();
                 engine.attachReader(baseReader);

@@ -295,6 +295,74 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testARepairedRootExcludesTheRowThatCrossedItsBoundary() throws Exception {
+        // A root at boundary B describes the window state after every qualifying row
+        // at or below B and no row above it - the contract every resume rests on,
+        // because it restores the root and replays from B + 1. A root that carries
+        // the crossing row makes that resume fold the row a second time, which for a
+        // bounded RANGE frame puts it in the ring twice and counts it twice.
+        //
+        // The replay's own row loop cannot freeze there: the window cursor's
+        // hasNext() folds a row into every function before the loop body reads its
+        // timestamp, so a boundary frozen from the body carries that row as well.
+        // The 25s change below localizes and re-versions the 30s, 40s and 50s roots;
+        // the replay reaches 40s while standing on 50s and 30s while standing on 40s,
+        // so those two are the roots that used to be one row ahead of themselves. The
+        // 50s root is the control - the replay ends on it and freezes it from the
+        // drain, which was always right.
+        //
+        // The oracle is the same thirteen rows ingested in ascending order, where the
+        // cadence seals each boundary at its own row and nothing can run ahead.
+        assertMemoryLeak(() -> {
+            final byte[][] orderedAt30;
+            final byte[][] orderedAt40;
+            final byte[][] orderedAt50;
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1);
+                appendAndRefresh(job, 20, 2);
+                appendAndRefresh(job, 25, 100);
+                for (int commit = 3; commit <= 12; commit++) {
+                    appendAndRefresh(job, commit * 10, commit);
+                }
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals(13, entryCount(instance));
+                // One commit per row in ascending order, so the checkpoint ids run
+                // 0..12 over 10s, 20s, 25s, 30s, 40s ... 120s.
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                orderedAt30 = restoreRoot(instance, functions, ts(timestamp(30)), 3);
+                orderedAt40 = restoreRoot(instance, functions, ts(timestamp(40)), 4);
+                orderedAt50 = restoreRoot(instance, functions, ts(timestamp(50)), 5);
+            }
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LongList before = snapshotTimeline(instance);
+
+                appendAndRefresh(job, 25, 100);
+
+                Assert.assertEquals("the repair must take the localized rebuild",
+                        0, instance.getO3ResumeReplayRows());
+                Assert.assertEquals("the rebuild must stop at H", 6, instance.getO3ReplayScanRows());
+                final LongList after = snapshotTimeline(instance);
+                for (int i = 2; i <= 4; i++) {
+                    assertNewRoot(before, after, i);
+                }
+
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                assertRuntimeState(orderedAt30, restoreRoot(instance, functions, ts(timestamp(30)), 2));
+                assertRuntimeState(orderedAt40, restoreRoot(instance, functions, ts(timestamp(40)), 3));
+                assertRuntimeState(orderedAt50, restoreRoot(instance, functions, ts(timestamp(50)), 4));
+            }
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
     public void testLocalizedO3ReplaySplicesTheTimelineInPlace() throws Exception {
         // The replay side of the splice, driven by a real out-of-order commit rather
         // than a synthetic capture: the refresh job plans the repair, segments its
