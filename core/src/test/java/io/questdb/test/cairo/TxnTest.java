@@ -342,6 +342,85 @@ public class TxnTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * An old-format record must not merely be TOLERATED, it must migrate FORWARD on first write.
+     * <p>
+     * Adaptive is forward-only: a new binary reads what an old one left behind, but an old binary writing
+     * into a new-format record is corruption and is refused. That is only tenable if opening a legacy
+     * table UPGRADES it. Otherwise a table carried across the upgrade keeps its absent checksum for ever,
+     * permanently exempt from the guard it was supposed to gain, and the "absent" sentinel becomes a hole
+     * rather than a migration step. {@code TxWriter.commit} stores the body checksum unconditionally, so
+     * the upgrade lands on the very next commit; this pins that, and pins that the guard is then ARMED
+     * rather than merely stamped.
+     */
+    @Test
+    public void testOldFormatTxnMigratesForwardOnNextCommit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String tableName = "migrateForwardTxn";
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
+            model.timestamp();
+            AbstractCairoTest.create(model);
+            final int timestampType = TableUtils.getTimestampType(model);
+            final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+            final TableToken tableToken = engine.verifyTableName(tableName);
+
+            final long legacyBaseOffset;
+            try (Path path = new Path(); TxWriter txWriter = new TxWriter(ff, configuration)) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                txWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+                txWriter.updatePartitionSizeByTimestamp(0, 42);
+                txWriter.updatePartitionSizeByTimestamp(Micros.HOUR_MICROS, 43);
+                txWriter.setMaxTimestamp(Micros.HOUR_MICROS);
+                txWriter.commit(symbolCounts);
+                legacyBaseOffset = txWriter.getBaseOffset();
+            }
+
+            // Make it look like a record written before the checksum existed.
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                pokeLong(ff, path.$(), legacyBaseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 0L);
+                Assert.assertEquals("precondition: the record must look old-format",
+                        0L, peekLong(ff, path.$(), legacyBaseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64));
+            }
+
+            // One ordinary commit is the whole migration.
+            final long migratedBaseOffset;
+            try (Path path = new Path(); TxWriter txWriter = new TxWriter(ff, configuration)) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                txWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+                txWriter.updatePartitionSizeByTimestamp(Micros.HOUR_MICROS, 44);
+                txWriter.setMaxTimestamp(Micros.HOUR_MICROS);
+                txWriter.commit(symbolCounts);
+                migratedBaseOffset = txWriter.getBaseOffset();
+            }
+
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                Assert.assertNotEquals(
+                        "the committed record must carry a checksum: a legacy table that never gains one is"
+                                + " permanently exempt from the guard, not migrated forward",
+                        0L,
+                        peekLong(ff, path.$(), migratedBaseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64)
+                );
+            }
+
+            // Migrated means GUARDED, not just stamped: tearing a covered field must now be caught.
+            TxReader.resetBodyChecksumFallbackCount();
+            try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                pokeLong(ff, path.$(), migratedBaseOffset + TableUtils.TX_OFFSET_FIXED_ROW_COUNT_64, 987_654_321L);
+                txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                txReader.unsafeLoadAll();
+                Assert.assertTrue(
+                        "a torn covered field must be detected once the record has migrated forward",
+                        TxReader.getBodyChecksumFallbackCount() > 0
+                );
+            }
+            TxReader.resetBodyChecksumFallbackCount();
+        });
+    }
+
     @Test
     public void testTornTxnBodyBothAreasCorrupt() throws Exception {
         // Corrupt the covered region of BOTH A and B (a [0,80) scalar) without fixing either checksum.
