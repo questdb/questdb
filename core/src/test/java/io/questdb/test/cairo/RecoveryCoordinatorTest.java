@@ -73,6 +73,60 @@ import static org.junit.Assert.assertTrue;
 public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
     @Test
+    public void testTableCreatedUnderNosyncRefusesAGlobalSwitchToAdaptive() throws Exception {
+        // KNOWN GAP, pinned here so it is visible rather than folklore. The generation-zero anchor is
+        // published at CREATE only when the table's effective mode is already adaptive, so a table
+        // created while the server ran nosync has none. Nothing later gives it one: the enrolment paths
+        // cover a restore and a pre-commit-mode _meta, and this table is neither -- its _meta carries the
+        // commit-mode field and says UNSET, so it simply inherits the server default.
+        //
+        // Flip that default to adaptive -- unpinning cairo.commit.mode, or upgrading to a build where
+        // adaptive is the default -- and recoverTable finds an adaptive table with no anchor. It refuses,
+        // and because the refusal fails the engine component the whole instance stops starting, not just
+        // this table. The per-table route does NOT have this problem: ALTER ... SET PARAM commit_mode
+        // publishes a baseline first (TableWriter.setMetaCommitMode).
+        //
+        // Publishing an anchor at CREATE unconditionally does not fix it and makes it worse: a nosync
+        // table's anchor would sit frozen at generation zero while the table grew, so the flip would
+        // rewind the materialized table to empty and replay WAL that nosync's purge floor may already
+        // have deleted. A fix has to enrol at the LIVE cut, which needs a durable way to tell a table
+        // that was never adaptive from one whose anchor was lost -- a design decision, not a patch.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        try {
+            execute("create table mode_flip (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into mode_flip values ('2024-09-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("mode_flip");
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                Assert.assertFalse(
+                        "a nosync-created table is expected to have no anchor; if this now holds, the"
+                                + " create path changed and this gap may be closed",
+                        TestFilesFacadeImpl.INSTANCE.exists(path.$())
+                );
+            }
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            // A live SeqTxnTracker still remembers the mode this table was written under, which would
+            // let recovery skip it and hide the gap. Drop the cached sequencer and tracker so the mode
+            // is resolved from _meta and the server default, as it is on a cold start.
+            engine.getTableSequencerAPI().resetForReboot(token);
+
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            try {
+                new RecoveryCoordinator(engine).recover();
+                Assert.fail("expected the markerless adaptive table to be refused");
+            } catch (CairoException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "adaptive epoch marker is absent");
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    @Test
     public void testRecoveryDisableSwitchFailsClosedForAdaptiveTable() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, "false");
