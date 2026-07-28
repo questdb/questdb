@@ -123,6 +123,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_ROLE_PREFIX = "\r\nX-QuestDB-Role: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SUFFIX = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] RESPONSE_TABLE_OPTIONS =
+            "\r\nX-QWP-Table-Options: 1".getBytes(StandardCharsets.US_ASCII);
     private static final int SHA1_BASE64_SIZE = 28;
     private static final CarrierLocal<byte[]> BASE64_SCRATCH = CarrierLocal.withInitial(() -> new byte[SHA1_BASE64_SIZE]);
     // Thread-local SHA-1 digest for computing Sec-WebSocket-Accept
@@ -316,6 +318,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
         int size = RESPONSE_PREFIX.length + acceptKey.length
                 + RESPONSE_AFTER_ACCEPT.length + VERSION_BYTES[qwpVersion].length
+                + RESPONSE_TABLE_OPTIONS.length
                 + RESPONSE_SUFFIX.length;
         if (contentEncodingBytes != null) {
             size += RESPONSE_CONTENT_ENCODING_PREFIX.length + contentEncodingBytes.length;
@@ -447,6 +450,9 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
             Unsafe.putByte(buf + offset++, b);
         }
         for (byte b : VERSION_BYTES[qwpVersion]) {
+            Unsafe.putByte(buf + offset++, b);
+        }
+        for (byte b : RESPONSE_TABLE_OPTIONS) {
             Unsafe.putByte(buf + offset++, b);
         }
 

@@ -150,6 +150,30 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAutoCreatedTableWithDesignatedTimestampName() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_named_ts")
+                            .designatedTimestampName("event_time")
+                            .longColumn("v", 42)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT v, event_time FROM qwp_udp_named_ts")
+                    .noLeakCheck()
+                    .returnsOnce("v\tevent_time\n42\t1970-01-01T00:00:01.000000Z\n");
+            assertQuery("SELECT \"column\" FROM table_columns('qwp_udp_named_ts') ORDER BY \"column\"")
+                    .noLeakCheck()
+                    .returnsOnce("column\nevent_time\nv\n");
+        });
+    }
+
+    @Test
     public void testAutoCreatedTableWithMultiDimArrayReadsBack() throws Exception {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {

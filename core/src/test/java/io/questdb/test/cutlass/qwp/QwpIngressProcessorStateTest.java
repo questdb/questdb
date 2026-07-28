@@ -639,7 +639,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     @Override
                     public WalTableUpdateDetails getTableUpdateDetails(
                             SecurityContext secCtx, Utf8Sequence tableName,
-                            ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor, int maxTables) {
+                            ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor,
+                            Utf8Sequence designatedTsName, int maxTables) {
                         throw CairoException.critical(0).put("simulated critical error");
                     }
                 });
@@ -677,7 +678,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     @Override
                     public WalTableUpdateDetails getTableUpdateDetails(
                             SecurityContext secCtx, Utf8Sequence tableName,
-                            ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor, int maxTables) {
+                            ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor,
+                            Utf8Sequence designatedTsName, int maxTables) {
                         throw CairoException.schemaMismatch().put("type coercion from VARCHAR to IPV4 is not supported");
                     }
                 });
@@ -714,7 +716,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     @Override
                     public WalTableUpdateDetails getTableUpdateDetails(
                             SecurityContext secCtx, Utf8Sequence tableName,
-                            ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor, int maxTables) {
+                            ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor,
+                            Utf8Sequence designatedTsName, int maxTables) {
                         throw CairoException.nonCritical().put("table is busy");
                     }
                 });
@@ -796,6 +799,45 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 cache.setDistressed();
                 cache.clear();
                 Assert.assertEquals(0, getCacheSize(cache));
+            }
+        });
+    }
+
+    @Test
+    public void testCompatibilityIgnoresUnknownFlagsAndTrailingPayload() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                byte[] payload = {
+                        20, 'c', 'o', 'm', 'p', 'a', 't', '_', 'u', 'n', 'k', 'n', 'o', 'w', 'n', '_', 'f', 'l', 'a', 'g', 's',
+                        1,
+                        2,
+                        1, 'v', QwpConstants.TYPE_LONG,
+                        0, QwpConstants.TYPE_TIMESTAMP,
+                        0, 42, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0x40, 0x42, 0x0f, 0, 0, 0, 0, 0,
+                        0x55, 0x66, 0x77
+                };
+
+                // Never tighten either behavior. New QWP clients depend on old
+                // servers ignoring the new flag and options trailer bytes.
+                addNativeData(state, wrapQwpPayload(payload, (byte) (0x02 | 0x40 | 0x80)));
+                state.processMessage();
+                Assert.assertTrue(state.getErrorText().toString(), state.isOk());
+                state.commit();
+                Assert.assertTrue(state.getErrorText().toString(), state.isOk());
+
+                drainWalQueue();
+                assertQuery("select v from compat_unknown_flags")
+                        .noLeakCheck()
+                        .returnsOnce("v\n42\n");
+            } finally {
+                state.onDisconnected();
+                state.close();
             }
         });
     }
@@ -1737,6 +1779,88 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             // LocalValueMap.set(key, null) which calls Misc.freeIfCloseable().
             state.close();
             state.close();
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsAutoCreatesTableWithExcludedLegacyTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            final long addr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                Unsafe.putByte(addr, (byte) 1);
+                Unsafe.putByte(addr + 1, (byte) 0x01);
+
+                final String tableName = "legacy_excluded_timestamp_col";
+                final ObjList<QwpColumnDef> schema = new ObjList<>();
+                schema.add(new QwpColumnDef("timestamp", QwpConstants.TYPE_DOUBLE_ARRAY));
+                schema.add(new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP));
+
+                // Old clients send no table-options hint. The all-NULL array
+                // column does not survive schema inference, so it cannot
+                // collide with the default designated timestamp column.
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String(tableName),
+                        schema,
+                        getQwpTableBlockCursor(addr),
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                try (TableReader reader = engine.getReader(tableName)) {
+                    Assert.assertEquals(1, reader.getMetadata().getColumnCount());
+                    Assert.assertEquals(0, reader.getMetadata().getTimestampIndex());
+                    Assert.assertEquals("timestamp", reader.getMetadata().getColumnName(0));
+                    Assert.assertEquals(ColumnType.TIMESTAMP, reader.getMetadata().getColumnType(0));
+                }
+            } finally {
+                Unsafe.free(addr, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsAutoCreatesTableWithHintMatchingExcludedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            final long addr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                Unsafe.putByte(addr, (byte) 1);
+                Unsafe.putByte(addr + 1, (byte) 0x01);
+
+                final String tableName = "hint_matches_excluded_col";
+                final ObjList<QwpColumnDef> schema = new ObjList<>();
+                schema.add(new QwpColumnDef("event_time", QwpConstants.TYPE_DOUBLE_ARRAY));
+                schema.add(new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP));
+
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String(tableName),
+                        schema,
+                        getQwpTableBlockCursor(addr),
+                        new Utf8String("event_time"),
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                try (TableReader reader = engine.getReader(tableName)) {
+                    Assert.assertEquals(1, reader.getMetadata().getColumnCount());
+                    Assert.assertEquals(0, reader.getMetadata().getTimestampIndex());
+                    Assert.assertEquals("event_time", reader.getMetadata().getColumnName(0));
+                    Assert.assertEquals(ColumnType.TIMESTAMP, reader.getMetadata().getColumnType(0));
+                }
+            } finally {
+                Unsafe.free(addr, 2, MemoryTag.NATIVE_DEFAULT);
+            }
         });
     }
 

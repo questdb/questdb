@@ -167,6 +167,15 @@ public class QwpMessageHeader {
     }
 
     /**
+     * Returns true if the per-table options trailer is present.
+     *
+     * @return true if table options are enabled
+     */
+    public boolean isTableOptionsEnabled() {
+        return (flags & FLAG_TABLE_OPTIONS) != 0;
+    }
+
+    /**
      * Parses a header from direct memory.
      *
      * @param address the memory address containing the header

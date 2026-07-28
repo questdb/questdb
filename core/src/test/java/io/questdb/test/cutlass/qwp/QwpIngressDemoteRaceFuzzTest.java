@@ -606,6 +606,7 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
                 Utf8Sequence tableName,
                 ObjList<QwpColumnDef> schema,
                 QwpTableBlockCursor cursor,
+                Utf8Sequence designatedTsName,
                 int maxTables
         ) {
             Runnable hook = getTudHook;
