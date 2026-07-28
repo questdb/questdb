@@ -133,6 +133,14 @@ public class Overrides {
         return isHiddenTelemetryTable;
     }
 
+    /**
+     * Whether a test has explicitly pinned {@code key}, as opposed to leaving it at its default. Lets a
+     * configuration override step aside for a deliberate choice instead of silently outvoting it.
+     */
+    public boolean isPropertySet(ConfigPropertyKey key) {
+        return properties.getProperty(key.getPropertyPath()) != null;
+    }
+
     public boolean mangleTableDirNames() {
         return mangleTableDirNames;
     }

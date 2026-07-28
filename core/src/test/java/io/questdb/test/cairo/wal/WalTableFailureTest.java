@@ -1976,7 +1976,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public long openRO(LPSZ name) {
-                if (Utf8s.containsAscii(name, "_meta") && attempt++ >= 2) {
+                // Skips one more _meta open than it used to, and the extra one is nameable: publishing a
+                // table's generation-zero epoch baseline copies the live _meta, and that copy now opens its
+                // SOURCE read-only (TableUtils.replaceFileContent) where ff.copy() was a single native call
+                // this facade never saw. The added open lands inside createTable, while the name is still
+                // reserved, so firing on it made the verifyTableName below throw "table name is reserved"
+                // instead of exercising the suspend path under test.
+                if (Utf8s.containsAscii(name, "_meta") && attempt++ >= 3) {
                     if (!engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName))) {
                         return -1;
                     }
