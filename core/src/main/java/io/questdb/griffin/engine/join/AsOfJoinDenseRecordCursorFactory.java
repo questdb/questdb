@@ -89,11 +89,11 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
                     masterFactory.getMetadata().getTimestampIndex(),
                     masterFactory.getMetadata().getTimestampType(),
                     new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                        PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath()),
+                            PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath()),
                     slaveFactory.getMetadata().getTimestampIndex(),
                     slaveFactory.getMetadata().getTimestampType(),
                     new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                        PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath())
+                            PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath())
             );
         } catch (Throwable th) {
             Misc.free(bwdScanKeyToRowId);
