@@ -87,9 +87,9 @@ pub fn can_skip_row_group(
         let qdb_column_type = packed_filter.qdb_column_type();
 
         if op == FILTER_OP_IS_NULL {
-            // See ParquetDecoder::has_non_finite_nulls: a FLOAT or DOUBLE row group can hold an
-            // infinity the writer did not count as null but QuestDB does.
-            if null_count == Some(0) && !ParquetDecoder::has_non_finite_nulls(qdb_column_type) {
+            // See ParquetDecoder::writer_undercounts_nulls: a row group can hold a null the writer
+            // did not count - an infinity in a FLOAT or DOUBLE, a (char) 0 in a CHAR.
+            if null_count == Some(0) && !ParquetDecoder::writer_undercounts_nulls(qdb_column_type) {
                 return Ok(true);
             }
             continue;
@@ -126,7 +126,12 @@ pub fn can_skip_row_group(
             7 => PhysicalType::FixedLenByteArray(col_desc.fixed_byte_len as usize),
             _ => continue,
         };
-        let has_nulls = null_count.is_none_or(|c| c > 0);
+        // Paired with the identical composition in ParquetDecoder::filter_row_group: a type whose
+        // NULLs the statistics cannot identify as NULL never reports has_nulls == false, or a value
+        // loop would prune a group on the very null the writer failed to count. Narrower than the
+        // writer_undercounts_nulls gate on IS NULL above - see nulls_hidden_from_stats.
+        let has_nulls = null_count.is_none_or(|c| c > 0)
+            || ParquetDecoder::nulls_hidden_from_stats(qdb_column_type);
         let col_type_tag = qdb_column_type & 0xFF;
 
         let is_decimal = matches!(

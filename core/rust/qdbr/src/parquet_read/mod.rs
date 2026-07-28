@@ -971,6 +971,88 @@ mod tests {
     }
 
     #[test]
+    fn no_skip_row_group_is_null_char_with_stored_zero() -> ParquetResult<()> {
+        // A CHAR NULL is (char) 0, an in-domain value the writer stores at definition level 1,
+        // so null_count stays 0 while the row IS null to QuestDB. Skipping on that count drops
+        // every row native storage returns. A REQUIRED column reproduces it exactly: no row can
+        // reach definition level 0, so null_count is Some(0) whatever the values are.
+        //
+        // This covers ParquetDecoder::filter_row_group, the arm read_parquet() takes. Its twin in
+        // parquet_metadata::skip is what a CONVERT PARTITION TO PARQUET table reads, and the two
+        // must agree - see writer_undercounts_nulls.
+        let buf = gen_i32_parquet_with_stats(&[0, 97, 98])?;
+        let decoder = read_decoder(&buf)?;
+
+        let filters = [make_filter_with_op_and_type(
+            0,
+            0,
+            0,
+            FILTER_OP_IS_NULL,
+            ColumnTypeTag::Char as i32,
+        )];
+        assert!(
+            !decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+            "IS NULL must not skip a CHAR group: null_count cannot see a stored (char) 0"
+        );
+
+        // An INT group of the same shape has no such hidden null, so it still skips - the gate is
+        // per type, not a blanket surrender of the IS NULL skip.
+        let filters = [make_filter_with_op_and_type(
+            0,
+            0,
+            0,
+            FILTER_OP_IS_NULL,
+            ColumnTypeTag::Int as i32,
+        )];
+        assert!(
+            decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+            "IS NULL should still skip an INT group whose null_count is 0"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn no_skip_row_group_eq_null_double_with_infinity() -> ParquetResult<()> {
+        // Numbers.isNull(double) is an exponent-bits test, so QuestDB calls +/-Infinity NULL and
+        // Numbers.equals calls it EQUAL to a NaN bound - `d = null::double` matches that row
+        // natively. The writer counts only is_nan(), so null_count stays 0 and the EQ arm, which
+        // keeps the group only `if has_nulls`, pruned the row away.
+        //
+        // Same division as the CHAR test above: this is the read_parquet() arm.
+        let buf = gen_f64_parquet_with_stats(&[1.0, f64::INFINITY])?;
+        let decoder = read_decoder(&buf)?;
+
+        let v: Vec<f64> = vec![f64::NAN];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_EQ,
+            ColumnTypeTag::Double as i32,
+        )];
+        assert!(
+            !decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+            "EQ on a NULL bound must not skip a DOUBLE group: an infinity is an uncounted null"
+        );
+
+        // A finite bound outside the range still prunes, so the group did not simply become
+        // unprunable.
+        let v: Vec<f64> = vec![-5.0];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_EQ,
+            ColumnTypeTag::Double as i32,
+        )];
+        assert!(
+            decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+            "a finite bound outside [min, max] should still skip"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn skip_row_group_is_not_null_all_nulls() -> ParquetResult<()> {
         // All nulls: null_count == num_values → IS NOT NULL should skip
         let data: Vec<i64> = vec![];

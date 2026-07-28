@@ -695,10 +695,14 @@ public final class ParquetRowGroupFilter {
     // any of which a row group may hold instead of d, and neither the min/max stats (which would
     // place d outside [min, max]) nor the bloom filter (which hashes the exact bits of d) can see
     // it - so only a certified bound may push as an exact equality. A NULL (NaN) bound is equal to
-    // NULL rows alone, which the native side decides from the null count rather than the stats, so
-    // it certifies as exact. That reasoning covers NaN only, hence the isNaN test rather than
-    // Numbers.isNull: the latter also calls +/-Infinity NULL, and an infinite bound is pushed as a
-    // real value against the min/max stats - see isPushableFloatingBound.
+    // NULL rows alone, which the native side decides from its has_nulls rather than from the stats,
+    // so it certifies as exact. That holds only because has_nulls treats a FLOAT or DOUBLE row group
+    // as possibly-null whatever its null_count says: the writer counts NaN alone, so an infinity -
+    // which Numbers.equals calls equal to this bound - is stored as an ordinary value and left
+    // uncounted, and reading null_count directly would prune the group holding it. See
+    // ParquetDecoder::nulls_hidden_from_stats. That reasoning covers NaN only, hence the isNaN test
+    // rather than Numbers.isNull: the latter also calls +/-Infinity NULL, and an infinite bound is
+    // pushed as a real value against the min/max stats - see isPushableFloatingBound.
     private static boolean isExactEqDouble(double d) {
         return Double.isNaN(d)
                 || (!Numbers.equals(Math.nextUp(d), d) && !Numbers.equals(Math.nextDown(d), d));

@@ -60,6 +60,82 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterOnAliasReadsTheSameWidthAsTheProjection() throws Exception {
+        // A WHERE clause over a projection alias compiled against the base factory's bare metadata,
+        // which cannot answer the width question and takes the conservative true default, so the
+        // filter emitted a plain IntColumn where the projection above it emitted IntWideColumn. The
+        // two halves of the same query then disagreed about the same alias: the row's own a::LONG
+        // was the bound the predicate tested for, yet the predicate excluded the row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE faw (i INT, j INT)");
+            execute("INSERT INTO faw VALUES (2_000_000_000, 2_000_000_000)");
+
+            // i*j is 4000000000000000000 read at long width and -1651507200 read at INT width
+            assertQuery("SELECT (i*j)::LONG AS v FROM faw").noLeakCheck().expectSize().returns("v\n4000000000000000000\n");
+            assertQuery("SELECT i*j AS v FROM faw").noLeakCheck().expectSize().returns("v\n-1651507200\n");
+
+            // the un-aliased spelling keeps the row: the filter sees the arithmetic function itself
+            assertQuery("SELECT (i*j)::LONG AS v FROM faw WHERE i*j = 4000000000000000000")
+                    .noLeakCheck().returns("v\n4000000000000000000\n");
+
+            // the alias must agree with it. The projection reads a at long width, so the filter has
+            // to as well, or the query contradicts itself.
+            assertQuery("SELECT a::LONG AS v FROM (SELECT i*j AS a FROM faw) WHERE a = 4000000000000000000")
+                    .noLeakCheck().returns("v\n4000000000000000000\n");
+
+            // and it must agree in the other direction too: the wrapped value is not the row's
+            // long-width value, so a long-width predicate on it excludes the row on both spellings
+            assertQuery("SELECT (i*j)::LONG AS v FROM faw WHERE i*j = -1651507200L")
+                    .noLeakCheck().returns("v\n");
+            assertQuery("SELECT a::LONG AS v FROM (SELECT i*j AS a FROM faw) WHERE a = -1651507200L")
+                    .noLeakCheck().returns("v\n");
+
+            // The plain INT read of the alias still wraps in a filter, exactly as the arithmetic
+            // does, so an INT-width predicate keeps the row on both spellings. Without this arm the
+            // fix could have moved every read to long width and still passed.
+            assertQuery("SELECT a::LONG AS v FROM (SELECT i*j AS a FROM faw) WHERE a = -1651507200")
+                    .noLeakCheck().returns("v\n4000000000000000000\n");
+            assertQuery("SELECT (i*j)::LONG AS v FROM faw WHERE i*j = -1651507200")
+                    .noLeakCheck().returns("v\n4000000000000000000\n");
+
+            // IN is the consumer that changes most: the key's isIntWidthStable decides whether
+            // InLongFunctionFactory splits the key and probes the INT and LONG element sets
+            // separately. A filter that reported the alias width-stable read the wide element at
+            // INT width and matched nothing. The projection spelling of the same predicate is the
+            // reference - the two must agree, which is the whole point of the alias contract.
+            assertQuery("SELECT a IN (4000000000000000000) AS v FROM (SELECT i*j AS a FROM faw)")
+                    .noLeakCheck().expectSize().returns("v\ntrue\n");
+            assertQuery("SELECT a::LONG AS v FROM (SELECT i*j AS a FROM faw) WHERE a IN (4000000000000000000)")
+                    .noLeakCheck().returns("v\n4000000000000000000\n");
+            // ... and the wrapped value must still not match at long width, on both spellings
+            assertQuery("SELECT a IN (-1651507200L) AS v FROM (SELECT i*j AS a FROM faw)")
+                    .noLeakCheck().expectSize().returns("v\nfalse\n");
+            assertQuery("SELECT a::LONG AS v FROM (SELECT i*j AS a FROM faw) WHERE a IN (-1651507200L)")
+                    .noLeakCheck().returns("v\n");
+
+            // A post-join filter is compiled the same way and over the same live master record:
+            // JoinRecord hands the master through, so the alias has to read wide there too. The OR
+            // keeps the predicate from being pushed below the join, and the LEFT JOIN finds no
+            // match, so k IS NULL and only the wide read can keep the row.
+            execute("CREATE TABLE fay (k INT)");
+            execute("INSERT INTO fay VALUES (7)");
+            assertQuery("SELECT x.a::LONG AS v FROM (SELECT i*j AS a, i FROM faw) x LEFT JOIN fay ON x.i = fay.k WHERE x.a = 4000000000000000000 OR fay.k = 5")
+                    .noLeakCheck().noRandomAccess()
+                    .withPlanContaining("Filter filter: (x.a=4000000000000000000L or fay.k=5)")
+                    .returns("v\n4000000000000000000\n");
+
+            // ... and so is a post-UNNEST filter, over UnnestRecord's pass-through of the master.
+            // Neither array element exceeds 100, so again only the wide read keeps the rows.
+            execute("CREATE TABLE fau (i INT, j INT, arr DOUBLE[])");
+            execute("INSERT INTO fau VALUES (2_000_000_000, 2_000_000_000, ARRAY[1.0, 2.0])");
+            assertQuery("SELECT tt.a::LONG AS v FROM (SELECT i*j AS a, arr FROM fau) tt, UNNEST(tt.arr) u(val) WHERE tt.a = 4000000000000000000 OR u.val > 100")
+                    .noLeakCheck().noRandomAccess()
+                    .withPlanContaining("Filter filter: (tt.a=4000000000000000000L or 100<u.val)")
+                    .returns("v\n4000000000000000000\n4000000000000000000\n");
+        });
+    }
+
+    @Test
     public void testFloatingPointPairAgreesBetweenConstantAndColumn() throws Exception {
         // A floating-point constant pair used to regroup: (dblCol * 1e300) * 1e-300 became
         // dblCol * (1e300 * 1e-300) = dblCol * 1.0. IEEE-754 * is not associative - the

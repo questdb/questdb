@@ -269,6 +269,23 @@ public class NamedParameterLinkFunction implements Function {
         base.init(symbolTableSource, executionContext);
     }
 
+    /**
+     * A bind variable never carries two different values at the two INT widths: every narrow-int
+     * binding resolves to an {@code IntBindVariable}, {@code ShortBindVariable} or
+     * {@code ByteBindVariable}, none of which overrides {@code getLong()} to compute at long width,
+     * so {@code getLong()} is exactly {@code Numbers.intToLong(getInt())}.
+     * <p>
+     * The answer is a constant rather than {@code getBase().isIntWidthStable()} because callers ask
+     * at compile time, when the variable may still be undefined and {@link #getBase()} would throw.
+     * It also has to stay constant across a re-bind: a caller that reads the key at INT width on the
+     * strength of a false answer hits {@code LongFunction.getInt()}, which is final and throws, as
+     * soon as the same factory runs against a LONG binding.
+     */
+    @Override
+    public boolean isIntWidthStable() {
+        return true;
+    }
+
     @Override
     public boolean isNonDeterministic() {
         return true;

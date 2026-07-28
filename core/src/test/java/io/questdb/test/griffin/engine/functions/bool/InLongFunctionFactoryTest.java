@@ -24,12 +24,15 @@
 
 package io.questdb.test.griffin.engine.functions.bool;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bool.InLongFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
@@ -39,6 +42,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.BindVariableTestSetter;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -57,6 +61,8 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
             rn
             1
             """;
+    // The header alone: the key matched no element.
+    private static final String NO_ROWS = "rn\n";
     // The rows whose INT-arithmetic key is NULL, i.e. whose getInt() carries INT_NULL.
     private static final String NULL_KEY_ROWS = """
             rn
@@ -440,6 +446,97 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableBareKeyCompileThenLongRebind() throws Exception {
+        // A BARE bind variable as the IN key, rather than an arithmetic expression holding one.
+        // Its two widths are the same number, so it never needed the width split - but the link
+        // function does not answer the width question and inherits Function's false, while this
+        // PR made it report isRowStable(). isSplitKey therefore turns on for every bind-variable
+        // key, and getBool reads it with getInt().
+        //
+        // Whether that read is legal depends on what the variable is bound to: LongFunction.getInt()
+        // is final and throws. So re-binding a compiled factory from INT to LONG - the pattern
+        // testBindVariableIntWidthCompileThenLongRebind establishes as supported, and which master
+        // served because it only ever read the key at long width - fails with
+        // UnsupportedOperationException instead of returning rows.
+        assertMemoryLeak(() -> {
+            // The defect is not JIT-specific - it fires from BooleanRuntimeConstFunction.init(),
+            // before the JIT is consulted, and reproduces either way. The JIT is off here because it
+            // freezes each bind variable's width into its IR at compile time and does not
+            // re-serialize on a re-bind, so it answers a re-bound query at the compile-time width
+            // whatever the new binding says. Pinning the Java path keeps the expected result sets
+            // below exact, and it is the path the split key actually feeds.
+            final int jitMode = sqlExecutionContext.getJitMode();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            try {
+                execute("CREATE TABLE x AS (SELECT cast(x AS INT) rn FROM long_sequence(3))");
+
+                final String allRows = """
+                        rn
+                        1
+                        2
+                        3
+                        """;
+                final String rowThree = """
+                        rn
+                        3
+                        """;
+                // Each list shape reaches a different InLong form, and every one of them reads the
+                // key itself: single const, two const, set, the var path, and the runtime-const one.
+                assertQuery("SELECT rn FROM x WHERE rn > 0 AND $1 IN (3)")
+                        .noLeakCheck()
+                        .assertBinds(bareKeyRebindCases(allRows));
+                assertQuery("SELECT rn FROM x WHERE rn > 0 AND $1 IN (3, 5_000_000_000)")
+                        .noLeakCheck()
+                        .assertBinds(bareKeyRebindCases(allRows));
+                assertQuery("SELECT rn FROM x WHERE rn > 0 AND $1 IN (3, 5_000_000_000, 7)")
+                        .noLeakCheck()
+                        .assertBinds(bareKeyRebindCases(allRows));
+                // A column element reaches InLongVarFunction; only row 3 equals the bound key.
+                assertQuery("SELECT rn FROM x WHERE rn > 0 AND $1 IN (rn, 5_000_000_000)")
+                        .noLeakCheck()
+                        .assertBinds(bareKeyRebindCases(rowThree));
+                // A bind-variable element resolves once per cursor rather than per row, which is the
+                // fifth form - InLongRuntimeConstFunction - and it reads the key the same way.
+                final ObjList<BindVarTuple> runtimeConstElement = new ObjList<>();
+                runtimeConstElement.add(BindVarTuple.ok("int bind", allRows, bvs -> {
+                    bvs.setInt(0, 3);
+                    bvs.setLong(1, 5_000_000_000L);
+                }));
+                runtimeConstElement.add(BindVarTuple.ok("re-bound to a long that wraps onto 3", NO_ROWS, bvs -> {
+                    bvs.setLong(0, 4_294_967_299L);
+                    bvs.setLong(1, 5_000_000_000L);
+                }));
+                assertQuery("SELECT rn FROM x WHERE rn > 0 AND $1 IN (3, $2)")
+                        .noLeakCheck()
+                        .assertBinds(runtimeConstElement);
+
+                // A positive control rather than a width assertion: the re-bound wide key still has
+                // to match the wide element. It cannot fail for a width reason, because a LONG-typed
+                // element reads the key with getLong() whether or not the key was split - see
+                // isIntWidthElement. It guards the plain "does a wide re-bind still return its rows"
+                // question that the wrapping cases above deliberately answer with nothing.
+                final ObjList<BindVarTuple> wideMatch = new ObjList<>();
+                wideMatch.add(BindVarTuple.ok("int bind", allRows, bvs -> bvs.setInt(0, 3)));
+                wideMatch.add(BindVarTuple.ok("re-bound to the wide element", allRows, bvs -> bvs.setLong(0, 5_000_000_000L)));
+                assertQuery("SELECT rn FROM x WHERE rn > 0 AND $1 IN (3, 5_000_000_000)")
+                        .noLeakCheck()
+                        .assertBinds(wideMatch);
+
+                // SHORT and BYTE are narrow ints too, so a key bound at either width takes the same
+                // split decision at compile time as an INT one, and crashed the same way.
+                assertQuery("SELECT rn FROM x WHERE rn > 0 AND $1 IN (3, 5_000_000_000)")
+                        .noLeakCheck()
+                        .assertBinds(narrowKeyRebindCases(allRows, "short", bvs -> bvs.setShort(0, (short) 3)));
+                assertQuery("SELECT rn FROM x WHERE rn > 0 AND $1 IN (3, 5_000_000_000)")
+                        .noLeakCheck()
+                        .assertBinds(narrowKeyRebindCases(allRows, "byte", bvs -> bvs.setByte(0, (byte) 3)));
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
     public void testBindVariableIntWidthCompileThenLongRebind() throws Exception {
         // The runtime-const form decided WHICH width sets exist from a compile-time type snapshot,
         // but init() re-partitions the elements by their RUNTIME type. Compiled with INT-width binds
@@ -479,6 +576,37 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                         .assertBinds(cases);
             } finally {
                 sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableLinkKeyIsNotSplit() throws Exception {
+        // NamedParameterLinkFunction cannot reach this contract from SQL. Its init() only asserts
+        // base.getType() == type where the indexed sibling refreshes the field, so the
+        // INT-compile-then-LONG-rebind sequence that exposes the width question dies on that
+        // assertion under -ea, which surefire enables (core/pom.xml). Drive both link functions
+        // through the factory directly instead, and count the width each key is read at.
+        //
+        // The element list mixes widths on purpose - that is what makes a split key probe the INT
+        // set with getInt() and the LONG set with getLong(), reading the key twice. A bind variable
+        // carries the same number at either width and must not be split: one read, at long width.
+        // Key 11 misses both elements, so a split key falls through to its second width, while a
+        // correctly single-width key still has to touch exactly one.
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            try {
+                bindVariableService.setInt(0, 11);
+                bindVariableService.setInt("k", 11);
+                try (
+                        CountingIndexedLink indexed = new CountingIndexedLink();
+                        CountingNamedLink named = new CountingNamedLink()
+                ) {
+                    assertKeyReadOnceAtLongWidth(indexed);
+                    assertKeyReadOnceAtLongWidth(named);
+                }
+            } finally {
+                bindVariableService.clear();
             }
         });
     }
@@ -927,6 +1055,56 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                         """);
     }
 
+    // The re-bound value is 3 + 2^32. Read at long width it matches no element of the lists this
+    // feeds, so the case expects nothing back; a key read at INT width wraps it onto exactly 3 and
+    // would match. The two cases therefore differ in their result, which pins the width the key is
+    // read at rather than only the absence of a crash.
+    private static ObjList<BindVarTuple> bareKeyRebindCases(String intBindExpected) {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok("int bind", intBindExpected, bvs -> bvs.setInt(0, 3)));
+        cases.add(BindVarTuple.ok("re-bound to a long that wraps onto 3", NO_ROWS, bvs -> bvs.setLong(0, 4_294_967_299L)));
+        return cases;
+    }
+
+    // The first case decides the type the query compiles the key at, so this is how a SHORT or BYTE
+    // key reaches the compile-time split decision. The LONG re-bind that follows is the read the
+    // split key could not serve.
+    private static ObjList<BindVarTuple> narrowKeyRebindCases(String expected, String description, BindVariableTestSetter firstBind) {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(description + " bind", expected, firstBind));
+        cases.add(BindVarTuple.ok("re-bound to a long that wraps onto 3", NO_ROWS, bvs -> bvs.setLong(0, 4_294_967_299L)));
+        return cases;
+    }
+
+    private <T extends Function & WidthCounter> void assertKeyReadOnceAtLongWidth(T key) throws SqlException {
+        // two-constant path -> InLongTwoConstFunction
+        key.reset();
+        try (Function f = newInFunction(key, new IntConstant(7), new LongConstant(5_000_000_000L))) {
+            f.init(null, sqlExecutionContext);
+            Assert.assertFalse(f.getBool(null));
+            Assert.assertEquals(0, key.intCalls());
+            Assert.assertEquals(1, key.longCalls());
+        }
+
+        // constant-set path (>= 3 elements) -> InLongConstFunction
+        key.reset();
+        try (Function f = newInFunction(key, new IntConstant(7), new IntConstant(8), new LongConstant(5_000_000_000L))) {
+            f.init(null, sqlExecutionContext);
+            Assert.assertFalse(f.getBool(null));
+            Assert.assertEquals(0, key.intCalls());
+            Assert.assertEquals(1, key.longCalls());
+        }
+
+        // variable path (a non-constant element) -> InLongVarFunction
+        key.reset();
+        try (Function f = newInFunction(key, new NonConstIntElement(7), new LongConstant(5_000_000_000L))) {
+            f.init(null, sqlExecutionContext);
+            Assert.assertFalse(f.getBool(null));
+            Assert.assertEquals(0, key.intCalls());
+            Assert.assertEquals(1, key.longCalls());
+        }
+    }
+
     private Function newInFunction(Function key, Function... elements) throws SqlException {
         final ObjList<Function> args = new ObjList<>();
         final IntList argPositions = new IntList();
@@ -937,6 +1115,50 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
             argPositions.add(0);
         }
         return new InLongFunctionFactory().newInstance(0, args, argPositions, configuration, sqlExecutionContext);
+    }
+
+    /**
+     * The real {@link IndexedParameterLinkFunction} as an IN key, counting the width each read lands
+     * on. The counting has to happen in a subclass because the link function delegates every
+     * accessor to a bind variable the test cannot substitute; everything the factory actually asks
+     * about - {@code isIntWidthStable()}, {@code isRowStable()}, {@code getType()} - still comes
+     * from the class under test.
+     */
+    private static class CountingIndexedLink extends IndexedParameterLinkFunction implements WidthCounter {
+        private int intCalls;
+        private long longCalls;
+
+        CountingIndexedLink() {
+            super(0, ColumnType.INT, 0);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            intCalls++;
+            return super.getInt(rec);
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            longCalls++;
+            return super.getLong(rec);
+        }
+
+        @Override
+        public int intCalls() {
+            return intCalls;
+        }
+
+        @Override
+        public long longCalls() {
+            return longCalls;
+        }
+
+        @Override
+        public void reset() {
+            intCalls = 0;
+            longCalls = 0;
+        }
     }
 
     /**
@@ -993,6 +1215,50 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     /**
+     * The named counterpart of {@link CountingIndexedLink}. This is the only route to the named link
+     * function's width answer: an SQL re-bind that changes the variable's type trips the assertion in
+     * {@code NamedParameterLinkFunction.init()} before the key is ever read.
+     */
+    private static class CountingNamedLink extends NamedParameterLinkFunction implements WidthCounter {
+        private int intCalls;
+        private long longCalls;
+
+        CountingNamedLink() {
+            // The name keeps its leading colon: FunctionParser passes the SQL token verbatim, and
+            // BindVariableServiceImpl.getFunction() asserts on it before stripping it for lookup.
+            super(":k", ColumnType.INT);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            intCalls++;
+            return super.getInt(rec);
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            longCalls++;
+            return super.getLong(rec);
+        }
+
+        @Override
+        public int intCalls() {
+            return intCalls;
+        }
+
+        @Override
+        public long longCalls() {
+            return longCalls;
+        }
+
+        @Override
+        public void reset() {
+            intCalls = 0;
+            longCalls = 0;
+        }
+    }
+
+    /**
      * A non-constant INT element, which routes the IN list to its variable (per-row) function.
      */
     private static class NonConstIntElement extends IntFunction {
@@ -1016,5 +1282,16 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
         public void toPlan(PlanSink sink) {
             sink.val("non_const_int_element");
         }
+    }
+
+    /**
+     * Reports which width a test key was read at.
+     */
+    private interface WidthCounter {
+        int intCalls();
+
+        long longCalls();
+
+        void reset();
     }
 }

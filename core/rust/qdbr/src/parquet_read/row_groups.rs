@@ -2514,9 +2514,9 @@ impl ParquetDecoder {
             let qdb_column_type = packed_filter.qdb_column_type();
 
             if op == FILTER_OP_IS_NULL {
-                // A FLOAT or DOUBLE row group can hold an infinity the writer did not count as
-                // null but QuestDB does; see has_non_finite_nulls.
-                if null_count == Some(0) && !Self::has_non_finite_nulls(qdb_column_type) {
+                // A row group can hold a null the writer did not count: an infinity in a FLOAT or
+                // DOUBLE, a (char) 0 in a CHAR. See writer_undercounts_nulls.
+                if null_count == Some(0) && !Self::writer_undercounts_nulls(qdb_column_type) {
                     return Ok(true);
                 }
                 continue;
@@ -2541,7 +2541,13 @@ impl ParquetDecoder {
                 buf_end: filter_buf_end,
             };
             let physical_type = column_metadata.physical_type();
-            let has_nulls = null_count.is_none_or(|c| c > 0);
+            // A type whose NULLs the statistics cannot identify as NULL never reports
+            // has_nulls == false: the value loops consult this where the FILTER value is the null
+            // sentinel, look at no statistic there, and would prune away the very row the writer
+            // failed to count. See nulls_hidden_from_stats - narrower than writer_undercounts_nulls
+            // above, which gates IS NULL and also covers CHAR.
+            let has_nulls =
+                null_count.is_none_or(|c| c > 0) || Self::nulls_hidden_from_stats(qdb_column_type);
             let has_implicit_zeros = Self::has_matchable_zero_nulls(qdb_column_type, has_nulls);
 
             let (min_bytes, max_bytes) = statistics
@@ -3191,19 +3197,59 @@ impl ParquetDecoder {
             || tag == ColumnTypeTag::Char as i32
     }
 
-    /// Reports the types whose NULL set is wider than the parquet writer's.
+    /// Reports the types whose QuestDB NULL set is wider than the one the parquet writer counts,
+    /// so that `null_count == 0` does NOT mean "this row group holds no NULLs".
     ///
-    /// `Numbers.isNull(double)` is an exponent-bits test, so QuestDB calls every non-finite value -
-    /// NaN AND +/-Infinity - NULL, and `Numbers.isNull(float)` says so explicitly. The writer's
-    /// `Nullable` impls for `f32`/`f64` report `is_nan()` alone, so an infinity is written as an
-    /// ordinary value and never counted in `null_count`. A row group holding one therefore reports
-    /// `null_count == 0` while QuestDB considers that row null, and skipping `IS NULL` on that count
-    /// drops a row native storage returns.
+    /// Two independent reasons land a type here, and both make the writer's count an undercount:
     ///
-    /// Only that direction is unsound. `null_count == num_values` means every row is a NaN, which
-    /// QuestDB also calls null, so the `IS NOT NULL` skip stays correct; and an infinity merely keeps
-    /// the count below `num_values`, which declines rather than over-prunes.
-    pub(crate) fn has_non_finite_nulls(qdb_column_type: i32) -> bool {
+    /// - FLOAT and DOUBLE: `Numbers.isNull(double)` is an exponent-bits test, so QuestDB calls every
+    ///   non-finite value - NaN AND +/-Infinity - NULL, while the writer's `Nullable` impls for
+    ///   `f32`/`f64` report `is_nan()` alone. An infinity is written as an ordinary value and never
+    ///   counted.
+    /// - CHAR: its NULL is `(char) 0`, an in-domain value written at definition level 1 like any
+    ///   other. `impl Nullable for u16` (see `parquet_write::mod`) returns `false` unconditionally,
+    ///   so a CHAR NULL is never counted either. Only a column top - definition level 0 - reaches
+    ///   `null_count` for CHAR.
+    ///
+    /// Both make the `IS NULL` skip unsound, which is what this gates: it fires on
+    /// `null_count == Some(0)` and would drop every row native storage returns.
+    ///
+    /// The opposite direction stays correct without help. `null_count == num_values` means every row
+    /// reached definition level 0 or was a NaN, both of which QuestDB also calls null, so the
+    /// `IS NOT NULL` skip is sound; an uncounted null merely keeps `null_count` below `num_values`,
+    /// which declines to skip rather than over-prunes.
+    ///
+    /// This is deliberately WIDER than [`Self::nulls_hidden_from_stats`], which gates `has_nulls` on
+    /// the value paths. CHAR belongs here but not there, because a stored `(char) 0` is an ordinary
+    /// value that lands in the min/max statistics like any other, so the value loops already see it;
+    /// only `null_count` is blind to it. See that method for the other half.
+    pub(crate) fn writer_undercounts_nulls(qdb_column_type: i32) -> bool {
+        let tag = qdb_column_type & 0xFF;
+        tag == ColumnTypeTag::Float as i32
+            || tag == ColumnTypeTag::Double as i32
+            || tag == ColumnTypeTag::Char as i32
+    }
+
+    /// Reports the types holding a NULL that the min/max statistics cannot identify as NULL, so that
+    /// `has_nulls` must not be derived from `null_count` alone.
+    ///
+    /// Every value loop consults `has_nulls` in one place: the branch where the FILTER value is the
+    /// type's own null sentinel (`v.is_nan()` for FLOAT and DOUBLE). It never looks at the statistics
+    /// there, because a NULL is supposed to be a definition-level fact rather than a value. For
+    /// FLOAT and DOUBLE that premise is false - `Numbers.isNull` calls +/-Infinity NULL, and
+    /// `Numbers.equals` therefore calls an infinity EQUAL to a NULL bound, so `d = null::double`
+    /// matches that row natively - while the writer counted only `is_nan()`. Deriving `has_nulls`
+    /// from `null_count` prunes the group holding it.
+    ///
+    /// CHAR is deliberately absent, even though [`Self::writer_undercounts_nulls`] includes it. Its
+    /// NULL is `(char) 0`, an in-domain value, and the two ways one reaches a row group both leave
+    /// the pruning paths already correct: a value stored at definition level 1 is recorded in the
+    /// min/max statistics, and a column top is definition level 0, which lifts `null_count` above 0
+    /// so `has_nulls` is true anyway. Adding CHAR here would force
+    /// [`Self::has_matchable_zero_nulls`] true for every CHAR column and widen its statistics to
+    /// include 0 unconditionally, which costs real pruning - `WHERE val < 'A'` would stop skipping a
+    /// row group that holds no zero at all - and buys no correctness.
+    pub(crate) fn nulls_hidden_from_stats(qdb_column_type: i32) -> bool {
         let tag = qdb_column_type & 0xFF;
         tag == ColumnTypeTag::Float as i32 || tag == ColumnTypeTag::Double as i32
     }
@@ -3224,8 +3270,15 @@ impl ParquetDecoder {
     /// deliberately absent from `has_matchable_zero_nulls`.
     ///
     /// These three plus CHAR are exactly the types `parquet_write::schema` declares Optional purely
-    /// to carry a column top, so the set is closed: every other type has a real sentinel that
-    /// `Nullable::is_null` reports, making def-level 0 equivalent to a genuine NULL.
+    /// to carry a column top. For every type outside that set, def-level 0 is equivalent to a
+    /// genuine NULL, so `null_count == num_values` really does mean every row is null.
+    ///
+    /// That is a statement about definition levels alone, and it does NOT say the writer counts
+    /// every QuestDB NULL - CHAR's own `(char) 0` and a FLOAT/DOUBLE infinity are written as
+    /// ordinary values and go uncounted. [`Self::writer_undercounts_nulls`] carries that half, and
+    /// the two are independent: this one governs the `IS NOT NULL` skip, which reads
+    /// `null_count == num_values` and stays sound under an undercount, while that one governs the
+    /// `IS NULL` skip and `has_nulls`, which read `null_count == 0` and do not.
     pub(crate) fn is_null_free_type(qdb_column_type: i32) -> bool {
         let tag = qdb_column_type & 0xFF;
         tag == ColumnTypeTag::Boolean as i32
@@ -5020,19 +5073,65 @@ mod column_top_zero_tests {
         }
     }
     #[test]
-    fn has_non_finite_nulls_covers_only_float_and_double() {
+    fn writer_undercounts_nulls_covers_float_double_and_char() {
         // QuestDB calls every non-finite value NULL; the writer counts only NaN, so an infinity
         // leaves null_count at 0 while the row is null to a reader.
-        assert!(ParquetDecoder::has_non_finite_nulls(qdb_type(
+        assert!(ParquetDecoder::writer_undercounts_nulls(qdb_type(
             ColumnTypeTag::Float
         )));
-        assert!(ParquetDecoder::has_non_finite_nulls(qdb_type(
+        assert!(ParquetDecoder::writer_undercounts_nulls(qdb_type(
             ColumnTypeTag::Double
+        )));
+        // CHAR's NULL is (char) 0, an in-domain value written at definition level 1 that
+        // `impl Nullable for u16` never reports, so it goes uncounted for the same reason.
+        assert!(ParquetDecoder::writer_undercounts_nulls(qdb_type(
+            ColumnTypeTag::Char
+        )));
+        // BYTE and SHORT also decode a column top to 0, but that 0 is NOT their NULL - they have
+        // no NULL at all - so null_count == 0 is the truth for them and pruning may rely on it.
+        for tag in [
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Long,
+            ColumnTypeTag::Timestamp,
+            ColumnTypeTag::IPv4,
+            ColumnTypeTag::GeoByte,
+            ColumnTypeTag::GeoShort,
+        ] {
+            assert!(
+                !ParquetDecoder::writer_undercounts_nulls(qdb_type(tag)),
+                "{tag:?} has every NULL counted by the writer"
+            );
+        }
+    }
+
+    #[test]
+    fn nulls_hidden_from_stats_excludes_char() {
+        // The narrower of the pair. FLOAT and DOUBLE are in it because an infinity is a NULL that
+        // the value loops cannot recognise: they consult has_nulls where the FILTER value is NaN
+        // and read no statistic there.
+        assert!(ParquetDecoder::nulls_hidden_from_stats(qdb_type(
+            ColumnTypeTag::Float
+        )));
+        assert!(ParquetDecoder::nulls_hidden_from_stats(qdb_type(
+            ColumnTypeTag::Double
+        )));
+        // CHAR is the whole point of keeping two predicates. A stored (char) 0 lands in the min/max
+        // statistics like any other value, and a column top lifts null_count above 0, so has_nulls
+        // needs no help - while forcing it true would make has_matchable_zero_nulls widen every
+        // CHAR column's statistics to include 0 and stop `WHERE val < 'A'` pruning a group that
+        // holds no zero. It IS in writer_undercounts_nulls, which gates IS NULL.
+        assert!(!ParquetDecoder::nulls_hidden_from_stats(qdb_type(
+            ColumnTypeTag::Char
+        )));
+        assert!(ParquetDecoder::writer_undercounts_nulls(qdb_type(
+            ColumnTypeTag::Char
         )));
         for tag in [
             ColumnTypeTag::Byte,
             ColumnTypeTag::Short,
-            ColumnTypeTag::Char,
             ColumnTypeTag::Boolean,
             ColumnTypeTag::Int,
             ColumnTypeTag::Long,
@@ -5040,9 +5139,30 @@ mod column_top_zero_tests {
             ColumnTypeTag::IPv4,
         ] {
             assert!(
-                !ParquetDecoder::has_non_finite_nulls(qdb_type(tag)),
-                "{tag:?} has no non-finite values"
+                !ParquetDecoder::nulls_hidden_from_stats(qdb_type(tag)),
+                "{tag:?} has no NULL the statistics cannot identify"
             );
         }
+    }
+
+    #[test]
+    fn nulls_hidden_from_stats_ignores_the_high_type_bits() {
+        let packed = qdb_type(ColumnTypeTag::Float) | (7 << 8);
+        assert!(ParquetDecoder::nulls_hidden_from_stats(packed));
+        let packed_int = qdb_type(ColumnTypeTag::Int) | (7 << 8);
+        assert!(!ParquetDecoder::nulls_hidden_from_stats(packed_int));
+    }
+
+    #[test]
+    fn writer_undercounts_nulls_ignores_the_high_type_bits() {
+        // The tag lives in the low byte; a packed type (geohash bits, timestamp precision, array
+        // dimensionality) must not read as a different type. Mirrors the has_matchable_zero_nulls
+        // twin above, because both predicates gate a skip that would drop rows.
+        let packed = qdb_type(ColumnTypeTag::Double) | (7 << 8);
+        assert!(ParquetDecoder::writer_undercounts_nulls(packed));
+        let packed_char = qdb_type(ColumnTypeTag::Char) | (11 << 8);
+        assert!(ParquetDecoder::writer_undercounts_nulls(packed_char));
+        let packed_int = qdb_type(ColumnTypeTag::Int) | (7 << 8);
+        assert!(!ParquetDecoder::writer_undercounts_nulls(packed_int));
     }
 }

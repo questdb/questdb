@@ -1336,13 +1336,62 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInfinityRowsSurviveNullEqualityPruning() throws Exception {
+        // The same hole as testInfinityRowsSurviveIsNullPruning, on the EQ path rather than the
+        // IS NULL one. `d = null::double` is not a bare NULL keyword, so it compiles to an ordinary
+        // OP_EQ with a NaN bound; isExactEqDouble certifies NaN as exact because the native side
+        // decides a NULL bound from the null count rather than the statistics. That count came from
+        // a writer that calls only is_nan() null, so a row group holding an infinity - which
+        // Numbers.equals calls EQUAL to NULL, and which EqDoubleFunctionFactory therefore matches
+        // natively - reported has_nulls == false and was pruned away.
+        //
+        // Both signs, and both the statistics and the bloom paths: the bloom arm is the one that
+        // runs when the group carries a bloom filter for the column, and it reads the same
+        // has_nulls.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src2 (m DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO src2 VALUES (10.0, '2024-01-01T01:00:00.000000Z')");
+            execute("CREATE TABLE inf2 (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO inf2 VALUES (1.0, '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO inf2 SELECT 1e308 * m, ts FROM src2");
+            execute("INSERT INTO inf2 SELECT -1e308 * m, '2024-01-01T02:00:00.000000Z'::TIMESTAMP FROM src2");
+            execute("INSERT INTO inf2 VALUES (2.0, '2024-01-02T00:00:00.000000Z')");
+
+            // Genuine infinities, not NaNs: only an infinity compares outside the finite range,
+            // and a NaN would fail both comparisons.
+            assertQuery("SELECT count() c FROM inf2 WHERE d > 1e308")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+            assertQuery("SELECT count() c FROM inf2 WHERE d < -1e308")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+
+            final String nulls = """
+                    d
+                    null
+                    null
+                    """;
+            assertQuery("SELECT d FROM inf2 WHERE d = null::double").noLeakCheck().returns(nulls);
+
+            execute("ALTER TABLE inf2 CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertHasParquetPartitions("inf2", true);
+
+            assertQuery("SELECT d FROM inf2 WHERE d = null::double").noLeakCheck().returns(nulls);
+            // IS NULL already took this branch before the EQ path did; asserting it here keeps the
+            // two spellings of one predicate pinned to the same answer.
+            assertQuery("SELECT d FROM inf2 WHERE d IS NULL").noLeakCheck().returns(nulls);
+        });
+    }
+
+    @Test
     public void testCharColumnTopRowsSurviveEqualityPruning() throws Exception {
         // CHAR's column top decodes to (char) 0, which IS its NULL - but `c = null::char` is not
         // rewritten to IS NULL. It compiles to an ordinary equality against 0, and CHAR equality is
         // a raw comparison, so native storage matches those rows. The statistics never recorded the
-        // zeros, so parquet pruned the row group and lost them. IS NULL, which DOES consult
-        // null_count, was never affected - that is why CHAR needs the statistics widening but not
-        // the IS NOT NULL guard BYTE and SHORT need.
+        // zeros, so parquet pruned the row group and lost them. CHAR therefore needs the statistics
+        // widening but not the IS NOT NULL guard BYTE and SHORT need.
+        //
+        // IS NULL is unaffected in THIS shape only: a column top is definition level 0, which does
+        // reach null_count. A CHAR NULL stored as a value does not - see the sibling
+        // testCharNullRowsSurviveIsNullPruning, which is the shape that broke IS NULL.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE cc (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -1368,6 +1417,59 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             assertHasParquetPartitions("cc", true);
 
             assertQuery("SELECT id FROM cc WHERE c = null::char").noLeakCheck().returns(expected);
+        });
+    }
+
+    @Test
+    public void testCharNullRowsSurviveIsNullPruning() throws Exception {
+        // A CHAR NULL is (char) 0 - an in-domain value the writer stores at definition level 1 like
+        // any other, because `impl Nullable for u16` reports false unconditionally. Only a column
+        // top reaches null_count for CHAR, so a row group whose NULLs were all stored as values
+        // reports null_count == 0, and the IS NULL pushdown skipped it on that count and dropped
+        // every row native storage returns.
+        //
+        // This is the shape the sibling testCharColumnTopRowsSurviveEqualityPruning does NOT cover:
+        // its NULLs come from a column top, which IS counted, which is why IS NULL survived there.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cn (id INT, c CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO cn VALUES
+                    (1, 'a', '2024-01-01T00:00:00.000000Z'),
+                    (2, null, '2024-01-01T01:00:00.000000Z'),
+                    (3, 'b', '2024-01-01T02:00:00.000000Z'),
+                    (4, null, '2024-01-01T03:00:00.000000Z'),
+                    (5, 'c', '2024-01-02T00:00:00.000000Z')
+                    """);
+
+            final String nulls = """
+                    id
+                    2
+                    4
+                    """;
+            final String nonNulls = """
+                    id
+                    1
+                    3
+                    5
+                    """;
+            assertQuery("SELECT id FROM cn WHERE c IS NULL").noLeakCheck().returns(nulls);
+            assertQuery("SELECT id FROM cn WHERE c IS NOT NULL").noLeakCheck().returns(nonNulls);
+            assertQuery("SELECT id FROM cn WHERE c = null::char").noLeakCheck().returns(nulls);
+
+            execute("ALTER TABLE cn CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertHasParquetPartitions("cn", true);
+
+            // IS NOT NULL is the direction that was always correct: an uncounted null keeps
+            // null_count below num_values, which declines to skip rather than over-pruning.
+            assertQuery("SELECT id FROM cn WHERE c IS NULL").noLeakCheck().returns(nulls);
+            assertQuery("SELECT id FROM cn WHERE c IS NOT NULL").noLeakCheck().returns(nonNulls);
+
+            // The equality spelling in the shape that has null_count == 0, which is what makes the
+            // two-predicate split load-bearing: CHAR is deliberately OUT of nulls_hidden_from_stats,
+            // so has_nulls is false here. These rows survive only because a stored (char) 0 is an
+            // ordinary value that lands in the min/max statistics - the premise that lets the value
+            // paths keep working without help. If that premise were wrong this arm would lose rows.
+            assertQuery("SELECT id FROM cn WHERE c = null::char").noLeakCheck().returns(nulls);
         });
     }
 
