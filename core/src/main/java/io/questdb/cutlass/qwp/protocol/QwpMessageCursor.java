@@ -59,6 +59,12 @@ public class QwpMessageCursor implements Mutable {
     private long currentTableAddress;
     private int currentTableIndex;
     private boolean deltaSymbolDictEnabled;
+    // Entries an in-flight delta is about to overwrite, so the finally can put them
+    // back. setPos alone restores only the list's length, so without this an overlap
+    // delta -- the shape of every full-dict frame and every orphan-adoption replay --
+    // leaves its partial writes in place after a mid-frame throw. Reused across
+    // messages; the common append-only delta leaves it empty.
+    private final ObjList<String> dictRollbackScratch = new ObjList<>();
     private boolean gorillaEnabled;
     // Message state
     private long payloadAddress;
@@ -264,26 +270,26 @@ public class QwpMessageCursor implements Mutable {
                             + " exceeds dictionary size " + connectionSymbolDict.size()
             );
         }
-        // With the gap rejected, deltaStartId <= size(), so every slot this
-        // pre-sizing appends falls inside [deltaStartId, requiredSize) and the
-        // loop below overwrites it -- ON A COMPLETE FRAME. But the per-entry loop
-        // can still throw partway (a truncated entry, a symbol length past the
-        // payload), and reject() does NOT close the connection nor clear the
-        // dictionary -- state.clear() preserves connectionSymbolDict for the next
-        // message. So a null pre-filled here but never overwritten would SURVIVE
-        // onto the connection, inflate size(), and defeat QwpSymbolColumnCursor's
-        // idx >= dictLimit guard on a LATER frame exactly as a gap would. Make the
-        // mutation atomic: restore the size on any throw, so a rejected frame leaves
-        // the connection dictionary exactly as it was. Only then does the invariant
-        // "no null can survive this method" actually hold on every path.
         int sizeBefore = connectionSymbolDict.size();
+        // Snapshot what this delta will overwrite. The finally restores it alongside the
+        // length, so a frame that throws partway leaves the connection dictionary exactly
+        // as it was -- content included. reject() neither closes the connection nor clears
+        // the dictionary, and the symbolDictRedefined -> symbolCache.clear() consumer runs
+        // only on success, so a half-applied overlap would leave the cache mapping the old
+        // strings while the dictionary holds the new ones. Empty range on a pure append.
+        int overlapEnd = Math.min(sizeBefore, requiredSize);
+        dictRollbackScratch.clear();
+        for (int i = deltaStartId; i < overlapEnd; i++) {
+            dictRollbackScratch.add(connectionSymbolDict.getQuick(i));
+        }
         boolean committed = false;
         try {
-            while (connectionSymbolDict.size() < requiredSize) {
-                connectionSymbolDict.add(null);
-            }
+            // extendPos, not an add(null) loop: with the gap rejected above,
+            // deltaStartId <= size(), so every slot in [size(), requiredSize) is
+            // overwritten by the entry loop on the success path. Null-filling first was a
+            // redundant O(new ids) write pass on every message carrying a delta.
+            connectionSymbolDict.extendPos(requiredSize);
 
-            // Read and accumulate symbols
             for (int i = 0; i < deltaCount; i++) {
                 if (address >= payloadEnd) {
                     throw QwpParseException.create(
@@ -321,19 +327,28 @@ public class QwpMessageCursor implements Mutable {
                 // Re-sending an identical dict (the common dict-from-0 case within
                 // one sender) overwrites with equal values and is not a redefinition.
                 int dictIndex = deltaStartId + i;
-                String previous = connectionSymbolDict.getQuick(dictIndex);
-                if (previous != null && !previous.equals(symbol)) {
-                    symbolDictRedefined = true;
+                // Only a slot that existed before this frame can be REDEFINED. extendPos
+                // does not null-fill and a rolled-back setPos does not clear, so a slot
+                // above sizeBefore can still hold a stale string; reading it would falsely
+                // raise symbolDictRedefined and force a needless symbolCache.clear().
+                if (dictIndex < sizeBefore) {
+                    String previous = connectionSymbolDict.getQuick(dictIndex);
+                    if (previous != null && !previous.equals(symbol)) {
+                        symbolDictRedefined = true;
+                    }
                 }
                 connectionSymbolDict.setQuick(dictIndex, symbol);
             }
             committed = true;
         } finally {
             if (!committed) {
-                // Roll the pre-sizing back to what it was. A later add() overwrites any
-                // stale slots beyond this position before getQuick can expose them, so no
-                // null is ever reachable through size().
+                // Content first, then length: setQuick asserts index < pos, so shrinking
+                // before restoring would trip the assertion on the very slots being fixed.
+                for (int i = deltaStartId; i < overlapEnd; i++) {
+                    connectionSymbolDict.setQuick(i, dictRollbackScratch.getQuick(i - deltaStartId));
+                }
                 connectionSymbolDict.setPos(sizeBefore);
+                dictRollbackScratch.clear();
             }
         }
 

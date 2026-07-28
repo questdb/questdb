@@ -263,6 +263,64 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
+    public void testTruncatedOverlapDeltaRestoresOverwrittenEntries() throws Exception {
+        // The overlap twin of testTruncatedDeltaLeavesNoNullResidueOnTheConnection.
+        // setPos restores the SIZE only; for deltaStartId < size() the entry loop has
+        // already overwritten pre-existing slots, and reject() neither closes the
+        // connection nor clears the dictionary. A later bare row referencing id 0 then
+        // resolves against the failed frame's symbol -- silent misattribution, with
+        // symbolDictRedefined (success-path only) discarded alongside the exception.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b", "sym_c"));
+
+            // deltaStartId == 0 over a 3-entry dictionary: declares 3, carries 2.
+            // requiredSize == sizeBefore, so the pre-sizing is a no-op and setPos cannot
+            // undo anything. Slots 0 and 1 are rewritten, then the loop throws.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 0, 3, "sym_x", "sym_y");
+                Assert.fail("Expected a truncated-entry parse error");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+            }
+
+            Assert.assertEquals(3, dict.size());
+            Assert.assertEquals("sym_a", dict.getQuick(0));
+            Assert.assertEquals("sym_b", dict.getQuick(1));
+            Assert.assertEquals("sym_c", dict.getQuick(2));
+        });
+    }
+
+    @Test
+    public void testRolledBackFrameDoesNotLeakStaleRedefinition() throws Exception {
+        // extendPos grows pos WITHOUT null-filling, and the rollback's setPos does not
+        // clear, so slots above the restored size can still hold a failed frame's
+        // strings. A later delta extending into that range must not read them as a
+        // "previous value": that raises symbolDictRedefined and forces a spurious
+        // symbolCache.clear() on a healthy frame. Passes today (the code null-fills);
+        // it is the regression guard for the extendPos change below.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a"));
+
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 1, 3, "stale_x");
+                Assert.fail("Expected a truncated-entry parse error");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+            }
+            Assert.assertEquals(1, dict.size());
+
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 1, "sym_b", "sym_c"));
+            Assert.assertEquals(3, dict.size());
+            Assert.assertEquals("sym_b", dict.getQuick(1));
+            Assert.assertEquals("sym_c", dict.getQuick(2));
+        });
+    }
+
+    @Test
     public void testSymbolDictRedefinitionDetected() throws Exception {
         // Guards the orphan-adoption symbol-corruption fix: when a connection's
         // delta symbol dictionary remaps an already-defined client symbol ID to
