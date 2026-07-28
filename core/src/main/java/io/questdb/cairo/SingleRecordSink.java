@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
@@ -43,6 +44,20 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenable {
+    // Name both knobs, not just *.max.pages. That one defaults to Integer.MAX_VALUE, so a user who
+    // reaches the budget on stock settings would be told to raise a property already pinned at its
+    // ceiling, and a user who lowered *.page.size instead would get no usable advice at all. The
+    // page-size key is always raisable, so it leads.
+    public static final String CONFIG_KEYS_ASOF_JOIN =
+            PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE.getPropertyPath()
+                    + " or " + PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath();
+    // RANK halves the product of the two window-store knobs to size each of its two sinks, so the
+    // printed limit is half what the named properties multiply out to. Say so, otherwise the
+    // number reads as a 2x discrepancy to anyone checking it against their configuration.
+    public static final String CONFIG_KEYS_WINDOW_STORE =
+            PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE.getPropertyPath()
+                    + " or " + PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath()
+                    + ", of whose product this budget is half";
     public static final String OWNER_ASOF_JOIN = "ASOF join";
     public static final String OWNER_DENSE_RANK_WINDOW_FUNCTION = "DENSE_RANK() window function";
     public static final String OWNER_RANK_WINDOW_FUNCTION = "RANK() window function";
@@ -63,10 +78,13 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     private long appendAddress;
     private long heapLimit;
     private long heapStart;
-    // Per-query native memory tracker bound by the owning factory at cursor
-    // open time. Null when no per-query limit applies. The class is lazy by
-    // design (constructor does not allocate; reopen() does), so the factory
-    // sequence is setMemoryTracker(...) followed by reopen().
+    // Per-query native memory tracker bound by the owning factory at cursor open time. Null when
+    // no per-query limit applies. The class is lazy by design (constructor does not allocate;
+    // reopen() does), so a factory that binds a tracker does so before calling reopen().
+    // The six ASOF join sinks bind one. The two RANK()/DENSE_RANK() sinks deliberately do not:
+    // each holds exactly one record's serialized ORDER BY key, so the footprint is bounded by the
+    // key width rather than by row count, and there is no runaway to catch. They stay on the
+    // global counter, and their own maxHeapSize still caps them.
     @Nullable
     private MemoryTracker memoryTracker;
 
@@ -76,7 +94,12 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
 
     public SingleRecordSink(long maxHeapSizeBytes, int memoryTag, @NotNull String ownerName, @Nullable String configKey) {
         this.memoryTag = memoryTag;
-        this.maxHeapSize = maxHeapSizeBytes;
+        // Floor at the initial capacity, as the five other budgeted structures do. reopen()
+        // allocates INITIAL_CAPACITY_BYTES unconditionally, so storing a smaller budget verbatim
+        // left the sink holding bytes it had no budget for: a *.max.pages of 0 yields a 0-byte
+        // budget that an 8-byte key still satisfies, and the overflow message then reports
+        // "limit of 0", which is neither what was configured nor what is actually allowed.
+        this.maxHeapSize = Math.max(maxHeapSizeBytes, INITIAL_CAPACITY_BYTES);
         this.ownerName = ownerName;
         this.configKey = configKey;
     }

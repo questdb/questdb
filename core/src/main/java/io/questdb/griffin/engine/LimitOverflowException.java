@@ -32,8 +32,12 @@ public class LimitOverflowException extends CairoException {
 
     public static LimitOverflowException instance() {
         LimitOverflowException ex = tlException.get();
-        ex.message.clear();
-        ex.errno = NON_CRITICAL;
+        // Reset through clear() rather than by hand: this is a recycled per-carrier flyweight, so
+        // flags, messagePosition and the native backtrace all have to go back to their defaults.
+        // Callers stamp state onto a caught CairoException in place - SqlCompilerImpl sets the
+        // statement position on the CREATE TABLE AS SELECT path - and without the full reset that
+        // state reappears on the next limit overflow raised on the same carrier.
+        ex.clear(NON_CRITICAL);
         return ex;
     }
 }

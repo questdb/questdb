@@ -176,7 +176,21 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         });
     }
 
-    // sibling is black and its both children are black (?)
+    @Test
+    public void testCursorClearLeavesCursorExhausted() throws Exception {
+        // clear() used to reset the cursor to 0/0, but 0 is a legal block and value offset, so
+        // hasNext() reported true and next() read rowId(0) - from address 0 once the chain had
+        // been closed. It has to clear to the sentinels instead.
+        assertMemoryLeak(() -> {
+            createTree(5, 3, 9);
+            LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
+            Assert.assertTrue(treeCursor.hasNext());
+
+            treeCursor.clear();
+            Assert.assertFalse("a cleared cursor must be exhausted", treeCursor.hasNext());
+        });
+    }
+
     @Test
     public void testLazyChainAllocatesOnFirstPutWithoutReopen() throws Exception {
         // LimitedSizeSortedLightRecordCursorFactory and AsyncTopKAtom both construct this chain
@@ -211,19 +225,6 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
             assertReadsBack(values.length);
             chain.close();
         });
-    }
-
-    @Test
-    public void testCursorClearLeavesCursorExhausted() {
-        // clear() used to reset the cursor to 0/0, but 0 is a legal block and value offset, so
-        // hasNext() reported true and next() read rowId(0) - from address 0 once the chain had
-        // been closed. It has to clear to the sentinels instead.
-        createTree(5, 3, 9);
-        LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
-        Assert.assertTrue(treeCursor.hasNext());
-
-        treeCursor.clear();
-        Assert.assertFalse("a cleared cursor must be exhausted", treeCursor.hasNext());
     }
 
     @Test

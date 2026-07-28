@@ -131,7 +131,7 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                 Assert.fail("expected LimitOverflowException");
             } catch (LimitOverflowException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
-                        "memory exceeded in DENSE_RANK() window function (raise cairo.sql.window.store.max.pages)");
+                        "memory exceeded in DENSE_RANK() window function (raise cairo.sql.window.store.page.size or cairo.sql.window.store.max.pages, of whose product this budget is half)");
             }
 
             // The sibling test pins the same path for rank(), so assert here that the two owners
@@ -142,7 +142,7 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                 Assert.fail("expected LimitOverflowException");
             } catch (LimitOverflowException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
-                        "memory exceeded in RANK() window function (raise cairo.sql.window.store.max.pages)");
+                        "memory exceeded in RANK() window function (raise cairo.sql.window.store.page.size or cairo.sql.window.store.max.pages, of whose product this budget is half)");
             }
         });
     }
@@ -279,15 +279,17 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                       ('a', 3, '2024-01-01T00:00:02.000000Z'),
                       ('b', 4, '2024-01-01T00:00:03.000000Z')""");
 
-            // assertExceptionNoLeakCheck() passes silently when nothing is thrown, and the point
-            // of this test is that the query reaches the sink at all, so require the throw here.
+            // Catch explicitly to assert on the typed LimitOverflowException rather than on a
+            // message alone. (assertExceptionNoLeakCheck() would also do: TestUtils.assertException
+            // ends with Assert.fail("SQL statement should have failed"), and that AssertionError is
+            // not a FlyweightMessageContainer, so it is rethrown rather than swallowed.)
             try {
                 printSql("SELECT sym, ts, rank() OVER (ORDER BY sym, ts) FROM tab" +
                         " WHERE ts IN '2024-01-01' ORDER BY sym, ts");
                 Assert.fail("expected LimitOverflowException");
             } catch (LimitOverflowException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
-                        "memory exceeded in RANK() window function (raise cairo.sql.window.store.max.pages)");
+                        "memory exceeded in RANK() window function (raise cairo.sql.window.store.page.size or cairo.sql.window.store.max.pages, of whose product this budget is half)");
             }
 
             // Negative control: a single 8-byte key fits the initial capacity, so the same budget

@@ -967,6 +967,12 @@ public class PropServerConfigurationTest {
         assertPageSizeRejected("cairo.sql.window.store.page.size", "32");
         assertPageSizeRejected("cairo.sql.hash.join.light.value.page.size", "0");
         assertPageSizeRejected("cairo.sql.hash.join.light.value.page.size", "8");
+        // small.map sizes OrderedMap's heap. Its constructor already rejects a page too small for
+        // the query's key plus values, but that minimum is query-dependent and only surfaces at
+        // factory construction; the floor rejects the values no query could use at startup.
+        assertPageSizeRejected("cairo.sql.small.map.page.size", "0");
+        assertPageSizeRejected("cairo.sql.small.map.page.size", "4");
+        assertPageSizeRejected("cairo.sql.small.map.page.size", "31");
     }
 
     @Test

@@ -154,6 +154,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     // feeds AbstractRedBlackTree (BLOCK_SIZE 24); sort.light.value/window.rowid feed value chains
     // (CHAIN_VALUE_SIZE 12); window.store sizes buffers via store/RECORD_SIZE (widest 40) and the
     // RecordArray index page (store >> 4), so it needs >= 64.
+    // small.map sizes OrderedMap's heap, whose constructor rejects any page that cannot fit one
+    // key plus its values. That true minimum is query-dependent, so the per-query check stays;
+    // this floor only rules out values no query could use. 32 admits the commonest minimal entry
+    // (one LONG key plus one LONG value, 16 bytes) with the strict margin the check requires.
+    private static final int MIN_MAP_PAGE_SIZE = 32;
     private static final int MIN_SORT_KEY_PAGE_SIZE = 64;
     private static final int MIN_VALUE_HEAP_PAGE_SIZE = 12;
     private static final int MIN_WINDOW_STORE_PAGE_SIZE = 64;
@@ -1584,6 +1589,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
             this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 32);
             this.sqlSmallMapPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
+            validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, this.sqlSmallMapPageSize, MIN_MAP_PAGE_SIZE);
             this.sqlUnorderedMapMaxEntrySize = getInt(properties, env, PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);

@@ -152,8 +152,11 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         clear();
         if (headerPtr != 0) {
             headerPtr = _wptr = hi = Unsafe.free(headerPtr, hi - headerPtr, MemoryTag.NATIVE_HTTP_CONN);
-            boundaryAugmenter.close();
         }
+        // The augmenter owns a block with its own lifecycle, so do not gate freeing it on the
+        // header buffer's pointer: of() allocates on demand and no longer needs the header buffer
+        // to have been present. Its close() is idempotent, so calling it unconditionally is safe.
+        boundaryAugmenter.close();
         sink.close();
         csPool.clear();
     }
@@ -1001,21 +1004,30 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
     public static class BoundaryAugmenter implements Reopenable, QuietCloseable {
         private static final Utf8String BOUNDARY_PREFIX = new Utf8String("\r\n--");
+        // Must stay >= BOUNDARY_PREFIX.size(): the constructor and reopen() both write the prefix
+        // into a block of exactly this size before anything else can grow it.
+        private static final int INITIAL_CAPACITY = 64;
         private final DirectUtf8String export = new DirectUtf8String();
         private long _wptr;
         private long lim;
         private long lo;
 
         public BoundaryAugmenter() {
-            this.lim = 64;
+            this.lim = INITIAL_CAPACITY;
             this.lo = this._wptr = Unsafe.malloc(lim, MemoryTag.NATIVE_HTTP_CONN);
             of0(BOUNDARY_PREFIX);
         }
 
         @Override
         public void close() {
-            if (lo > 0) {
+            if (lo != 0) {
                 lo = _wptr = Unsafe.free(lo, lim, MemoryTag.NATIVE_HTTP_CONN);
+                // lim is a capacity, and the block backing it is gone. Leaving it at the grown
+                // value made of() compare against a block the augmenter no longer held: a value
+                // that fit skipped resize() and wrote through lo + 4 == 4, and a value that did
+                // not booked only newLim - staleLim while allocating newLim. Zero it so every
+                // of() after a close takes the resize path, and let reopen() restore it.
+                lim = 0;
             }
         }
 
@@ -1032,6 +1044,8 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         @Override
         public void reopen() {
             if (lo == 0) {
+                // close() zeroed lim along with the block, so restore it before allocating.
+                this.lim = INITIAL_CAPACITY;
                 this.lo = this._wptr = Unsafe.malloc(lim, MemoryTag.NATIVE_HTTP_CONN);
                 of0(BOUNDARY_PREFIX);
             }
@@ -1043,9 +1057,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             _wptr += len;
         }
 
-        private void resize(int lim) {
+        private void resize(int requiredLen) {
             final long prevLim = this.lim;
-            final long newLim = Numbers.ceilPow2(lim);
+            final long newLim = Numbers.ceilPow2(requiredLen);
             // Commit the pointer and the size only once the realloc has returned. Unsafe.realloc
             // throws once the global RSS limit is breached, and committing this.lim first left the
             // augmenter holding a prevLim-sized block while claiming newLim: close() then

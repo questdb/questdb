@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
@@ -220,7 +219,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 final String owner = dense
                         ? SingleRecordSink.OWNER_DENSE_RANK_WINDOW_FUNCTION
                         : SingleRecordSink.OWNER_RANK_WINDOW_FUNCTION;
-                final String configKey = PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath();
+                final String configKey = SingleRecordSink.CONFIG_KEYS_WINDOW_STORE;
                 singleRecordSinkA = new SingleRecordSink(sinkBudget, MemoryTag.NATIVE_RECORD_CHAIN, owner, configKey);
                 singleRecordSinkB = new SingleRecordSink(sinkBudget, MemoryTag.NATIVE_RECORD_CHAIN, owner, configKey);
             } else {

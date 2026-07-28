@@ -123,6 +123,27 @@ public class SingleRecordSinkTest extends AbstractTest {
     }
 
     @Test
+    public void testMaxHeapSizeFlooredAtInitialCapacity() throws Exception {
+        // A *.max.pages of 0 gives a 0-byte budget, but reopen() allocates INITIAL_CAPACITY_BYTES
+        // regardless. Storing the budget verbatim left the sink holding 8 bytes it had no budget
+        // for: an 8-byte key succeeded against a declared 0-byte limit, and the overflow message
+        // then read "limit of 0" - neither what was configured nor what is actually allowed.
+        // Flooring the budget at the initial capacity makes the two agree.
+        assertMemoryLeak(() -> {
+            try (SingleRecordSink sink = new SingleRecordSink(0, MemoryTag.NATIVE_DEFAULT, "test sink")) {
+                // Exactly the initial capacity, so this must fit rather than overflow.
+                sink.putLong(1);
+                try {
+                    sink.putLong(2);
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 8 memory exceeded in test sink");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPutAfterCloseWithoutReopen() throws Exception {
         // close() zeroes heapLimit along with heapStart, so a closed sink is indistinguishable
         // from a freshly constructed one. heapLimit is an absolute address, not a size: leaving it

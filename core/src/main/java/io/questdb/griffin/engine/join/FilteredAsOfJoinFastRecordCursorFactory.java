@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
@@ -112,10 +111,10 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                 slaveNullRecord,
                 masterFactory.getMetadata().getTimestampIndex(),
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                        PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath()),
+                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
                 slaveTimestampIndex,
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                        PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath()),
+                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
                 masterFactory.getMetadata().getTimestampType(),
                 slaveFactory.getMetadata().getTimestampType(),
                 configuration.getSqlAsOfJoinLookAhead()

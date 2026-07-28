@@ -88,7 +88,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private boolean isFirstN;
     // maximum number of values tree can store (including repeating values)
     private long limit; // -1 means 'almost' unlimited
-    private int minMaxNode = -1;
+    private int minMaxNode = EMPTY;
     private int comparatorLeftSideValidForFrame = -1;
     // for fast filtering out of records in here we store rowId of:
     //  - record with max value for firstN/bottomN query
@@ -149,7 +149,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         valueHeapPos = valueHeapStart;
         comparatorLeftSideValidForFrame = -1;
         minMaxRowId = -1;
-        minMaxNode = -1;
+        minMaxNode = EMPTY;
         currentValues = 0;
         cursor.clear();
         freeList.clear();
@@ -164,7 +164,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         // Misc.free() is null-safe.
         comparatorLeftSideValidForFrame = -1;
         minMaxRowId = -1;
-        minMaxNode = -1;
+        minMaxNode = EMPTY;
         currentValues = 0;
         cursor.clear();
         Misc.free(freeList);
@@ -176,7 +176,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         }
     }
 
-    // returns offset of node containing searchRecord; otherwise returns -1
+    // returns offset of node containing searchRecord; otherwise returns EMPTY
     @TestOnly
     public int find(
             Record searchedRecord,
@@ -186,8 +186,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     ) {
         comparator.setLeft(searchedRecord);
 
-        if (root == -1) {
-            return -1;
+        if (root == EMPTY) {
+            return EMPTY;
         }
 
         int p = root;
@@ -204,7 +204,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             }
         } while (p != EMPTY);
 
-        return -1;
+        return EMPTY;
     }
 
     public LimitedSizeLongTreeChain.TreeCursor getCursor() {
@@ -343,7 +343,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             freeList.add(nodeToRemove); // keep node on freelist to minimize allocations
 
             minMaxRowId = -1; // re-compute after inserting, there's no point doing it now
-            minMaxNode = -1;
+            minMaxNode = EMPTY;
         }
 
         currentValues--;
@@ -381,48 +381,15 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     private void checkValueCapacity() {
-        if (valueHeapStart == 0) {
-            // See AbstractRedBlackTree.checkKeyCapacity: the heaps are unallocated before the
-            // first reopen() and after close(), and valueHeapSize still carries the configured
-            // page size in the never-opened case, so growing from here would book a delta against
-            // memory nothing ever charged.
-            reopen();
-        }
         if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
-            final long required = valueHeapPos - valueHeapStart + CHAIN_VALUE_SIZE;
-            // Doubling alone falls short whenever the heap is smaller than one value, which the
-            // config floors rule out but they do not run in every embedding.
-            long newHeapSize = Math.max(valueHeapSize << 1, required);
-            if (newHeapSize > maxValueHeapSize) {
-                if (required > maxValueHeapSize) {
-                    LimitOverflowException ex = LimitOverflowException.instance();
-                    ex.put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LimitedSizeLongTreeChain");
-                    if (valueHeapConfigKey != null) {
-                        ex.put(" (raise ").put(valueHeapConfigKey).put(')');
-                    }
-                    throw ex;
-                }
-                // Doubling overshoots a cap that is rarely a power of two, so rejecting here
-                // would strand part of the configured budget: the largest reachable heap would be
-                // the largest pageSize * 2^k not exceeding the cap. The value we have to fit still
-                // fits, so clamp to the cap instead.
-                newHeapSize = maxValueHeapSize;
-            }
-            long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
-
-            valueHeapSize = newHeapSize;
-            long delta = newHeapPos - valueHeapStart;
-            valueHeapPos += delta;
-
-            this.valueHeapStart = newHeapPos;
-            this.valueHeapLimit = newHeapPos + newHeapSize;
+            growValueHeap();
         }
     }
 
     private void clearBlock(int position) {
-        setParent(position, -1);
-        setLeft(position, -1);
-        setRight(position, -1);
+        setParent(position, EMPTY);
+        setLeft(position, EMPTY);
+        setRight(position, EMPTY);
         setColor(position, BLACK);
         // assume there's only one value in the chain (otherwise node shouldn't be deleted)
         int refOffset = refOf(position);
@@ -441,6 +408,51 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             counter++;
         }
         return counter;
+    }
+
+    private void growValueHeap() {
+        if (valueHeapStart == 0) {
+            // See AbstractRedBlackTree.growKeyHeap: the heaps are unallocated before the
+            // first reopen() and after close(), and valueHeapSize still carries the configured
+            // page size in the never-opened case, so growing from here would book a delta against
+            // memory nothing ever charged. The unallocated state always reaches this branch,
+            // because close() and the lazy constructor leave valueHeapPos and valueHeapLimit at 0
+            // alongside valueHeapStart, so the caller's 0 + CHAIN_VALUE_SIZE > 0 test is already
+            // true. Testing valueHeapStart here rather than in checkValueCapacity() keeps the
+            // per-row fast path to a single load-compare-branch.
+            assert valueHeapPos == 0 && valueHeapLimit == 0;
+            reopen();
+            if (valueHeapPos + CHAIN_VALUE_SIZE <= valueHeapLimit) {
+                return;
+            }
+        }
+        final long required = valueHeapPos - valueHeapStart + CHAIN_VALUE_SIZE;
+        // Doubling alone falls short whenever the heap is smaller than one value, which the
+        // config floors rule out but they do not run in every embedding.
+        long newHeapSize = Math.max(valueHeapSize << 1, required);
+        if (newHeapSize > maxValueHeapSize) {
+            if (required > maxValueHeapSize) {
+                LimitOverflowException ex = LimitOverflowException.instance();
+                ex.put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LimitedSizeLongTreeChain");
+                if (valueHeapConfigKey != null) {
+                    ex.put(" (raise ").put(valueHeapConfigKey).put(')');
+                }
+                throw ex;
+            }
+            // Doubling overshoots a cap that is rarely a power of two, so rejecting here
+            // would strand part of the configured budget: the largest reachable heap would be
+            // the largest pageSize * 2^k not exceeding the cap. The value we have to fit still
+            // fits, so clamp to the cap instead.
+            newHeapSize = maxValueHeapSize;
+        }
+        long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
+
+        valueHeapSize = newHeapSize;
+        long delta = newHeapPos - valueHeapStart;
+        valueHeapPos += delta;
+
+        this.valueHeapStart = newHeapPos;
+        this.valueHeapLimit = newHeapPos + newHeapSize;
     }
 
     private boolean hasMoreThanOneValue(int position) {
@@ -464,7 +476,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     private void putParent(long rowId) {
-        root = allocateBlock(-1, rowId);
+        root = allocateBlock(EMPTY, rowId);
     }
 
     private void refreshMinMaxNode() {
@@ -485,7 +497,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
         // clear both rowid slot and next value offset
         setRowId(ref, -1);
-        setNextValueOffset(ref, -1);
+        setNextValueOffset(ref, CHAIN_END);
 
         chainFreeList.add(ref);
     }
@@ -592,12 +604,12 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         }
 
         public boolean hasNext() {
-            if (chainCurrent != -1) {
+            if (chainCurrent != CHAIN_END) {
                 return true;
             }
 
             treeCurrent = successor(treeCurrent);
-            if (treeCurrent == -1) {
+            if (treeCurrent == EMPTY) {
                 return false;
             }
 
@@ -617,8 +629,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
         private void setup() {
             int p = root;
-            if (p != -1) {
-                while (leftOf(p) != -1) {
+            if (p != EMPTY) {
+                while (leftOf(p) != EMPTY) {
                     p = leftOf(p);
                 }
             }

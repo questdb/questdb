@@ -352,6 +352,10 @@ public class OrderedMap implements Map, Reopenable {
             size = 0;
             heapSize = 0;
             nResizes = 0;
+            // Clear the mask along with the capacity it derives from. Leaving it behind would let
+            // a probe on a closed map index off the freed offsets address, so keep the two fields
+            // consistent the way every other field here is.
+            mask = 0;
         }
         if (batchEmptyValueStart != 0) {
             batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, heapMemoryTag, memoryTracker);
@@ -430,8 +434,11 @@ public class OrderedMap implements Map, Reopenable {
      * unsigned-sentinel contract without allocating such a heap. The planted offset does not address
      * a real entry, so the caller must keep the planted hash code distinct from every live key's:
      * that keeps every consumer on the hash-mismatch branch, which never dereferences the offset.
-     * The poke bypasses the {@code size} and {@code free} accounting, so a planted slot occupies
-     * the table without counting against the load factor; plant only into a table with headroom.
+     * The poke does not touch {@code size}, since no entry was added to the heap, but it does debit
+     * {@code free} when it fills a previously empty slot: a planted slot really does occupy the
+     * table, and leaving the load factor overstated would let a test plant into a nearly full table
+     * and spin {@code probe0}'s linear probe forever. {@code rehash()} recomputes {@code free} from
+     * the capacity delta, so the debit survives a resize.
      */
     @TestOnly
     public void pokeRawSlot(int index, int rawOffset, int hashCodeLo) {
@@ -439,6 +446,9 @@ public class OrderedMap implements Map, Reopenable {
         // 0 is the empty marker: planting it would free a slot without crediting back free.
         assert !isEmptySlot(rawOffset);
         long offsetAddr = offsetsAddr + ((long) index << 3);
+        if (isEmptySlot(Unsafe.getInt(offsetAddr))) {
+            free--;
+        }
         Unsafe.putInt(offsetAddr, rawOffset);
         Unsafe.putInt(offsetAddr + 4, hashCodeLo);
     }
@@ -945,6 +955,11 @@ public class OrderedMap implements Map, Reopenable {
 
     // Returns delta between new and old heapStart addresses.
     private long resize(long entrySize, long appendAddr) {
+        // OrderedMap is the one lazy structure here that does not self-heal a closed heap: every
+        // owner calls reopen() first, so growing from heapAddr == 0 is unreachable rather than
+        // handled. Assert it, otherwise the realloc would resurrect the key heap while offsetsAddr
+        // stayed 0 and probe0 read through a freed address.
+        assert heapAddr != 0;
         assert appendAddr >= heapAddr;
         if (nResizes == maxResizes) {
             throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");

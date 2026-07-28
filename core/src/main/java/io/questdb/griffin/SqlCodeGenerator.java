@@ -1101,6 +1101,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // light rather than recursing; that keeps the predicate O(1) and the
     // wrapper overrides for translateOrderByColumnToBase / rewrapOverTopK
     // still chain correctly when they run.
+    // Both the streaming and the cached window path decide whether the model's ORDER BY already
+    // delivers the window's. They used to carry hand-copied loops, which is how one of the two came
+    // to index the key list past its end; one implementation now serves both call sites.
+    private static boolean canDismissWindowOrder(LowerCaseCharSequenceIntHashMap orderHash, WindowExpression ac, int osz) {
+        // The loop walks both orders positionally, so the model's has to be at least as long as the
+        // window's. It cannot dismiss a window order the model does not cover anyway: a longer
+        // window order asks for a finer sort than the model delivers. Bound on the key list because
+        // that is what gets indexed below - not because it can differ from size(), which it cannot:
+        // AbstractLowerCaseCharSequenceHashMap keeps the list and the hash part in lockstep, so
+        // keys().size() == size() unconditionally. Either bound would be numerically right; this
+        // one is right for the indexing it guards.
+        if (osz == 0 || osz > orderHash.keys().size()) {
+            return false;
+        }
+        for (int j = 0; j < osz; j++) {
+            ExpressionNode node = ac.getOrderBy().getQuick(j);
+            int direction = ac.getOrderByDirection().getQuick(j);
+            if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j))
+                    || orderHash.get(node.token) != direction) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static boolean canReachPageFrameLeafForTopK(RecordCursorFactory f) {
         if (f.supportsPageFrameCursor() || f.supportsFilterStealing()) {
             return true;
@@ -9850,26 +9875,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // analyze order by clause on the current model and optimise out
                     // order by on window function if it matches the one on the model
                     final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
-                    boolean dismissOrder = false;
+                    boolean dismissOrder;
                     int timestampIdx = base.getMetadata().getTimestampIndex();
                     int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
 
-                    // The loop below walks both orders positionally, so the model's has to be at
-                    // least as long as the window's. It cannot dismiss a window order the model
-                    // does not cover anyway: a longer window order asks for a finer sort than the
-                    // model delivers. Bound on the key list itself, which is what gets indexed.
-                    if (base.followedOrderByAdvice() && osz > 0 && osz <= orderHash.keys().size()) {
-                        dismissOrder = true;
-                        for (int j = 0; j < osz; j++) {
-                            ExpressionNode node = ac.getOrderBy().getQuick(j);
-                            int direction = ac.getOrderByDirection().getQuick(j);
-                            if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
-                                    orderHash.get(node.token) != direction) {
-                                dismissOrder = false;
-                                break;
-                            }
-                        }
-                    }
+                    dismissOrder = base.followedOrderByAdvice() && canDismissWindowOrder(orderHash, ac, osz);
                     if (!dismissOrder && osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
                         ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
                         int orderByDirection = ac.getOrderByDirection().getQuick(0);
@@ -10101,26 +10111,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // analyze order by clause on the current model and optimise out
                     // order by on window function if it matches the one on the model
                     final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
-                    boolean dismissOrder = false;
+                    boolean dismissOrder;
                     int timestampIdx = base.getMetadata().getTimestampIndex();
                     int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
 
-                    // The loop below walks both orders positionally, so the model's has to be at
-                    // least as long as the window's. It cannot dismiss a window order the model
-                    // does not cover anyway: a longer window order asks for a finer sort than the
-                    // model delivers. Bound on the key list itself, which is what gets indexed.
-                    if (base.followedOrderByAdvice() && osz > 0 && osz <= orderHash.keys().size()) {
-                        dismissOrder = true;
-                        for (int j = 0; j < osz; j++) {
-                            ExpressionNode node = ac.getOrderBy().getQuick(j);
-                            int direction = ac.getOrderByDirection().getQuick(j);
-                            if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j))
-                                    || orderHash.get(node.token) != direction) {
-                                dismissOrder = false;
-                                break;
-                            }
-                        }
-                    }
+                    dismissOrder = base.followedOrderByAdvice() && canDismissWindowOrder(orderHash, ac, osz);
                     if (osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
                         ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
                         int orderByDirection = ac.getOrderByDirection().getQuick(0);

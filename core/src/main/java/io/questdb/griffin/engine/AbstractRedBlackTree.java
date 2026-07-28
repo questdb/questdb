@@ -120,64 +120,70 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         return (keyHeapPos - keyHeapStart) / BLOCK_SIZE;
     }
 
-    private static int compressKeyOffset(long rawOffset) {
-        return (int) (rawOffset >> 3);
-    }
-
-    // Compressed offsets are unsigned: blocks at or past the 16GB mark have the top bit set.
-    private static long uncompressKeyOffset(int offset) {
-        return Integer.toUnsignedLong(offset) << 3;
-    }
-
     /**
-     * Resolves a block offset to its heap address for the setters. Holding the EMPTY check here
-     * rather than repeating it in each setter keeps those six methods small enough for the JIT to
-     * inline unconditionally; they sit on the O(log n)-per-row rebalancing path.
+     * Resolves a block offset to its heap address for the setters, and asserts the offset is not
+     * the EMPTY sentinel. The setters had no such check before, so this adds one rather than
+     * hoisting one out of them: it turns a silent write at {@code keyHeapStart + 32GB} - which is
+     * where an EMPTY offset now lands, since the widening is unsigned - into a loud failure under
+     * {@code -ea}. The assert compiles out in production builds.
      */
     private long blockAddress(int blockOffset) {
         assert blockOffset != EMPTY;
-        return keyHeapStart + uncompressKeyOffset(blockOffset);
+        return keyHeapStart + CompressedOffsets.uncompressAligned8(blockOffset);
     }
 
     private void checkKeyCapacity() {
+        if (keyHeapPos + BLOCK_SIZE > keyHeapLimit) {
+            growKeyHeap();
+        }
+    }
+
+    private void growKeyHeap() {
         if (keyHeapStart == 0) {
             // Every production owner constructs with openOnInit == false, and close() zeroes the
             // heap again, so this is the normal state before the first reopen(). keyHeapSize still
             // carries the configured page size in the never-opened case, so growing from here
             // would realloc off a null pointer while booking a delta against memory nothing ever
             // charged, driving the global and per-query counters low. Allocate first instead.
+            // The unallocated state always reaches this branch: close() and the lazy constructor
+            // leave keyHeapPos and keyHeapLimit at 0 alongside keyHeapStart, so the caller's
+            // 0 + BLOCK_SIZE > 0 test is already true. Testing keyHeapStart here rather than in
+            // checkKeyCapacity() keeps the per-row fast path to a single load-compare-branch and
+            // off the bimorphic reopen() call.
+            assert keyHeapPos == 0 && keyHeapLimit == 0;
             reopen();
-        }
-        if (keyHeapPos + BLOCK_SIZE > keyHeapLimit) {
-            final long required = keyHeapPos - keyHeapStart + BLOCK_SIZE;
-            // Doubling alone does not necessarily cover the block: it falls short whenever the
-            // heap is smaller than one block, which the constructor's assert and the config
-            // floors rule out but neither runs in every embedding.
-            long newHeapSize = Math.max(keyHeapSize << 1, required);
-            if (newHeapSize > maxKeyHeapSize) {
-                if (required > maxKeyHeapSize) {
-                    LimitOverflowException ex = LimitOverflowException.instance();
-                    ex.put("limit of ").put(maxKeyHeapSize).put(" memory exceeded in RedBlackTree");
-                    if (keyHeapConfigKey != null) {
-                        ex.put(" (raise ").put(keyHeapConfigKey).put(')');
-                    }
-                    throw ex;
-                }
-                // Doubling overshoots a cap that is rarely a power of two, so rejecting here
-                // would strand part of the configured budget: the largest reachable heap would be
-                // the largest pageSize * 2^k not exceeding the cap. The block we have to fit still
-                // fits, so clamp to the cap instead.
-                newHeapSize = maxKeyHeapSize;
+            if (keyHeapPos + BLOCK_SIZE <= keyHeapLimit) {
+                return;
             }
-            long newHeapPos = Unsafe.realloc(keyHeapStart, keyHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
-
-            keyHeapSize = newHeapSize;
-            long delta = newHeapPos - keyHeapStart;
-            keyHeapPos += delta;
-
-            this.keyHeapStart = newHeapPos;
-            this.keyHeapLimit = newHeapPos + newHeapSize;
         }
+        final long required = keyHeapPos - keyHeapStart + BLOCK_SIZE;
+        // Doubling alone does not necessarily cover the block: it falls short whenever the
+        // heap is smaller than one block, which the constructor's assert and the config
+        // floors rule out but neither runs in every embedding.
+        long newHeapSize = Math.max(keyHeapSize << 1, required);
+        if (newHeapSize > maxKeyHeapSize) {
+            if (required > maxKeyHeapSize) {
+                LimitOverflowException ex = LimitOverflowException.instance();
+                ex.put("limit of ").put(maxKeyHeapSize).put(" memory exceeded in RedBlackTree");
+                if (keyHeapConfigKey != null) {
+                    ex.put(" (raise ").put(keyHeapConfigKey).put(')');
+                }
+                throw ex;
+            }
+            // Doubling overshoots a cap that is rarely a power of two, so rejecting here
+            // would strand part of the configured budget: the largest reachable heap would be
+            // the largest pageSize * 2^k not exceeding the cap. The block we have to fit still
+            // fits, so clamp to the cap instead.
+            newHeapSize = maxKeyHeapSize;
+        }
+        long newHeapPos = Unsafe.realloc(keyHeapStart, keyHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
+
+        keyHeapSize = newHeapSize;
+        long delta = newHeapPos - keyHeapStart;
+        keyHeapPos += delta;
+
+        this.keyHeapStart = newHeapPos;
+        this.keyHeapLimit = newHeapPos + newHeapSize;
     }
 
     private void rotateLeft(int p) {
@@ -226,7 +232,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
 
     protected int allocateBlock() {
         checkKeyCapacity();
-        final int offset = compressKeyOffset(keyHeapPos - keyHeapStart);
+        final int offset = CompressedOffsets.compressAligned8(keyHeapPos - keyHeapStart);
         setLeft(offset, EMPTY);
         setRight(offset, EMPTY);
         setColor(offset, BLACK);
@@ -235,7 +241,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     }
 
     protected byte colorOf(int blockOffset) {
-        return blockOffset == EMPTY ? BLACK : Unsafe.getByte(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_COLOUR);
+        return blockOffset == EMPTY ? BLACK : Unsafe.getByte(keyHeapStart + CompressedOffsets.uncompressAligned8(blockOffset) + OFFSET_COLOUR);
     }
 
     protected int findMaxNode() {
@@ -387,11 +393,11 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     // The returned -1 is the value-chain sentinel, not EMPTY: it marks "no element ref", and
     // element refs are a different namespace from block offsets.
     protected int lastRefOf(int blockOffset) {
-        return blockOffset == EMPTY ? -1 : Unsafe.getInt(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_LAST_REF);
+        return blockOffset == EMPTY ? -1 : Unsafe.getInt(keyHeapStart + CompressedOffsets.uncompressAligned8(blockOffset) + OFFSET_LAST_REF);
     }
 
     protected int leftOf(int blockOffset) {
-        return blockOffset == EMPTY ? EMPTY : Unsafe.getInt(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_LEFT);
+        return blockOffset == EMPTY ? EMPTY : Unsafe.getInt(keyHeapStart + CompressedOffsets.uncompressAligned8(blockOffset) + OFFSET_LEFT);
     }
 
     protected int parent2Of(int blockOffset) {
@@ -399,12 +405,12 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     }
 
     protected int parentOf(int blockOffset) {
-        return blockOffset == EMPTY ? EMPTY : Unsafe.getInt(keyHeapStart + uncompressKeyOffset(blockOffset));
+        return blockOffset == EMPTY ? EMPTY : Unsafe.getInt(keyHeapStart + CompressedOffsets.uncompressAligned8(blockOffset));
     }
 
     // See lastRefOf: the returned -1 is the value-chain sentinel, not EMPTY.
     protected int refOf(int blockOffset) {
-        return blockOffset == EMPTY ? -1 : Unsafe.getInt(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_REF);
+        return blockOffset == EMPTY ? -1 : Unsafe.getInt(keyHeapStart + CompressedOffsets.uncompressAligned8(blockOffset) + OFFSET_REF);
     }
 
     // based on Thomas Cormen's Introduction to Algorithm's
@@ -447,7 +453,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
 
     // methods below check for the EMPTY sentinel to simulate a nil node and thus simplify insert/remove methods
     protected int rightOf(int blockOffset) {
-        return blockOffset == EMPTY ? EMPTY : Unsafe.getInt(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_RIGHT);
+        return blockOffset == EMPTY ? EMPTY : Unsafe.getInt(keyHeapStart + CompressedOffsets.uncompressAligned8(blockOffset) + OFFSET_RIGHT);
     }
 
     protected void setColor(int blockOffset, byte colour) {

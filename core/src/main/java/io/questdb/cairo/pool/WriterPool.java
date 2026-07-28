@@ -389,7 +389,7 @@ public class WriterPool extends AbstractPool {
     private void checkClosed() {
         if (isClosed()) {
             LOG.info().$("is closed").$();
-            throw PoolClosedException.INSTANCE;
+            throw PoolClosedException.instance();
         }
     }
 

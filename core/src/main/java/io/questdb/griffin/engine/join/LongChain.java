@@ -124,39 +124,51 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     }
 
     private void checkCapacity() {
+        if (heapPos + CHAIN_VALUE_SIZE > heapLimit) {
+            grow();
+        }
+    }
+
+    private void grow() {
         if (heapStart == 0) {
             // A keepClosed chain allocates nothing until reopen(), and close() zeroes the heap
             // again. Growing from that state would realloc off a null pointer and then write 12
             // bytes through address 0, so allocate the configured heap first. Recovering here
             // rather than through Math.max alone also keeps the chain at its configured page size
             // instead of leaving it at one value and re-doubling from there.
+            // The unallocated state always reaches this branch: close() and the keepClosed
+            // constructor leave heapPos and heapLimit at 0 alongside heapStart, so the caller's
+            // 0 + CHAIN_VALUE_SIZE > 0 test is already true. Testing heapStart here rather than
+            // in checkCapacity() keeps the per-row fast path to a single load-compare-branch.
+            assert heapPos == 0 && heapLimit == 0;
             reopen();
-        }
-        if (heapPos + CHAIN_VALUE_SIZE > heapLimit) {
-            final long required = heapPos - heapStart + CHAIN_VALUE_SIZE;
-            if (required > maxHeapSize) {
-                throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in LongChain");
+            if (heapPos + CHAIN_VALUE_SIZE <= heapLimit) {
+                return;
             }
-            // Doubling alone falls short whenever the heap is smaller than one value, which the
-            // config floor and the constructor's assert rule out but neither runs in every
-            // embedding. The tree chains carry the same guard for the same reason.
-            long newHeapSize = Math.max(heapSize << 1, required);
-            // Doubling overshoots a cap that is rarely a power of two, and the throw above has
-            // already established that the value we have to fit does fit under the cap. Clamp
-            // instead of rejecting, otherwise the largest reachable heap is the largest
-            // pageSize * 2^k not exceeding the cap and part of the configured budget stays unused.
-            if (newHeapSize > maxHeapSize) {
-                newHeapSize = maxHeapSize;
-            }
-            long newHeapPos = Unsafe.realloc(heapStart, heapSize, newHeapSize, MemoryTag.NATIVE_DEFAULT, memoryTracker);
-
-            heapSize = newHeapSize;
-            long delta = newHeapPos - heapStart;
-            heapPos += delta;
-
-            this.heapStart = newHeapPos;
-            this.heapLimit = newHeapPos + newHeapSize;
         }
+        final long required = heapPos - heapStart + CHAIN_VALUE_SIZE;
+        if (required > maxHeapSize) {
+            throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in LongChain");
+        }
+        // Doubling alone falls short whenever the heap is smaller than one value, which the
+        // config floor and the constructor's assert rule out but neither runs in every
+        // embedding. The tree chains carry the same guard for the same reason.
+        long newHeapSize = Math.max(heapSize << 1, required);
+        // Doubling overshoots a cap that is rarely a power of two, and the throw above has
+        // already established that the value we have to fit does fit under the cap. Clamp
+        // instead of rejecting, otherwise the largest reachable heap is the largest
+        // pageSize * 2^k not exceeding the cap and part of the configured budget stays unused.
+        if (newHeapSize > maxHeapSize) {
+            newHeapSize = maxHeapSize;
+        }
+        long newHeapPos = Unsafe.realloc(heapStart, heapSize, newHeapSize, MemoryTag.NATIVE_DEFAULT, memoryTracker);
+
+        heapSize = newHeapSize;
+        long delta = newHeapPos - heapStart;
+        heapPos += delta;
+
+        this.heapStart = newHeapPos;
+        this.heapLimit = newHeapPos + newHeapSize;
     }
 
     public class Cursor {

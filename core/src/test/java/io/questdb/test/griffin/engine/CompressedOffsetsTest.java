@@ -68,4 +68,42 @@ public class CompressedOffsetsTest {
                     -1, CompressedOffsets.compressAligned4(offset));
         }
     }
+
+    @Test
+    public void testAligned8RoundTripsAboveSignedIntRange() {
+        // The 8-byte-scaled pair backs AbstractRedBlackTree's key heap, which addresses blocks
+        // rather than chain values. Same unsigned contract as the 4-byte pair, twice the reach:
+        // reading a top-bit-set offset as signed put every node accessor 32GB below the heap.
+        final long blockSize = 24;
+        final long maxKeyHeapSize = (Integer.toUnsignedLong(-1) - 1) << 3; // (2^32 - 2) * 8
+        final long lastSignedOffset = ((long) Integer.MAX_VALUE) << 3;     // compresses to Integer.MAX_VALUE
+        final long firstUnsignedOffset = (1L << 31) << 3;                  // compresses to Integer.MIN_VALUE
+        final long lastBlockOffset = maxKeyHeapSize - blockSize;           // last offset a block can start at
+        final long[] offsets = {
+                0,
+                8,
+                1L << 30,
+                lastSignedOffset,
+                firstUnsignedOffset,
+                3L << 33, // mid-unsigned range: compresses negative, but to neither boundary
+                lastBlockOffset,
+        };
+        for (long offset : offsets) {
+            final int rawOffset = CompressedOffsets.compressAligned8(offset);
+            Assert.assertEquals("offset " + offset, offset, CompressedOffsets.uncompressAligned8(rawOffset));
+        }
+
+        // The upper half of the range is exactly what the signed reading got wrong.
+        Assert.assertTrue(CompressedOffsets.compressAligned8(lastSignedOffset) > 0);
+        Assert.assertTrue(CompressedOffsets.compressAligned8(firstUnsignedOffset) < 0);
+        Assert.assertTrue(CompressedOffsets.compressAligned8(lastBlockOffset) < 0);
+
+        // The empty-block sentinel decodes to 8 bytes past the largest addressable heap, so no
+        // legal block offset can collide with it.
+        Assert.assertEquals(maxKeyHeapSize + 8, CompressedOffsets.uncompressAligned8(-1));
+        for (long offset : offsets) {
+            Assert.assertNotEquals("offset " + offset + " must not compress to the EMPTY sentinel",
+                    -1, CompressedOffsets.compressAligned8(offset));
+        }
+    }
 }

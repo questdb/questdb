@@ -65,6 +65,70 @@ public class HttpHeaderParserTest {
             .build();
 
     @Test
+    public void testBoundaryAugmenterCloseResetsLimit() throws Exception {
+        // close() used to zero lo and _wptr but leave lim at its last grown value. The augmenter
+        // then claimed a block it no longer held: the next of() large enough to resize reallocated
+        // off a null pointer while booking only newLim - staleLim, so the counters were charged
+        // less than was allocated and close() over-freed by the difference. assertMemoryLeak
+        // observes exactly that imbalance.
+        TestUtils.assertMemoryLeak(() -> {
+            final StringSink grown = new StringSink();
+            for (int i = 0; i < 200; i++) {
+                grown.put('a');
+            }
+            // Longer than the block the first value grows into, so the follow-up of() resizes
+            // rather than taking the write-through-a-stale-limit path.
+            final StringSink larger = new StringSink();
+            for (int i = 0; i < 300; i++) {
+                larger.put('b');
+            }
+
+            try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
+                TestUtils.assertEquals("\r\n--" + grown, augmenter.of(new Utf8String(grown)));
+                augmenter.close();
+                TestUtils.assertEquals("\r\n--" + larger, augmenter.of(new Utf8String(larger)));
+            }
+        });
+    }
+
+    @Test
+    public void testBoundaryAugmenterOfAfterCloseWithoutReopen() throws Exception {
+        // The other half of the stale-limit bug: a follow-up value that fits under the stale lim
+        // skipped resize() altogether, so _wptr became lo + 4 == 4 and of0() wrote through
+        // address 4. Zeroing lim in close() makes every of() take the resize path instead.
+        // If this ever regresses the failure mode is a JVM crash (SIGSEGV, surefire exit 134),
+        // not an assertion, and it takes the rest of the fork down with it. The sibling
+        // testBoundaryAugmenterCloseResetsLimit localises the same fix with a clean assertion.
+        TestUtils.assertMemoryLeak(() -> {
+            final StringSink grown = new StringSink();
+            for (int i = 0; i < 200; i++) {
+                grown.put('a');
+            }
+
+            try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
+                TestUtils.assertEquals("\r\n--" + grown, augmenter.of(new Utf8String(grown)));
+                augmenter.close();
+                // Nine bytes: comfortably inside the 256-byte block close() used to keep claiming.
+                TestUtils.assertEquals("\r\n--short", augmenter.of(new Utf8String("short")));
+            }
+        });
+    }
+
+    @Test
+    public void testBoundaryAugmenterReopenAfterCloseRestoresLimit() throws Exception {
+        // close() zeroes lim, so reopen() has to restore it before allocating - otherwise it
+        // mallocs a zero-length block and the boundary prefix writes past the end of it.
+        TestUtils.assertMemoryLeak(() -> {
+            try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
+                TestUtils.assertEquals("\r\n--first", augmenter.of(new Utf8String("first")));
+                augmenter.close();
+                augmenter.reopen();
+                TestUtils.assertEquals("\r\n--second", augmenter.of(new Utf8String("second")));
+            }
+        });
+    }
+
+    @Test
     public void testBoundaryAugmenterResizeFailureKeepsSizeConsistent() throws Exception {
         // A multipart boundary longer than 64 bytes is client-controlled and makes the augmenter
         // grow. Unsafe.realloc throws once the global RSS limit is breached - which every standard
@@ -94,6 +158,24 @@ public class HttpHeaderParserTest {
                 // The augmenter still holds its original block, so a value that fits must round
                 // trip rather than run past the end of it.
                 TestUtils.assertEquals("\r\n--short", augmenter.of(new Utf8String("short")));
+
+                // The production comment names two consequences, and the value above only
+                // reaches the first: nine bytes fit the real 64-byte block either way. A value
+                // that overflows the block actually held but not the size wrongly claimed enters
+                // the second. Under the old code lim already read 256, so this of() skipped
+                // resize() and wrote ~150 bytes into a 64-byte block. The allocation is what to
+                // assert - reading the content back would only return the bytes the overrun
+                // itself wrote.
+                final StringSink overrun = new StringSink();
+                for (int i = 0; i < 150; i++) {
+                    overrun.put('c');
+                }
+                final long usedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
+                TestUtils.assertEquals("\r\n--" + overrun, augmenter.of(new Utf8String(overrun)));
+                Assert.assertTrue(
+                        "of() must grow the block it really holds rather than write past it",
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) > usedBefore
+                );
             }
         });
     }

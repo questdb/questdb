@@ -1079,7 +1079,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "SELECT m.k, m.v, s.v FROM master m ASOF JOIN slave s ON (k)",
                     0,
-                    "limit of 8 memory exceeded in ASOF join (raise cairo.sql.hash.join.value.max.pages)"
+                    "limit of 8 memory exceeded in ASOF join (raise cairo.sql.hash.join.value.page.size or cairo.sql.hash.join.value.max.pages)"
             );
         });
     }

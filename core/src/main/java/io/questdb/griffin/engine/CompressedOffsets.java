@@ -36,8 +36,14 @@ package io.questdb.griffin.engine;
  * The 4-byte-aligned pair below backs the value chains of
  * {@link io.questdb.griffin.engine.orderby.LongTreeChain},
  * {@link io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain} and
- * {@link io.questdb.griffin.engine.join.LongChain}, which held byte-identical copies of it. Keeping
- * one copy keeps the unsigned contract, and any future correction to it, in a single place.
+ * {@link io.questdb.griffin.engine.join.LongChain}, and the 8-byte-aligned pair backs
+ * {@link io.questdb.griffin.engine.AbstractRedBlackTree}'s key heap. All four held byte-identical
+ * copies of this arithmetic. Keeping one copy keeps the unsigned contract, and any future
+ * correction to it, in a single place.
+ * <p>
+ * {@link io.questdb.cairo.map.OrderedMap} deliberately keeps its own pair: its offsets carry a
+ * {@code +1} bias so that 0 can mark an empty slot, which is a different encoding rather than a
+ * duplicate of this one.
  */
 public final class CompressedOffsets {
 
@@ -45,10 +51,19 @@ public final class CompressedOffsets {
     }
 
     /**
-     * Compresses a 4-byte-aligned heap offset. Addresses up to 16GB round trip.
+     * Compresses a 4-byte-aligned heap offset. Offsets round trip up to {@code (2^32 - 2) * 4},
+     * one step below the all-ones encoding that consumers reserve as their chain-end sentinel.
      */
     public static int compressAligned4(long rawOffset) {
         return (int) (rawOffset >> 2);
+    }
+
+    /**
+     * Compresses an 8-byte-aligned heap offset. Offsets round trip up to {@code (2^32 - 2) * 8},
+     * one step below the all-ones encoding that consumers reserve as their empty-block sentinel.
+     */
+    public static int compressAligned8(long rawOffset) {
+        return (int) (rawOffset >> 3);
     }
 
     /**
@@ -56,5 +71,12 @@ public final class CompressedOffsets {
      */
     public static long uncompressAligned4(int offset) {
         return Integer.toUnsignedLong(offset) << 2;
+    }
+
+    /**
+     * Widens an 8-byte-aligned compressed offset back to a byte offset, treating it as unsigned.
+     */
+    public static long uncompressAligned8(int offset) {
+        return Integer.toUnsignedLong(offset) << 3;
     }
 }

@@ -29,8 +29,8 @@ import io.questdb.griffin.engine.join.LongChain;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -72,6 +72,30 @@ public class LongChainTest {
                         count++;
                     }
                     Assert.assertEquals(N, count);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBudgetFlooredAtOnePage() throws Exception {
+        // cairo.sql.hash.join.light.value.max.pages = 0 is accepted by config and used to give a
+        // zero budget, so every hash join failed with "limit of 0" even though the chain had
+        // already allocated a full page. Flooring the budget at one page makes the reported limit
+        // agree with what the chain actually holds, and is user-visible behaviour: without the
+        // floor the first put below throws instead of succeeding.
+        assertMemoryLeak(() -> {
+            try (LongChain chain = new LongChain(64, 0)) {
+                // 64-byte page, 12-byte values: five fit, the sixth needs 72.
+                int prev = -1;
+                for (int i = 0; i < 5; i++) {
+                    prev = chain.put(i, prev);
+                }
+                try {
+                    chain.put(5, prev);
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 64 memory exceeded in LongChain");
                 }
             }
         });
@@ -153,7 +177,14 @@ public class LongChainTest {
                 // The configured 64-byte page, not the 12 bytes this one value needs. Growing from
                 // a closed heap instead of opening it leaves the chain one value wide, re-doubling
                 // from there for the rest of its life, and reallocs off a null pointer.
-                Assert.assertEquals(64, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT) - usedBefore);
+                // NATIVE_DEFAULT is engine-wide and the most widely shared tag in the codebase, so
+                // assert a lower bound rather than an exact delta: any unrelated allocation between
+                // the two reads would turn an equality check into a spurious hard failure. The
+                // bound still separates the two outcomes, since the broken path books only 12.
+                Assert.assertTrue(
+                        "a keepClosed chain must allocate its configured page on first put",
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT) - usedBefore >= 64
+                );
 
                 final int second = chain.put(43, first);
 

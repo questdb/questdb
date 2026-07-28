@@ -21997,9 +21997,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             b\t4\t4
                             """);
 
+            // This is the only probe of the cached generator copy, so pin the factory as well as
+            // the rows: without the plan assertion the test would still pass if the query silently
+            // stopped taking the CachedWindow path the guard lives on.
             assertQuery("SELECT sym, l, avg(l) OVER (ORDER BY sym, ts, l) avg FROM tab" +
                     " WHERE ts IN '2024-01-01' ORDER BY sym, ts")
                     .expectSize()
+                    .withPlanContaining("CachedWindow")
                     .returns("""
                             sym\tl\tavg
                             a\t1\t1.0

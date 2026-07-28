@@ -200,42 +200,54 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     }
 
     private void checkValueCapacity() {
+        if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
+            growValueHeap();
+        }
+    }
+
+    private void growValueHeap() {
         if (valueHeapStart == 0) {
-            // See AbstractRedBlackTree.checkKeyCapacity: the heaps are unallocated before the
+            // See AbstractRedBlackTree.growKeyHeap: the heaps are unallocated before the
             // first reopen() and after close(), and valueHeapSize still carries the configured
             // page size in the never-opened case, so growing from here would book a delta against
-            // memory nothing ever charged.
+            // memory nothing ever charged. The unallocated state always reaches this branch,
+            // because close() and the lazy constructor leave valueHeapPos and valueHeapLimit at 0
+            // alongside valueHeapStart, so the caller's 0 + CHAIN_VALUE_SIZE > 0 test is already
+            // true. Testing valueHeapStart here rather than in checkValueCapacity() keeps the
+            // per-row fast path to a single load-compare-branch.
+            assert valueHeapPos == 0 && valueHeapLimit == 0;
             reopen();
-        }
-        if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
-            final long required = valueHeapPos - valueHeapStart + CHAIN_VALUE_SIZE;
-            // Doubling alone falls short whenever the heap is smaller than one value, which the
-            // config floors rule out but they do not run in every embedding.
-            long newHeapSize = Math.max(valueHeapSize << 1, required);
-            if (newHeapSize > maxValueHeapSize) {
-                if (required > maxValueHeapSize) {
-                    LimitOverflowException ex = LimitOverflowException.instance();
-                    ex.put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LongTreeChain");
-                    if (valueHeapConfigKey != null) {
-                        ex.put(" (raise ").put(valueHeapConfigKey).put(')');
-                    }
-                    throw ex;
-                }
-                // Doubling overshoots a cap that is rarely a power of two, so rejecting here
-                // would strand part of the configured budget: the largest reachable heap would be
-                // the largest pageSize * 2^k not exceeding the cap. The value we have to fit still
-                // fits, so clamp to the cap instead.
-                newHeapSize = maxValueHeapSize;
+            if (valueHeapPos + CHAIN_VALUE_SIZE <= valueHeapLimit) {
+                return;
             }
-            long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
-
-            valueHeapSize = newHeapSize;
-            long delta = newHeapPos - valueHeapStart;
-            valueHeapPos += delta;
-
-            this.valueHeapStart = newHeapPos;
-            this.valueHeapLimit = newHeapPos + newHeapSize;
         }
+        final long required = valueHeapPos - valueHeapStart + CHAIN_VALUE_SIZE;
+        // Doubling alone falls short whenever the heap is smaller than one value, which the
+        // config floors rule out but they do not run in every embedding.
+        long newHeapSize = Math.max(valueHeapSize << 1, required);
+        if (newHeapSize > maxValueHeapSize) {
+            if (required > maxValueHeapSize) {
+                LimitOverflowException ex = LimitOverflowException.instance();
+                ex.put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LongTreeChain");
+                if (valueHeapConfigKey != null) {
+                    ex.put(" (raise ").put(valueHeapConfigKey).put(')');
+                }
+                throw ex;
+            }
+            // Doubling overshoots a cap that is rarely a power of two, so rejecting here
+            // would strand part of the configured budget: the largest reachable heap would be
+            // the largest pageSize * 2^k not exceeding the cap. The value we have to fit still
+            // fits, so clamp to the cap instead.
+            newHeapSize = maxValueHeapSize;
+        }
+        long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
+
+        valueHeapSize = newHeapSize;
+        long delta = newHeapPos - valueHeapStart;
+        valueHeapPos += delta;
+
+        this.valueHeapStart = newHeapPos;
+        this.valueHeapLimit = newHeapPos + newHeapSize;
     }
 
     private int nextValueOffset(int valueOffset) {

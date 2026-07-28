@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
@@ -81,11 +80,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 masterFactory.getMetadata().getTimestampIndex(),
                 masterFactory.getMetadata().getTimestampType(),
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                        PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath()),
+                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
                 slaveFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampType(),
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                        PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath()),
+                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
         this.symbolShortCircuit = symbolShortCircuit;
