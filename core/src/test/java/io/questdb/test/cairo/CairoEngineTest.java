@@ -347,6 +347,13 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertReconcileReadLocked(() -> engine.getReader(token, -1, null));
                 assertReconcileReadLocked(() -> engine.getTableMetadata(token));
                 assertReconcileReadLocked(() -> engine.getTableMetadata(token, -1));
+                // Sequencer metadata is the write-compile path (getMetadataForWrite -> getLegacyMetadata
+                // -> getSequencerMetadata for WAL tables); it must refuse the dir too, or an UPDATE /
+                // INSERT-SELECT / ALTER could open metadata over half-swapped sequencer files.
+                assertReconcileReadLocked(() -> engine.getSequencerMetadata(token));
+                assertReconcileReadLocked(() -> engine.getSequencerMetadata(token, -1));
+                assertReconcileReadLocked(() -> engine.getLegacyMetadata(token));
+                assertReconcileReadLocked(() -> engine.getLegacyMetadata(token, -1));
 
                 // A SELECT resolves through the same guarded entry points; the compiler catches the
                 // EntryLockedException during table resolution and surfaces it as a sensible
@@ -373,6 +380,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             try (TableMetadata metadata = engine.getTableMetadata(token)) {
                 Assert.assertEquals(2, metadata.getColumnCount());
             }
+            Misc.freeIfCloseable(engine.getSequencerMetadata(token)); // sequencer metadata opens again too
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 try (RecordCursorFactory factory = compiler.compile("select count() from x", sqlExecutionContext).getRecordCursorFactory();
                      RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

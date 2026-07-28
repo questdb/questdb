@@ -275,7 +275,7 @@ public class SeqTxnTracker {
             }
             // Either nothing is held (active == 0) or we outrank the holder; both cases remember
             // `active` as the preempted lock, which is 0 when the table was unlocked.
-            final int newActive = (priority << 16) | (flags & 0xFFFF);
+            final int newActive = ((priority & 0xFFFF) << 16) | (flags & 0xFFFF);
             final long ns = ((long) newActive << 32) | (active & 0xFFFFFFFFL);
             if (Unsafe.cas(this, SUSPEND_PRIORITY_STATE_OFFSET, s, ns)) {
                 return true;
@@ -320,7 +320,7 @@ public class SeqTxnTracker {
             final int newActive;
             final int newPreempted;
             if (flags != 0) {
-                newActive = (priority << 16) | (flags & 0xFFFF);
+                newActive = ((priority & 0xFFFF) << 16) | (flags & 0xFFFF);
                 if (activeFlags != 0 && activePriority < priority) {
                     newPreempted = active; // preempting a lower lock -- remember it
                 } else if (activeFlags != 0 && activePriority == priority) {

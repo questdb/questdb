@@ -244,7 +244,6 @@ public class SeqTxnTrackerTest {
                         }
                         doneLatch.countDown();
                     } catch (Throwable th) {
-                        th.printStackTrace(System.out);
                         errors.incrementAndGet();
                     }
                 }).start();
@@ -286,7 +285,6 @@ public class SeqTxnTrackerTest {
                         }
                         doneLatch.countDown();
                     } catch (Throwable th) {
-                        th.printStackTrace(System.out);
                         errors.incrementAndGet();
                     }
                 }).start();
@@ -328,7 +326,6 @@ public class SeqTxnTrackerTest {
                         }
                         doneLatch.countDown();
                     } catch (Throwable th) {
-                        th.printStackTrace(System.out);
                         errors.incrementAndGet();
                     }
                 }).start();

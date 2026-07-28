@@ -1203,6 +1203,13 @@ public class CairoEngine implements Closeable, WriterSource {
     public TableRecordMetadata getSequencerMetadata(TableToken tableToken, long desiredVersion) {
         assert tableToken.isWal();
         verifyTableToken(tableToken);
+        // Fence the sequencer-metadata open behind the reconcile read lock, exactly like getReader /
+        // getTableMetadata. getMetadataForWrite -> getLegacyMetadata -> getSequencerMetadata is the
+        // UPDATE / INSERT-SELECT / ALTER compile path; without this a compile racing a RECONCILE TABLE
+        // apply could open a SequencerMetadata over a half-swapped _meta / _txnlog (moveStagedSeq
+        // replaces them non-atomically) and hit a torn read / assertion. Fail fast with
+        // EntryLockedException instead, so the caller retries once the apply releases the lock.
+        checkReconcileReadLock(tableToken);
         if (tableToken.isView()) {
             return getViewMetadata(tableToken);
         }
