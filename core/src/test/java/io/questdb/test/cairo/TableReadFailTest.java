@@ -251,6 +251,61 @@ public class TableReadFailTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A torn live area is TERMINAL, so the diagnosis must not depend on time passing.
+     * <p>
+     * The retry loop's only exit was a wall-clock deadline. Freezing the clock is ordinary practice in this
+     * suite -- any test that drives time by hand does it, and {@code AbstractEntColdStorageFsTest} pins
+     * {@code currentMicros} for the whole class -- and {@code CairoTestConfiguration.getMillisecondClock}
+     * derives from that same frozen source. So the deadline could never arrive, and a condition the code
+     * already knew how to name became an unbounded 100%-CPU spin: enterprise CI burned its 20-minute
+     * per-test limit on it across the linux, mac and Replication jobs rather than failing in milliseconds.
+     * <p>
+     * Waiting never repairs a torn area, so there is nothing to wait for. The same error, without the wait.
+     */
+    @Test(timeout = 60_000)
+    public void testTornLiveTxnAreaIsNamedEvenWhenTheClockCannotAdvance() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // Frozen: every getTicks() from here returns the same value, so no deadline can ever elapse.
+            currentMicros = 1_000_000L;
+            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 100);
+            spinLockTimeout = 100;
+            String x = "clockfrozen";
+            TableModel model = new TableModel(configuration, x, PartitionBy.NONE)
+                    .col("a", ColumnType.INT)
+                    .timestamp();
+            AbstractCairoTest.create(model);
+            TableToken tableToken = engine.verifyTableName(x);
+
+            commitOneRow(x, 0);
+            commitOneRow(x, 1);
+
+            // Pins the scoreboard max at the current txn, so the intact PREVIOUS record the fallback lands
+            // on is refused and the loop cannot converge -- the live-engine corruption case.
+            try (TableReader pin = newOffPoolReader(configuration, x)) {
+                Assert.assertTrue(pin.getTxn() > 0);
+            }
+
+            tearLiveTxnArea(tableToken);
+
+            TxReader.resetBodyChecksumFallbackCount();
+            try (TableReader ignore = newOffPoolReader(configuration, x)) {
+                Assert.fail("a torn live _txn area must not open a reader");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_txn live area is torn");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table=" + x);
+            }
+            Assert.assertTrue(
+                    "the body-checksum fallback must have fired, else this test proves nothing",
+                    TxReader.getBodyChecksumFallbackCount() > 0
+            );
+
+            TxReader.resetBodyChecksumFallbackCount();
+            currentMicros = -1;
+            engine.clear();
+        });
+    }
+
     @Test
     public void testTornLiveTxnAreaIsNamedRatherThanBlamedOnContentionForMetadataReader() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
