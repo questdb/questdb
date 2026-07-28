@@ -452,7 +452,7 @@ public class WalReader implements Closeable {
                     DirectSymbolMap symbolMap = columnIndex < symbolMaps.size() ? symbolMaps.getQuick(columnIndex) : null;
 
                     if (symbolMap == null) {
-                        symbolMap = new DirectSymbolMap(256, 8, MemoryTag.NATIVE_DEFAULT);
+                        symbolMap = new DirectSymbolMap(256, 8, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
                         symbolMaps.extendAndSet(columnIndex, symbolMap);
                     }
                     if (cleanSymbolCount > 0 && symbolMap.size() == 0) {

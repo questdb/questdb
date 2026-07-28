@@ -159,7 +159,10 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 final CairoTable cairoTable = metadataRO.getTable(tableToken);
                 if (cairoTable != null) {
-                    if (tableToken.isView() || tableToken.isLiveView()) {
+                    // Plain VIEWs read through their base table and own no symbol maps, so they have
+                    // no reader to open. Live views are physical WAL-backed tables that do own their
+                    // symbol maps, so they take the reader path and report real symbol table sizes.
+                    if (tableToken.isView()) {
                         return of(cairoTable, null);
                     }
                     try (TableReader tableReader = engine.getReader(tableToken)) {

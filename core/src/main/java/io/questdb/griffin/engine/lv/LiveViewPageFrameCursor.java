@@ -430,11 +430,12 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         this.tierColumns.addAll(tierColumns);
         this.slotRowCount = slot.rowCount();
         final long diskSize = base.size();
-        final long leadStart = slotRowCount - slot.leadRowCount();
-        // The overlap band is a suffix of the disk scan, so it cannot exceed it. Holds
-        // under a passing fence; assert to fail safe rather than cut at a negative row
-        // count and serve disk rows twice.
-        assert leadStart >= 0 : "leadStart " + leadStart + " is negative";
+        final long rawLeadStart = slotRowCount - slot.leadRowCount();
+        // The overlap band is a suffix of the disk scan, so it cannot run negative. Assert to
+        // fail loudly under -ea, but clamp as well: -ea is off in production, and a negative
+        // leadStart inflates the seam's disk band past the scan.
+        assert rawLeadStart >= 0 : "leadStart " + rawLeadStart + " is negative";
+        final long leadStart = Math.max(0, rawLeadStart);
         // The intervals the base scan confines its rows to, if any. They select the mode as
         // much as the direction does: an interval narrows the base scan BENEATH this cursor,
         // so the scan's trailing rows are no longer the slot's overlap band and the seam's
@@ -447,7 +448,14 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         // itself, and it narrows the base out from under the cut. Lead-only needs neither,
         // so every other shape falls back to it rather than to disk-only, which also makes
         // an unsized base degrade instead of mis-cutting.
-        if (isDescending || intervals != null || diskSize < 0) {
+        final boolean isSeamShape = !isDescending && intervals == null && diskSize >= 0;
+        // Under the seam shape the overlap band is a suffix of the disk scan, so it cannot
+        // exceed it. Assert to fail loudly under -ea, and degrade to lead-only otherwise: with
+        // -ea off a negative cut makes every reader read diskRoutedRows as "cannot size", so the
+        // disk frames pass through in full AND the slot band is served on top - rows emitted
+        // twice, with size() returning -1 so nothing cross-checks it.
+        assert !isSeamShape || leadStart <= diskSize : "leadStart " + leadStart + " exceeds disk size " + diskSize;
+        if (!isSeamShape || leadStart > diskSize) {
             // Lead-only: disk serves every row it kept and the slot adds the lead band
             // alone, so there is no cut to take and no overlap to skip. diskRoutedRows
             // carries the base's own -1 through when it cannot size itself.
@@ -455,10 +463,7 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
             this.diskRoutedRows = diskSize;
         } else {
             // The seam: the slot's overlap band stands in for the disk scan's trailing
-            // leadStart rows, so the disk band stops leadStart rows short of its end. The
-            // overlap band is a suffix of the disk scan, so it cannot exceed it; assert to
-            // fail safe rather than cut at a negative row count and serve disk rows twice.
-            assert leadStart <= diskSize : "leadStart " + leadStart + " exceeds disk size " + diskSize;
+            // leadStart rows, so the disk band stops leadStart rows short of its end.
             slotBandLo = 0;
             this.diskRoutedRows = diskSize - leadStart;
         }

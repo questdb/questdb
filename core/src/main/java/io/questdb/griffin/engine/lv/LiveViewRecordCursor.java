@@ -537,7 +537,22 @@ public class LiveViewRecordCursor implements RecordCursor {
                         // only band a lead-only mode serves. The slot is frozen for the
                         // cursor's lifetime, so these snapshots stay valid.
                         this.slotRowCount = pinnedSlot.rowCount();
-                        this.leadStart = slotRowCount - pinnedSlot.leadRowCount();
+                        this.leadStart = Math.max(0, slotRowCount - pinnedSlot.leadRowCount());
+                        // Under the seam the overlap band is a suffix of the disk scan, so it
+                        // cannot exceed it. Assert to fail loudly under -ea, and degrade to
+                        // lead-only otherwise: with -ea off the seam's (diskSize - leadStart) cut
+                        // goes negative, which size() and skipRows() read as "cannot size" while
+                        // hasNext() still serves the whole disk scan plus the slot band - rows
+                        // emitted twice, with size() returning -1 so nothing cross-checks it.
+                        // This runs before buildSlotBands(), which keys its band floor off the mode.
+                        if (routingMode == ROUTING_SEAM) {
+                            final long diskSize = diskCursor.size();
+                            assert diskSize < 0 || leadStart <= diskSize
+                                    : "leadStart " + leadStart + " exceeds disk size " + diskSize;
+                            if (diskSize >= 0 && leadStart > diskSize) {
+                                this.routingMode = ROUTING_LEAD_ONLY_FWD;
+                            }
+                        }
                         // Only a routing read walks the slot, and only it may read the
                         // intervals: a fence miss keeps the slot pinned for getCursor's
                         // retry but serves disk-only, so it needs no bands.

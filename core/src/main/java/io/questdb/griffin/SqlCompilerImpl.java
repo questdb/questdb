@@ -2953,7 +2953,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final CharSequence tableName = unquote(tok);
                 // define operation to make sure we generate correct errors in case of syntax check failure
                 final TableToken tt = executionContext.getTableTokenIfExists(tableName);
-                if (tt != null && (tt.isView() || tt.isMatView())) {
+                if (tt != null && (tt.isView() || tt.isMatView() || tt.isLiveView())) {
+                    // Live views are rejected here as well as at execute time, so DROP TABLE on
+                    // one fails the compile-only /validate endpoint too. Keep the message
+                    // identical to the execute-time one so the user-visible contract is unchanged.
+                    if (tt.isLiveView()) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "table name expected, got live view name: ").put(tableName);
+                    }
                     throw SqlException.$(lexer.lastTokenPosition(), "table name expected, got view or materialized view name");
                 }
                 dropOperationBuilder.clear();

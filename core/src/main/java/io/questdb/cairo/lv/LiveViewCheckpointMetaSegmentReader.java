@@ -182,6 +182,22 @@ public class LiveViewCheckpointMetaSegmentReader implements Closeable {
         }
         LiveViewCheckpointLayout.metaSegmentPath(path, checkpointsDir, segmentId);
         fileSize = ff.length(path.$());
+        // A negative length means the stat failed. A MISSING segment is genuine structural
+        // invalidity - the root references a segment that is not there - so it falls through to
+        // the too-small branch below and keeps raising the errno the restore fallback keys on. Any
+        // other failure (EACCES, EIO, a transient NFS blip) is an IO error, not corruption:
+        // condemning the root on one blip would make restore skip an intact root. Only
+        // 0 <= size < SEG_HEADER_SIZE is real truncation.
+        if (fileSize < 0) {
+            final int errno = ff.errno();
+            if (errno != CairoException.ERRNO_FILE_DOES_NOT_EXIST && errno != CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN) {
+                throw CairoException.critical(errno)
+                        .put("could not read live view checkpoint metadata segment length [segmentId=")
+                        .put(segmentId)
+                        .put(", path=").put(path)
+                        .put(']');
+            }
+        }
         if (fileSize < SEG_HEADER_SIZE) {
             throw invalid("metadata segment file too small")
                     .put(", size=").put(fileSize)

@@ -226,26 +226,25 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         // keyIndex >= 0 marks an empty slot (a brand-new key); < 0 marks an existing key.
         final boolean isNewKey = idx >= 0;
         long offset = append(value);
+        // The reverse index can be extended in O(1) only when it is already built, clean, and this
+        // is a brand-new key. Overwriting a key strands its previous (oldOffset, key) entry, and
+        // only a full rebuild can drop it; overwrites do not occur on the WAL symbol-diff hot path
+        // (segment keys are immutable), so that fallback stays cold.
+        final boolean canExtendIndex = isNewKey && explicitValueToKey != null && !explicitValueToKeyDirty;
+        // Mark the index stale BEFORE the mutations that can throw. A put that fails part-way must
+        // not leave the index both missing the entry and marked clean, or
+        // buildExplicitValueToKeyIfNeeded() short-circuits and keyOf() reports VALUE_NOT_FOUND for
+        // that symbol for the rest of the map's life.
+        explicitValueToKeyDirty = true;
         keyToOffset.putAt(idx, key, toIntOffset(offset));
-        if (explicitValueToKey == null || explicitValueToKeyDirty) {
-            // The reverse index is not built yet, or a rebuild is already pending: keep
-            // deferring. The first bounded keyOf() builds it in one O(size) pass.
-            explicitValueToKeyDirty = true;
-            return;
-        }
-        if (isNewKey) {
-            // Extend the already-built index in O(1): a brand-new key adds exactly one
-            // (offset, key) pair. This keeps a WAL replay (put then bounded keyOf per
-            // transaction) linear instead of rebuilding the whole map on every lookup.
+        if (canExtendIndex) {
+            // A brand-new key adds exactly one (offset, key) pair. This keeps a WAL replay (put
+            // then bounded keyOf per transaction) linear instead of rebuilding on every lookup.
             // Null symbols are deliberately absent, matching the rebuild's len >= 0 guard.
             if (value != null) {
                 explicitValueToKey.insertExplicit(toIntOffset(offset), key);
             }
-        } else {
-            // Overwriting a key strands its previous (oldOffset, key) entry in the reverse
-            // index, and only a full rebuild can drop it. Overwrites do not occur on the WAL
-            // symbol-diff hot path (segment keys are immutable), so this fallback stays cold.
-            explicitValueToKeyDirty = true;
+            explicitValueToKeyDirty = false;
         }
     }
 
@@ -436,7 +435,15 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
             Unsafe.getUnsafe().putInt(p, offsetInBuf);
             Unsafe.getUnsafe().putInt(p + 4, symbolKey);
             if (--free == 0) {
-                rehash();
+                try {
+                    rehash();
+                } catch (CairoException e) {
+                    // Restore the grow trigger. rehash() throws before assigning, so leaving free
+                    // at 0 lets it drift negative on later inserts, the table never grows again,
+                    // and every probe loop spins forever once the slots fill up.
+                    free = 1;
+                    throw e;
+                }
             }
         }
 

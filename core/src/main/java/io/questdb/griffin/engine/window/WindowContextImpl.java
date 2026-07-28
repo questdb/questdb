@@ -92,11 +92,12 @@ public class WindowContextImpl implements WindowContext, Mutable {
     ) throws SqlException {
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         final long maxUnitValue = driver.getMaxUnitValue(unit);
-        if (bound < -maxUnitValue || bound > maxUnitValue) {
-            // From the negating caller a PRECEDING bound arrives negated, and the widest count
-            // the parser accepts, Long.MAX_VALUE, negates onto Long.MIN_VALUE - which negates
-            // back onto itself.
-            final long width = bound == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(bound);
+        // Compare on the width, not the signed bound. normalizeWindowFrame() aliases a user-written
+        // Long.MAX_VALUE PRECEDING onto the Long.MIN_VALUE UNBOUNDED sentinel, and -maxUnitValue is
+        // Long.MIN_VALUE + 1 for units whose ceiling is Long.MAX_VALUE, so a signed comparison
+        // rejects a bound of exactly maxUnitValue - one that compiled before this guard existed.
+        final long width = bound == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(bound);
+        if (width > maxUnitValue) {
             throw SqlException.$(position, "RANGE frame ").put(boundName)
                     .put(" is out of range for the designated timestamp [width=").put(width).put(unit)
                     .put(", max=").put(maxUnitValue).put(unit)

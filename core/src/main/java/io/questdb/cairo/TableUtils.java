@@ -2715,12 +2715,25 @@ public final class TableUtils {
         reader.ofRO(path.concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
     }
 
+    /**
+     * Maps a table type code stored in {@code tables.d} onto its token type.
+     * <p>
+     * Unknown codes throw rather than falling back to {@link TableToken.Type#TABLE}. A newer binary
+     * can write a type this one does not know, and every view kind is implicitly WAL: silently
+     * degrading such an entry to a plain non-WAL table hands out a {@code TableWriter} where a
+     * {@code WalWriter} is required, which corrupts the directory. Refusing to load the entry is
+     * recoverable by upgrading the binary again; the corruption is not.
+     */
     public static TableToken.Type tableTypeOf(int tableType) {
         return switch (tableType) {
+            case TABLE_TYPE_NON_WAL, TABLE_TYPE_WAL -> TableToken.Type.TABLE;
             case TABLE_TYPE_LIVE_VIEW -> TableToken.Type.LIVE_VIEW;
             case TABLE_TYPE_MAT -> TableToken.Type.MAT_VIEW;
             case TABLE_TYPE_VIEW -> TableToken.Type.VIEW;
-            default -> TableToken.Type.TABLE;
+            default -> throw CairoException.critical(0)
+                    .put("unknown table type in name registry, table was created by a newer version [type=")
+                    .put(tableType)
+                    .put(']');
         };
     }
 

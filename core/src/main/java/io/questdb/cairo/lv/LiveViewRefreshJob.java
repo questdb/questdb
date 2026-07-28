@@ -614,14 +614,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * drained segments retire for the purge job. Best-effort: a fault abandons the
      * candidate and leaves the published generation byte-identical.
      */
-    private void maybeCompactCheckpointTimeline(LiveViewInstance instance, long lvSeqTxn) {
+    private void maybeCompactCheckpointTimeline(LiveViewInstance instance) {
         final long interval = engine.getConfiguration().getLiveViewCheckpointCompactionInterval();
-        if (interval <= 0 || lvSeqTxn <= 0 || lvSeqTxn % interval != 0) {
+        if (interval <= 0) {
             return;
         }
         if (checkpointTimelineStoreWriter == null) {
+            // Nothing to compact through. Return before the cadence counter advances, so a
+            // stretch of seals reached without a writer does not silently burn the interval.
             return;
         }
+        // Count seals. The cadence config is documented in seals, and lvSeqTxn is the BASE
+        // table's sequencer txn: it advances on the base's schedule, and this hook is only
+        // reached past the seal cadence gate, so under a steady ingest rate consecutive seals
+        // land on a near-constant seqTxn stride. A modulo test against that stride fires at
+        // every seal or at no seal at all, decided by an arbitrary phase offset rather than by
+        // the configured interval - and the "never" case leaves the dead bytes that repairs
+        // strand in ring-shared segments unreclaimed, growing _checkpoints without bound while
+        // compaction is nominally enabled.
+        if (instance.incrementAndGetSealsSinceCompaction() < interval) {
+            return;
+        }
+        instance.resetSealsSinceCompaction();
         try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
@@ -779,6 +793,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setSuspendedRepair(null);
         }
         Misc.free(session);
+        if (session.isWindowStateRestoreFailed()) {
+            // The abandoned repair could not put its overlay back, so the compiled factory holds
+            // neither the pre-repair state nor a settled one. Mark the runtime dirty so
+            // handleRefreshFailure rebuilds it instead of letting the next drain continue over
+            // half-restored accumulators. Mirrors settleRepairRuntime's handling on the
+            // settled path.
+            windowStateDirty = true;
+        }
     }
 
     /**
@@ -2005,7 +2027,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 TableReader committedSymbolReader = internSymbols ? engine.getReader(instance.getLiveViewToken()) : null;
                 // Closed with the drain so the turn does not park the last segment's
                 // event file mapped between turns - see the note on walEventReader.
-                WalEventReader eventReader = walEventReader
+                WalEventReader eventReader = walEventReader;
+                // Same reason, over a strictly larger mapping set: the frame cursor holds the
+                // segment's _meta, its nested _event and every projected .d/.i. On Windows those
+                // mappings are open handles on the segment directory, so WalPurgeJob's rmdir
+                // fails ACCESS_DENIED and an otherwise idle view pins the segment indefinitely.
+                // releaseSegment() rather than close(): it drops the mappings but keeps the
+                // per-worker scratch, whose retained capacity is what stops a steady sub-cap load
+                // reallocating every turn.
+                QuietCloseable segmentRelease = walFrameCursor::releaseSegment
         ) {
             if (internSymbols) {
                 // Re-anchor each SYMBOL column's next-new-id to the committed symbol
@@ -2032,6 +2062,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         || engine.getConfiguration().getMicrosecondClock().getTicks() - turnStartUs >= turnMaxDurationUs)) {
                     break;
                 }
+                // Snapshot the prior value: advanceTo is claimed before this commit's type is
+                // known, and the mat-view TRUNCATE arm below has to give it back.
+                final long advanceToBeforeCommit = advanceTo;
                 advanceTo = txn;
                 turnCommitsProcessed++;
                 int walId = txnCursor.getWalId();
@@ -2069,6 +2102,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // pre-rebuild rows until the apply job applies this same seqTxn and
                         // invalidates it. Until then each cycle re-drains to here and stops, which
                         // is the same benign no-progress hold the apply-lag gate takes.
+                        //
+                        // Give advanceTo back. It was claimed above before this commit's type was
+                        // known, so leaving it would commit the TRUNCATE as consumed and the next
+                        // drain would resume ABOVE it - the exact crossing the paragraph above
+                        // says never happens, and the rows it would then re-emit are the ones this
+                        // arm exists to refuse.
+                        advanceTo = advanceToBeforeCommit;
                         break;
                     }
                     // Non-data commit (schema change / DROP PARTITION / TRUNCATE / TTL) —
@@ -3930,8 +3970,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // left the window state at that same moment, so the next in-order seal
             // re-opens the history from there. There is also nothing to seal
             // (replayMaxTs is LONG_NULL).
-            maybeWriteHeadCheckpoint(instance, windowFactory, committedSeqTxn, replayMaxTs, appendedRows, true);
-            headSealed = true;
+            // Take the seal's own answer. maybeWriteHeadCheckpoint swallows every Throwable and
+            // also declines a boundary that does not clear the head, so assuming success here
+            // would clear the durable repair marker over a head that was never written - and the
+            // next restart would take the incremental path against a head-truncated timeline.
+            headSealed = maybeWriteHeadCheckpoint(instance, windowFactory, committedSeqTxn, replayMaxTs, appendedRows, true);
         }
         if (prefixMarkerLive) {
             // Resolve the truncate's live marker: a fresh head now anchors the
@@ -4808,7 +4851,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     final long headMaxTs = repairPublication.isKeepPrimaryRuntime()
                             ? instance.getLatestSeenTs()
                             : replayMaxTs;
-                    maybeWriteHeadCheckpoint(
+                    // Take the seal's own answer: it swallows every Throwable and also declines a
+                    // boundary that does not clear the head, so assuming success would clear the
+                    // durable repair marker over a head that was never written.
+                    headSealed = maybeWriteHeadCheckpoint(
                             instance,
                             windowFactory,
                             effectiveSeqTxn,
@@ -4817,7 +4863,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             true,
                             !timelineSpliced
                     );
-                    headSealed = true;
                 }
                 if (prefixMarkerLive) {
                     // The truncate preserved the prefix behind a live marker. If a
@@ -5602,7 +5647,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the previously published generation stays authoritative, and the next
      * eligible cycle seals again.
      */
-    private void maybeWriteHeadCheckpoint(
+    /**
+     * @return true when a head checkpoint was actually sealed. False covers every skip - the
+     * capability and cadence gates, a boundary that did not clear the head, and a swallowed
+     * write failure - so a caller must not treat the call as having sealed unconditionally.
+     */
+    private boolean maybeWriteHeadCheckpoint(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
             long lvSeqTxn,
@@ -5610,7 +5660,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long appendedRows,
             boolean force
     ) {
-        maybeWriteHeadCheckpoint(instance, windowFactory, lvSeqTxn, batchMaxTs, appendedRows, force, true);
+        return maybeWriteHeadCheckpoint(instance, windowFactory, lvSeqTxn, batchMaxTs, appendedRows, force, true);
     }
 
     /**
@@ -5624,7 +5674,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * a boundary that is either a duplicate of the head root or a root over
      * state nothing new produced.
      */
-    private void maybeWriteHeadCheckpoint(
+    private boolean maybeWriteHeadCheckpoint(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
             long lvSeqTxn,
@@ -5640,7 +5690,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setSnapshotCapability(computeSnapshotCapability(instance, windowFactory));
         }
         if (!instance.isSnapshotCapability()) {
-            return;
+            return false;
         }
         // A boundary with no maxTs has no place in a timeline keyed on
         // (maxTimestamp, checkpointId): the resume floors at maxTs + 1, and
@@ -5649,7 +5699,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // timestamp today; this guard keeps a future force-caller from sealing a
         // poison boundary past the cadence gate below.
         if (batchMaxTs == Numbers.LONG_NULL) {
-            return;
+            return false;
         }
 
         instance.addRowsSinceLastCheckpointWritten(appendedRows);
@@ -5687,9 +5737,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // splice that keeps its timeline does not, and cadence could then skip the
         // seal and strand the head at the stale maxTs.
         if (!(force || firstCp || restoredHeadFirstFlush || rowTrigger || durationTrigger)) {
-            return;
+            return false;
         }
 
+        boolean sealed = false;
         try {
             // The base commit this root covers. Mirrored onto the instance below
             // so WalPurgeJob can hold the base WAL purge floor here rather than at
@@ -5734,6 +5785,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // cadence-gate clock read above. Surfaced via
             // live_views().checkpoint_last_write_micros.
             instance.recordCheckpointWriteMicros(engine.getConfiguration().getMicrosecondClock().getTicks() - nowUs);
+            sealed = true;
         } catch (LiveViewCheckpointTimelineStoreWriter.BoundaryNotAboveHeadException e) {
             // Every row this cycle emitted sat on the head boundary's own designated
             // timestamp, so the group that boundary covers grew instead of a new one
@@ -5757,11 +5809,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", lvSeqTxn=").$(lvSeqTxn)
                     .$(", error=").$(t).I$();
         }
-        // Best-effort maintenance, kept off the seal's own try so a compaction
-        // fault never reads as a failed head write. It publishes its own generation
-        // after the seal's is durable, so it sits outside any reconcile orphan
-        // window and a fault leaves the just-sealed generation untouched.
-        maybeCompactCheckpointTimeline(instance, lvSeqTxn);
+        // Best-effort maintenance, kept off the seal's own try so a compaction fault never reads
+        // as a failed head write. It publishes its own generation after the seal's is durable, so
+        // it sits outside any reconcile orphan window and a fault leaves the just-sealed
+        // generation untouched. Gated on an actual seal because its cadence is configured in
+        // seals: a skipped boundary or a failed write added no roots and left nothing to repack.
+        if (sealed) {
+            maybeCompactCheckpointTimeline(instance);
+        }
+        return sealed;
     }
 
     /**
@@ -6305,6 +6361,57 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Appends this cycle's staging rows onto the <em>published</em> slot in place, skipping the
+     * retained-row copy and index swap the slow path performs. Returns {@code false} when a
+     * reader pins that slot, leaving the tier byte-identical to its prior state.
+     * <p>
+     * Both the fast path and the slow path's one-slot-pinned fallback route through here, so a
+     * reader pinning only the non-published slot defers compaction by a cycle instead of forcing
+     * the caller to flush.
+     */
+    private boolean tryAppendStagingInPlace(
+            LiveViewInMemoryTier tier,
+            LiveViewInstance instance,
+            int publishedIdx,
+            boolean dropRetained,
+            long lvSeqTxn,
+            long newLeadRowCount,
+            boolean leadMode
+    ) {
+        LiveViewInMemoryBuffer acquired = tier.tryAcquireWrite(publishedIdx);
+        if (acquired == null) {
+            return false;
+        }
+        try {
+            if (dropRetained) {
+                // Reset under the writer sentinel (no reader can observe it) so the published
+                // slot reflects only this cycle's disk-consistent staging rows; seamTs
+                // re-initialises from the first staged row.
+                acquired.reset();
+            }
+            acquired.appendStaging(stagingBuffer, stagingBuffer.seamTs());
+            acquired.setLvSeqTxn(lvSeqTxn);
+            acquired.setLeadRowCount(newLeadRowCount);
+        } catch (Throwable t) {
+            // An in-place append cannot leave the slot partially populated visibly to readers:
+            // rowCount only advances once at the end of appendStaging, after all column writes
+            // have completed, and appendStaging rewinds any partially-advanced var-size append
+            // cursors on failure, so the slot is byte-identical to its pre-append state. The
+            // writer sentinel (rc = -1) keeps readers spinning until release. Drop the sentinel
+            // and let the flush-retry budget tick.
+            tier.releaseWriteWithoutPublish(publishedIdx);
+            throw t;
+        }
+        tier.releaseWriteWithoutPublish(publishedIdx);
+        if (leadMode) {
+            instance.setLeadRowCount(newLeadRowCount);
+        }
+        instance.setWriterStallStartUs(Numbers.LONG_NULL);
+        instance.setTierStale(false);
+        return true;
+    }
+
+    /**
      * ACTIVE-view restart recovery from the versioned checkpoint timeline. The
      * durable live-view table supplies the materialization frontier, row count,
      * and live-view writer txn; its in-band max-base-seqTxn supplies the
@@ -6797,41 +6904,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // for any tier larger than the growth budget, which O3-throttled the drain
         // and made the view fall behind.
         long growthBudget = engine.getConfiguration().getLiveViewInMemoryBufferGrowthBytes();
-        if (!isCompactionWorthwhile(pubSlot, stagingMaxTs, instance, growthBudget)) {
-            LiveViewInMemoryBuffer acquired = tier.tryAcquireWrite(publishedIdx);
-            if (acquired != null) {
-                try {
-                    if (dropRetained) {
-                        // Reset under the writer sentinel (no reader can observe
-                        // it) so the published slot reflects only this cycle's
-                        // disk-consistent staging rows; seamTs re-initialises from
-                        // the first staged row in appendStagingInPlace.
-                        acquired.reset();
-                    }
-                    acquired.appendStaging(stagingBuffer, stagingBuffer.seamTs());
-                    acquired.setLvSeqTxn(lvSeqTxn);
-                    acquired.setLeadRowCount(newLeadRowCount);
-                } catch (Throwable t) {
-                    // Fast-path append cannot leave the slot partially
-                    // populated visibly to readers: rowCount only advances
-                    // once at the end of appendStaging, after all column
-                    // writes have completed, and appendStaging rewinds any
-                    // partially-advanced var-size append cursors on
-                    // failure, so the slot is byte-identical to its pre-append
-                    // state. The writer sentinel (rc = -1) keeps readers
-                    // spinning until release. Drop the sentinel and let the
-                    // flush-retry budget tick.
-                    tier.releaseWriteWithoutPublish(publishedIdx);
-                    throw t;
-                }
-                tier.releaseWriteWithoutPublish(publishedIdx);
-                if (leadMode) {
-                    instance.setLeadRowCount(newLeadRowCount);
-                }
-                instance.setWriterStallStartUs(Numbers.LONG_NULL);
-                instance.setTierStale(false);
-                return true;
-            }
+        if (!isCompactionWorthwhile(pubSlot, stagingMaxTs, instance, growthBudget)
+                && tryAppendStagingInPlace(tier, instance, publishedIdx, dropRetained, lvSeqTxn, newLeadRowCount, leadMode)) {
+            return true;
         }
 
         // Slow-path: take the non-published slot, copy retained rows, append
@@ -6839,6 +6914,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         int writeIdx = 1 - publishedIdx;
         LiveViewInMemoryBuffer writeSlot = tier.tryAcquireWrite(writeIdx);
         if (writeSlot == null) {
+            // The non-published slot is reader-pinned, so the retained-row copy and the index
+            // swap cannot run this cycle. Compaction is an optimisation, not a correctness
+            // requirement, so defer it one cycle and append in place rather than treating this
+            // as a stall: a single long-lived cursor (an idle PGWire connection, a slow ASOF
+            // slave) pins exactly ONE slot, and giving up here degrades the view to a disk
+            // flush every cycle for as long as that cursor lives. The stall accounting below
+            // is for BOTH slots pinned, which is what this method's contract already states.
+            if (tryAppendStagingInPlace(tier, instance, publishedIdx, dropRetained, lvSeqTxn, newLeadRowCount, leadMode)) {
+                return true;
+            }
             // Both slots reader-pinned. Record the start of the stall streak; a
             // subsequent successful acquire clears it.
             if (instance.getWriterStallStartUs() == Numbers.LONG_NULL) {
@@ -8521,7 +8606,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // invalidates after the duration cap. A dropped/invalidated view is short-circuited by the
         // isDropped()/isInvalid() gate in refreshInstance, so it never spins here.
         boolean tableTransient = t instanceof CairoException ce && ce.isTableDoesNotExist();
-        boolean budgetExhausted = elapsedUs >= maxDurationMicros || (!tableTransient && retryCount >= maxRetry);
+        // The duration term needs an actual retry window to measure. On the first failure
+        // retryStartUs is unset, so elapsedUs is 0, and a configured budget of 0 would make
+        // "0 >= 0" exhaust the budget before !tableTransient is ever consulted - permanently
+        // invalidating a view on its first fault and defeating the CREATE-window carve-out
+        // documented above. For every positive budget this is behaviour-neutral: elapsedUs is 0
+        // on the first failure, which is already below the cap.
+        boolean durationExhausted = retryStartUs != Numbers.LONG_NULL && elapsedUs >= maxDurationMicros;
+        boolean budgetExhausted = durationExhausted || (!tableTransient && retryCount >= maxRetry);
         if (budgetExhausted) {
             // Last resort before a permanent invalidation: a base WAL segment the drain needs has
             // been missing for the whole budget, so it is not coming back. That is what a restore

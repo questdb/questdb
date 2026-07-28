@@ -442,7 +442,15 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // reference across retries; startCheckpoint is idempotent.
                                         if (freezeLvInstance == null) {
                                             final LiveViewInstance lvInstance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
-                                            if (lvInstance != null) {
+                                            // The registry is keyed by NAME, so a DROP + CREATE in
+                                            // this window hands back a different view that merely
+                                            // shares the name. Freezing that one while this loop
+                                            // copies the old token's directory fences the wrong
+                                            // instance and captures a directory nothing is holding
+                                            // still. Match on the directory name, which carries the
+                                            // table id and so is exact.
+                                            if (lvInstance != null
+                                                    && Chars.equals(lvInstance.getLiveViewToken().getDirName(), tableToken.getDirName())) {
                                                 if (lvInstance.startCheckpoint(circuitBreaker)) {
                                                     freezeLvInstance = lvInstance;
                                                 } else {

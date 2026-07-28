@@ -288,6 +288,15 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            // defaultValue is an ordinary argument function; super only notifies arg.
+            if (defaultValue != null) {
+                defaultValue.cursorClosed();
+            }
+        }
+
+        @Override
         public void getDecimal128(Record rec, Decimal128 sink) {
             sink.copyFrom(lagValue);
         }
@@ -310,6 +319,21 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
+            if (defaultValue != null) {
+                defaultValue.init(symbolTableSource, executionContext);
+            }
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            // The third arg of lag (defaultValue) can be a non-constant function over base
+            // columns. Each incremental refresh hands the function a fresh WAL-segment-scoped
+            // SymbolTableSource, so the cached column / symbol bindings inside defaultValue must
+            // rebind every cycle; the full init path runs once at first compile only. This class
+            // extends BasePartitionedWindowFunction directly rather than
+            // LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction, so it does not
+            // inherit that rebind.
             if (defaultValue != null) {
                 defaultValue.init(symbolTableSource, executionContext);
             }
@@ -362,6 +386,11 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toTop() {
             super.toTop();
+            // defaultValue is an ordinary argument function and may hold cursor-scoped state;
+            // super.toTop() only rewinds arg.
+            if (defaultValue != null) {
+                defaultValue.toTop();
+            }
             memory.truncate();
         }
     }
@@ -667,6 +696,15 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            // defaultValue is an ordinary argument function; super only notifies arg.
+            if (defaultValue != null) {
+                defaultValue.cursorClosed();
+            }
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(lagValue);
         }
@@ -689,6 +727,21 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
+            if (defaultValue != null) {
+                defaultValue.init(symbolTableSource, executionContext);
+            }
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            // The third arg of lag (defaultValue) can be a non-constant function over base
+            // columns. Each incremental refresh hands the function a fresh WAL-segment-scoped
+            // SymbolTableSource, so the cached column / symbol bindings inside defaultValue must
+            // rebind every cycle; the full init path runs once at first compile only. This class
+            // extends BasePartitionedWindowFunction directly rather than
+            // LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction, so it does not
+            // inherit that rebind.
             if (defaultValue != null) {
                 defaultValue.init(symbolTableSource, executionContext);
             }
@@ -743,6 +796,11 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toTop() {
             super.toTop();
+            // defaultValue is an ordinary argument function and may hold cursor-scoped state;
+            // super.toTop() only rewinds arg.
+            if (defaultValue != null) {
+                defaultValue.toTop();
+            }
             memory.truncate();
         }
     }

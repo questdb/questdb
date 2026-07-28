@@ -98,6 +98,10 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private long durableRowsReplaced;
     private ObjList<WindowFunction> functions;
     private boolean isSuspended;
+    // Set when close() abandoned the repair but could not put the overlay back, leaving the
+    // compiled factory holding neither the pre-repair state nor a settled one. Read by
+    // LiveViewRefreshJob.endRepairSession after the free, so it must outlive close().
+    private boolean isWindowStateRestoreFailed;
     private long replayMaxTs = Numbers.LONG_NULL;
     private long replayMinTs = Numbers.LONG_NULL;
     private long resumeFromTs = Numbers.LONG_NULL;
@@ -134,6 +138,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      */
     @Override
     public void close() {
+        isWindowStateRestoreFailed = false;
         if (overlay.isCaptured() && functions != null) {
             // Nobody took the state back, so this repair is being abandoned rather
             // than settled: the replay left the compiled factory part-way through
@@ -144,6 +149,11 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
             try {
                 overlay.restore(functions, anchorWindow);
             } catch (Throwable t) {
+                // The runtime now holds neither the pre-repair state nor a settled one. Flag it so
+                // the caller forces a rebuild; without that the next drain continues over
+                // half-restored accumulators. settleRepairRuntime() takes the same position on the
+                // settled path, where it can set windowStateDirty and rethrow directly.
+                isWindowStateRestoreFailed = true;
                 LOG.critical().$("could not restore the window state of an abandoned live view repair [error=")
                         .$(t).I$();
             }
@@ -349,6 +359,15 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      */
     public boolean isSuspended() {
         return isSuspended;
+    }
+
+    /**
+     * @return true when {@link #close()} abandoned this repair but failed to put the captured
+     * window state back, so the compiled factory is left half-restored and the caller must
+     * rebuild rather than drain forward over it
+     */
+    public boolean isWindowStateRestoreFailed() {
+        return isWindowStateRestoreFailed;
     }
 
     /**

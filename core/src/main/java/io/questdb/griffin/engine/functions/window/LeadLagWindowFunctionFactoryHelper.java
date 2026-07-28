@@ -217,6 +217,15 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            // defaultValue is an ordinary argument function; super only notifies arg.
+            if (defaultValue != null) {
+                defaultValue.cursorClosed();
+            }
+        }
+
+        @Override
         public String getName() {
             return LAG_NAME;
         }
@@ -272,6 +281,11 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
+            // defaultValue is an ordinary argument function and may hold cursor-scoped state
+            // (a column binding, a symbol cache). super.toTop() only rewinds arg.
+            if (defaultValue != null) {
+                defaultValue.toTop();
+            }
             loIdx = 0;
             count = 0;
         }
@@ -377,6 +391,15 @@ public class LeadLagWindowFunctionFactoryHelper {
             mapValue.putLong(0, startOffset);
             mapValue.putLong(1, firstIdx % offset);
             mapValue.putLong(2, count);
+        }
+
+        @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            // defaultValue is an ordinary argument function; super only notifies arg.
+            if (defaultValue != null) {
+                defaultValue.cursorClosed();
+            }
         }
 
         @Override
@@ -558,6 +581,11 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
+            // defaultValue is an ordinary argument function and may hold cursor-scoped state
+            // (a column binding, a symbol cache). super.toTop() only rewinds arg.
+            if (defaultValue != null) {
+                defaultValue.toTop();
+            }
             memory.truncate();
             tombstoneCount = 0;
         }
@@ -590,6 +618,15 @@ public class LeadLagWindowFunctionFactoryHelper {
             super.close();
             buffer.close();
             Misc.free(defaultValue);
+        }
+
+        @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            // defaultValue is an ordinary argument function; super only notifies arg.
+            if (defaultValue != null) {
+                defaultValue.cursorClosed();
+            }
         }
 
         @Override
@@ -651,6 +688,11 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
+            // defaultValue is an ordinary argument function and may hold cursor-scoped state
+            // (a column binding, a symbol cache). super.toTop() only rewinds arg.
+            if (defaultValue != null) {
+                defaultValue.toTop();
+            }
             loIdx = 0;
             count = 0;
         }
@@ -726,6 +768,15 @@ public class LeadLagWindowFunctionFactoryHelper {
             super.close();
             Misc.free(memory);
             Misc.free(defaultValue);
+        }
+
+        @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            // defaultValue is an ordinary argument function; super only notifies arg.
+            if (defaultValue != null) {
+                defaultValue.cursorClosed();
+            }
         }
 
         @Override
@@ -809,6 +860,11 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
+            // defaultValue is an ordinary argument function and may hold cursor-scoped state
+            // (a column binding, a symbol cache). super.toTop() only rewinds arg.
+            if (defaultValue != null) {
+                defaultValue.toTop();
+            }
             memory.truncate();
         }
 

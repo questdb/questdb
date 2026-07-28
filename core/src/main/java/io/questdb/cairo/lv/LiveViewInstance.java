@@ -491,6 +491,15 @@ public class LiveViewInstance implements QuietCloseable {
     // only on the refresh-worker thread under the refresh latch; not volatile
     // because no other thread reads it.
     private long rowsSinceLastCheckpointWritten;
+    // Checkpoint seals completed since the last compaction pass, i.e. the cadence
+    // cairo.live.view.checkpoint.compaction.interval is actually expressed in. Counting
+    // seals rather than testing a base seqTxn modulo matters: the base seqTxn advances on
+    // its own schedule, and the compaction hook is only reached past the seal cadence gate,
+    // so under a steady ingest rate every seal lands on a near-constant stride and a modulo
+    // test degenerates into "every seal" or "never" depending on an arbitrary phase offset.
+    // Mutated only on the refresh-worker thread under the refresh latch; not volatile
+    // because no other thread reads it.
+    private long sealsSinceCompaction;
     // Base-table reader pinned across the whole multi-turn seed sweep so every
     // turn reads one stable MVCC snapshot. Without it, re-opening the base at the
     // latest applied seqTxn each turn makes the positional skipRows() resume
@@ -1296,6 +1305,16 @@ public class LiveViewInstance implements QuietCloseable {
         return hasWarnedBelowLowerBoundDrop;
     }
 
+    /**
+     * Records one completed checkpoint seal against the compaction cadence and returns the
+     * running count. The caller compares it against
+     * {@code cairo.live.view.checkpoint.compaction.interval} and calls
+     * {@link #resetSealsSinceCompaction()} once it fires.
+     */
+    public long incrementAndGetSealsSinceCompaction() {
+        return ++sealsSinceCompaction;
+    }
+
     public boolean isDropped() {
         return dropped;
     }
@@ -1701,6 +1720,14 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void resetMinSeenTsSinceCheckpoint() {
         minSeenTsSinceCheckpoint = Long.MAX_VALUE;
+    }
+
+    /**
+     * Restarts the compaction cadence window after a compaction pass has been attempted.
+     * See {@link #incrementAndGetSealsSinceCompaction()}.
+     */
+    public void resetSealsSinceCompaction() {
+        sealsSinceCompaction = 0;
     }
 
     /**

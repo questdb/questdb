@@ -626,6 +626,13 @@ public class CairoEngine implements Closeable, WriterSource {
             if (maxBaseSeqTxn <= reader.getLastProcessedSeqTxn()) {
                 return;
             }
+            // Never move a slot backwards. Each of these advances independently and
+            // lvConsumedSeqTxn legitimately runs AHEAD of lastProcessedSeqTxn in steady state
+            // (advanceLiveViewConsumedSeqTxn produces exactly that), so stamping all three with
+            // maxBaseSeqTxn would regress it on every such restart and make WalPurgeJob re-retain
+            // the base segments in (maxBaseSeqTxn, lvConsumedSeqTxn] again.
+            final long appliedWatermark = Math.max(maxBaseSeqTxn, reader.getAppliedWatermark());
+            final long lvConsumedSeqTxn = Math.max(maxBaseSeqTxn, reader.getLvConsumedSeqTxn());
             try {
                 path.of(configuration.getDbRoot()).concat(liveViewToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
                 blockFileWriter.of(path.$());
@@ -635,8 +642,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         reader.getInvalidationTimestampUs(),
                         reader.getSubscribeFromSeqTxn(),
                         maxBaseSeqTxn, // lastProcessedSeqTxn
-                        maxBaseSeqTxn, // appliedWatermark
-                        maxBaseSeqTxn, // lvConsumedSeqTxn
+                        appliedWatermark,
+                        lvConsumedSeqTxn,
                         reader.getSeedState(),
                         reader.getSeedTargetSeqTxn(),
                         blockFileWriter
@@ -649,8 +656,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         .put(liveViewToken.getTableName()).put(", maxBaseSeqTxn=").put(maxBaseSeqTxn).put(']');
             }
             instance.setLastProcessedSeqTxn(maxBaseSeqTxn);
-            instance.setAppliedWatermark(maxBaseSeqTxn);
-            instance.setLvConsumedSeqTxn(maxBaseSeqTxn);
+            instance.setAppliedWatermark(appliedWatermark);
+            instance.setLvConsumedSeqTxn(lvConsumedSeqTxn);
         }
     }
 
@@ -1227,6 +1234,14 @@ public class CairoEngine implements Closeable, WriterSource {
         // which can outlive the pools below.
         liveViewRegistry.discardSuspendedRepairs();
         liveViewRegistry.freeSeedBaseReaders();
+        // Free the live-view state ABOVE the pools rather than below them. Every pooled handle a
+        // live view can hold - base readers, live-view WAL writers - is returned by this free, so
+        // ordering it here makes the teardown correct by construction instead of resting on the
+        // hand-maintained pre-release calls above. clear() already sequences it this way; adding
+        // one pooled handle to LiveViewInstance would otherwise turn the old order into a
+        // use-after-free that no test catches.
+        Misc.free(liveViewRegistry);
+        Misc.free(liveViewStateStore);
         Misc.free(sqlCompilerPool);
         Misc.free(writerPool);
         Misc.free(readerPool);
@@ -1242,8 +1257,6 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(checkpointAgent);
         Misc.free(metadataCache);
         Misc.free(scoreboardPool);
-        Misc.free(liveViewRegistry);
-        Misc.free(liveViewStateStore);
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
         Misc.free(frameFactory);
@@ -1657,6 +1670,14 @@ public class CairoEngine implements Closeable, WriterSource {
                             .$(", error=").$(rollbackErr).I$();
                 }
                 try {
+                    // Release _lv.s before the rollback unlinks the directory holding it. This
+                    // catch runs inside the enclosing try-with-resources, so the writer is still
+                    // open here; POSIX tolerates unlinking an open file, Windows refuses it and
+                    // leaves an orphan directory the restart reap will not clear (it has an _lv,
+                    // so the half-created arm does not fire, and there is no _lv.drop). Closing
+                    // twice is safe - the underlying mapping is guarded on its page address, so
+                    // the try-with-resources close below is a no-op.
+                    blockFileWriter.close();
                     rollbackDeferredLiveViewCreate(path, liveViewToken);
                 } catch (Throwable rollbackErr) {
                     LOG.error().$("could not roll back partially-created live view [view=").$(liveViewToken)

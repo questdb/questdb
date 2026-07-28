@@ -741,7 +741,8 @@ public class ServerMain implements Closeable {
             } else {
                 log.advisory().$("mat view and live view refresh are disabled; set ")
                         .$(MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
-                        .$(" to a positive value or keep default to enable refresh.")
+                        .$(" to a positive value or keep default to enable refresh. CREATE MATERIALIZED VIEW")
+                        .$(" and CREATE LIVE VIEW still succeed, but nothing will refresh them.")
                         .$();
             }
         }

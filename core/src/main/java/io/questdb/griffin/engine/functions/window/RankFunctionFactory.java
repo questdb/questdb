@@ -595,26 +595,18 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
-            if (streamingSymbolTableIndices != null) {
-                // Streaming path: rank maps are indexed by compacted ORDER BY position, but the symbol
-                // tables live at the base column indices, so build each one through the mapping.
-                if (rankMaps != null) {
-                    for (int i = 0, n = rankMaps.size(); i < n; i++) {
-                        DirectIntList rankMap = rankMaps.getQuick(i);
-                        if (rankMap != null) {
-                            SortKeyEncoder.buildRankMap(symbolTableSource.getSymbolTable(streamingSymbolTableIndices[i]), rankMap);
-                        }
-                    }
-                    recordComparator.setRankMaps(rankMaps);
-                }
-            } else {
-                SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
-            }
+            buildRankMaps(symbolTableSource);
         }
 
         @Override
         public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+            // Rebuild the rank maps here too. A live view's incremental refresh calls
+            // initPartitionBy instead of init() from the second cycle onward, and a rank map
+            // encodes symbol keys against the symbol table of the cycle that built it. Reusing a
+            // cycle-1 encoding to compare cycle-2 keys mis-orders every row whose ORDER BY symbol
+            // was added in between - silently, since the comparison still succeeds.
+            buildRankMaps(symbolTableSource);
         }
 
         @Override
@@ -854,6 +846,29 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             Misc.clear(map);
             rank = 0;
             tombstoneCount = 0;
+        }
+
+        /**
+         * (Re)builds the ORDER BY rank maps against {@code symbolTableSource}'s current symbol
+         * tables. Both {@link #init} and {@link #initPartitionBy} call this: the encodings are
+         * only valid for the symbol tables they were built from.
+         */
+        private void buildRankMaps(SymbolTableSource symbolTableSource) {
+            if (streamingSymbolTableIndices != null) {
+                // Streaming path: rank maps are indexed by compacted ORDER BY position, but the symbol
+                // tables live at the base column indices, so build each one through the mapping.
+                if (rankMaps != null) {
+                    for (int i = 0, n = rankMaps.size(); i < n; i++) {
+                        DirectIntList rankMap = rankMaps.getQuick(i);
+                        if (rankMap != null) {
+                            SortKeyEncoder.buildRankMap(symbolTableSource.getSymbolTable(streamingSymbolTableIndices[i]), rankMap);
+                        }
+                    }
+                    recordComparator.setRankMaps(rankMaps);
+                }
+            } else {
+                SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
+            }
         }
     }
 

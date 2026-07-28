@@ -137,10 +137,17 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         this.configuration = configuration;
         // Pinned scratch buffer for extracted timestamps. 64 KiB base page is
         // small enough to start cheap and doubles as needed.
+        //
+        // Tagged to the live-view arena so memory_metrics() can attribute it; deliberately NOT
+        // bound to a per-view MemoryTracker. This cursor is owned by the refresh WORKER and reused
+        // across every view that worker drains, so charging it to whichever view happens to be
+        // draining would leave the balance attached to that view after the next drain moves on.
+        // Binding it correctly needs a cycle-scoped attach/detach, which is a separate change.
+        // MAX_RETAINED_EXTRACTED_TS_BYTES is what bounds the retained peak in the meantime.
         this.extractedTimestampMem = new MemoryCARWImpl(
                 64L * 1024L,
                 Integer.MAX_VALUE,
-                MemoryTag.NATIVE_DEFAULT
+                MemoryTag.NATIVE_LIVE_VIEW_IN_MEM
         );
     }
 
@@ -286,6 +293,24 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     }
 
     /**
+     * Unmaps the WAL segment this cursor last opened - the segment's {@code _meta}, its nested
+     * {@code _event} and every projected {@code .d}/{@code .i} - while keeping the reusable
+     * per-worker scratch allocated.
+     * <p>
+     * A drain must call this when it ends. On Windows a live mapping is an open handle on the
+     * segment directory, so {@link io.questdb.cairo.wal.WalPurgeJob}'s rmdir fails with
+     * ACCESS_DENIED and an otherwise idle view pins the segment indefinitely.
+     * <p>
+     * Deliberately narrower than {@link #close()}: the extracted-timestamp scratch and the
+     * per-column symbol overlays carry no file mappings, and their retained capacity is what
+     * keeps a steady sub-cap load from reallocating every turn. {@link #of} lazily re-creates the
+     * reader, so the cursor stays reusable.
+     */
+    public void releaseSegment() {
+        reader = Misc.free(reader);
+    }
+
+    /**
      * Test-only: lowers the extracted-timestamp scratch retention cap so a modest transaction
      * deterministically triggers the shrink path. See {@link #MAX_RETAINED_EXTRACTED_TS_BYTES}.
      */
@@ -342,7 +367,7 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             int colIdx = diff.getColumnIndex();
             DirectSymbolMap map = colIdx < txnSymbolDiffs.size() ? txnSymbolDiffs.getQuick(colIdx) : null;
             if (map == null) {
-                map = new DirectSymbolMap(256, 8, MemoryTag.NATIVE_DEFAULT);
+                map = new DirectSymbolMap(256, 8, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
                 txnSymbolDiffs.extendAndSet(colIdx, map);
             }
             // Record the diff's clean symbol count so keyOf can probe the overlay's
