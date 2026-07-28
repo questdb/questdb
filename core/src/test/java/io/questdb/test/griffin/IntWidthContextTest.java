@@ -25,49 +25,41 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
- * The acceptance matrix for INT expression width: one overflowing expression, written three
- * ways, crossed with every context that can read it at 64 bits.
+ * The contexts that read an INT expression at 64 bits without an explicit cast asking them to.
  * <p>
- * The three spellings - literal arithmetic, INT column arithmetic and bind-variable
- * arithmetic - must give the same answer in the same context, and the contexts must not
- * contradict each other. {@link IntArithmeticOverflowFoldingTest} pins the store path and the
- * cast/implicit-read agreement in depth; this class pins the context axis, including the
- * contexts that reach 64 bits through overload resolution rather than through an explicit
- * cast:
+ * {@link IntArithmeticOverflowFoldingTest} pins the casts, the implicit-read agreement and the
+ * store path. What it does not cover is the set of contexts that reach 64 bits through overload
+ * resolution or type escalation - where the width is decided by a PEER or a TARGET rather than
+ * by anything visible in the expression's own syntax:
  * <ul>
- *     <li>arithmetic with a 64-bit peer, which resolves {@code +(LL)} and reads the INT
- *     operand through {@code getLong()};</li>
- *     <li>a conditional with a 64-bit arm, where {@code CaseCommon.getCommonType} escalates
+ *     <li>arithmetic with a 64-bit peer. The LONG row of {@code ColumnType.OVERLOAD_PRIORITY}
+ *     has no INT, so {@code +(II)} cannot match an {@code (INT, LONG)} pair, {@code +(LL)} wins
+ *     and {@code AddLongFunctionFactory} reads the INT operand through {@code getLong()}.</li>
+ *     <li>a conditional with a 64-bit arm. {@code CaseCommon.getCommonType} escalates
  *     {@code (INT, LONG)} to LONG and no {@code (INT, LONG)} cast factory exists, so the LONG
- *     variant reads the INT arm directly;</li>
- *     <li>a comparison against a function-valued 64-bit peer, whose type is known only after
- *     the peer has been built;</li>
- *     <li>an {@code UPDATE} SET target, which is a typed destination exactly as an
- *     {@code INSERT} target is, but reaches the writer through
- *     {@code UpdateOperatorImpl.updateColumnValues} rather than through a row copier.</li>
+ *     variant of COALESCE / CASE / NULLIF reads the INT arm directly.</li>
+ *     <li>a comparison against a function-valued 64-bit peer, whose declared type is known only
+ *     once the peer has been built.</li>
+ *     <li>an {@code UPDATE} SET target, a typed destination like an {@code INSERT} target but
+ *     one that bypasses the row copier: {@code UpdateOperatorImpl.updateColumnValues} reads the
+ *     virtual record with {@code getLong()} / {@code getTimestamp()} / {@code getDate()}
+ *     dispatched on the target column's type.</li>
+ *     <li>the designated timestamp target, whose two spellings behave differently.</li>
  * </ul>
- * Those four are the contexts a compile-time retyping pass has to reach through resolved
- * parameter types rather than through syntax, so they are the cells that decide whether such
- * a pass is complete.
- * <p>
- * Every cell asserts the CURRENT behaviour, which is not uniformly 9.4.3's: the store cells and
- * the alias cell widen here where 9.4.3 wrapped, and the literal spelling of a bare projection
- * folded to LONG in 9.4.3. The point of the matrix is that the cells agree with each other and
- * that any future change to one of them is deliberate, not that they reproduce a released
- * version.
+ * Released 9.4.3 and this branch agree on every value asserted here, apart from the DATE arm of
+ * the UPDATE test, which is called out in place. So these are not characterization tests: any
+ * change to INT width has to keep them green, and a redesign that decides width from syntax
+ * alone cannot.
  */
-public class IntWidthContextMatrixTest extends AbstractCairoTest {
+public class IntWidthContextTest extends AbstractCairoTest {
 
     // 1_720_468_802 * 1_000_000: the GitHub issue #4752 expression.
     private static final String TS_OF_WIDE = "2024-07-08T20:00:02.000000Z";
-    private static final String TS_OF_WIDE_BERLIN = "2024-07-08T18:00:02.000000Z";
     private static final String WIDE = "1720468802000000";
-    private static final String WRAPPED = "-607497088";
 
     @Test
     public void testComparisonAgainstFunctionValuedPeerComputesWide() throws Exception {
@@ -210,30 +202,6 @@ public class IntWidthContextMatrixTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSpellingMatrixBindArithmetic() throws Exception {
-        assertMemoryLeak(() -> {
-            createMatrixTables("bind");
-            assertContextMatrix("bind", ":b0::INT * 1_000_000", true);
-        });
-    }
-
-    @Test
-    public void testSpellingMatrixColumnArithmetic() throws Exception {
-        assertMemoryLeak(() -> {
-            createMatrixTables("col");
-            assertContextMatrix("col", "secs * 1_000_000", false);
-        });
-    }
-
-    @Test
-    public void testSpellingMatrixLiteralArithmetic() throws Exception {
-        assertMemoryLeak(() -> {
-            createMatrixTables("lit");
-            assertContextMatrix("lit", "1_720_468_802 * 1_000_000", false);
-        });
-    }
-
-    @Test
     public void testUpdateIntoWiderColumnWidens() throws Exception {
         // An UPDATE SET target is a typed destination exactly as an INSERT target is, but it
         // does not go through a row copier: when the SET expression's type does not match the
@@ -263,81 +231,5 @@ public class IntWidthContextMatrixTest extends AbstractCairoTest {
             execute("UPDATE updi SET l = i");
             assertQuery("SELECT l FROM updi").noLeakCheck().expectSize().returns("l\nnull\n7\n");
         });
-    }
-
-    private void assertContextMatrix(String suffix, String e, boolean isBind) throws Exception {
-        // 1. plain INT projection wraps, and the expression's declared type is INT
-        rebind(isBind);
-        assertQuery("SELECT " + e + " AS v FROM m" + suffix)
-                .noLeakCheck().expectSize().columnType(0, ColumnType.INT).returns("v\n" + WRAPPED + "\n");
-
-        // 2. an explicit 64-bit cast widens
-        rebind(isBind);
-        assertQuery("SELECT (" + e + ")::LONG AS v FROM m" + suffix)
-                .noLeakCheck().expectSize().returns("v\n" + WIDE + "\n");
-
-        // 3. ::TIMESTAMP is the same 64-bit read as ::LONG
-        rebind(isBind);
-        assertQuery("SELECT (" + e + ")::TIMESTAMP AS v FROM m" + suffix)
-                .noLeakCheck().expectSize().returns("v\n" + TS_OF_WIDE + "\n");
-
-        // 4. a temporal function argument - the original issue #4752 shape
-        rebind(isBind);
-        assertQuery("SELECT to_utc(" + e + ", 'Europe/Berlin') AS v FROM m" + suffix)
-                .noLeakCheck().expectSize().returns("v\n" + TS_OF_WIDE_BERLIN + "\n");
-
-        // 5/6. a comparison takes its width from the PEER's spelling, so the same predicate
-        // answers differently against a LONG zero and an INT zero. This pair is the shape
-        // that cannot be removed without promoting the type outright.
-        rebind(isBind);
-        assertQuery("SELECT count() AS c FROM m" + suffix + " WHERE " + e + " > 0L")
-                .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
-        rebind(isBind);
-        assertQuery("SELECT count() AS c FROM m" + suffix + " WHERE " + e + " > 0")
-                .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
-
-        // 7. INSERT into a LONG column
-        rebind(isBind);
-        execute("INSERT INTO dstLong" + suffix + " SELECT " + e + " FROM m" + suffix);
-        assertQuery("SELECT l FROM dstLong" + suffix)
-                .noLeakCheck().expectSize().returns("l\n" + WIDE + "\n");
-
-        // 8. INSERT into a NON-DESIGNATED timestamp column
-        rebind(isBind);
-        execute("INSERT INTO dstTs" + suffix + " SELECT " + e + " FROM m" + suffix);
-        assertQuery("SELECT t FROM dstTs" + suffix)
-                .noLeakCheck().expectSize().returns("t\n" + TS_OF_WIDE + "\n");
-
-        // 9. INSERT ... SELECT into a DESIGNATED timestamp column never reaches the writer:
-        // SqlCompilerImpl rejects an INT select column for the designated timestamp before any
-        // copier is generated. See testDesignatedTimestampTargetRejectsIntSelect.
-        rebind(isBind);
-        assertExceptionNoLeakCheck(
-                "INSERT INTO dstDts" + suffix + " SELECT " + e + " FROM m" + suffix,
-                12,
-                "expected timestamp column but type is INT"
-        );
-
-        // 10. the alias cell. An alias is a column reference, so a 64-bit read THROUGH it is a
-        // read of a materialized INT column. This asserts the current branch, which forwards
-        // both widths through the reference; released 9.4.3 wraps here.
-        rebind(isBind);
-        assertQuery("SELECT a::LONG AS v FROM (SELECT " + e + " AS a, secs FROM m" + suffix + ")")
-                .noLeakCheck().expectSize().returns("v\n" + WIDE + "\n");
-    }
-
-    private void createMatrixTables(String suffix) throws Exception {
-        execute("CREATE TABLE m" + suffix + " (secs INT)");
-        execute("INSERT INTO m" + suffix + " VALUES (1_720_468_802)");
-        execute("CREATE TABLE dstLong" + suffix + " (l LONG)");
-        execute("CREATE TABLE dstTs" + suffix + " (t TIMESTAMP)");
-        execute("CREATE TABLE dstDts" + suffix + " (t TIMESTAMP) TIMESTAMP(t) PARTITION BY YEAR");
-    }
-
-    private void rebind(boolean isBind) throws SqlException {
-        if (isBind) {
-            bindVariableService.clear();
-            bindVariableService.setStr("b0", "1720468802");
-        }
     }
 }
