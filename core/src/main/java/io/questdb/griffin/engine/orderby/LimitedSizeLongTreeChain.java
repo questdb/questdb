@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordRandomAccess;
 import io.questdb.griffin.engine.AbstractRedBlackTree;
+import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.DirectIntList;
@@ -331,6 +332,9 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
     // remove node and put on freelist (if holds only one value in chain)
     public void removeAndCache(int node) {
+        // find() documents a -1 return, and a -1 here would walk the value chain off the
+        // heap: uncompressAligned4(-1) is ~16GB now that compressed offsets are unsigned.
+        assert node != EMPTY;
         if (hasMoreThanOneValue(node)) {
             removeMostRecentChainValue(node); // don't change minMax
         } else {
@@ -367,18 +371,9 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         this.limit = limit;
     }
 
-    private static int compressValueOffset(long rawOffset) {
-        return (int) (rawOffset >> 2);
-    }
-
-    // Compressed offsets are unsigned: values at or past the 8GB mark have the top bit set.
-    private static long uncompressValueOffset(int offset) {
-        return Integer.toUnsignedLong(offset) << 2;
-    }
-
     private int appendValue(long value, int prevValueOffset) {
         checkValueCapacity();
-        final int offset = compressValueOffset(valueHeapPos - valueHeapStart);
+        final int offset = CompressedOffsets.compressAligned4(valueHeapPos - valueHeapStart);
         Unsafe.putLong(valueHeapPos, value);
         Unsafe.putInt(valueHeapPos + 8, prevValueOffset);
         valueHeapPos += CHAIN_VALUE_SIZE;
@@ -386,9 +381,18 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     private void checkValueCapacity() {
+        if (valueHeapStart == 0) {
+            // See AbstractRedBlackTree.checkKeyCapacity: the heaps are unallocated before the
+            // first reopen() and after close(), and valueHeapSize still carries the configured
+            // page size in the never-opened case, so growing from here would book a delta against
+            // memory nothing ever charged.
+            reopen();
+        }
         if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
             final long required = valueHeapPos - valueHeapStart + CHAIN_VALUE_SIZE;
-            long newHeapSize = valueHeapSize << 1;
+            // Doubling alone falls short whenever the heap is smaller than one value, which the
+            // config floors rule out but they do not run in every embedding.
+            long newHeapSize = Math.max(valueHeapSize << 1, required);
             if (newHeapSize > maxValueHeapSize) {
                 if (required > maxValueHeapSize) {
                     LimitOverflowException ex = LimitOverflowException.instance();
@@ -399,8 +403,9 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
                     throw ex;
                 }
                 // Doubling overshoots a cap that is rarely a power of two, so rejecting here
-                // would strand up to half of the configured budget. The value we have to fit
-                // still fits, so clamp to the cap instead.
+                // would strand part of the configured budget: the largest reachable heap would be
+                // the largest pageSize * 2^k not exceeding the cap. The value we have to fit still
+                // fits, so clamp to the cap instead.
                 newHeapSize = maxValueHeapSize;
             }
             long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
@@ -428,8 +433,9 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private int getChainLength(int chainStart) {
         int counter = 1;
         int nextOffset = nextValueOffset(chainStart);
-        // CHAIN_END, not EMPTY: this walks value offsets, which are a different namespace from
-        // the tree's block offsets even though both sentinels happen to be -1.
+        // CHAIN_END, not EMPTY: this walks value offsets rather than block offsets. The two
+        // sentinels are deliberately the same -1, and the tree relies on that - refOf()/lastRefOf()
+        // return the literal -1 for an EMPTY block, which the cursors then read as a chain end.
         while (nextOffset != CHAIN_END) {
             nextOffset = nextValueOffset(nextOffset);
             counter++;
@@ -444,7 +450,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     private int nextValueOffset(int valueOffset) {
-        return Unsafe.getInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8);
+        assert valueOffset != CHAIN_END;
+        return Unsafe.getInt(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset) + 8);
     }
 
     private void prepareComparatorLeftSideIfAtMaxCapacity(RecordRandomAccess sourceCursor, Record ownedRecord, RecordComparator comparator, int currentFrameIndex) {
@@ -484,15 +491,18 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     private long rowId(int valueOffset) {
-        return Unsafe.getLong(valueHeapStart + uncompressValueOffset(valueOffset));
+        assert valueOffset != CHAIN_END;
+        return Unsafe.getLong(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset));
     }
 
     private void setNextValueOffset(int valueOffset, int nextValueOffset) {
-        Unsafe.putInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8, nextValueOffset);
+        assert valueOffset != CHAIN_END;
+        Unsafe.putInt(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset) + 8, nextValueOffset);
     }
 
     private void setRowId(int valueOffset, long rowId) {
-        Unsafe.putLong(valueHeapStart + uncompressValueOffset(valueOffset), rowId);
+        assert valueOffset != CHAIN_END;
+        Unsafe.putLong(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset), rowId);
     }
 
     // if not empty - reuses most recently deleted node from freelist; otherwise allocates a new node
@@ -574,8 +584,11 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         private int treeCurrent;
 
         public void clear() {
-            treeCurrent = 0;
-            chainCurrent = 0;
+            // Sentinels, not 0: 0 is a legal block and value offset, so clearing to it left
+            // hasNext() reporting true and next() reading rowId(0) - from address 0 after a
+            // close(). LongTreeChain's cursor already cleared to the sentinels.
+            treeCurrent = EMPTY;
+            chainCurrent = CHAIN_END;
         }
 
         public boolean hasNext() {

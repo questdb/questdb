@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -122,6 +122,46 @@ public class LongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLazyChainAllocatesOnFirstPutWithoutReopen() throws Exception {
+        // Every production owner constructs the chain with openOnInit == false and calls reopen()
+        // before use. The constructor records the configured page size in the heap size fields
+        // either way, so a put() that skips reopen() grew from a null heap pointer while booking
+        // only the doubling delta: the counters were charged one page less than was allocated, and
+        // close() then freed the full amount. assertMemoryLeak observes exactly that imbalance.
+        assertMemoryLeak(() -> {
+            try (
+                    LongTreeChain chain = new LongTreeChain(
+                            64,
+                            Long.MAX_VALUE,
+                            128,
+                            Long.MAX_VALUE,
+                            PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                            PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
+                            false
+                    )
+            ) {
+                final long[] values = new long[8];
+                for (int i = 0; i < values.length; i++) {
+                    values[i] = i;
+                }
+                final TestRecordCursor cursor = new TestRecordCursor(values);
+                final Record left = cursor.getRecord();
+                final Record placeholder = cursor.getRecordB();
+                final RecordComparator comparator = new TestRecordComparator();
+
+                int inserted = 0;
+                while (cursor.hasNext()) {
+                    chain.put(left, cursor, placeholder, comparator);
+                    inserted++;
+                }
+
+                Assert.assertEquals(values.length, inserted);
+                assertReadsBack(chain, inserted);
+            }
+        });
+    }
+
+    @Test
     public void testValueHeapAcceptsRequiredEqualToMaxHeapSize() throws Exception {
         // Same boundary on the value heap: a 36-byte budget is an exact multiple of the 12-byte
         // chain value, so the 3rd value makes required exactly 36 and must be accepted.
@@ -160,43 +200,6 @@ public class LongTreeChainTest extends AbstractCairoTest {
                 Assert.assertEquals(8, fillUntilOverflow(chain, "memory exceeded in LongTreeChain"));
             }
         });
-    }
-
-    @Test
-    public void testValueOffsetCompressionRoundTripsAboveSignedIntRange() throws Exception {
-        // Same unsigned encoding on the rowid value chain, 4-byte scaled, with -1 reserved as
-        // the chain-end sentinel. Offsets at or above 2^31 * 4 set the top bit of the raw int.
-        final Method compressValueOffset = LongTreeChain.class.getDeclaredMethod("compressValueOffset", long.class);
-        final Method uncompressValueOffset = LongTreeChain.class.getDeclaredMethod("uncompressValueOffset", int.class);
-        compressValueOffset.setAccessible(true);
-        uncompressValueOffset.setAccessible(true);
-
-        final long chainValueSize = 12;
-        final long maxValueHeapSize = (Integer.toUnsignedLong(-1) - 1) << 2; // (2^32 - 2) * 4
-        final long lastSignedOffset = ((long) Integer.MAX_VALUE) << 2; // compresses to Integer.MAX_VALUE
-        final long firstUnsignedOffset = (1L << 31) << 2;              // compresses to Integer.MIN_VALUE
-        final long lastValueOffset = maxValueHeapSize - chainValueSize; // last offset a value can start at
-        final long[] offsets = {
-                0,
-                4,
-                1L << 30,
-                lastSignedOffset,
-                firstUnsignedOffset,
-                3L << 32, // mid-unsigned range: compresses negative, but to neither boundary
-                lastValueOffset,
-        };
-        for (long offset : offsets) {
-            int rawOffset = (Integer) compressValueOffset.invoke(null, offset);
-            Assert.assertNotEquals("offset " + offset + " must not compress to the chain-end sentinel", -1, rawOffset);
-            Assert.assertEquals("offset " + offset, offset, ((Long) uncompressValueOffset.invoke(null, rawOffset)).longValue());
-        }
-
-        // Offset 0 is a legal value start here, so 0 is not a sentinel and must round-trip as itself.
-        Assert.assertEquals(0, (int) (Integer) compressValueOffset.invoke(null, 0L));
-        // The upper half of the range is exactly what the signed reading got wrong.
-        Assert.assertTrue((Integer) compressValueOffset.invoke(null, lastSignedOffset) > 0);
-        Assert.assertTrue((Integer) compressValueOffset.invoke(null, firstUnsignedOffset) < 0);
-        Assert.assertTrue((Integer) compressValueOffset.invoke(null, lastValueOffset) < 0);
     }
 
     /**

@@ -37,8 +37,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.reflect.Method;
-
 /**
  * Test RBTree removal cases asserting final tree structure.
  */
@@ -47,8 +45,8 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     LimitedSizeLongTreeChain chain;
     RecordComparator comparator;
     TestRecordCursor cursor;
-    TestRecord left;
-    TestRecord placeholder;
+    SingleLongRecord left;
+    SingleLongRecord placeholder;
 
     @After
     public void after() {
@@ -179,6 +177,55 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     // sibling is black and its both children are black (?)
+    @Test
+    public void testLazyChainAllocatesOnFirstPutWithoutReopen() throws Exception {
+        // LimitedSizeSortedLightRecordCursorFactory and AsyncTopKAtom both construct this chain
+        // with openOnInit == false and reopen() before use. The constructor still records the
+        // configured page size in both heap-size fields, so a put() that skips reopen() grew from
+        // a null heap pointer while booking only the doubling delta: the counters ended up short
+        // of what was allocated, and close() then freed the full amount.
+        //
+        // This pins the key-heap guard in AbstractRedBlackTree. The value-heap guard cannot be
+        // reached from here - allocateBlock() runs first and its reopen() opens both heaps - and
+        // only fires when a previous reopen() failed part way, leaving the key heap open and the
+        // value heap null.
+        chain.close();
+        assertMemoryLeak(() -> {
+            chain = new LimitedSizeLongTreeChain(
+                    64,
+                    Long.MAX_VALUE,
+                    128,
+                    Long.MAX_VALUE,
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
+                    false
+            );
+            chain.updateLimits(true, 1_000);
+
+            final long[] values = new long[8];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = i;
+            }
+            createTree(values);
+
+            assertReadsBack(values.length);
+            chain.close();
+        });
+    }
+
+    @Test
+    public void testCursorClearLeavesCursorExhausted() {
+        // clear() used to reset the cursor to 0/0, but 0 is a legal block and value offset, so
+        // hasNext() reported true and next() read rowId(0) - from address 0 once the chain had
+        // been closed. It has to clear to the sentinels instead.
+        createTree(5, 3, 9);
+        LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
+        Assert.assertTrue(treeCursor.hasNext());
+
+        treeCursor.clear();
+        Assert.assertFalse("a cleared cursor must be exhausted", treeCursor.hasNext());
+    }
+
     @Test
     public void testRemoveBlackNodeWithBlackSiblingWithBothChildrenBlack() {
         assertTree(
@@ -524,46 +571,6 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testValueOffsetCompressionRoundTripsAboveSignedIntRange() throws Exception {
-        // Compressed value offsets are unsigned 32-bit and 4-byte scaled, with -1 reserved as
-        // the chain-end sentinel. Offsets at or above 2^31 * 4 set the top bit of the raw int;
-        // reading them back as a signed int yielded a negative offset, so the rowid accessors
-        // addressed 8GB below the heap. There is no +1 bias here, so offset 0 legitimately
-        // compresses to 0 and only -1 is out of bounds.
-        final Method compressValueOffset = LimitedSizeLongTreeChain.class.getDeclaredMethod("compressValueOffset", long.class);
-        final Method uncompressValueOffset = LimitedSizeLongTreeChain.class.getDeclaredMethod("uncompressValueOffset", int.class);
-        compressValueOffset.setAccessible(true);
-        uncompressValueOffset.setAccessible(true);
-
-        final long chainValueSize = 12;
-        final long maxValueHeapSize = (Integer.toUnsignedLong(-1) - 1) << 2; // (2^32 - 2) * 4
-        final long lastSignedOffset = ((long) Integer.MAX_VALUE) << 2; // compresses to Integer.MAX_VALUE
-        final long firstUnsignedOffset = (1L << 31) << 2;              // compresses to Integer.MIN_VALUE
-        final long lastValueOffset = maxValueHeapSize - chainValueSize; // last offset a value can start at
-        final long[] offsets = {
-                0,
-                4,
-                1L << 30,
-                lastSignedOffset,
-                firstUnsignedOffset,
-                3L << 32, // mid-unsigned range: compresses negative, but to neither boundary
-                lastValueOffset,
-        };
-        for (long offset : offsets) {
-            int rawOffset = (Integer) compressValueOffset.invoke(null, offset);
-            Assert.assertNotEquals("offset " + offset + " must not compress to the chain-end sentinel", -1, rawOffset);
-            Assert.assertEquals("offset " + offset, offset, ((Long) uncompressValueOffset.invoke(null, rawOffset)).longValue());
-        }
-
-        // Offset 0 is a legal value start here, so 0 is not a sentinel and must round-trip as itself.
-        Assert.assertEquals(0, (int) (Integer) compressValueOffset.invoke(null, 0L));
-        // The upper half of the range is exactly what the signed reading got wrong.
-        Assert.assertTrue((Integer) compressValueOffset.invoke(null, lastSignedOffset) > 0);
-        Assert.assertTrue((Integer) compressValueOffset.invoke(null, firstUnsignedOffset) < 0);
-        Assert.assertTrue((Integer) compressValueOffset.invoke(null, lastValueOffset) < 0);
-    }
-
     /**
      * Walks the tree back after a clamped growth step. Values go in ascending with rowId == value,
      * so the cursor has to yield 0..inserted-1 in order - which only holds if every heap-relative
@@ -590,8 +597,8 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     private void createTree(long... values) {
         cursor = new TestRecordCursor(values);
-        left = (TestRecord) cursor.getRecord();
-        placeholder = (TestRecord) cursor.getRecordB();
+        left = (SingleLongRecord) cursor.getRecord();
+        placeholder = (SingleLongRecord) cursor.getRecordB();
         comparator = new TestRecordComparator();
         comparator.setLeft(left);
         while (cursor.hasNext()) {
@@ -602,6 +609,11 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     /**
      * Inserts distinct ascending values until one of the heaps runs out, and returns how many
      * of them the chain accepted. Fails when no overflow happens at all.
+     * <p>
+     * Deliberately not shared with the namesake in {@code LongTreeChainTest}: this chain's
+     * {@code put()} expects the caller to have set the comparator's left side, while
+     * {@link io.questdb.griffin.engine.orderby.LongTreeChain#put} sets it itself, and the two
+     * cursor types are unrelated inner classes.
      */
     private int fillUntilOverflow(String expectedMessage) {
         final long[] values = new long[256];
@@ -609,8 +621,8 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
             values[i] = i;
         }
         cursor = new TestRecordCursor(values);
-        left = (TestRecord) cursor.getRecord();
-        placeholder = (TestRecord) cursor.getRecordB();
+        left = (SingleLongRecord) cursor.getRecord();
+        placeholder = (SingleLongRecord) cursor.getRecordB();
         comparator = new TestRecordComparator();
         comparator.setLeft(left);
 
@@ -636,7 +648,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @NotNull
-    private String toString(TestRecordCursor cursor, TestRecord right) {
+    private String toString(TestRecordCursor cursor, SingleLongRecord right) {
         StringSink sink = new StringSink();
         chain.print(sink, rowid -> {
             cursor.recordAt(right, rowid);

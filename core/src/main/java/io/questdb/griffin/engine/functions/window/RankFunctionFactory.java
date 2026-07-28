@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
@@ -212,8 +213,10 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                     chainTypes.add(metadata.getColumnType(i));
                 }
                 recordSink = RecordSinkFactory.getInstance(configuration, sqlGenerator.getAsm(), chainTypes, listColumnFilter);
-                singleRecordSinkA = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN, "RANK() window function");
-                singleRecordSinkB = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN, "RANK() window function");
+                singleRecordSinkA = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_RANK_WINDOW_FUNCTION,
+                        PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath());
+                singleRecordSinkB = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_RANK_WINDOW_FUNCTION,
+                        PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath());
             } else {
                 if (orderIndices == null) {
                     orderIndices = sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);

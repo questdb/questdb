@@ -29,14 +29,14 @@ import io.questdb.griffin.engine.join.LongChain;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.lang.reflect.Method;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -141,43 +141,30 @@ public class LongChainTest {
     }
 
     @Test
-    public void testOffsetCompressionRoundTripsAboveSignedIntRange() throws Exception {
-        // Compressed offsets are unsigned 32-bit and 4-byte scaled, with -1 reserved as the
-        // end-of-chain sentinel. Offsets at or above 2^31 * 4 set the top bit of the raw int;
-        // reading them back as a signed int yielded a negative offset, so the cursor walked
-        // 8GB below the heap. Unlike OrderedMap there is no +1 bias, so offset 0 legitimately
-        // compresses to 0 and only -1 is out of bounds.
-        final Method compressOffset = LongChain.class.getDeclaredMethod("compressOffset", long.class);
-        final Method uncompressOffset = LongChain.class.getDeclaredMethod("uncompressOffset", int.class);
-        compressOffset.setAccessible(true);
-        uncompressOffset.setAccessible(true);
+    public void testKeepClosedChainAllocatesOnFirstPut() throws Exception {
+        // All three production owners construct the chain with keepClosed == true, yet no test
+        // built one that way. Such a chain allocates nothing until reopen(), so a put() that skips
+        // reopen() has to allocate the configured page rather than grow from heapSize 0.
+        assertMemoryLeak(() -> {
+            try (LongChain chain = new LongChain(64, 3, true)) {
+                final long usedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
+                final int first = chain.put(42, -1);
 
-        final long chainValueSize = 12;
-        final long maxHeapSize = (Integer.toUnsignedLong(-1) - 1) << 2; // (2^32 - 2) * 4
-        final long lastSignedOffset = ((long) Integer.MAX_VALUE) << 2; // compresses to Integer.MAX_VALUE
-        final long firstUnsignedOffset = (1L << 31) << 2;              // compresses to Integer.MIN_VALUE
-        final long lastValueOffset = maxHeapSize - chainValueSize;     // last offset a value can start at
-        final long[] offsets = {
-                0,
-                4,
-                1L << 30,
-                lastSignedOffset,
-                firstUnsignedOffset,
-                3L << 32, // mid-unsigned range: compresses negative, but to neither boundary
-                lastValueOffset,
-        };
-        for (long offset : offsets) {
-            int rawOffset = (Integer) compressOffset.invoke(null, offset);
-            Assert.assertNotEquals("offset " + offset + " must not compress to the chain-end sentinel", -1, rawOffset);
-            Assert.assertEquals("offset " + offset, offset, ((Long) uncompressOffset.invoke(null, rawOffset)).longValue());
-        }
+                // The configured 64-byte page, not the 12 bytes this one value needs. Growing from
+                // a closed heap instead of opening it leaves the chain one value wide, re-doubling
+                // from there for the rest of its life, and reallocs off a null pointer.
+                Assert.assertEquals(64, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT) - usedBefore);
 
-        // Offset 0 is a legal value here, so 0 is not a sentinel and must round-trip as itself.
-        Assert.assertEquals(0, (int) (Integer) compressOffset.invoke(null, 0L));
-        // The upper half of the range is exactly what the signed reading got wrong.
-        Assert.assertTrue((Integer) compressOffset.invoke(null, lastSignedOffset) > 0);
-        Assert.assertTrue((Integer) compressOffset.invoke(null, firstUnsignedOffset) < 0);
-        Assert.assertTrue((Integer) compressOffset.invoke(null, lastValueOffset) < 0);
+                final int second = chain.put(43, first);
+
+                LongChain.Cursor cursor = chain.getCursor(second);
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(43, cursor.next());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(42, cursor.next());
+                Assert.assertFalse(cursor.hasNext());
+            }
+        });
     }
 
     private int populateChain(LongChain chain, Rnd rnd, LongList expectedValues) {

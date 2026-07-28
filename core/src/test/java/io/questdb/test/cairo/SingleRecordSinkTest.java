@@ -95,11 +95,12 @@ public class SingleRecordSinkTest extends AbstractTest {
         // A 3000-byte budget is not a power of two, while every doubling step is: the heap grows
         // 4 -> 8 -> ... -> 2048 and then wants 4096. Rejecting there stranded a third of the
         // configured budget at 512 ints; clamping to 3000 fits the 750 that actually do fit.
-        // The owner name also has to reach the message: the same sink backs the RANK() window
-        // function, which used to report a hard-coded ASOF join error.
+        // The owner name also has to reach the message. This only covers that the sink interpolates
+        // the name its constructor was given; CachedWindowMemoryCapTest covers a factory-supplied
+        // one end to end.
         assertMemoryLeak(() -> {
             try (
-                    SingleRecordSink clamped = new SingleRecordSink(3000, MemoryTag.NATIVE_DEFAULT, "RANK() window function");
+                    SingleRecordSink clamped = new SingleRecordSink(3000, MemoryTag.NATIVE_DEFAULT, "test sink");
                     // 4096 is a power of two above the budget, so this one never clamps.
                     SingleRecordSink reference = new SingleRecordSink(4096, MemoryTag.NATIVE_DEFAULT, "test sink")
             ) {
@@ -115,7 +116,7 @@ public class SingleRecordSinkTest extends AbstractTest {
                     Assert.fail("expected LimitOverflowException");
                 } catch (LimitOverflowException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "limit of 3000 memory exceeded in RANK() window function");
+                            "limit of 3000 memory exceeded in test sink");
                 }
             }
         });

@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
  * Minimal single-column record shared by the tree-chain tests. Its row id doubles as its
  * position in the backing {@link TestRecordCursor}.
  */
-class TestRecord implements Record {
+class SingleLongRecord implements Record {
     long position;
     long value;
 

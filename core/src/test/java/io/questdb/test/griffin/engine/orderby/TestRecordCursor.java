@@ -29,13 +29,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.LongList;
 
 /**
- * Serves a fixed list of long values as {@link TestRecord}s, addressable by row id.
+ * Serves a fixed list of long values as {@link SingleLongRecord}s, addressable by row id.
  */
 class TestRecordCursor implements RecordCursor {
-    final Record left = new TestRecord();
-    int position = -1;
-    final Record right = new TestRecord();
+    final Record left = new SingleLongRecord();
+    final Record right = new SingleLongRecord();
     final LongList values = new LongList();
+    int position = -1;
 
     TestRecordCursor(long... newValues) {
         for (int i = 0; i < newValues.length; i++) {
@@ -76,8 +76,8 @@ class TestRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((TestRecord) record).value = values.get((int) atRowId);
-        ((TestRecord) record).position = atRowId;
+        ((SingleLongRecord) record).value = values.get((int) atRowId);
+        ((SingleLongRecord) record).position = atRowId;
     }
 
     public void recordAtValue(Record record, long value) {

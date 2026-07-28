@@ -1045,8 +1045,15 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
         private void resize(int lim) {
             final long prevLim = this.lim;
-            this.lim = Numbers.ceilPow2(lim);
-            this.lo = this._wptr = Unsafe.realloc(this.lo, prevLim, this.lim, MemoryTag.NATIVE_HTTP_CONN);
+            final long newLim = Numbers.ceilPow2(lim);
+            // Commit the pointer and the size only once the realloc has returned. Unsafe.realloc
+            // throws once the global RSS limit is breached, and committing this.lim first left the
+            // augmenter holding a prevLim-sized block while claiming newLim: close() then
+            // over-decremented the memory counters by the difference, and the next of() call whose
+            // value fit the claimed size skipped the resize and wrote past the real block.
+            final long newLo = Unsafe.realloc(this.lo, prevLim, newLim, MemoryTag.NATIVE_HTTP_CONN);
+            this.lo = this._wptr = newLo;
+            this.lim = newLim;
             of0(BOUNDARY_PREFIX);
         }
     }

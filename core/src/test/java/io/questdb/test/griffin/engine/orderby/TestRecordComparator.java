@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.RecordComparator;
 
 /**
- * Orders {@link TestRecord}s by their single long column. Uses Long.compare rather than a
+ * Orders {@link SingleLongRecord}s by their single long column. Uses Long.compare rather than a
  * subtraction, which would overflow for values far apart.
  */
 class TestRecordComparator implements RecordComparator {

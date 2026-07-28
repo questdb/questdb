@@ -115,6 +115,9 @@ public class OrderedMap implements Map, Reopenable {
     private final long keySize;
     private final int listMemoryTag;
     private final double loadFactor;
+    // Heap ceiling honoured by resize(). Always MAX_HEAP_SIZE in production; tests construct with
+    // a lower one to exercise the clamp without growing a 16GB heap into a 32GB one.
+    private final long maxHeapSize;
     private final int maxResizes;
     private final MergeFunction mergeRef;
     private final OrderedMapRecord record;
@@ -133,9 +136,6 @@ public class OrderedMap implements Map, Reopenable {
     private long kPos;      // Current key-value memory pointer (contains searched key / pending key-value pair).
     private int keyCapacity;
     private int mask;
-    // Heap ceiling honoured by resize(). Always MAX_HEAP_SIZE in production; tests lower it
-    // to exercise the clamp without growing a 16GB heap into a 32GB one.
-    private long maxHeapSize = MAX_HEAP_SIZE;
     // Per-query native memory tracker bound by the owning factory at cursor start.
     // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
     // degrade to the global-only overloads in that case.
@@ -171,7 +171,7 @@ public class OrderedMap implements Map, Reopenable {
             int maxResizes,
             int memoryTag
     ) {
-        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, memoryTag, memoryTag, true);
+        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, memoryTag, memoryTag, true, MAX_HEAP_SIZE);
     }
 
     public OrderedMap(
@@ -182,7 +182,7 @@ public class OrderedMap implements Map, Reopenable {
             double loadFactor,
             int maxResizes
     ) {
-        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_INT_LIST, true);
+        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_INT_LIST, true, MAX_HEAP_SIZE);
     }
 
     public OrderedMap(
@@ -194,7 +194,29 @@ public class OrderedMap implements Map, Reopenable {
             int maxResizes,
             boolean openOnInit
     ) {
-        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_INT_LIST, openOnInit);
+        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_INT_LIST, openOnInit, MAX_HEAP_SIZE);
+    }
+
+    /**
+     * Constructs a map with a lowered heap ceiling, so that both the clamp in {@code resize()} and
+     * its limit-exceeded path can be exercised without growing a 16GB heap into a 32GB one. The
+     * ceiling must be positive and 8-byte aligned, since heap offsets are 8-byte scaled, and is
+     * capped to the natural ceiling imposed by compressed offsets: a heap larger than
+     * {@code MAX_HEAP_SIZE} yields entry start offsets whose {@code (offset >> 3) + 1} truncates
+     * past 32 bits, so the compressed offset would no longer round-trip.
+     */
+    @TestOnly
+    public OrderedMap(
+            long heapSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes,
+            boolean openOnInit,
+            long maxHeapSize
+    ) {
+        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_INT_LIST, openOnInit, maxHeapSize);
     }
 
     OrderedMap(
@@ -206,14 +228,17 @@ public class OrderedMap implements Map, Reopenable {
             int maxResizes,
             int heapMemoryTag,
             int listMemoryTag,
-            boolean openOnInit
+            boolean openOnInit,
+            long maxHeapSize
     ) {
         assert heapSize > 3;
         assert loadFactor > 0 && loadFactor < 1d;
+        assert maxHeapSize > 0 && (maxHeapSize & 7) == 0;
 
         try {
             this.heapMemoryTag = heapMemoryTag;
             this.listMemoryTag = listMemoryTag;
+            this.maxHeapSize = Math.min(maxHeapSize, MAX_HEAP_SIZE);
             initialHeapSize = heapSize;
             this.loadFactor = loadFactor;
             validateBatchAddressable(heapSize);
@@ -398,6 +423,26 @@ public class OrderedMap implements Map, Reopenable {
         return c.init(heapAddr, size);
     }
 
+    /**
+     * Writes a raw [compressed offset, hash code] pair straight into a hash table slot, bypassing
+     * the key heap. A real map only produces a compressed offset with the top bit set once its heap
+     * passes the 16GB mark, so this lets a test drive the probe, rehash and merge loops against the
+     * unsigned-sentinel contract without allocating such a heap. The planted offset does not address
+     * a real entry, so the caller must keep the planted hash code distinct from every live key's:
+     * that keeps every consumer on the hash-mismatch branch, which never dereferences the offset.
+     * The poke bypasses the {@code size} and {@code free} accounting, so a planted slot occupies
+     * the table without counting against the load factor; plant only into a table with headroom.
+     */
+    @TestOnly
+    public void pokeRawSlot(int index, int rawOffset, int hashCodeLo) {
+        assert index >= 0 && index < keyCapacity;
+        // 0 is the empty marker: planting it would free a slot without crediting back free.
+        assert rawOffset != 0;
+        long offsetAddr = offsetsAddr + ((long) index << 3);
+        Unsafe.putInt(offsetAddr, rawOffset);
+        Unsafe.putInt(offsetAddr + 4, hashCodeLo);
+    }
+
     @Override
     public long probeBatch(
             PageFrameMemoryRecord record,
@@ -425,6 +470,16 @@ public class OrderedMap implements Map, Reopenable {
             return probeBatchFilteredFixedSize(record, mapSink, rowIdsAddr, batchStart, batchEnd, batchAddr);
         }
         return probeBatchFilteredVarSize(record, mapSink, rowIdsAddr, batchStart, batchEnd, batchAddr);
+    }
+
+    /**
+     * Reads a hash table slot as the single 64-bit value the probe loops see: the compressed offset
+     * in the low int, the hash code in the high int. An empty slot reads back as 0.
+     */
+    @TestOnly
+    public long rawSlotAt(int index) {
+        assert index >= 0 && index < keyCapacity;
+        return Unsafe.getLong(offsetsAddr + ((long) index << 3));
     }
 
     @Override
@@ -500,19 +555,6 @@ public class OrderedMap implements Map, Reopenable {
             throw CairoException.nonCritical().put("map capacity overflow");
         }
         rehash(Numbers.ceilPow2((int) requiredCapacity));
-    }
-
-    /**
-     * Lowers the heap ceiling honoured by {@code resize()}, so that both the clamp and the
-     * limit-exceeded path can be exercised without growing a 16GB heap into a 32GB one. The value
-     * must be positive and 8-byte aligned, since heap offsets are 8-byte scaled. Anything above
-     * the natural ceiling imposed by compressed offsets is capped to it: an entry starting at
-     * MAX_HEAP_SIZE would compress to 0, which is the empty-slot marker.
-     */
-    @TestOnly
-    public void setMaxHeapSize(long maxHeapSize) {
-        assert maxHeapSize > 0 && (maxHeapSize & 7) == 0;
-        this.maxHeapSize = Math.min(maxHeapSize, MAX_HEAP_SIZE);
     }
 
     @Override
@@ -907,10 +949,12 @@ public class OrderedMap implements Map, Reopenable {
         if (kCapacity < target) {
             kCapacity = Numbers.ceilPow2(target);
         }
-        // Both the doubling and the ceilPow2 above yield a power of two, while the ceiling is
-        // 16 bytes below 2^35. Clamp rather than reject: the data we have to fit still does fit,
-        // and nothing downstream requires a power-of-two heap. Without the clamp the largest
-        // reachable heap would be 2^34, i.e. half of what compressed offsets can address.
+        // Growth is initialHeapSize * 2^k, with a ceilPow2 jump when one doubling is not enough,
+        // while the ceiling sits 16 bytes below 2^35 and so is rarely landed on exactly. Clamp
+        // rather than reject: the data we have to fit still does fit, and nothing downstream
+        // requires a power-of-two heap. Without the clamp the largest reachable heap is the
+        // largest initialHeapSize * 2^k not exceeding the ceiling, stranding part of what
+        // compressed offsets can address - a full half of it when the page size is a power of two.
         if (kCapacity > maxHeapSize) {
             kCapacity = maxHeapSize;
         }

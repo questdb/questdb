@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.HttpCookie;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpHeaderParser;
@@ -62,6 +63,40 @@ public class HttpHeaderParserTest {
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
+
+    @Test
+    public void testBoundaryAugmenterResizeFailureKeepsSizeConsistent() throws Exception {
+        // A multipart boundary longer than 64 bytes is client-controlled and makes the augmenter
+        // grow. Unsafe.realloc throws once the global RSS limit is breached - which every standard
+        // deployment sets from ram.usage.limit.percent - and the augmenter used to commit the new
+        // size before the realloc returned. It was then holding the old, smaller block while
+        // claiming the larger size, so close() decremented the memory counters by more than was
+        // ever charged. assertMemoryLeak observes exactly that imbalance.
+        TestUtils.assertMemoryLeak(() -> {
+            try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
+                final StringSink boundary = new StringSink();
+                for (int i = 0; i < 200; i++) {
+                    boundary.put('a');
+                }
+
+                final long savedLimit = Unsafe.getRssMemLimit();
+                try {
+                    // No headroom at all, so the growing realloc cannot succeed.
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                    augmenter.of(new Utf8String(boundary));
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                } finally {
+                    Unsafe.setRssMemLimit(savedLimit);
+                }
+
+                // The augmenter still holds its original block, so a value that fits must round
+                // trip rather than run past the end of it.
+                TestUtils.assertEquals("\r\n--short", augmenter.of(new Utf8String("short")));
+            }
+        });
+    }
 
     @Test
     public void testContentDisposition() throws Exception {

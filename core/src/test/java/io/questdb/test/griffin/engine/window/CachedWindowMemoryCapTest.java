@@ -25,7 +25,10 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class CachedWindowMemoryCapTest extends AbstractCairoTest {
@@ -203,6 +206,57 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                             s2\t1970-01-01T00:00:09.000000Z\t10\t6
                             s3\t1970-01-01T00:00:10.000000Z\t11\t7
                             s0\t1970-01-01T00:00:11.000000Z\t12\t8
+                            """);
+        });
+    }
+
+    @Test
+    public void testRankStreamingSinkCapNamesRankOwner() throws Exception {
+        // The streaming RANK() path serializes each window ORDER BY key into a SingleRecordSink,
+        // whose limit message names the owning feature. RankFunctionFactory threads that name in;
+        // the message used to be hard-coded to "ASOF join", so RANK reported an ASOF join error.
+        //
+        // Reaching the sink's budget needs a key wider than its 8-byte initial capacity. Following
+        // order-by advice on an indexed SYMBOL admits a two-column (SYMBOL, TIMESTAMP) window
+        // ORDER BY, which serializes to 12 bytes and therefore enters resize().
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 64);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 0);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (sym SYMBOL INDEX, l LONG, ts TIMESTAMP)
+                      TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO tab VALUES
+                      ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                      ('b', 2, '2024-01-01T00:00:01.000000Z'),
+                      ('a', 3, '2024-01-01T00:00:02.000000Z'),
+                      ('b', 4, '2024-01-01T00:00:03.000000Z')""");
+
+            // assertExceptionNoLeakCheck() passes silently when nothing is thrown, and the point
+            // of this test is that the query reaches the sink at all, so require the throw here.
+            try {
+                printSql("SELECT sym, ts, rank() OVER (ORDER BY sym, ts) FROM tab" +
+                        " WHERE ts IN '2024-01-01' ORDER BY sym, ts");
+                Assert.fail("expected LimitOverflowException");
+            } catch (LimitOverflowException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "memory exceeded in RANK() window function (raise cairo.sql.window.store.max.pages)");
+            }
+
+            // Negative control: a single 8-byte key fits the initial capacity, so the same budget
+            // never reaches resize(). This pins that the assertion above is driven by key width.
+            assertQuery("SELECT ts, rank() OVER (ORDER BY ts) FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\trank
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T00:00:01.000000Z\t2
+                            2024-01-01T00:00:02.000000Z\t3
+                            2024-01-01T00:00:03.000000Z\t4
                             """);
         });
     }

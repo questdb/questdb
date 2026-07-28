@@ -43,7 +43,14 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenable {
+    public static final String OWNER_ASOF_JOIN = "ASOF join";
+    public static final String OWNER_RANK_WINDOW_FUNCTION = "RANK() window function";
     private static final int INITIAL_CAPACITY_BYTES = 8;
+    // Property to raise when the budget is exceeded. Null when the owner has no single knob.
+    // The sink's budget rarely comes from a key the user would guess: the ASOF sinks are sized
+    // from the hash-join value budget, so naming the feature alone leaves them stuck.
+    @Nullable
+    private final String configKey;
     private final long maxHeapSize;
     private final int memoryTag;
     // Names the feature that owns this sink, so that an exceeded budget blames the query the
@@ -61,9 +68,14 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     private MemoryTracker memoryTracker;
 
     public SingleRecordSink(long maxHeapSizeBytes, int memoryTag, @NotNull String ownerName) {
+        this(maxHeapSizeBytes, memoryTag, ownerName, null);
+    }
+
+    public SingleRecordSink(long maxHeapSizeBytes, int memoryTag, @NotNull String ownerName, @Nullable String configKey) {
         this.memoryTag = memoryTag;
         this.maxHeapSize = maxHeapSizeBytes;
         this.ownerName = ownerName;
+        this.configKey = configKey;
     }
 
     @Override
@@ -77,6 +89,9 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
             Unsafe.free(heapStart, heapLimit - heapStart, memoryTag, memoryTracker);
             appendAddress = 0;
             heapStart = 0;
+            // Clear the limit too, otherwise a put() without reopen() compares against a stale
+            // one, finds room it does not have and writes through address 0.
+            heapLimit = 0;
         }
     }
 
@@ -319,7 +334,12 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
         assert appendAddress >= heapStart;
         final long target = appendAddress + entrySize - heapStart;
         if (target > maxHeapSize) {
-            throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in ").put(ownerName);
+            LimitOverflowException ex = LimitOverflowException.instance();
+            ex.put("limit of ").put(maxHeapSize).put(" memory exceeded in ").put(ownerName);
+            if (configKey != null) {
+                ex.put(" (raise ").put(configKey).put(')');
+            }
+            throw ex;
         }
         long currentCapacity = heapLimit - heapStart;
         long newCapacity = currentCapacity << 1;

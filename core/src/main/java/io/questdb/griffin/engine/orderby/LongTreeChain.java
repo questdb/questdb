@@ -28,6 +28,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.AbstractRedBlackTree;
+import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.MemoryTag;
@@ -37,6 +38,9 @@ import io.questdb.std.Unsafe;
  * Values are stored on a heap. Value chain addresses are 4-byte aligned.
  */
 public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
+    // Marks the end of a node's value chain. A different namespace from the tree's EMPTY block
+    // sentinel, which happens to share the same numeric value.
+    private static final int CHAIN_END = -1;
     private static final long CHAIN_VALUE_SIZE = 12;
     // Upper bound enforced by the compressed-offset encoding (offsets are 4-byte-aligned and
     // stored as 32-bit ints), independent of any user-supplied byte cap.
@@ -133,7 +137,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
             RecordComparator comparator,
             long rowId
     ) {
-        if (root == -1) {
+        if (root == EMPTY) {
             putParent(rowId);
             return;
         }
@@ -186,28 +190,28 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         }
     }
 
-    private static int compressValueOffset(long rawOffset) {
-        return (int) (rawOffset >> 2);
-    }
-
-    // Compressed offsets are unsigned: values at or past the 8GB mark have the top bit set.
-    private static long uncompressValueOffset(int offset) {
-        return Integer.toUnsignedLong(offset) << 2;
-    }
-
     private int appendNewValue(long rowId) {
         checkValueCapacity();
-        final int offset = compressValueOffset(valueHeapPos - valueHeapStart);
+        final int offset = CompressedOffsets.compressAligned4(valueHeapPos - valueHeapStart);
         Unsafe.putLong(valueHeapPos, rowId);
-        Unsafe.putInt(valueHeapPos + 8, -1);
+        Unsafe.putInt(valueHeapPos + 8, CHAIN_END);
         valueHeapPos += CHAIN_VALUE_SIZE;
         return offset;
     }
 
     private void checkValueCapacity() {
+        if (valueHeapStart == 0) {
+            // See AbstractRedBlackTree.checkKeyCapacity: the heaps are unallocated before the
+            // first reopen() and after close(), and valueHeapSize still carries the configured
+            // page size in the never-opened case, so growing from here would book a delta against
+            // memory nothing ever charged.
+            reopen();
+        }
         if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
             final long required = valueHeapPos - valueHeapStart + CHAIN_VALUE_SIZE;
-            long newHeapSize = valueHeapSize << 1;
+            // Doubling alone falls short whenever the heap is smaller than one value, which the
+            // config floors rule out but they do not run in every embedding.
+            long newHeapSize = Math.max(valueHeapSize << 1, required);
             if (newHeapSize > maxValueHeapSize) {
                 if (required > maxValueHeapSize) {
                     LimitOverflowException ex = LimitOverflowException.instance();
@@ -218,8 +222,9 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
                     throw ex;
                 }
                 // Doubling overshoots a cap that is rarely a power of two, so rejecting here
-                // would strand up to half of the configured budget. The value we have to fit
-                // still fits, so clamp to the cap instead.
+                // would strand part of the configured budget: the largest reachable heap would be
+                // the largest pageSize * 2^k not exceeding the cap. The value we have to fit still
+                // fits, so clamp to the cap instead.
                 newHeapSize = maxValueHeapSize;
             }
             long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
@@ -234,7 +239,8 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     }
 
     private int nextValueOffset(int valueOffset) {
-        return Unsafe.getInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8);
+        assert valueOffset != CHAIN_END;
+        return Unsafe.getInt(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset) + 8);
     }
 
     private void putParent(long rowId) {
@@ -242,15 +248,17 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         final int chainStart = appendNewValue(rowId);
         setRef(root, chainStart);
         setLastRef(root, chainStart);
-        setParent(root, -1);
+        setParent(root, EMPTY);
     }
 
     private long rowId(int valueOffset) {
-        return Unsafe.getLong(valueHeapStart + uncompressValueOffset(valueOffset));
+        assert valueOffset != CHAIN_END;
+        return Unsafe.getLong(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset));
     }
 
     private void setNextValueOffset(int valueOffset, int nextValueOffset) {
-        Unsafe.putInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8, nextValueOffset);
+        assert valueOffset != CHAIN_END;
+        Unsafe.putInt(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset) + 8, nextValueOffset);
     }
 
     public class TreeCursor {
@@ -258,17 +266,17 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         private int treeCurrent;
 
         public void clear() {
-            treeCurrent = -1;
-            chainCurrent = -1;
+            treeCurrent = EMPTY;
+            chainCurrent = CHAIN_END;
         }
 
         public boolean hasNext() {
-            if (chainCurrent != -1) {
+            if (chainCurrent != CHAIN_END) {
                 return true;
             }
 
             treeCurrent = successor(treeCurrent);
-            if (treeCurrent == -1) {
+            if (treeCurrent == EMPTY) {
                 return false;
             }
 
@@ -288,8 +296,8 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
 
         private void setup() {
             int p = root;
-            if (p != -1) {
-                while (leftOf(p) != -1) {
+            if (p != EMPTY) {
+                while (leftOf(p) != EMPTY) {
                     p = leftOf(p);
                 }
             }

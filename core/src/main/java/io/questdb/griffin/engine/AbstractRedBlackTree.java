@@ -140,9 +140,20 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     }
 
     private void checkKeyCapacity() {
+        if (keyHeapStart == 0) {
+            // Every production owner constructs with openOnInit == false, and close() zeroes the
+            // heap again, so this is the normal state before the first reopen(). keyHeapSize still
+            // carries the configured page size in the never-opened case, so growing from here
+            // would realloc off a null pointer while booking a delta against memory nothing ever
+            // charged, driving the global and per-query counters low. Allocate first instead.
+            reopen();
+        }
         if (keyHeapPos + BLOCK_SIZE > keyHeapLimit) {
             final long required = keyHeapPos - keyHeapStart + BLOCK_SIZE;
-            long newHeapSize = keyHeapSize << 1;
+            // Doubling alone does not necessarily cover the block: it falls short whenever the
+            // heap is smaller than one block, which the constructor's assert and the config
+            // floors rule out but neither runs in every embedding.
+            long newHeapSize = Math.max(keyHeapSize << 1, required);
             if (newHeapSize > maxKeyHeapSize) {
                 if (required > maxKeyHeapSize) {
                     LimitOverflowException ex = LimitOverflowException.instance();
@@ -153,8 +164,9 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
                     throw ex;
                 }
                 // Doubling overshoots a cap that is rarely a power of two, so rejecting here
-                // would strand up to half of the configured budget. The block we have to fit
-                // still fits, so clamp to the cap instead.
+                // would strand part of the configured budget: the largest reachable heap would be
+                // the largest pageSize * 2^k not exceeding the cap. The block we have to fit still
+                // fits, so clamp to the cap instead.
                 newHeapSize = maxKeyHeapSize;
             }
             long newHeapPos = Unsafe.realloc(keyHeapStart, keyHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
@@ -388,12 +400,6 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
 
     protected int parentOf(int blockOffset) {
         return blockOffset == EMPTY ? EMPTY : Unsafe.getInt(keyHeapStart + uncompressKeyOffset(blockOffset));
-    }
-
-    protected void putParent(int value) {
-        root = allocateBlock();
-        setRef(root, value);
-        setParent(root, EMPTY);
     }
 
     // See lastRefOf: the returned -1 is the value-chain sentinel, not EMPTY.

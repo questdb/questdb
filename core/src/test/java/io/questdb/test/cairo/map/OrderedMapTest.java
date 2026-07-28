@@ -1736,6 +1736,16 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergeTopBitOffsetSlotStaysOccupiedFixedSizeKey() throws Exception {
+        assertMergeSkipsPlantedSlot(false);
+    }
+
+    @Test
+    public void testMergeTopBitOffsetSlotStaysOccupiedVarSizeKey() throws Exception {
+        assertMergeSkipsPlantedSlot(true);
+    }
+
+    @Test
     public void testMergeVarSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
@@ -1861,6 +1871,60 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProbeTreatsTopBitOffsetSlotAsOccupied() throws Exception {
+        // A compressed offset with the top bit set is a legal, occupied slot: it encodes a heap
+        // offset at or above 16GB. Testing emptiness as "raw > 0" instead of "raw != 0" reads such
+        // a slot as free and silently overwrites a live group - no exception, just a wrong GROUP BY
+        // result. A 16GB heap is not constructible here, so plant the slot directly.
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.INT);
+
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+
+            try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 16, 0.5, 24)) {
+                final int key = 42;
+
+                // Learn which slot the key probes to, then empty the table again.
+                MapKey k = map.withKey();
+                k.putInt(key);
+                Assert.assertTrue(k.createValue().isNew());
+                final int home = onlyOccupiedSlot(map);
+                final int keyHash = Numbers.decodeHighInt(map.rawSlotAt(home));
+                map.clear();
+
+                // Plant an occupied slot with the top bit set right where the key probes. Flipping
+                // only the top hash bit keeps the planted hash distinct from the key's, so every
+                // consumer stays on the hash-mismatch branch and never dereferences the offset.
+                final int plantedOffset = 0x8000_0001;
+                final int plantedHash = keyHash ^ 0x8000_0000;
+                map.pokeRawSlot(home, plantedOffset, plantedHash);
+
+                // createValue() has to probe past the planted slot instead of overwriting it.
+                k = map.withKey();
+                k.putInt(key);
+                Assert.assertTrue(k.createValue().isNew());
+
+                final long planted = map.rawSlotAt(home);
+                Assert.assertEquals("planted slot must survive the probe", plantedOffset, Numbers.decodeLowInt(planted));
+                Assert.assertEquals(plantedHash, Numbers.decodeHighInt(planted));
+
+                final int next = (home + 1) & (map.getKeyCapacity() - 1);
+                final long landed = map.rawSlotAt(next);
+                Assert.assertNotEquals("key must land in the slot after the planted one", 0, Numbers.decodeLowInt(landed));
+                Assert.assertEquals(keyHash, Numbers.decodeHighInt(landed));
+
+                // The read-only probe has to walk past the planted slot too, otherwise it reports
+                // a live key as absent.
+                k = map.withKey();
+                k.putInt(key);
+                Assert.assertFalse("lookup must find the key beyond the planted slot", k.notFound());
+            }
+        });
+    }
+
+    @Test
     public void testRecordAsKey() throws Exception {
         assertMemoryLeak(() -> {
             final int N = 5000;
@@ -1924,6 +1988,79 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRehashPreservesTopBitOffsetSlots() throws Exception {
+        // rehash() rebuilds the table straight from the raw slots. It has to carry a top-bit offset
+        // across, and must not overwrite one while placing a colliding entry. Reading such a slot
+        // as empty drops a live group outright.
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.INT);
+
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+
+            try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 16, 0.5, 24)) {
+                MapKey k = map.withKey();
+                k.putInt(0);
+                Assert.assertTrue(k.createValue().isNew());
+                final int anchorHash = Numbers.decodeHighInt(map.rawSlotAt(onlyOccupiedSlot(map)));
+
+                // Both planted hashes share their low bits with a live key's, so all three collide
+                // at the same index of the rebuilt table and the inner placement probe has to walk
+                // over them. Flipping only high bits keeps the hashes distinct, so no consumer ever
+                // compares keys against a planted slot.
+                final int plantedOffsetA = 0x8000_0001;
+                final int plantedOffsetB = 0xFFFF_FFFE;
+                final int plantedHashA = anchorHash ^ 0x8000_0000;
+                final int plantedHashB = anchorHash ^ 0x4000_0000;
+                int planted = 0;
+                for (int i = 0, n = map.getKeyCapacity(); i < n && planted < 2; i++) {
+                    if (Numbers.decodeLowInt(map.rawSlotAt(i)) == 0) {
+                        map.pokeRawSlot(
+                                i,
+                                planted == 0 ? plantedOffsetA : plantedOffsetB,
+                                planted == 0 ? plantedHashA : plantedHashB
+                        );
+                        planted++;
+                    }
+                }
+                Assert.assertEquals(2, planted);
+
+                // Grow past the load factor so that rehash() runs.
+                final int initialCapacity = map.getKeyCapacity();
+                for (int i = 1; i < 1000 && map.getKeyCapacity() == initialCapacity; i++) {
+                    k = map.withKey();
+                    k.putInt(i);
+                    k.createValue();
+                }
+                Assert.assertTrue("rehash must have run", map.getKeyCapacity() > initialCapacity);
+
+                // Every real key plus both planted slots must have survived the rebuild.
+                Assert.assertEquals(map.size() + 2, occupiedSlotCount(map));
+
+                // Counting rather than flagging also detects a real key whose hash collided with a
+                // planted one, which would put a 2^34 offset on the hash-match branch.
+                int countA = 0;
+                int countB = 0;
+                for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
+                    final long slot = map.rawSlotAt(i);
+                    final int rawOffset = Numbers.decodeLowInt(slot);
+                    final int hash = Numbers.decodeHighInt(slot);
+                    if (hash == plantedHashA) {
+                        Assert.assertEquals(plantedOffsetA, rawOffset);
+                        countA++;
+                    } else if (hash == plantedHashB) {
+                        Assert.assertEquals(plantedOffsetB, rawOffset);
+                        countB++;
+                    }
+                }
+                Assert.assertEquals("planted slot A must survive the rehash exactly once", 1, countA);
+                Assert.assertEquals("planted slot B must survive the rehash exactly once", 1, countB);
+            }
+        });
+    }
+
+    @Test
     public void testResizeAcceptsTargetEqualToMaxHeapSize() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // A 2064-byte ceiling is an exact multiple of the 16-byte entry, and the heap doubles
@@ -1940,11 +2077,11 @@ public class OrderedMapTest extends AbstractCairoTest {
                             new SingleColumnType(ColumnType.LONG),
                             16,
                             0.5,
-                            Integer.MAX_VALUE
+                            Integer.MAX_VALUE,
+                            true,
+                            maxHeapSize
                     )
             ) {
-                map.setMaxHeapSize(maxHeapSize);
-
                 for (int i = 0; i < clampedEntries; i++) {
                     MapKey key = map.withKey();
                     key.putLong(i);
@@ -1986,11 +2123,11 @@ public class OrderedMapTest extends AbstractCairoTest {
                             new SingleColumnType(ColumnType.LONG),
                             16,
                             0.5,
-                            Integer.MAX_VALUE
+                            Integer.MAX_VALUE,
+                            true,
+                            maxHeapSize
                     )
             ) {
-                map.setMaxHeapSize(maxHeapSize);
-
                 // Fill to one entry short of the ceiling. The clamp happens well before that.
                 for (int i = 0; i < clampedEntries - 1; i++) {
                     MapKey key = map.withKey();
@@ -2046,11 +2183,11 @@ public class OrderedMapTest extends AbstractCairoTest {
                             new SingleColumnType(ColumnType.LONG),
                             16,
                             0.5,
-                            Integer.MAX_VALUE
+                            Integer.MAX_VALUE,
+                            true,
+                            maxHeapSize
                     )
             ) {
-                map.setMaxHeapSize(maxHeapSize);
-
                 // Fill to one entry short of the ceiling. The clamp happens at 2048 -> 3064,
                 // so everything past entry 128 only exists because resize() clamped.
                 for (int i = 0; i < clampedEntries - 1; i++) {
@@ -2121,11 +2258,11 @@ public class OrderedMapTest extends AbstractCairoTest {
                             new SingleColumnType(ColumnType.LONG),
                             16,
                             0.5,
-                            Integer.MAX_VALUE
+                            Integer.MAX_VALUE,
+                            true,
+                            3_064
                     )
             ) {
-                map.setMaxHeapSize(3_064);
-
                 try {
                     MapKey key = map.withKey();
                     key.putStr("a".repeat(4_000));
@@ -2469,6 +2606,95 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    /**
+     * Plants an occupied slot with the top bit set in the destination table, right where the source
+     * key probes to, then merges. The merge probe has to walk over the planted slot; reading it as
+     * empty overwrites it with the merged entry.
+     */
+    private static void assertMergeSkipsPlantedSlot(boolean isVarSizeKey) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.INT);
+            if (isVarSizeKey) {
+                keyTypes.add(ColumnType.STRING);
+            }
+
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+
+            try (
+                    OrderedMap dest = new OrderedMap(1024, keyTypes, valueTypes, 16, 0.5, 24);
+                    OrderedMap src = new OrderedMap(1024, keyTypes, valueTypes, 16, 0.5, 24)
+            ) {
+                // Learn which destination slot the key probes to, then empty the table again.
+                MapKey k = dest.withKey();
+                k.putInt(7);
+                if (isVarSizeKey) {
+                    k.putStr("abc");
+                }
+                k.createValue().putLong(0, 1);
+                final int home = onlyOccupiedSlot(dest);
+                final int keyHash = Numbers.decodeHighInt(dest.rawSlotAt(home));
+                dest.clear();
+
+                // Flipping only the top hash bit keeps the planted hash distinct from the key's, so
+                // the merge stays on the hash-mismatch branch and never dereferences the offset.
+                final int plantedOffset = 0x8000_0001;
+                final int plantedHash = keyHash ^ 0x8000_0000;
+                dest.pokeRawSlot(home, plantedOffset, plantedHash);
+
+                k = src.withKey();
+                k.putInt(7);
+                if (isVarSizeKey) {
+                    k.putStr("abc");
+                }
+                k.createValue().putLong(0, 2);
+
+                dest.merge(src, new TestMapValueMergeFunction());
+
+                final long planted = dest.rawSlotAt(home);
+                Assert.assertEquals("planted slot must survive the merge", plantedOffset, Numbers.decodeLowInt(planted));
+                Assert.assertEquals(plantedHash, Numbers.decodeHighInt(planted));
+
+                final int next = (home + 1) & (dest.getKeyCapacity() - 1);
+                final long landed = dest.rawSlotAt(next);
+                Assert.assertNotEquals("merged key must land in the slot after the planted one", 0, Numbers.decodeLowInt(landed));
+                Assert.assertEquals(keyHash, Numbers.decodeHighInt(landed));
+                Assert.assertEquals(1, dest.size());
+
+                // The source entry was inserted, not merged into the planted slot, so the value is
+                // the source's own rather than a sum.
+                try (RecordCursor destCursor = dest.getCursor()) {
+                    Assert.assertTrue(destCursor.hasNext());
+                    Assert.assertEquals(2, dest.getRecord().getValue().getLong(0));
+                    Assert.assertFalse(destCursor.hasNext());
+                }
+            }
+        });
+    }
+
+    private static int occupiedSlotCount(OrderedMap map) {
+        int count = 0;
+        for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
+            if (Numbers.decodeLowInt(map.rawSlotAt(i)) != 0) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static int onlyOccupiedSlot(OrderedMap map) {
+        int found = -1;
+        for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
+            if (Numbers.decodeLowInt(map.rawSlotAt(i)) != 0) {
+                Assert.assertEquals("expected exactly one occupied slot", -1, found);
+                found = i;
+            }
+        }
+        Assert.assertNotEquals("expected exactly one occupied slot", -1, found);
+        return found;
     }
 
     /**

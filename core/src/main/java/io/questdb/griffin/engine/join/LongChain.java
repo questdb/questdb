@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.Reopenable;
+import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
@@ -40,10 +41,13 @@ import java.io.Closeable;
  * For each long value also stores compressed offset for its parent (previous in the chain) value.
  * A compressed offset contains an offset to the address of the parent value in the heap memory
  * compressed to an int. Value addresses are 4-byte aligned. Compressed offsets are unsigned,
- * with -1 reserved as the end-of-chain sentinel, so the chain end must be tested as
- * {@code == -1}, never as {@code < 0}.
+ * with {@link #CHAIN_END} reserved as the sentinel, so the chain end must be tested as
+ * {@code == CHAIN_END}, never as {@code < 0}.
  */
 public class LongChain implements Closeable, Mutable, Reopenable {
+    // Marks the end of a chain. Compressed offsets are unsigned, so this must be tested for
+    // equality: every offset from the 8GB mark upwards has its top bit set.
+    private static final int CHAIN_END = -1;
     private static final long CHAIN_VALUE_SIZE = 12;
     private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
     private final Cursor cursor = new Cursor();
@@ -66,7 +70,9 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     public LongChain(long valuePageSize, int valueMaxPages, boolean keepClosed) {
         assert valuePageSize >= CHAIN_VALUE_SIZE;
         this.initialHeapSize = valuePageSize;
-        this.maxHeapSize = Math.min(valuePageSize * valueMaxPages, MAX_HEAP_SIZE_LIMIT);
+        // Floor at one page, as both tree chains do: valueMaxPages == 0 would otherwise give a
+        // zero budget while reopen() still allocates a full page.
+        this.maxHeapSize = Math.min(Math.max(valuePageSize * valueMaxPages, valuePageSize), MAX_HEAP_SIZE_LIMIT);
         if (!keepClosed) {
             heapSize = initialHeapSize;
             heapStart = heapPos = Unsafe.malloc(heapSize, MemoryTag.NATIVE_DEFAULT, memoryTracker);
@@ -97,7 +103,7 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         checkCapacity();
 
         final long appendRawOffset = heapPos - heapStart;
-        final int appendOffset = compressOffset(appendRawOffset);
+        final int appendOffset = CompressedOffsets.compressAligned4(appendRawOffset);
         Unsafe.putLong(heapPos, value);
         Unsafe.putInt(heapPos + 8, parentOffset);
         heapPos += CHAIN_VALUE_SIZE;
@@ -117,32 +123,28 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         this.memoryTracker = memoryTracker;
     }
 
-    private static int compressOffset(long rawOffset) {
-        return (int) (rawOffset >> 2);
-    }
-
-    // Compressed offsets are unsigned: values at or past the 8GB mark have the top bit set.
-    private static long uncompressOffset(int offset) {
-        return Integer.toUnsignedLong(offset) << 2;
-    }
-
     private void checkCapacity() {
+        if (heapStart == 0) {
+            // A keepClosed chain allocates nothing until reopen(), and close() zeroes the heap
+            // again. Growing from that state would realloc off a null pointer and then write 12
+            // bytes through address 0, so allocate the configured heap first. Recovering here
+            // rather than through Math.max alone also keeps the chain at its configured page size
+            // instead of leaving it at one value and re-doubling from there.
+            reopen();
+        }
         if (heapPos + CHAIN_VALUE_SIZE > heapLimit) {
             final long required = heapPos - heapStart + CHAIN_VALUE_SIZE;
             if (required > maxHeapSize) {
                 throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in LongChain");
             }
-            // Take required into account rather than trusting the doubling alone. Doubling covers
-            // it whenever heapSize >= CHAIN_VALUE_SIZE, but this class - unlike the tree chains,
-            // which set their heap size in the constructor either way - leaves heapSize at 0 until
-            // reopen(), so a put() on a keepClosed chain would otherwise realloc to 0 and write
-            // 12 bytes at address 0. It also covers a sub-block page size, which config validation
-            // and the constructor's assert rule out but neither runs in every embedding.
+            // Doubling alone falls short whenever the heap is smaller than one value, which the
+            // config floor and the constructor's assert rule out but neither runs in every
+            // embedding. The tree chains carry the same guard for the same reason.
             long newHeapSize = Math.max(heapSize << 1, required);
             // Doubling overshoots a cap that is rarely a power of two, and the throw above has
             // already established that the value we have to fit does fit under the cap. Clamp
-            // instead of rejecting, otherwise the largest reachable heap is the largest power of
-            // two below the cap and up to half of the configured budget stays unused.
+            // instead of rejecting, otherwise the largest reachable heap is the largest
+            // pageSize * 2^k not exceeding the cap and part of the configured budget stays unused.
             if (newHeapSize > maxHeapSize) {
                 newHeapSize = maxHeapSize;
             }
@@ -161,11 +163,12 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         private int nextOffset;
 
         public boolean hasNext() {
-            return nextOffset != -1;
+            return nextOffset != CHAIN_END;
         }
 
         public long next() {
-            final long rawOffset = uncompressOffset(nextOffset);
+            assert nextOffset != CHAIN_END;
+            final long rawOffset = CompressedOffsets.uncompressAligned4(nextOffset);
             final long value = Unsafe.getLong(heapStart + rawOffset);
             nextOffset = Unsafe.getInt(heapStart + rawOffset + 8);
             return value;
