@@ -2893,8 +2893,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * in {@code [C, H)} and keeps the prefix and the converged suffix. A repair
      * takes it when it localized <b>and</b> converged at a finite {@code H}: only
      * then is there a suffix whose state provably did not change, and only then
-     * does the repair leave the runtime standing where it found it, so no new
-     * logical boundary is created either. A repair that replaces through positive
+     * does the repair leave the runtime standing where it found it. The splice
+     * appends no boundary of its own; the post-replay seal adds one at the
+     * runtime frontier when the frontier has run past the newest root the splice
+     * kept, so the generation's base coverage never outruns its roots. A repair
+     * that replaces through positive
      * infinity - an unlocalized rebuild, or a localized one whose change set has no
      * proven ceiling - has no converged suffix to keep and still retires here.
      * This also catches a splice that failed after its replacement committed: the
@@ -4259,7 +4262,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 session != null ? session.getBoundaries() : emptyRepairBoundaries;
         int capturedBoundaries = resuming ? resumed.getCapturedBoundaries() : 0;
         boolean replayCompleted = false;
-        boolean timelineSpliced = false;
+        // The range splice this repair published, null until it does (and if it
+        // never does). Carries the newest logical key the spliced timeline holds,
+        // which the post-replay seal below needs: a splice appends no root, so a
+        // frontier that has run past that key leaves the generation claiming base
+        // coverage no root has.
+        LiveViewCheckpointTimelineStoreWriter.RepairResult timelineSplice = null;
         // Set when this turn preserved the timeline prefix instead of retiring it
         // (an EOF-reaching localized repair). A durable marker is then live and the
         // post-replay seal must resolve it: clear it once a fresh head is sealed, or
@@ -4772,14 +4780,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             .$(", rowsEmitted=").$(appendedRows)
                             .$(", rowsAfter=").$(durableRowsAfterRepair).I$();
                 } else {
-                    timelineSpliced = publishCheckpointTimelineRepair(
+                    timelineSplice = publishCheckpointTimelineRepair(
                             instance,
                             timelineCapture,
                             effectiveSeqTxn,
                             plan.getHighTsExclusive(),
                             suffixRowDelta
                     );
-                    if (timelineSpliced) {
+                    if (timelineSplice != null) {
                         repairPublication.timelinePublished();
                     }
                 }
@@ -4845,9 +4853,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // from the on-disk size above), so adding them again would
                     // double-count lvRowPosition. Mirrors the seed-completion path.
                     //
-                    // A published splice already IS this repair's timeline publication, and
-                    // it created no new boundary - the runtime stands exactly where the
-                    // repair found it - so the seal only re-stamps the head metadata.
+                    // A published splice already IS this repair's timeline publication,
+                    // and it appended no root. That is enough only while the newest
+                    // root it kept still sits at the frontier: the splice moved the
+                    // generation's normalizedBaseSeqTxn up to E, and restart replays
+                    // (E, durableBase] alone, so any row above that root came from a
+                    // base transaction the replay will not walk and the restored state
+                    // would never see it. Seal the frontier as a root of its own
+                    // whenever it has run past the splice's head key - the convergence
+                    // that let the repair keep the primary runtime is exactly what
+                    // makes that runtime the correct state there - and leave the seal
+                    // to re-stamp the head metadata alone when the two already agree.
                     final long headMaxTs = repairPublication.isKeepPrimaryRuntime()
                             ? instance.getLatestSeenTs()
                             : replayMaxTs;
@@ -4861,7 +4877,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             headMaxTs,
                             0L,
                             true,
-                            !timelineSpliced
+                            timelineSplice == null || headMaxTs > timelineSplice.getHeadRootMaxTimestamp()
                     );
                 }
                 if (prefixMarkerLive) {
@@ -4893,7 +4909,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             .$(", error=").$(t).I$();
                 }
             }
-            if (timelineCapture != null && !timelineSpliced) {
+            if (timelineCapture != null && timelineSplice == null) {
                 // Either the splice could not publish, or it was never allowed to try
                 // because the replacement has not applied. The output the timeline's
                 // roots describe has moved either way, so it must not survive them.
@@ -5558,12 +5574,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * publishes is valid against durable output rather than a candidate one
      * ({@code LV_REPLACEMENT_APPLIED -> TIMELINE_GENERATION_PUBLISHED}). A crash in
      * between leaves the previous generation authoritative and the repair repeatable;
-     * a failure returns false and the caller retires the timeline instead, because
+     * a failure returns null and the caller retires the timeline instead, because
      * the durable output has already moved under every root it holds.
      *
-     * @return true when the superblock committed the new generation
+     * @return the splice's result when the superblock committed the new
+     * generation, null when it did not
      */
-    private boolean publishCheckpointTimelineRepair(
+    private LiveViewCheckpointTimelineStoreWriter.RepairResult publishCheckpointTimelineRepair(
             LiveViewInstance instance,
             LiveViewCheckpointTimelineStoreWriter.RepairCapture capture,
             long normalizedBaseSeqTxn,
@@ -5607,7 +5624,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", suffixRowDelta=").$(result.getSuffixRowDelta())
                     .$(", suffixBreakpointTs=").$(result.getSuffixBreakpointTimestamp())
                     .$(", newBytes=").$(result.getDataBytesAdded() + result.getMetadataBytesAdded()).I$();
-            return true;
+            return result;
         } catch (Throwable t) {
             instance.recordCheckpointRepairFailure();
             LOG.critical().$("could not publish live view checkpoint timeline repair [view=")
@@ -5615,7 +5632,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", highTsExclusive=").$(highTsExclusive)
                     .$(", suffixRowDelta=").$(suffixRowDelta)
                     .$(", error=").$(t).I$();
-            return false;
+            return null;
         }
     }
 
@@ -5668,11 +5685,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * logical boundary or only re-stamps the head metadata.
      * <p>
      * Only a repair that published a timeline range splice passes
-     * {@code false}. It has already published this repair's generation, and it
-     * left the runtime standing exactly where it found it - the state describes
-     * the same frontier the newest root already does - so appending would claim
-     * a boundary that is either a duplicate of the head root or a root over
-     * state nothing new produced.
+     * {@code false}, and only when the splice's newest root already sits at the
+     * frontier the seal is about to stamp: that generation is published, the
+     * runtime stands exactly where the repair found it, and appending would
+     * claim a boundary duplicating the head root. A splice whose frontier ran
+     * past its newest root passes {@code true} instead - see the call site for
+     * why a root there is what keeps the generation's base coverage honest.
      */
     private boolean maybeWriteHeadCheckpoint(
             LiveViewInstance instance,

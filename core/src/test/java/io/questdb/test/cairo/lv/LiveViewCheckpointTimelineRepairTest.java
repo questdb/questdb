@@ -1533,6 +1533,120 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRestartWithoutASpliceRestoresFromAHeadRootBelowTheFrontier() throws Exception {
+        // The control for testSpliceSealsAFrontierAboveTheHeadRootItKept: on a cadence
+        // that seals one root every three commits, the newest root normally sits below
+        // the frontier and restart is fine, because the generation's
+        // normalizedBaseSeqTxn is the one that root was sealed at and the replay of
+        // (that, durableBase] re-feeds every row above it. It is the splice moving that
+        // watermark - not the lagging root - that breaks the pairing.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 3);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildSparseHistory(job, 14);
+                Assert.assertEquals(
+                        "the newest root must lag the frontier for this control to mean anything",
+                        ts(timestamp(130)),
+                        headRootMaxTimestamp(instance)
+                );
+                Assert.assertEquals(ts(timestamp(140)), instance.getLatestSeenTs());
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 150, 15);
+                Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+                Assert.assertEquals(
+                        "the row above the newest root is replayed, so restart restores",
+                        0,
+                        reloaded.getO3BoundaryReplayRows()
+                );
+                Assert.assertEquals(15, reloaded.getLvRowsTotal());
+            }
+        });
+    }
+
+    @Test
+    public void testSpliceSealsAFrontierAboveTheHeadRootItKept() throws Exception {
+        // A splice appends no root but does move the generation's
+        // normalizedBaseSeqTxn up to E, the repair's applied base point. On a cadence
+        // that leaves the newest root below the runtime frontier, that pairs a root at
+        // 130s with base coverage through the commit that carried 140s: restart replays
+        // (E, durableBase] - empty - so the 140s row is never re-fed and the restore's
+        // own invariant rejects the timeline, costing a full rebuild from the applied
+        // base on an otherwise clean restart. The seal after the splice must therefore
+        // put a root at the frontier.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 3);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildSparseHistory(job, 14);
+                final long rootsBefore = entryCount(instance);
+                Assert.assertEquals(ts(timestamp(130)), headRootMaxTimestamp(instance));
+
+                // W is 30s, so the change at 25s converges one microsecond past 55s and
+                // the splice keeps every root from 70s up - the newest of them still at
+                // 130s, ten seconds below the frontier.
+                appendAndRefresh(job, 25, 100);
+
+                Assert.assertEquals(
+                        "the frontier the splice left behind must be sealed as its own root",
+                        rootsBefore + 1,
+                        entryCount(instance)
+                );
+                Assert.assertEquals(ts(timestamp(140)), headRootMaxTimestamp(instance));
+                Assert.assertEquals(
+                        "the sealed root must carry every durable row",
+                        durableRowCount(instance),
+                        headRootEffectivePosition(instance)
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 150, 15);
+                Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+                Assert.assertEquals(
+                        "a splice must not send restart back to a full rebuild",
+                        0,
+                        reloaded.getO3BoundaryReplayRows()
+                );
+                Assert.assertEquals(16, reloaded.getLvRowsTotal());
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t26.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t30.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t42.0\n" +
+                            "2026-01-01T00:02:10.000000Z\ta\t46.0\n" +
+                            "2026-01-01T00:02:20.000000Z\ta\t50.0\n" +
+                            "2026-01-01T00:02:30.000000Z\ta\t54.0\n");
+        });
+    }
+
+    @Test
     public void testStalledApplyDefersTheRepairAndRepeatsItOnceReconciled() throws Exception {
         // The reconciliation between the replacement's commit and everything that
         // describes it. With the live view's inline apply stalled, the block sits in
@@ -2147,6 +2261,21 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         return instance;
     }
 
+    /**
+     * The same forward history {@link #buildHistory(LiveViewRefreshJob, int)}
+     * drives, for a cadence coarser than one root per commit: the caller sets
+     * {@code cairo.live.view.checkpoint.rows} itself and this asserts nothing
+     * about the root count, so the newest root is free to lag the frontier.
+     */
+    private LiveViewInstance buildSparseHistory(LiveViewRefreshJob job, int commits) throws Exception {
+        for (int commit = 1; commit <= commits; commit++) {
+            appendAndRefresh(job, commit * 10, commit);
+        }
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        return instance;
+    }
+
     private void captureRange(
             LiveViewInstance instance,
             LiveViewCheckpointTimelineStoreWriter.RepairCapture capture,
@@ -2226,6 +2355,20 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         try (LiveViewCheckpointMetaStore store = openStore(instance)) {
             return store.getSuperblock().generation;
         }
+    }
+
+    /**
+     * Effective lifetime row position of the newest logical root, i.e. the row
+     * count a restart selecting it would credit the view with.
+     */
+    private long headRootEffectivePosition(LiveViewInstance instance) {
+        final LongList timeline = snapshotTimeline(instance);
+        return timeline.getQuick(timeline.size() - ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION);
+    }
+
+    private long headRootMaxTimestamp(LiveViewInstance instance) {
+        final LongList timeline = snapshotTimeline(instance);
+        return timeline.getQuick(timeline.size() - ENTRY_SIZE + ENTRY_MAX_TIMESTAMP);
     }
 
     private long nextSegmentId(LiveViewInstance instance) {

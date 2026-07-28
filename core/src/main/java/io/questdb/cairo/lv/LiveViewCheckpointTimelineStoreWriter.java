@@ -610,6 +610,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 copy(oldTimelineRoot, newTimelineRoot);
             }
 
+            // The newest logical key the published timeline holds, resolved against
+            // the OLD tree for the reason the breakpoint below states. The caller
+            // needs it because a splice appends no root: it seals a fresh boundary
+            // of its own only when its runtime frontier has run past this one.
+            final LiveViewCheckpointTimelineEntry headEntry = new LiveViewCheckpointTimelineEntry();
+            final long headRootMaxTimestamp = timelineReader.last(oldTimelineRoot, headEntry)
+                    ? headEntry.maxTimestamp
+                    : Numbers.LONG_NULL;
+
             // The breakpoint is resolved against the OLD tree on purpose: a splice
             // preserves every key, so the first suffix key is the same in both, and
             // reading it here needs no page from the segment just written.
@@ -664,6 +673,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return new RepairResult(
                     generation,
                     boundaryCount,
+                    headRootMaxTimestamp,
                     suffixRowDelta,
                     suffixBreakpointTimestamp,
                     dataSegmentBytes,
@@ -1557,6 +1567,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     public static final class RepairResult {
         private final long dataBytesAdded;
         private final long generation;
+        private final long headRootMaxTimestamp;
         private final long metadataBytesAdded;
         private final int rootsVersioned;
         private final LiveViewCheckpointTimelineStats stats;
@@ -1567,6 +1578,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private RepairResult(
                 long generation,
                 int rootsVersioned,
+                long headRootMaxTimestamp,
                 long suffixRowDelta,
                 long suffixBreakpointTimestamp,
                 long dataBytesAdded,
@@ -1576,6 +1588,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         ) {
             this.generation = generation;
             this.rootsVersioned = rootsVersioned;
+            this.headRootMaxTimestamp = headRootMaxTimestamp;
             this.suffixRowDelta = suffixRowDelta;
             this.suffixBreakpointTimestamp = suffixBreakpointTimestamp;
             this.dataBytesAdded = dataBytesAdded;
@@ -1590,6 +1603,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         public long getGeneration() {
             return generation;
+        }
+
+        /**
+         * @return the newest logical key the spliced timeline holds, or
+         * {@link Numbers#LONG_NULL} when it holds none. A splice appends no root,
+         * so this is the boundary the caller's post-repair seal must clear before
+         * it may claim the generation covers a later base transaction.
+         */
+        public long getHeadRootMaxTimestamp() {
+            return headRootMaxTimestamp;
         }
 
         public long getMetadataBytesAdded() {
