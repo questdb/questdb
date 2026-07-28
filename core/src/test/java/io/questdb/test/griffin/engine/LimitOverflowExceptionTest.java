@@ -58,10 +58,13 @@ public class LimitOverflowExceptionTest {
     @Test
     public void testInstanceClearsPositionFromPriorUse() {
         // The flyweight is recycled per carrier, and callers mutate a caught CairoException in
-        // place: SqlCompilerImpl stamps the statement position onto it on the CREATE TABLE AS
-        // SELECT path. A budget overflow inside such a SELECT therefore leaves a non-zero
+        // place: SqlCompilerImpl stamps the statement position onto it on the CREATE ... AS SELECT
+        // paths, which wrap the cursor copy and so can catch this exception directly, and on the
+        // ALTER paths. A budget overflow under such a statement therefore leaves a non-zero
         // position behind, which every later limit overflow on the same carrier would report,
-        // underlining the wrong token for PG and HTTP clients.
+        // underlining the wrong token for PG and HTTP clients. Worse, compileAlterTable() and
+        // compileAlterMatView() only stamp when the position still reads 0, so the stale value also
+        // suppresses the position those two would otherwise set.
         LimitOverflowException first = LimitOverflowException.instance();
         first.put("limit of 1 memory exceeded in FastMap");
         first.position(42);

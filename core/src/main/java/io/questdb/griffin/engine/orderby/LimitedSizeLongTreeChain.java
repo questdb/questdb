@@ -82,6 +82,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private final long initialValueHeapSize;
     private final long maxValueHeapSize;
     private final String valueHeapConfigKey;
+    private int comparatorLeftSideValidForFrame = -1;
     // number of all values stored in tree (including repeating ones)
     private int currentValues = 0;
     // firstN - keep <first->N> set , otherwise keep <last-N->last> set
@@ -89,7 +90,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     // maximum number of values tree can store (including repeating values)
     private long limit; // -1 means 'almost' unlimited
     private int minMaxNode = EMPTY;
-    private int comparatorLeftSideValidForFrame = -1;
     // for fast filtering out of records in here we store rowId of:
     //  - record with max value for firstN/bottomN query
     //  - record with min value for lastN/topN query
@@ -316,7 +316,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             }
         } while (p != EMPTY);
 
-        p = allocateBlock(parent, currentRecord.getRowId());
+        final long currentRecordRowId = currentRecord.getRowId();
+        p = allocateBlock(parent, currentRecordRowId);
 
         if (cmp < 0) {
             setLeft(parent, p);
@@ -325,7 +326,19 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         }
 
         fixInsert(p);
-        refreshMinMaxNode();
+        if (minMaxNode == EMPTY) {
+            // Only reachable when removeAndCache() ran on a node that was not the cached extreme
+            // and so could not name a replacement. An emptied tree returns at the root == EMPTY
+            // branch above and never arrives here.
+            refreshMinMaxNode();
+        } else if (parent == minMaxNode && (isFirstN ? cmp > 0 : cmp < 0)) {
+            // The extreme has no child on its outer side, so a node inserted there is the only one
+            // that can displace it - and it displaces it exactly when the walk ended at the extreme
+            // and went outwards. fixInsert() rotates the tree but never reorders the sequence, so
+            // this holds after the rotations too. Every other insert leaves the extreme alone.
+            minMaxNode = p;
+            minMaxRowId = currentRecordRowId;
+        }
         currentValues++;
         prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator, currentFrameIndex);
     }
@@ -338,12 +351,29 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         if (hasMoreThanOneValue(node)) {
             removeMostRecentChainValue(node); // don't change minMax
         } else {
+            // The cache must name a genuine extreme: one has no child on its outer side, which is
+            // exactly what lets remove() below take its nodeToRemove == node branch. An interior
+            // node here would send remove() down the ref-swapping branch and hand nextExtremeAfter
+            // the wrong neighbour, silently returning wrong top-N rows instead of failing.
+            assert node != minMaxNode || (isFirstN ? rightOf(node) == EMPTY : leftOf(node) == EMPTY);
+            // Name the replacement before remove() restructures anything. The cached extreme has
+            // no child on its outer side, so remove() takes its nodeToRemove == node branch and
+            // never swaps refs with a successor, and fixDelete() rotates without reordering the
+            // sequence - so the node that is next-most-extreme now is still next-most-extreme once
+            // the rotations finish. Any other node leaves the cache invalid, as before.
+            final int replacement = node == minMaxNode ? nextExtremeAfter(node) : EMPTY;
+
             int nodeToRemove = super.remove(node);
             clearBlock(nodeToRemove);
             freeList.add(nodeToRemove); // keep node on freelist to minimize allocations
 
-            minMaxRowId = -1; // re-compute after inserting, there's no point doing it now
-            minMaxNode = EMPTY;
+            if (replacement != EMPTY) {
+                minMaxNode = replacement;
+                minMaxRowId = rowId(refOf(replacement));
+            } else {
+                minMaxRowId = -1; // re-compute on the next insert
+                minMaxNode = EMPTY;
+            }
         }
 
         currentValues--;
@@ -367,6 +397,13 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     public void updateLimits(boolean isFirstN, long limit) {
+        // Callers must not flip isFirstN against a populated tree. minMaxNode/minMaxRowId name one
+        // end of it, chosen by isFirstN, and nothing here re-derives them for the other end - the
+        // top of put() reads minMaxRowId before any refresh can run. That precondition predates the
+        // incremental cache: LimitedSizeSortedLightRecordCursorFactory.initialize() reaches this
+        // ahead of cursor.of(), which is what clear()s the chain, so it holds only because the
+        // factory keeps isFirstN fixed for the life of the cursor. Deliberately not an assert: no
+        // test drives a direction flip, so one here would be an unproven -ea landmine.
         this.isFirstN = isFirstN;
         this.limit = limit;
     }
@@ -412,6 +449,12 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
     private void growValueHeap() {
         if (valueHeapStart == 0) {
+            // Not covered by tests: every put path reaches allocateBlock() -> growKeyHeap() ->
+            // reopen() before appendValue(), so this branch needs a reopen() whose key-heap malloc
+            // succeeded and whose value-heap malloc then threw. That is an RSS/OOM interleaving with
+            // no injectable seam, and replacing this guard with if (false) leaves the whole suite
+            // green. It stays because reopen() is the only recovery point and a partial one has to
+            // be survivable, not because anything exercises it.
             // See AbstractRedBlackTree.growKeyHeap: the heaps are unallocated before the
             // first reopen() and after close(), and valueHeapSize still carries the configured
             // page size in the never-opened case, so growing from here would book a delta against
@@ -461,9 +504,33 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         return previousOffset != CHAIN_END;
     }
 
+    // The extreme's neighbour: the rightmost node of its left subtree when keeping the first N
+    // (where the cache holds the maximum), the leftmost of its right subtree when keeping the last
+    // N. The extreme has no child on its outer side, so when the inner one is missing too the
+    // neighbour is simply its parent, and EMPTY there means the tree had a single node left.
+    private int nextExtremeAfter(int node) {
+        if (isFirstN) {
+            int p = leftOf(node);
+            if (p == EMPTY) {
+                return parentOf(node);
+            }
+            while (rightOf(p) != EMPTY) {
+                p = rightOf(p);
+            }
+            return p;
+        }
+        int p = rightOf(node);
+        if (p == EMPTY) {
+            return parentOf(node);
+        }
+        while (leftOf(p) != EMPTY) {
+            p = leftOf(p);
+        }
+        return p;
+    }
+
     private int nextValueOffset(int valueOffset) {
-        assert valueOffset != CHAIN_END;
-        return Unsafe.getInt(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset) + 8);
+        return Unsafe.getInt(valueAddress(valueOffset) + 8);
     }
 
     private void prepareComparatorLeftSideIfAtMaxCapacity(RecordRandomAccess sourceCursor, Record ownedRecord, RecordComparator comparator, int currentFrameIndex) {
@@ -503,18 +570,24 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     private long rowId(int valueOffset) {
-        assert valueOffset != CHAIN_END;
-        return Unsafe.getLong(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset));
+        return Unsafe.getLong(valueAddress(valueOffset));
     }
 
     private void setNextValueOffset(int valueOffset, int nextValueOffset) {
-        assert valueOffset != CHAIN_END;
-        Unsafe.putInt(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset) + 8, nextValueOffset);
+        Unsafe.putInt(valueAddress(valueOffset) + 8, nextValueOffset);
     }
 
     private void setRowId(int valueOffset, long rowId) {
+        Unsafe.putLong(valueAddress(valueOffset), rowId);
+    }
+
+    // Holds both the sentinel check and the widening so the four accessors above stay small
+    // enough for the JIT to inline them - the assert prologue sits in the class file whether or
+    // not -ea is on, and inlined into each accessor it pushed them past MaxInlineSize.
+    // AbstractRedBlackTree.blockAddress() plays the same role for the node getters.
+    private long valueAddress(int valueOffset) {
         assert valueOffset != CHAIN_END;
-        Unsafe.putLong(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset), rowId);
+        return valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset);
     }
 
     // if not empty - reuses most recently deleted node from freelist; otherwise allocates a new node

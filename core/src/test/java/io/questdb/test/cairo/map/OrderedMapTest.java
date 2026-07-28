@@ -79,7 +79,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Method;
 import java.util.HashMap;
 
 public class OrderedMapTest extends AbstractCairoTest {
@@ -1760,7 +1759,15 @@ public class OrderedMapTest extends AbstractCairoTest {
         //
         // Only the fixed-size-key merge can be driven this way - mergeVarSizeKey() reads the key
         // length off the source address before it probes - but both scans share isEmptySlot(), so
-        // this pins the predicate they both depend on.
+        // this pins the predicate they both depend on. CompressedOffsetsTest pins the predicate
+        // itself at the boundary, which is the only cover the var-size scan can get: no planted
+        // offset both sets the top bit and lands inside a test-sized heap, since the smallest such
+        // offset decodes to 17,179,869,176 bytes.
+        //
+        // The throw below depends on resize() rejecting the entry before the Unsafe.copyMemory on
+        // the next line, which holds today but is statement ordering rather than a contract. A
+        // refactor to copy-then-reserve would turn this red test into a SIGSEGV, so re-check the
+        // order here before changing either merge loop's tail.
         TestUtils.assertMemoryLeak(() -> {
             SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
@@ -1904,40 +1911,6 @@ public class OrderedMapTest extends AbstractCairoTest {
                 Assert.assertEquals(N, map.size());
             }
         });
-    }
-
-    @Test
-    public void testOffsetCompressionRoundTripsAboveSignedIntRange() throws Exception {
-        // Compressed offsets are unsigned 32-bit. Offsets at or above (2^31 - 1) * 8 set the top
-        // bit of the raw int; reading them back as a signed int yielded a negative offset, which
-        // the probe loops then mistook for an empty slot. Pin the unsigned round-trip down.
-        final Method compressOffset = OrderedMap.class.getDeclaredMethod("compressOffset", long.class);
-        final Method decompressOffset = OrderedMap.class.getDeclaredMethod("decompressOffset", int.class);
-        compressOffset.setAccessible(true);
-        decompressOffset.setAccessible(true);
-
-        final long lastSignedOffset = (Integer.MAX_VALUE - 1L) << 3; // compresses to Integer.MAX_VALUE
-        final long firstUnsignedOffset = ((long) Integer.MAX_VALUE) << 3; // compresses to Integer.MIN_VALUE
-        final long maxHeapSize = (Integer.toUnsignedLong(-1) - 1) << 3; // (2^32 - 2) * 8
-        final long[] offsets = {
-                0,
-                8,
-                1L << 30,
-                lastSignedOffset,
-                firstUnsignedOffset,
-                1L << 34,
-                maxHeapSize - 8, // last offset an entry can start at
-        };
-        for (long offset : offsets) {
-            int rawOffset = (Integer) compressOffset.invoke(null, offset);
-            Assert.assertNotEquals("offset " + offset + " must not compress to the empty marker", 0, rawOffset);
-            Assert.assertEquals("offset " + offset, offset, ((Long) decompressOffset.invoke(null, rawOffset)).longValue());
-        }
-
-        // The upper half of the range is exactly what the signed reading got wrong.
-        Assert.assertTrue((Integer) compressOffset.invoke(null, lastSignedOffset) > 0);
-        Assert.assertTrue((Integer) compressOffset.invoke(null, firstUnsignedOffset) < 0);
-        Assert.assertTrue((Integer) compressOffset.invoke(null, maxHeapSize - 8) < 0);
     }
 
     @Test
@@ -2095,6 +2068,22 @@ public class OrderedMapTest extends AbstractCairoTest {
                     }
                 }
                 Assert.assertEquals(2, planted);
+
+                // The three poke siblings establish that their planted hash hits no live key before
+                // planting it. This test plants first and fills afterwards, so it has to establish
+                // the same precondition against the keys the fill loop is about to insert: a
+                // collision would put Vect.memeq on a 2^34 offset and abort the fork instead of
+                // failing. A scratch map over the same key range answers that without disturbing
+                // the map under test.
+                try (OrderedMap scratch = new OrderedMap(1024, keyTypes, valueTypes, 16, 0.5, 24)) {
+                    for (int i = 0; i < 1000; i++) {
+                        MapKey scratchKey = scratch.withKey();
+                        scratchKey.putInt(i);
+                        scratchKey.createValue();
+                    }
+                    assertHashUnused(scratch, plantedHashA);
+                    assertHashUnused(scratch, plantedHashB);
+                }
 
                 // Grow past the load factor so that rehash() runs.
                 final int initialCapacity = map.getKeyCapacity();

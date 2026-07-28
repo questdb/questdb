@@ -1089,29 +1089,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    // Cheap structural predicate for the parallel top-K gate. Returns true when
-    // the outer factory, or a single projection wrapper above it, can reach a
-    // page-frame leaf that feeds AsyncTopKRecordCursorFactory. The unified
-    // generateOrderBy branch relies on this predicate to decide whether to
-    // attempt the gate at all; a negative answer falls through to Sort light
-    // without any translation or wrapper inspection.
-    //
-    // Only a single projection layer is peeled. Two or more stacked projection
-    // wrappers above the filter (rare today) silently fall through to Sort
-    // light rather than recursing; that keeps the predicate O(1) and the
-    // wrapper overrides for translateOrderByColumnToBase / rewrapOverTopK
-    // still chain correctly when they run.
     // Both the streaming and the cached window path decide whether the model's ORDER BY already
     // delivers the window's. They used to carry hand-copied loops, which is how one of the two came
     // to index the key list past its end; one implementation now serves both call sites.
     private static boolean canDismissWindowOrder(LowerCaseCharSequenceIntHashMap orderHash, WindowExpression ac, int osz) {
-        // The loop walks both orders positionally, so the model's has to be at least as long as the
-        // window's. It cannot dismiss a window order the model does not cover anyway: a longer
-        // window order asks for a finer sort than the model delivers. Bound on the key list because
-        // that is what gets indexed below - not because it can differ from size(), which it cannot:
-        // AbstractLowerCaseCharSequenceHashMap keeps the list and the hash part in lockstep, so
-        // keys().size() == size() unconditionally. Either bound would be numerically right; this
-        // one is right for the indexing it guards.
+        // The loop walks both orders positionally and indexes keys(), so bound on keys().size().
+        // A window order longer than the model's asks for a finer sort than the model delivers and
+        // could not be dismissed anyway.
         if (osz == 0 || osz > orderHash.keys().size()) {
             return false;
         }
@@ -1126,6 +1110,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    // Cheap structural predicate for the parallel top-K gate. Returns true when
+    // the outer factory, or a single projection wrapper above it, can reach a
+    // page-frame leaf that feeds AsyncTopKRecordCursorFactory. The unified
+    // generateOrderBy branch relies on this predicate to decide whether to
+    // attempt the gate at all; a negative answer falls through to Sort light
+    // without any translation or wrapper inspection.
+    //
+    // Only a single projection layer is peeled. Two or more stacked projection
+    // wrappers above the filter (rare today) silently fall through to Sort
+    // light rather than recursing; that keeps the predicate O(1) and the
+    // wrapper overrides for translateOrderByColumnToBase / rewrapOverTopK
+    // still chain correctly when they run.
     private static boolean canReachPageFrameLeafForTopK(RecordCursorFactory f) {
         if (f.supportsPageFrameCursor() || f.supportsFilterStealing()) {
             return true;

@@ -125,25 +125,10 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                       ('a', 3, '2024-01-01T00:00:02.000000Z'),
                       ('b', 4, '2024-01-01T00:00:03.000000Z')""");
 
-            try {
-                printSql("SELECT sym, ts, dense_rank() OVER (ORDER BY sym, ts) FROM tab" +
-                        " WHERE ts IN '2024-01-01' ORDER BY sym, ts");
-                Assert.fail("expected LimitOverflowException");
-            } catch (LimitOverflowException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(),
-                        "memory exceeded in DENSE_RANK() window function (raise cairo.sql.window.store.page.size or cairo.sql.window.store.max.pages, of whose product this budget is half)");
-            }
-
+            assertSinkCapMessage("dense_rank", "DENSE_RANK() window function");
             // The sibling test pins the same path for rank(), so assert here that the two owners
             // stay distinct rather than both drifting onto one name.
-            try {
-                printSql("SELECT sym, ts, rank() OVER (ORDER BY sym, ts) FROM tab" +
-                        " WHERE ts IN '2024-01-01' ORDER BY sym, ts");
-                Assert.fail("expected LimitOverflowException");
-            } catch (LimitOverflowException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(),
-                        "memory exceeded in RANK() window function (raise cairo.sql.window.store.page.size or cairo.sql.window.store.max.pages, of whose product this budget is half)");
-            }
+            assertSinkCapMessage("rank", "RANK() window function");
         });
     }
 
@@ -283,14 +268,7 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
             // message alone. (assertExceptionNoLeakCheck() would also do: TestUtils.assertException
             // ends with Assert.fail("SQL statement should have failed"), and that AssertionError is
             // not a FlyweightMessageContainer, so it is rethrown rather than swallowed.)
-            try {
-                printSql("SELECT sym, ts, rank() OVER (ORDER BY sym, ts) FROM tab" +
-                        " WHERE ts IN '2024-01-01' ORDER BY sym, ts");
-                Assert.fail("expected LimitOverflowException");
-            } catch (LimitOverflowException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(),
-                        "memory exceeded in RANK() window function (raise cairo.sql.window.store.page.size or cairo.sql.window.store.max.pages, of whose product this budget is half)");
-            }
+            assertSinkCapMessage("rank", "RANK() window function");
 
             // Negative control: a single 8-byte key fits the initial capacity, so the same budget
             // never reaches resize(). This pins that the assertion above is driven by key width.
@@ -391,5 +369,23 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     "memory exceeded in RedBlackTree (raise cairo.sql.window.tree.max.bytes)"
             );
         });
+    }
+
+    // Both sink-cap tests configure window.store.max.pages = 0, so the budget is the product 64 * 0
+    // floored at the sink's 8-byte allocation unit. Assert that number rather than just the tail of
+    // the message: without it, dropping the floor in SingleRecordSink's constructor still matches
+    // the substring and reports "limit of 0". RankFunctionFactory's / 2 stays unpinned here - the
+    // product is 0 with or without it - and no reachable configuration prints a halved budget,
+    // since at stock settings the limit works out to ~1 PB.
+    private void assertSinkCapMessage(String function, String owner) throws Exception {
+        try {
+            printSql("SELECT sym, ts, " + function + "() OVER (ORDER BY sym, ts) FROM tab" +
+                    " WHERE ts IN '2024-01-01' ORDER BY sym, ts");
+            Assert.fail("expected LimitOverflowException");
+        } catch (LimitOverflowException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(),
+                    "limit of 8 memory exceeded in " + owner
+                            + " (raise cairo.sql.window.store.page.size or cairo.sql.window.store.max.pages)");
+        }
     }
 }

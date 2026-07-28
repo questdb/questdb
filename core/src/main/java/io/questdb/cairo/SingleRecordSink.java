@@ -42,29 +42,32 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenable {
     // Name both knobs, not just *.max.pages. That one defaults to Integer.MAX_VALUE, so a user who
     // reaches the budget on stock settings would be told to raise a property already pinned at its
-    // ceiling, and a user who lowered *.page.size instead would get no usable advice at all. The
-    // page-size key is always raisable, so it leads.
+    // ceiling, and a user who lowered *.page.size instead would get no usable advice at all.
+    // Neither key dominates: the budget is the product, so a *.max.pages of 0 pins it at 0 whatever
+    // the page size, and the floor below then decides the printed limit.
     public static final String CONFIG_KEYS_ASOF_JOIN =
             PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE.getPropertyPath()
                     + " or " + PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath();
-    // RANK halves the product of the two window-store knobs to size each of its two sinks, so the
-    // printed limit is half what the named properties multiply out to. Say so, otherwise the
-    // number reads as a 2x discrepancy to anyone checking it against their configuration.
+    // RANK halves the product of the two window-store knobs to size each of its two sinks. The
+    // halving is not spelled out in the message: at stock settings the product is
+    // 1 MiB * Integer.MAX_VALUE, so the budget is ~1 PB and unreachable, and the only configuration
+    // that reaches the message at all is *.max.pages == 0 - where the product is 0, the floor
+    // decides the limit, and "half the product" would be plainly false.
     public static final String CONFIG_KEYS_WINDOW_STORE =
             PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE.getPropertyPath()
-                    + " or " + PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath()
-                    + ", of whose product this budget is half";
+                    + " or " + PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath();
     public static final String OWNER_ASOF_JOIN = "ASOF join";
     public static final String OWNER_DENSE_RANK_WINDOW_FUNCTION = "DENSE_RANK() window function";
     public static final String OWNER_RANK_WINDOW_FUNCTION = "RANK() window function";
     private static final int INITIAL_CAPACITY_BYTES = 8;
     // Property to raise when the budget is exceeded. Null when the owner has no single knob.
-    // The sink's budget rarely comes from a key the user would guess: the ASOF sinks are sized
-    // from the hash-join value budget, so naming the feature alone leaves them stuck.
+    // The sink's budget rarely comes from a key the user would guess - the ASOF factories size
+    // these sinks from the hash-join value budget - so naming the feature alone leaves them stuck.
     @Nullable
     private final String configKey;
     private final long maxHeapSize;
@@ -83,22 +86,33 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     // reopen() does), so a factory that binds a tracker does so before calling reopen().
     // The six ASOF join sinks bind one. The two RANK()/DENSE_RANK() sinks deliberately do not:
     // each holds exactly one record's serialized ORDER BY key, so the footprint is bounded by the
-    // key width rather than by row count, and there is no runaway to catch. They stay on the
-    // global counter, and their own maxHeapSize still caps them.
+    // key width rather than by row count, and there is no runaway to catch. Their own maxHeapSize
+    // caps nothing in practice - at stock settings it works out to ~1 PB - so the reason to leave
+    // them on the global counter is lifetime, not size: RankFunction.close() frees them and
+    // RankFunction.reset() does not, so they outlive the cursor and belong to the factory. A
+    // tracker bound at cursor open would have freed its native {used, limit} block by the time
+    // these sinks release their memory, making the free a use-after-write on that block. Tracking
+    // them means freeing them in reset() first, so that their lifetime matches a cursor's.
     @Nullable
     private MemoryTracker memoryTracker;
 
+    @TestOnly
     public SingleRecordSink(long maxHeapSizeBytes, int memoryTag, @NotNull String ownerName) {
         this(maxHeapSizeBytes, memoryTag, ownerName, null);
     }
 
     public SingleRecordSink(long maxHeapSizeBytes, int memoryTag, @NotNull String ownerName, @Nullable String configKey) {
         this.memoryTag = memoryTag;
-        // Floor at the initial capacity, as the five other budgeted structures do. reopen()
-        // allocates INITIAL_CAPACITY_BYTES unconditionally, so storing a smaller budget verbatim
-        // left the sink holding bytes it had no budget for: a *.max.pages of 0 yields a 0-byte
-        // budget that an 8-byte key still satisfies, and the overflow message then reports
-        // "limit of 0", which is neither what was configured nor what is actually allowed.
+        // Floor at the allocation unit, which is the same rule the five other budgeted structures
+        // follow - but their unit is one page and this one's is INITIAL_CAPACITY_BYTES, so the
+        // floors differ by construction rather than by oversight. LongChain, AbstractRedBlackTree
+        // and both tree chains reopen() into a full page, so a budget below a page would leave them
+        // holding bytes they had no budget for; this sink reopen()s into 8 bytes and grows 8 * 2^k,
+        // never a page. Storing a smaller budget verbatim left it in that same position: a
+        // *.max.pages of 0 yields a 0-byte budget that an 8-byte key still satisfies, and the
+        // overflow message then reports "limit of 0", which is neither what was configured nor what
+        // is actually allowed. Flooring at a page instead would hand a misconfigured query 128 KiB
+        // for a structure that holds exactly one serialized key.
         this.maxHeapSize = Math.max(maxHeapSizeBytes, INITIAL_CAPACITY_BYTES);
         this.ownerName = ownerName;
         this.configKey = configKey;

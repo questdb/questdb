@@ -121,11 +121,9 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     }
 
     /**
-     * Resolves a block offset to its heap address for the setters, and asserts the offset is not
-     * the EMPTY sentinel. The setters had no such check before, so this adds one rather than
-     * hoisting one out of them: it turns a silent write at {@code keyHeapStart + 32GB} - which is
-     * where an EMPTY offset now lands, since the widening is unsigned - into a loud failure under
-     * {@code -ea}. The assert compiles out in production builds.
+     * Resolves a block offset to its heap address for the setters. The assert turns a silent write
+     * at {@code keyHeapStart + 32GB} - where an unsigned EMPTY offset lands - into a loud failure
+     * under {@code -ea}, and holding it here keeps the six callers small enough to inline.
      */
     private long blockAddress(int blockOffset) {
         assert blockOffset != EMPTY;

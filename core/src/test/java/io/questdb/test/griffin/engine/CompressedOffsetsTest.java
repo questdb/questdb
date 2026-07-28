@@ -106,4 +106,58 @@ public class CompressedOffsetsTest {
                     -1, CompressedOffsets.compressAligned8(offset));
         }
     }
+
+    @Test
+    public void testBiased8RoundTripsAboveSignedIntRange() {
+        // The biased pair backs OrderedMap's hash table: the +1 reserves 0 for an empty slot, so
+        // every legal offset - including 0 itself - has to compress to something else. Reading a
+        // top-bit-set offset as signed put the probe, rehash and merge scans 16GB below the heap.
+        final long entrySize = 16;
+        final long maxHeapSize = (Integer.toUnsignedLong(-1) - 1) << 3; // (2^32 - 2) * 8
+        final long lastSignedOffset = (Integer.MAX_VALUE - 1L) << 3;    // compresses to Integer.MAX_VALUE
+        final long firstUnsignedOffset = ((long) Integer.MAX_VALUE) << 3; // compresses to Integer.MIN_VALUE
+        final long lastEntryOffset = maxHeapSize - entrySize;           // last offset an entry can start at
+        final long[] offsets = {
+                0,
+                8,
+                1L << 30,
+                lastSignedOffset,
+                firstUnsignedOffset,
+                1L << 34,
+                lastEntryOffset,
+        };
+        for (long offset : offsets) {
+            final int rawOffset = CompressedOffsets.compressBiased8(offset);
+            Assert.assertFalse("offset " + offset + " must not compress to the empty marker",
+                    CompressedOffsets.isEmptyBiased8(rawOffset));
+            Assert.assertEquals("offset " + offset, offset, CompressedOffsets.uncompressBiased8(rawOffset));
+        }
+
+        // The upper half of the range is exactly what the signed reading got wrong.
+        Assert.assertTrue(CompressedOffsets.compressBiased8(lastSignedOffset) > 0);
+        Assert.assertTrue(CompressedOffsets.compressBiased8(firstUnsignedOffset) < 0);
+        Assert.assertTrue(CompressedOffsets.compressBiased8(lastEntryOffset) < 0);
+    }
+
+    @Test
+    public void testIsEmptyBiased8RejectsSignedTest() {
+        // OrderedMap's eight slot scans - probe0, probeReadOnly, both rehash loops, and the dest
+        // and source halves of both merges - all route through isEmptyBiased8. Seven of them have a
+        // test that goes red when the predicate regresses. The exception is mergeVarSizeKey()'s
+        // source scan: the smallest raw offset a signed test misreads decodes to 17,179,869,176
+        // bytes, and that loop reads the key length off the source address before it probes, so
+        // planting one dereferences 16GB past the heap instead of failing an assertion. Pin the
+        // predicate itself here, which is the cover that scan can actually get.
+        Assert.assertTrue(CompressedOffsets.isEmptyBiased8(0));
+
+        final int firstTopBitSet = Integer.MIN_VALUE; // 0x8000_0000
+        Assert.assertEquals(17_179_869_176L, CompressedOffsets.uncompressBiased8(firstTopBitSet));
+        final int[] occupied = {1, 2, 1 << 30, Integer.MAX_VALUE, firstTopBitSet, firstTopBitSet + 1, -1};
+        for (int rawOffset : occupied) {
+            Assert.assertFalse(
+                    "raw offset " + Integer.toUnsignedString(rawOffset) + " marks a live entry",
+                    CompressedOffsets.isEmptyBiased8(rawOffset)
+            );
+        }
+    }
 }

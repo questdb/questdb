@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.orderby;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LongTreeChain;
@@ -77,41 +76,6 @@ public class LongTreeChainTest extends AbstractCairoTest {
                 Assert.assertEquals(8, fillUntilOverflow(chain, "memory exceeded in RedBlackTree"));
             }
         });
-    }
-
-    @Test
-    public void testKeyOffsetCompressionRoundTripsAboveSignedIntRange() {
-        // Compressed block offsets are unsigned 32-bit and 8-byte scaled, with EMPTY (-1)
-        // reserved as the leaf sentinel. Offsets at or above 2^31 * 8 set the top bit of the
-        // raw int; reading them back as a signed int yielded a negative offset, so every
-        // node accessor addressed 16GB below the heap. There is no +1 bias here, so offset 0
-        // legitimately compresses to 0 and only -1 is out of bounds.
-        final long blockSize = 24;
-        final long maxKeyHeapSize = (Integer.toUnsignedLong(-1) - 1) << 3; // (2^32 - 2) * 8
-        final long lastSignedOffset = ((long) Integer.MAX_VALUE) << 3; // compresses to Integer.MAX_VALUE
-        final long firstUnsignedOffset = (1L << 31) << 3;              // compresses to Integer.MIN_VALUE
-        final long lastBlockOffset = maxKeyHeapSize - blockSize;       // last offset a block can start at
-        final long[] offsets = {
-                0,
-                8,
-                1L << 30,
-                lastSignedOffset,
-                firstUnsignedOffset,
-                3L << 33, // mid-unsigned range: compresses negative, but to neither boundary
-                lastBlockOffset,
-        };
-        for (long offset : offsets) {
-            int rawOffset = CompressedOffsets.compressAligned8(offset);
-            Assert.assertNotEquals("offset " + offset + " must not compress to the EMPTY sentinel", -1, rawOffset);
-            Assert.assertEquals("offset " + offset, offset, CompressedOffsets.uncompressAligned8(rawOffset));
-        }
-
-        // Offset 0 is a legal block start here, so 0 is not a sentinel and must round-trip as itself.
-        Assert.assertEquals(0, CompressedOffsets.compressAligned8(0L));
-        // The upper half of the range is exactly what the signed reading got wrong.
-        Assert.assertTrue(CompressedOffsets.compressAligned8(lastSignedOffset) > 0);
-        Assert.assertTrue(CompressedOffsets.compressAligned8(firstUnsignedOffset) < 0);
-        Assert.assertTrue(CompressedOffsets.compressAligned8(lastBlockOffset) < 0);
     }
 
     @Test

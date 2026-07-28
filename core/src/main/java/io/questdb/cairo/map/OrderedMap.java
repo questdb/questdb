@@ -36,6 +36,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -352,9 +353,10 @@ public class OrderedMap implements Map, Reopenable {
             size = 0;
             heapSize = 0;
             nResizes = 0;
-            // Clear the mask along with the capacity it derives from. Leaving it behind would let
-            // a probe on a closed map index off the freed offsets address, so keep the two fields
-            // consistent the way every other field here is.
+            // Clear the mask along with the capacity it derives from, so the two stay consistent
+            // the way every other field here does. It is not what makes a probe on a closed map
+            // safe - offsetsAddr is already 0 by this point, so such a probe faults either way;
+            // mask = 0 only fixes the address it faults on.
             mask = 0;
         }
         if (batchEmptyValueStart != 0) {
@@ -435,10 +437,12 @@ public class OrderedMap implements Map, Reopenable {
      * a real entry, so the caller must keep the planted hash code distinct from every live key's:
      * that keeps every consumer on the hash-mismatch branch, which never dereferences the offset.
      * The poke does not touch {@code size}, since no entry was added to the heap, but it does debit
-     * {@code free} when it fills a previously empty slot: a planted slot really does occupy the
-     * table, and leaving the load factor overstated would let a test plant into a nearly full table
-     * and spin {@code probe0}'s linear probe forever. {@code rehash()} recomputes {@code free} from
-     * the capacity delta, so the debit survives a resize.
+     * {@code free} when it fills a previously empty slot, so that the load factor accounts for a
+     * slot that really does occupy the table. {@code rehash()} recomputes {@code free} from the
+     * capacity delta, so the debit survives a resize. The debit does not by itself keep a test off
+     * a full table: {@code asNew()} triggers the rehash on {@code --free == 0}, an equality test, so
+     * a poke that drove {@code free} to exactly 0 would leave the next {@code asNew()} taking it to
+     * -1 and never rehashing again. Callers must therefore leave slack, as every current one does.
      */
     @TestOnly
     public void pokeRawSlot(int index, int rawOffset, int hashCodeLo) {
@@ -449,8 +453,7 @@ public class OrderedMap implements Map, Reopenable {
         if (isEmptySlot(Unsafe.getInt(offsetAddr))) {
             free--;
         }
-        Unsafe.putInt(offsetAddr, rawOffset);
-        Unsafe.putInt(offsetAddr + 4, hashCodeLo);
+        Unsafe.putLong(offsetAddr, Numbers.encodeLowHighInts(rawOffset, hashCodeLo));
     }
 
     @Override
@@ -592,23 +595,26 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     private static int compressOffset(long offset) {
-        return (int) ((offset >> 3) + 1);
+        return CompressedOffsets.compressBiased8(offset);
     }
 
     // Callers must have established that the slot is occupied, i.e. that isEmptySlot() is false.
     private static long decompressOffset(int rawOffset) {
-        return (Integer.toUnsignedLong(rawOffset) - 1) << 3;
+        return CompressedOffsets.uncompressBiased8(rawOffset);
     }
 
     /**
-     * Tests a hash table slot for emptiness. A compressed offset is an UNSIGNED 32-bit value, so
-     * this has to be {@code rawOffset == 0} and never {@code rawOffset <= 0}: because of the +1
-     * shift, every offset from 16GB - 8 upwards has its top bit set, and a signed test reads those
-     * live entries as empty slots. Every slot scan goes through here so the predicate cannot drift
-     * apart across the probe, rehash and merge loops - hand-copying it is what got it wrong.
+     * Tests a hash table slot for emptiness. All eight slot scans in this class go through here, so
+     * the predicate cannot drift apart across the probe, rehash and merge loops, and the encoding
+     * it belongs to owns the contract - see {@link CompressedOffsets#isEmptyBiased8(int)} for why
+     * a signed test loses live entries. Seven of the eight have a test that fails when the
+     * predicate regresses, including mergeFixedSizeKey()'s source scan. Only mergeVarSizeKey()'s
+     * source scan has none: the smallest offset a signed test misreads sits 16GB into the heap, and
+     * that loop dereferences the source address before it probes, so planting one aborts the fork
+     * rather than failing an assertion.
      */
     private static boolean isEmptySlot(int rawOffset) {
-        return rawOffset == 0;
+        return CompressedOffsets.isEmptyBiased8(rawOffset);
     }
 
     private static void validateBatchAddressable(long sizeBytes) {
@@ -626,8 +632,9 @@ public class OrderedMap implements Map, Reopenable {
         // Align current pointer to 8 bytes, so that we can store compressed offsets.
         kPos = Bytes.align8b(keyWriter.appendAddr + valueSize);
         long offsetAddr = offsetsAddr + ((long) index << 3);
-        Unsafe.putInt(offsetAddr, compressOffset(keyWriter.startAddr - heapAddr));
-        Unsafe.putInt(offsetAddr + 4, hashCodeLo);
+        // One 8-byte store, as probe0 already does one 8-byte load: the slot is a single
+        // 8-byte-aligned unit. Layout: [rawOffset (4 bytes) | hashCodeLo (4 bytes)]
+        Unsafe.putLong(offsetAddr, Numbers.encodeLowHighInts(compressOffset(keyWriter.startAddr - heapAddr), hashCodeLo));
         size++;
         if (--free == 0) {
             try {
@@ -648,30 +655,34 @@ public class OrderedMap implements Map, Reopenable {
 
         OUTER:
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
-            long srcP = srcMap.offsetsAddr + ((long) i << 3);
-            int srcRawOffset = Unsafe.getInt(srcP);
+            // Read the slot as a single 64-bit value, as probe0 does.
+            // Layout: [rawOffset (4 bytes) | hashCodeLo (4 bytes)]
+            long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + ((long) i << 3));
+            int srcRawOffset = Numbers.decodeLowInt(srcSlot);
             if (isEmptySlot(srcRawOffset)) {
                 continue;
             }
 
             long srcStartAddr = srcMap.heapAddr + decompressOffset(srcRawOffset);
-            int hashCodeLo = Unsafe.getInt(srcP + 4);
+            int hashCodeLo = Numbers.decodeHighInt(srcSlot);
             int index = hashCodeLo & mask;
 
+            long destSlot;
             int destRawOffset;
             long destP = offsetsAddr + ((long) index << 3);
-            while (!isEmptySlot(destRawOffset = Unsafe.getInt(destP))) {
-                long destOffset = decompressOffset(destRawOffset);
-                if (
-                        hashCodeLo == Unsafe.getInt(destP + 4)
-                                && Vect.memeq(heapAddr + destOffset, srcStartAddr, keySize)
-                ) {
-                    // Match found, merge values.
-                    mergeFunc.merge(
-                            valueAt(heapAddr + destOffset),
-                            srcMap.valueAt(srcStartAddr)
-                    );
-                    continue OUTER;
+            while (!isEmptySlot(destRawOffset = Numbers.decodeLowInt(destSlot = Unsafe.getLong(destP)))) {
+                // Only the hash-match branch consumes the offset, so decompress it there rather
+                // than on every probe step.
+                if (hashCodeLo == Numbers.decodeHighInt(destSlot)) {
+                    long destOffset = decompressOffset(destRawOffset);
+                    if (Vect.memeq(heapAddr + destOffset, srcStartAddr, keySize)) {
+                        // Match found, merge values.
+                        mergeFunc.merge(
+                                valueAt(heapAddr + destOffset),
+                                srcMap.valueAt(srcStartAddr)
+                        );
+                        continue OUTER;
+                    }
                 }
                 index = (index + 1) & mask;
                 destP = offsetsAddr + ((long) index << 3);
@@ -681,8 +692,7 @@ public class OrderedMap implements Map, Reopenable {
                 resize(entrySize, kPos);
             }
             Unsafe.copyMemory(srcStartAddr, kPos, entrySize);
-            Unsafe.putInt(destP, compressOffset(kPos - heapAddr));
-            Unsafe.putInt(destP + 4, hashCodeLo);
+            Unsafe.putLong(destP, Numbers.encodeLowHighInts(compressOffset(kPos - heapAddr), hashCodeLo));
             kPos += alignedEntrySize;
             size++;
             if (--free == 0) {
@@ -701,32 +711,38 @@ public class OrderedMap implements Map, Reopenable {
 
         OUTER:
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
-            long srcOffsetAddr = srcMap.offsetsAddr + ((long) i << 3);
-            int srcRawOffset = Unsafe.getInt(srcOffsetAddr);
+            // Read the slot as a single 64-bit value, as probe0 does.
+            // Layout: [rawOffset (4 bytes) | hashCodeLo (4 bytes)]
+            long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + ((long) i << 3));
+            int srcRawOffset = Numbers.decodeLowInt(srcSlot);
             if (isEmptySlot(srcRawOffset)) {
                 continue;
             }
 
             long srcStartAddr = srcMap.heapAddr + decompressOffset(srcRawOffset);
             int srcKeySize = Unsafe.getInt(srcStartAddr);
-            int hashCodeLo = Unsafe.getInt(srcOffsetAddr + 4);
+            int hashCodeLo = Numbers.decodeHighInt(srcSlot);
             int index = hashCodeLo & mask;
 
+            long destSlot;
             int destRawOffset;
             long destOffsetAddr = offsetsAddr + ((long) index << 3);
-            while (!isEmptySlot(destRawOffset = Unsafe.getInt(destOffsetAddr))) {
-                long destOffset = decompressOffset(destRawOffset);
-                if (
-                        hashCodeLo == Unsafe.getInt(destOffsetAddr + 4)
-                                && Unsafe.getInt(heapAddr + destOffset) == srcKeySize
-                                && Vect.memeq(heapAddr + destOffset + keyOffset, srcStartAddr + keyOffset, srcKeySize)
-                ) {
-                    // Match found, merge values.
-                    mergeFunc.merge(
-                            valueAt(heapAddr + destOffset),
-                            srcMap.valueAt(srcStartAddr)
-                    );
-                    continue OUTER;
+            while (!isEmptySlot(destRawOffset = Numbers.decodeLowInt(destSlot = Unsafe.getLong(destOffsetAddr)))) {
+                // Only the hash-match branch consumes the offset, so decompress it there rather
+                // than on every probe step.
+                if (hashCodeLo == Numbers.decodeHighInt(destSlot)) {
+                    long destOffset = decompressOffset(destRawOffset);
+                    if (
+                            Unsafe.getInt(heapAddr + destOffset) == srcKeySize
+                                    && Vect.memeq(heapAddr + destOffset + keyOffset, srcStartAddr + keyOffset, srcKeySize)
+                    ) {
+                        // Match found, merge values.
+                        mergeFunc.merge(
+                                valueAt(heapAddr + destOffset),
+                                srcMap.valueAt(srcStartAddr)
+                        );
+                        continue OUTER;
+                    }
                 }
                 index = (index + 1) & mask;
                 destOffsetAddr = offsetsAddr + ((long) index << 3);
@@ -737,8 +753,7 @@ public class OrderedMap implements Map, Reopenable {
                 resize(entrySize, kPos);
             }
             Unsafe.copyMemory(srcStartAddr, kPos, entrySize);
-            Unsafe.putInt(destOffsetAddr, compressOffset(kPos - heapAddr));
-            Unsafe.putInt(destOffsetAddr + 4, hashCodeLo);
+            Unsafe.putLong(destOffsetAddr, Numbers.encodeLowHighInts(compressOffset(kPos - heapAddr), hashCodeLo));
             kPos = Bytes.align8b(kPos + entrySize);
             size++;
             if (--free == 0) {
@@ -930,21 +945,23 @@ public class OrderedMap implements Map, Reopenable {
         final int newMask = (int) newKeyCapacity - 1;
 
         for (int i = 0; i < keyCapacity; i++) {
-            long offsetAddr = offsetsAddr + ((long) i << 3);
-            int rawOffset = Unsafe.getInt(offsetAddr);
-            if (isEmptySlot(rawOffset)) {
+            // The slot is one 8-byte-aligned unit, so carry it across as a single value: the new
+            // table wants the very bytes the old one holds, and neither half needs re-encoding.
+            // Layout: [rawOffset (4 bytes) | hashCodeLo (4 bytes)]
+            long slotValue = Unsafe.getLong(offsetsAddr + ((long) i << 3));
+            if (isEmptySlot(Numbers.decodeLowInt(slotValue))) {
                 continue;
             }
-            int hashCodeLo = Unsafe.getInt(offsetAddr + 4);
-            int index = hashCodeLo & newMask;
+            int index = Numbers.decodeHighInt(slotValue) & newMask;
 
             long newOffsetAddr = newOffsetsAddr + ((long) index << 3);
+            // memset zeroed the new table, so emptiness is all the probe needs; it never compares
+            // a hash and so never reads the high half.
             while (!isEmptySlot(Unsafe.getInt(newOffsetAddr))) {
                 index = (index + 1) & newMask;
                 newOffsetAddr = newOffsetsAddr + ((long) index << 3);
             }
-            Unsafe.putInt(newOffsetAddr, rawOffset);
-            Unsafe.putInt(newOffsetAddr + 4, hashCodeLo);
+            Unsafe.putLong(newOffsetAddr, slotValue);
         }
         Unsafe.free(offsetsAddr, (long) keyCapacity << 3, listMemoryTag, memoryTracker);
         offsetsAddr = newOffsetsAddr;
@@ -966,7 +983,6 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         nResizes++;
-        final long maxHeapSize = this.maxHeapSize;
         final long target = appendAddr + entrySize - heapAddr;
         if (target > maxHeapSize) {
             throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in FastMap");

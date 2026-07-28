@@ -28,6 +28,8 @@ import io.questdb.PropertyKey;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
+import io.questdb.std.LongList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -36,6 +38,8 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.Arrays;
 
 /**
  * Test RBTree removal cases asserting final tree structure.
@@ -123,6 +127,65 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorClearLeavesCursorExhausted() throws Exception {
+        // clear() used to reset the cursor to 0/0, but 0 is a legal block and value offset, so
+        // hasNext() reported true and next() read rowId(0) - from address 0 once the chain had
+        // been closed. It has to clear to the sentinels instead.
+        assertMemoryLeak(() -> {
+            createTree(5, 3, 9);
+            LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
+            Assert.assertTrue(treeCursor.hasNext());
+
+            treeCursor.clear();
+            Assert.assertFalse("a cleared cursor must be exhausted", treeCursor.hasNext());
+        });
+    }
+
+    @Test
+    public void testIncrementalMinMaxMatchesFullWalk() {
+        // put() and removeAndCache() maintain the cached extreme in place instead of re-walking the
+        // spine from root on every accepted row. The cache decides which row a full chain evicts,
+        // so a wrong cache silently keeps the wrong rows rather than failing an invariant. Drive
+        // random data through both limit directions and compare against a sorted reference: any
+        // drift in the cache shows up as a wrong result set.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        for (int trial = 0; trial < 40; trial++) {
+            final int n = 1 + rnd.nextInt(200);
+            final int limit = 1 + rnd.nextInt(32);
+            final boolean isFirstN = rnd.nextBoolean();
+            final long[] values = new long[n];
+            for (int i = 0; i < n; i++) {
+                // A narrow range on purpose, so duplicates land on the chain-append path too.
+                values[i] = rnd.nextInt(40);
+            }
+
+            chain.clear();
+            chain.updateLimits(isFirstN, limit);
+            createTree(values);
+
+            final long[] sorted = values.clone();
+            Arrays.sort(sorted);
+            final int kept = Math.min(limit, n);
+            final long[] expected = new long[kept];
+            System.arraycopy(sorted, isFirstN ? 0 : n - kept, expected, 0, kept);
+
+            final LongList actual = new LongList();
+            LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
+            while (treeCursor.hasNext()) {
+                cursor.recordAt(placeholder, treeCursor.next());
+                actual.add(placeholder.getLong(0));
+            }
+            // The tree yields ascending order, and so does the reference slice.
+            Assert.assertEquals("trial " + trial + " isFirstN=" + isFirstN + " limit=" + limit
+                    + " n=" + n + " kept count", expected.length, actual.size());
+            for (int i = 0; i < expected.length; i++) {
+                Assert.assertEquals("trial " + trial + " isFirstN=" + isFirstN + " limit=" + limit
+                        + " position " + i, expected[i], actual.getQuick(i));
+            }
+        }
+    }
+
+    @Test
     public void testKeyHeapClampsToMaxHeapSize() throws Exception {
         // A 200-byte key budget is not a power of two, while every doubling step is. The chain
         // goes 64 -> 128 and then wants 256; rejecting there stranded a quarter of the budget
@@ -177,21 +240,6 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCursorClearLeavesCursorExhausted() throws Exception {
-        // clear() used to reset the cursor to 0/0, but 0 is a legal block and value offset, so
-        // hasNext() reported true and next() read rowId(0) - from address 0 once the chain had
-        // been closed. It has to clear to the sentinels instead.
-        assertMemoryLeak(() -> {
-            createTree(5, 3, 9);
-            LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
-            Assert.assertTrue(treeCursor.hasNext());
-
-            treeCursor.clear();
-            Assert.assertFalse("a cleared cursor must be exhausted", treeCursor.hasNext());
-        });
-    }
-
-    @Test
     public void testLazyChainAllocatesOnFirstPutWithoutReopen() throws Exception {
         // LimitedSizeSortedLightRecordCursorFactory and AsyncTopKAtom both construct this chain
         // with openOnInit == false and reopen() before use. The constructor still records the
@@ -225,6 +273,31 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
             assertReadsBack(values.length);
             chain.close();
         });
+    }
+
+    @Test
+    public void testPutAfterNonExtremeRemovalRecomputesMinMax() {
+        // put() maintains the cached extreme in place and falls back to the full spine walk only
+        // when removeAndCache() could not name a replacement. Its production caller only ever
+        // removes the cached extreme, so after that optimisation the fallback - and with it
+        // refreshMinMaxNode(), findMinNode() and findMaxNode() - is reachable only through the
+        // removeAndCache(node) API a dozen tests here already drive. Keep it covered: the walk is
+        // the safety net for every one of those removals.
+        chain.updateLimits(true, 4);
+        createTree(1, 2, 3, 4, 5);
+
+        // 2 is neither the smallest nor the cached maximum, so removeAndCache() cannot name a
+        // replacement and invalidates the cache outright.
+        removeRowWithValue(2);
+
+        // Back below the limit, so this insert takes the fallback and has to find the new maximum
+        // from the tree rather than trust the cache.
+        putValue(5);
+        // At the limit again. The accept/reject compare now runs against whatever the fallback
+        // decided the maximum is: 2 is below it, so it must be accepted and evict 5.
+        putValue(2);
+
+        assertChainHolds(1, 2, 3, 4);
     }
 
     @Test
@@ -577,6 +650,19 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
      * so the cursor has to yield 0..inserted-1 in order - which only holds if every heap-relative
      * offset survived the reallocs that moved the heap.
      */
+    private void assertChainHolds(long... expected) {
+        final LongList actual = new LongList();
+        LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
+        while (treeCursor.hasNext()) {
+            cursor.recordAt(placeholder, treeCursor.next());
+            actual.add(placeholder.getLong(0));
+        }
+        Assert.assertEquals("kept count", expected.length, actual.size());
+        for (int i = 0; i < expected.length; i++) {
+            Assert.assertEquals("position " + i, expected[i], actual.getQuick(i));
+        }
+    }
+
     private void assertReadsBack(int inserted) {
         LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
         int count = 0;
@@ -640,6 +726,11 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         }
         Assert.fail("expected LimitOverflowException");
         return -1;
+    }
+
+    private void putValue(long value) {
+        cursor.recordAtValue(left, value);
+        chain.put(left, cursor, placeholder, comparator);
     }
 
     private void removeRowWithValue(long value) {

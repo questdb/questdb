@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.pool;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import org.junit.Assert;
@@ -45,8 +46,8 @@ public class PoolExceptionResetTest {
     public void testEntryLockedExceptionClearsPositionFromPriorUse() {
         // Same recycled-flyweight defect as LimitOverflowException, reached the same way:
         // SqlCompilerImpl stamps the statement position onto a caught CairoException in place on
-        // the CREATE TABLE AS SELECT path, and without a full reset that position reappears on
-        // every later table-busy error raised on the same carrier.
+        // the CREATE ... AS SELECT and ALTER paths, and without a full reset that position
+        // reappears on every later table-busy error raised on the same carrier.
         EntryLockedException first = EntryLockedException.instance("first");
         first.position(42);
         Assert.assertEquals(42, first.getPosition());
@@ -62,6 +63,16 @@ public class PoolExceptionResetTest {
     }
 
     @Test
+    public void testEntryLockedExceptionInstanceIsNonCritical() {
+        // A busy table is a retryable condition, so instance() passes NON_CRITICAL and callers
+        // log it at error rather than critical. Pin the errno itself: every caller reads it
+        // through isCritical(), which treats any other value as critical.
+        EntryLockedException ex = EntryLockedException.instance("x");
+        Assert.assertEquals(CairoException.NON_CRITICAL, ex.getErrno());
+        Assert.assertFalse("table-busy must stay non-critical", ex.isCritical());
+    }
+
+    @Test
     public void testPoolClosedExceptionClearsPositionFromPriorUse() {
         // This used to be a single public static final INSTANCE with no reset hook at all, so a
         // position stamped onto it by one query stuck for the life of the process and on every
@@ -72,5 +83,16 @@ public class PoolExceptionResetTest {
 
         PoolClosedException second = PoolClosedException.instance();
         Assert.assertEquals("instance() must not inherit messagePosition from the previous use", 0, second.getPosition());
+    }
+
+    @Test
+    public void testPoolClosedExceptionStaysCritical() {
+        // instance() resets to errno 0, not NON_CRITICAL, matching the old default-constructed
+        // static INSTANCE. Switching to NON_CRITICAL looks like a consistency fix next to the
+        // sibling above, but it demotes the log level at every isCritical() call site and flips
+        // the QWP reply from INTERNAL_ERROR to NOT_ACCEPTING_WRITES. Pin both halves.
+        PoolClosedException ex = PoolClosedException.instance();
+        Assert.assertEquals(0, ex.getErrno());
+        Assert.assertTrue("pool-closed must stay critical", ex.isCritical());
     }
 }

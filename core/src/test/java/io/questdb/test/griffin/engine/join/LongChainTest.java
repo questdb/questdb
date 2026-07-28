@@ -174,25 +174,34 @@ public class LongChainTest {
                 final long usedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
                 final int first = chain.put(42, -1);
 
-                // The configured 64-byte page, not the 12 bytes this one value needs. Growing from
-                // a closed heap instead of opening it leaves the chain one value wide, re-doubling
-                // from there for the rest of its life, and reallocs off a null pointer.
-                // NATIVE_DEFAULT is engine-wide and the most widely shared tag in the codebase, so
-                // assert a lower bound rather than an exact delta: any unrelated allocation between
-                // the two reads would turn an equality check into a spurious hard failure. The
-                // bound still separates the two outcomes, since the broken path books only 12.
-                Assert.assertTrue(
-                        "a keepClosed chain must allocate its configured page on first put",
-                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT) - usedBefore >= 64
+                // Assert the consequence rather than the delta. NATIVE_DEFAULT is engine-wide, so a
+                // one-sided ">= 64" bound fails in the wrong direction: a concurrent free of 52 or
+                // more bytes on the tag drives the delta under 64 and turns a real regression into
+                // a pass. Four more values instead - 5 * 12 = 60 bytes, inside the configured
+                // 64-byte page - separate the two outcomes with no allocation of their own. A chain
+                // that opened its page absorbs them; one that grew from a closed heap opened 12
+                // bytes, re-doubles from there for the rest of its life, and has to realloc before
+                // the fifth value lands.
+                final long usedAfterFirstPut = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
+                Assert.assertTrue(usedAfterFirstPut > usedBefore);
+                int tail = first;
+                for (int i = 0; i < 4; i++) {
+                    tail = chain.put(44 + i, tail);
+                }
+                Assert.assertEquals(
+                        "a keepClosed chain must open its configured page, not grow from a closed heap",
+                        usedAfterFirstPut,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT)
                 );
 
-                final int second = chain.put(43, first);
+                final int second = chain.put(43, tail);
 
                 LongChain.Cursor cursor = chain.getCursor(second);
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(43, cursor.next());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(42, cursor.next());
+                final long[] expected = {43, 47, 46, 45, 44, 42};
+                for (long value : expected) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(value, cursor.next());
+                }
                 Assert.assertFalse(cursor.hasNext());
             }
         });

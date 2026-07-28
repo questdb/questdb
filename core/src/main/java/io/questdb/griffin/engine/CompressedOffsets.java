@@ -27,11 +27,11 @@ package io.questdb.griffin.engine;
 /**
  * Heap offsets compressed into a 32-bit int by scaling them down to their alignment.
  * <p>
- * The stored int is <strong>unsigned</strong>: every offset from the 8GB mark upwards has its top
- * bit set. Consumers must therefore test a sentinel - an empty slot or a chain end - for equality
- * and never as {@code < 0}, and must widen with {@link Integer#toUnsignedLong(int)} rather than a
- * plain cast. Reading such an offset as signed yields a negative value that a {@code < 0} test
- * silently mistakes for the sentinel.
+ * The stored int is <strong>unsigned</strong>: the 4-byte-aligned pair sets the top bit from the
+ * 8GB mark upwards, the 8-byte-aligned pairs from 16GB. Consumers must therefore test a sentinel -
+ * an empty slot or a chain end - for equality and never as {@code < 0}, and must widen with
+ * {@link Integer#toUnsignedLong(int)} rather than a plain cast. Reading such an offset as signed
+ * yields a negative value that a {@code < 0} test silently mistakes for the sentinel.
  * <p>
  * The 4-byte-aligned pair below backs the value chains of
  * {@link io.questdb.griffin.engine.orderby.LongTreeChain},
@@ -41,9 +41,10 @@ package io.questdb.griffin.engine;
  * copies of this arithmetic. Keeping one copy keeps the unsigned contract, and any future
  * correction to it, in a single place.
  * <p>
- * {@link io.questdb.cairo.map.OrderedMap} deliberately keeps its own pair: its offsets carry a
- * {@code +1} bias so that 0 can mark an empty slot, which is a different encoding rather than a
- * duplicate of this one.
+ * The biased 8-byte-aligned trio backs {@link io.questdb.cairo.map.OrderedMap}'s hash table. Its
+ * offsets carry a {@code +1} bias so that 0 can mark an empty slot, which makes it a third encoding
+ * rather than a duplicate - but the unsigned contract above binds it just as hard, and its
+ * emptiness sentinel lives here so a test can pin it at the boundary without a 16GB heap.
  */
 public final class CompressedOffsets {
 
@@ -67,6 +68,24 @@ public final class CompressedOffsets {
     }
 
     /**
+     * Compresses an 8-byte-aligned heap offset and adds a {@code +1} bias, reserving 0 to mark an
+     * empty hash table slot. Offsets round trip up to {@code (2^32 - 2) * 8}.
+     */
+    public static int compressBiased8(long rawOffset) {
+        return (int) ((rawOffset >> 3) + 1);
+    }
+
+    /**
+     * Tests a biased 8-byte-aligned slot for emptiness. The bias makes 0 the only empty encoding,
+     * so this has to be {@code == 0} and never {@code <= 0}: the smallest offset whose compressed
+     * form has its top bit set already sits 17,179,869,176 bytes into the heap, and a signed test
+     * reads every entry from there upwards as an empty slot.
+     */
+    public static boolean isEmptyBiased8(int offset) {
+        return offset == 0;
+    }
+
+    /**
      * Widens a 4-byte-aligned compressed offset back to a byte offset, treating it as unsigned.
      */
     public static long uncompressAligned4(int offset) {
@@ -78,5 +97,14 @@ public final class CompressedOffsets {
      */
     public static long uncompressAligned8(int offset) {
         return Integer.toUnsignedLong(offset) << 3;
+    }
+
+    /**
+     * Widens a biased 8-byte-aligned compressed offset back to a byte offset, treating it as
+     * unsigned and removing the {@code +1} bias. Callers must have established that the slot is
+     * occupied, i.e. that {@link #isEmptyBiased8(int)} is false.
+     */
+    public static long uncompressBiased8(int offset) {
+        return (Integer.toUnsignedLong(offset) - 1) << 3;
     }
 }

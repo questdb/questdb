@@ -207,6 +207,12 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
 
     private void growValueHeap() {
         if (valueHeapStart == 0) {
+            // Not covered by tests: every put path reaches allocateBlock() -> growKeyHeap() ->
+            // reopen() before appendValue(), so this branch needs a reopen() whose key-heap malloc
+            // succeeded and whose value-heap malloc then threw. That is an RSS/OOM interleaving with
+            // no injectable seam, and replacing this guard with if (false) leaves the whole suite
+            // green. It stays because reopen() is the only recovery point and a partial one has to
+            // be survivable, not because anything exercises it.
             // See AbstractRedBlackTree.growKeyHeap: the heaps are unallocated before the
             // first reopen() and after close(), and valueHeapSize still carries the configured
             // page size in the never-opened case, so growing from here would book a delta against
@@ -251,8 +257,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     }
 
     private int nextValueOffset(int valueOffset) {
-        assert valueOffset != CHAIN_END;
-        return Unsafe.getInt(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset) + 8);
+        return Unsafe.getInt(valueAddress(valueOffset) + 8);
     }
 
     private void putParent(long rowId) {
@@ -264,13 +269,20 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     }
 
     private long rowId(int valueOffset) {
-        assert valueOffset != CHAIN_END;
-        return Unsafe.getLong(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset));
+        return Unsafe.getLong(valueAddress(valueOffset));
     }
 
     private void setNextValueOffset(int valueOffset, int nextValueOffset) {
+        Unsafe.putInt(valueAddress(valueOffset) + 8, nextValueOffset);
+    }
+
+    // Holds both the sentinel check and the widening so the three accessors above stay small
+    // enough for the JIT to inline them - the assert prologue sits in the class file whether or
+    // not -ea is on, and inlined into each accessor it pushed all three past MaxInlineSize.
+    // AbstractRedBlackTree.blockAddress() plays the same role for the node getters.
+    private long valueAddress(int valueOffset) {
         assert valueOffset != CHAIN_END;
-        Unsafe.putInt(valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset) + 8, nextValueOffset);
+        return valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset);
     }
 
     public class TreeCursor {

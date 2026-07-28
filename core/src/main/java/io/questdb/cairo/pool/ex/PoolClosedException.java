@@ -32,17 +32,13 @@ public class PoolClosedException extends CairoException {
 
     public static PoolClosedException instance() {
         PoolClosedException ex = tlException.get();
-        // A single shared static instance had no reset hook at all, and callers stamp state onto
-        // a caught CairoException in place - SqlCompilerImpl sets the statement position on the
-        // CREATE TABLE AS SELECT path - so one such stamp stuck for the life of the process, on
-        // every thread at once. Recycle per carrier and reset, matching the sibling pool
-        // exceptions: that keeps the throw allocation-free while confining the state to one
-        // carrier and clearing it on every use.
-        // Reset to errno 0, not NON_CRITICAL. The old static instance came from the default
-        // constructor and never assigned errno, so isCritical() reported true; passing
-        // NON_CRITICAL here would quietly flip that, demoting the log level at four call sites and
-        // changing the QWP reply from INTERNAL_ERROR to NOT_ACCEPTING_WRITES. Reclassifying a
-        // pool-closed error is a separate decision from fixing the shared-state leak.
+        // A single shared static instance had no reset hook, and SqlCompilerImpl stamps the
+        // statement position onto a caught CairoException in place - so one stamp stuck for the
+        // life of the process, on every thread at once. A per-carrier flyweight keeps the throw
+        // allocation-free while confining that state to one carrier.
+        // Reset to errno 0, not NON_CRITICAL: the old instance never assigned errno, so
+        // isCritical() reported true, and NON_CRITICAL would demote the log level at every
+        // isCritical() call site and flip the QWP reply to NOT_ACCEPTING_WRITES.
         ex.clear(0);
         return ex;
     }

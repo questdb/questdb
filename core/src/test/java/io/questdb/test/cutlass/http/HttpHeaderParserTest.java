@@ -92,38 +92,61 @@ public class HttpHeaderParserTest {
     }
 
     @Test
-    public void testBoundaryAugmenterOfAfterCloseWithoutReopen() throws Exception {
-        // The other half of the stale-limit bug: a follow-up value that fits under the stale lim
-        // skipped resize() altogether, so _wptr became lo + 4 == 4 and of0() wrote through
-        // address 4. Zeroing lim in close() makes every of() take the resize path instead.
-        // If this ever regresses the failure mode is a JVM crash (SIGSEGV, surefire exit 134),
-        // not an assertion, and it takes the rest of the fork down with it. The sibling
-        // testBoundaryAugmenterCloseResetsLimit localises the same fix with a clean assertion.
+    public void testBoundaryAugmenterReopenAfterCloseRestoresLimit() throws Exception {
+        // close() zeroes lim, so reopen() has to commit INITIAL_CAPACITY back alongside the block
+        // it allocates. Assert the allocation directly: drop the commit and lim stays 0 while lo
+        // holds a 64-byte block, so the next of() reallocs against an oldSize of 0 and leaks the
+        // difference. reopen() sizes its malloc from the constant rather than from lim, so it can
+        // no longer ask for a zero-length block whichever order the two commits land in.
         TestUtils.assertMemoryLeak(() -> {
-            final StringSink grown = new StringSink();
-            for (int i = 0; i < 200; i++) {
-                grown.put('a');
-            }
-
             try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
-                TestUtils.assertEquals("\r\n--" + grown, augmenter.of(new Utf8String(grown)));
+                TestUtils.assertEquals("\r\n--first", augmenter.of(new Utf8String("first")));
                 augmenter.close();
-                // Nine bytes: comfortably inside the 256-byte block close() used to keep claiming.
-                TestUtils.assertEquals("\r\n--short", augmenter.of(new Utf8String("short")));
+
+                final long usedAfterClose = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
+                augmenter.reopen();
+                Assert.assertEquals(
+                        "reopen() must restore the initial capacity, not malloc a zero-length block",
+                        usedAfterClose + 64,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN)
+                );
+
+                TestUtils.assertEquals("\r\n--second", augmenter.of(new Utf8String("second")));
             }
         });
     }
 
     @Test
-    public void testBoundaryAugmenterReopenAfterCloseRestoresLimit() throws Exception {
-        // close() zeroes lim, so reopen() has to restore it before allocating - otherwise it
-        // mallocs a zero-length block and the boundary prefix writes past the end of it.
+    public void testBoundaryAugmenterReopenFailureKeepsSizeConsistent() throws Exception {
+        // reopen() used to commit lim before its malloc, the same ordering resize() was fixed for.
+        // Unsafe.malloc throws once the global RSS limit is breached, and the augmenter was then
+        // left claiming INITIAL_CAPACITY with no block behind it, breaking the lim == 0 <=> lo == 0
+        // invariant. The next of() large enough to resize reallocated off a null pointer while
+        // booking only newLim - 64, so the counters were charged less than was allocated and
+        // close() over-freed by the difference. assertMemoryLeak observes exactly that imbalance.
         TestUtils.assertMemoryLeak(() -> {
             try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
-                TestUtils.assertEquals("\r\n--first", augmenter.of(new Utf8String("first")));
                 augmenter.close();
-                augmenter.reopen();
-                TestUtils.assertEquals("\r\n--second", augmenter.of(new Utf8String("second")));
+
+                final long savedLimit = Unsafe.getRssMemLimit();
+                try {
+                    // No headroom at all, so reopen()'s malloc cannot succeed.
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                    augmenter.reopen();
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                } finally {
+                    Unsafe.setRssMemLimit(savedLimit);
+                }
+
+                // Longer than INITIAL_CAPACITY, so this of() takes the resize path rather than the
+                // write-through-a-stale-limit one, and the realloc books the whole block.
+                final StringSink boundary = new StringSink();
+                for (int i = 0; i < 200; i++) {
+                    boundary.put('a');
+                }
+                TestUtils.assertEquals("\r\n--" + boundary, augmenter.of(new Utf8String(boundary)));
             }
         });
     }
@@ -137,6 +160,7 @@ public class HttpHeaderParserTest {
         // claiming the larger size, so close() decremented the memory counters by more than was
         // ever charged. assertMemoryLeak observes exactly that imbalance.
         TestUtils.assertMemoryLeak(() -> {
+            final long usedBeforeOpen = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
             try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
                 final StringSink boundary = new StringSink();
                 for (int i = 0; i < 200; i++) {
@@ -159,23 +183,42 @@ public class HttpHeaderParserTest {
                 // trip rather than run past the end of it.
                 TestUtils.assertEquals("\r\n--short", augmenter.of(new Utf8String("short")));
 
-                // The production comment names two consequences, and the value above only
-                // reaches the first: nine bytes fit the real 64-byte block either way. A value
-                // that overflows the block actually held but not the size wrongly claimed enters
-                // the second. Under the old code lim already read 256, so this of() skipped
-                // resize() and wrote ~150 bytes into a 64-byte block. The allocation is what to
-                // assert - reading the content back would only return the bytes the overrun
-                // itself wrote.
-                final StringSink overrun = new StringSink();
-                for (int i = 0; i < 150; i++) {
-                    overrun.put('c');
-                }
-                final long usedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
-                TestUtils.assertEquals("\r\n--" + overrun, augmenter.of(new Utf8String(overrun)));
-                Assert.assertTrue(
-                        "of() must grow the block it really holds rather than write past it",
-                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) > usedBefore
+                // close() frees lim bytes, so the stale size shows up as an over-free the moment
+                // the augmenter is released. Assert that directly instead of driving another of()
+                // large enough to expose the second consequence: under the old code that call
+                // skipped resize() and wrote ~150 bytes into the 64-byte block it really held,
+                // which corrupts the heap before any assertion gets to run.
+                augmenter.close();
+                Assert.assertEquals(
+                        "close() must free exactly the block the augmenter really holds",
+                        usedBeforeOpen,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN)
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorFailureFreesFieldAllocations() throws Exception {
+        // boundaryAugmenter and sink are field initialisers, so they hold native blocks before the
+        // constructor body's own malloc runs. That malloc throws once the global RSS limit is
+        // breached, and nothing ever closes the half-built parser, so both blocks used to leak.
+        // Leave just enough headroom for the field initialisers and none for the header buffer.
+        TestUtils.assertMemoryLeak(() -> {
+            final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 8);
+            final long savedLimit = Unsafe.getRssMemLimit();
+            try {
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 4096);
+                new HttpHeaderParser(1_048_576, csPool);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                // Pin which allocation ran out of room. Without this the test passes vacuously if
+                // the headroom ever stops covering the field initialisers: the augmenter would
+                // throw first, the sink would never allocate, and nothing would leak either way.
+                TestUtils.assertContains(e.getFlyweightMessage(), "size=1048576");
+            } finally {
+                Unsafe.setRssMemLimit(savedLimit);
             }
         });
     }

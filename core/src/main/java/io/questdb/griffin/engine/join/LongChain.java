@@ -41,11 +41,11 @@ import java.io.Closeable;
  * For each long value also stores compressed offset for its parent (previous in the chain) value.
  * A compressed offset contains an offset to the address of the parent value in the heap memory
  * compressed to an int. Value addresses are 4-byte aligned. Compressed offsets are unsigned,
- * with {@link #CHAIN_END} reserved as the sentinel, so the chain end must be tested as
- * {@code == CHAIN_END}, never as {@code < 0}.
+ * with {@link #CHAIN_END} reserved as the sentinel, so callers have to test the chain end as
+ * {@code == CHAIN_END} and never as {@code < 0}.
  */
 public class LongChain implements Closeable, Mutable, Reopenable {
-    // Marks the end of a chain. Compressed offsets are unsigned, so this must be tested for
+    // Marks the end of a chain. Compressed offsets are unsigned, so callers test this for
     // equality: every offset from the 8GB mark upwards has its top bit set.
     private static final int CHAIN_END = -1;
     private static final long CHAIN_VALUE_SIZE = 12;
@@ -133,13 +133,12 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         if (heapStart == 0) {
             // A keepClosed chain allocates nothing until reopen(), and close() zeroes the heap
             // again. Growing from that state would realloc off a null pointer and then write 12
-            // bytes through address 0, so allocate the configured heap first. Recovering here
-            // rather than through Math.max alone also keeps the chain at its configured page size
-            // instead of leaving it at one value and re-doubling from there.
-            // The unallocated state always reaches this branch: close() and the keepClosed
-            // constructor leave heapPos and heapLimit at 0 alongside heapStart, so the caller's
-            // 0 + CHAIN_VALUE_SIZE > 0 test is already true. Testing heapStart here rather than
-            // in checkCapacity() keeps the per-row fast path to a single load-compare-branch.
+            // bytes through address 0, so open the configured page first - which also leaves the
+            // chain at its page size instead of one value wide, re-doubling from there.
+            // close() and the keepClosed constructor leave heapPos and heapLimit at 0 alongside
+            // heapStart, so the caller's 0 + CHAIN_VALUE_SIZE > 0 test already sends every
+            // unallocated state here. Testing heapStart here rather than in checkCapacity() keeps
+            // the per-row fast path to a single load-compare-branch.
             assert heapPos == 0 && heapLimit == 0;
             reopen();
             if (heapPos + CHAIN_VALUE_SIZE <= heapLimit) {
