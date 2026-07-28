@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
@@ -94,6 +95,10 @@ public final class WhereClauseParser implements Mutable {
     private static final int INTRINSIC_OP_NOT_EQ = 7;
     private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
+    // Holds the WHERE clauses saved around a speculative scalar sub-query compile. Cleared only in
+    // clear(), i.e. at a top-level compilation boundary, so a saved clause handed back to a model
+    // stays valid for the whole compilation, exactly like the compiler's own expression node pool.
+    private final ObjectPool<ExpressionNode> exprNodePool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
     private final Interval intervalScratch = new Interval();
     private final StringSink intervalSink = new StringSink();
     private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
@@ -141,6 +146,7 @@ public final class WhereClauseParser implements Mutable {
     public void clear() {
         freeBorrowedModels();
         csPool.clear();
+        exprNodePool.clear();
         clearTransientState();
         reentryDepth = 0;
         for (int i = 0, n = savedStates.size(); i < n; i++) {
@@ -2267,7 +2273,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        Function func = functionParser.parseFunction(queryNode, metadata, executionContext);
+        Function func = parseScalarSubQueryBound(queryNode, functionParser, metadata, executionContext);
         try {
             if (checkCursorFunctionReturnsSingleTimestamp(func)) {
                 final Function ownedFunc = func;
@@ -3077,6 +3083,37 @@ public final class WhereClauseParser implements Mutable {
         return ts;
     }
 
+    /**
+     * Compiles a scalar sub-query bound without consuming its query model. The compile is
+     * speculative: every path that declines pruning keeps the predicate as a residual row filter,
+     * which re-compiles this very node (and re-compiles it once more per worker for a parallel
+     * filter). {@link SqlCodeGenerator#generate} extracts a model's WHERE clause into intrinsics and
+     * leaves the model holding only the residual remainder, so without this save/restore the second
+     * generation would silently produce an unfiltered sub-query and the outer query would compare
+     * against the wrong bound. This mirrors what {@code generateFilter0()} already does for filters
+     * it compiles more than once, except that the clauses are held here instead of in the model's
+     * single backup slot, which the nested generation overwrites.
+     */
+    private Function parseScalarSubQueryBound(
+            ExpressionNode boundNode,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // Locals rather than scratch fields: compiling the sub-query re-enters extract() on this
+        // parser, and a nested bound would clobber shared scratch mid-call.
+        final ObjList<IQueryModel> savedModels = new ObjList<>();
+        final ObjList<ExpressionNode> savedWhereClauses = new ObjList<>();
+        saveSubQueryWhereClauses(boundNode.queryModel, savedModels, savedWhereClauses);
+        try {
+            return functionParser.parseFunction(boundNode, metadata, executionContext);
+        } finally {
+            for (int i = 0, n = savedModels.size(); i < n; i++) {
+                savedModels.getQuick(i).setWhereClause(savedWhereClauses.getQuick(i));
+            }
+        }
+    }
+
     private void processArgument(
             ExpressionNode inArg,
             RecordMetadata metadata,
@@ -3382,7 +3419,7 @@ public final class WhereClauseParser implements Mutable {
             if (!isTimestamp) {
                 return BOUND_FAIL;
             }
-            Function owner = functionParser.parseFunction(boundNode, metadata, executionContext);
+            Function owner = parseScalarSubQueryBound(boundNode, functionParser, metadata, executionContext);
             try {
                 if (checkCursorFunctionReturnsSingleTimestamp(owner)) {
                     owner = new ScalarSubQueryTimestampFunction(owner, boundNode.position);
@@ -3438,6 +3475,63 @@ public final class WhereClauseParser implements Mutable {
         return BOUND_FAIL;
     }
 
+    /**
+     * Deep-clones the WHERE clause of {@code model} and of every model reachable from it into the
+     * caller's lists, walking the same nested/union/join/update chain as
+     * {@link IQueryModel#backupWhereClause(ObjectPool, IQueryModel)} and, on top of that, the models
+     * a WHERE clause carries in its own scalar sub-query nodes - generating the bound consumes those
+     * too.
+     */
+    private void saveSubQueryWhereClauses(
+            IQueryModel model,
+            ObjList<IQueryModel> savedModels,
+            ObjList<ExpressionNode> savedWhereClauses
+    ) {
+        IQueryModel current = model;
+        while (current != null && current.isOptimisable()) {
+            if (current.getUnionModel() != null) {
+                saveSubQueryWhereClauses(current.getUnionModel(), savedModels, savedWhereClauses);
+            }
+            if (current.getUpdateTableModel() != null) {
+                saveSubQueryWhereClauses(current.getUpdateTableModel(), savedModels, savedWhereClauses);
+            }
+            for (int i = 1, n = current.getJoinModels().size(); i < n; i++) {
+                final IQueryModel m = current.getJoinModels().get(i);
+                if (m != null && current != m) {
+                    saveSubQueryWhereClauses(m, savedModels, savedWhereClauses);
+                }
+            }
+            final ExpressionNode whereClause = current.getWhereClause();
+            savedModels.add(current);
+            savedWhereClauses.add(ExpressionNode.deepClone(exprNodePool, whereClause));
+            saveWhereClauseSubQueryModels(whereClause, savedModels, savedWhereClauses);
+            current = current.getNestedModel();
+        }
+    }
+
+    /**
+     * Descends an expression tree and saves the WHERE clauses of every scalar sub-query model it
+     * carries. Unlike {@code SqlCodeGenerator.processNodeQueryModels()} this also walks {@code args},
+     * so a sub-query in a three-or-more argument call (e.g. {@code between}) is covered too.
+     */
+    private void saveWhereClauseSubQueryModels(
+            ExpressionNode node,
+            ObjList<IQueryModel> savedModels,
+            ObjList<ExpressionNode> savedWhereClauses
+    ) {
+        if (node == null) {
+            return;
+        }
+        if (node.queryModel != null) {
+            saveSubQueryWhereClauses(node.queryModel, savedModels, savedWhereClauses);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            saveWhereClauseSubQueryModels(node.args.getQuick(i), savedModels, savedWhereClauses);
+        }
+        saveWhereClauseSubQueryModels(node.lhs, savedModels, savedWhereClauses);
+        saveWhereClauseSubQueryModels(node.rhs, savedModels, savedWhereClauses);
+    }
+
     private boolean translateBetweenToTimestampModel(
             TimestampDriver timestampDriver,
             IntrinsicModel model,
@@ -3453,7 +3547,7 @@ public final class WhereClauseParser implements Mutable {
             // scalar subquery bound, e.g. ts BETWEEN (select ...) AND (select ...). Only a
             // single-timestamp-column cursor qualifies; it is evaluated at scan open, exactly
             // like a runtime-constant (bind variable) bound.
-            final Function func = functionParser.parseFunction(node, metadata, executionContext);
+            final Function func = parseScalarSubQueryBound(node, functionParser, metadata, executionContext);
             boolean isRetained = false;
             Throwable failure = null;
             try {
