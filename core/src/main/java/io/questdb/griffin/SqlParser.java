@@ -6278,11 +6278,15 @@ public class SqlParser {
                 }
 
                 ObjList<QueryColumn> columns = m.getColumns();
-                QueryColumn windowFuncColumn = null;
+                int windowFuncPosition = -1;
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     QueryColumn column = columns.getQuick(i);
-                    if (column.isWindowExpression()) {
-                        windowFuncColumn = column;
+                    // A window function can hide anywhere in the column's expression tree, e.g.
+                    // row_number() OVER (...) + 1 or (row_number() OVER (...))::long, where the
+                    // top-level QueryColumn is a plain column rather than a WindowExpression. Walk
+                    // the whole tree so nested windows are caught too.
+                    if (windowFuncPosition < 0) {
+                        windowFuncPosition = windowFunctionPosition(column.getAst());
                     }
 
                     if (!Chars.equals(column.getName(), '*') && !TableUtils.isValidColumnName(column.getName(), configuration.getMaxFileNameLength())) {
@@ -6299,8 +6303,8 @@ public class SqlParser {
                     }
                 }
 
-                if (windowFuncColumn != null) {
-                    throw SqlException.position(windowFuncColumn.getAst().position)
+                if (windowFuncPosition > -1) {
+                    throw SqlException.position(windowFuncPosition)
                             .put("window function on base table is not supported for materialized views: ").put(baseTableName);
                 }
             }
@@ -6361,6 +6365,32 @@ public class SqlParser {
                 validateNamedWindowReferencesInExpr(node.args.getQuick(i), namedWindows);
             }
         }
+    }
+
+    // Returns the source position of the first window function found anywhere in the expression
+    // tree, or -1 if there is none. A window function can sit below an operator or cast (e.g.
+    // row_number() OVER (...) + 1), so the whole tree is walked, not just the root.
+    private int windowFunctionPosition(ExpressionNode node) {
+        if (node == null) {
+            return -1;
+        }
+        if (node.windowExpression != null) {
+            return node.position;
+        }
+        if (node.paramCount < 3) {
+            final int lhsPosition = windowFunctionPosition(node.lhs);
+            if (lhsPosition > -1) {
+                return lhsPosition;
+            }
+            return windowFunctionPosition(node.rhs);
+        }
+        for (int i = 0, n = node.paramCount; i < n; i++) {
+            final int position = windowFunctionPosition(node.args.getQuick(i));
+            if (position > -1) {
+                return position;
+            }
+        }
+        return -1;
     }
 
     static void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {

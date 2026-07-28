@@ -1326,6 +1326,39 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewWindowFunctionNestedInExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            // Window function whose AST root is an arithmetic operator ('+'), so the top-level
+            // QueryColumn is a plain column, not a WindowExpression. The error points at the
+            // nested window function, not the operator.
+            assertQuery("create materialized view test as (" +
+                    "select ts, row_number() over (order by ts) + 1 as rn from " + TABLE1 +
+                    ") partition by day")
+                    .noLeakCheck()
+                    .fails(45, "window function on base table is not supported for materialized views: " + TABLE1);
+            // Window function nested under a cast.
+            assertQuery("create materialized view test as (" +
+                    "select ts, (row_number() over (order by ts))::long as rn from " + TABLE1 +
+                    ") partition by day")
+                    .noLeakCheck()
+                    .fails(46, "window function on base table is not supported for materialized views: " + TABLE1);
+            // Window function as a single-argument function operand (stored in rhs).
+            assertQuery("create materialized view test as (" +
+                    "select ts, abs(row_number() over (order by ts)) as rn from " + TABLE1 +
+                    ") partition by day")
+                    .noLeakCheck()
+                    .fails(49, "window function on base table is not supported for materialized views: " + TABLE1);
+            // Window function inside a CASE expression (stored in the args list).
+            assertQuery("create materialized view test as (" +
+                    "select ts, case when v > 0 then row_number() over (order by ts) else 0 end as rn from " + TABLE1 +
+                    ") partition by day")
+                    .noLeakCheck()
+                    .fails(66, "window function on base table is not supported for materialized views: " + TABLE1);
+        });
+    }
+
+    @Test
     public void testCreateMatViewWindowFunctions() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
