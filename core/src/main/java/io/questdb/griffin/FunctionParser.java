@@ -800,7 +800,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         sqlExecutionContext.pushTimestampRequiredFlag(false);
         try {
             final CursorFunction function = new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
-            if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
+            // Reject only sub-queries reading a source outside the database. Genuinely
+            // non-deterministic functions (now(), sysdate(), rnd_*) inside the sub-query are already
+            // rejected while the sub-query is generated, by the guard above, which names the offending
+            // function. Do NOT consult isNonDeterministic() here: it is a fail-safe optimizer hint that
+            // defaults to true, so 97 of 114 factories would make legal SQL illegal by accident.
+            if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.getRecordCursorFactory().usesExternalDataSource()) {
                 final SqlException exception = SqlException.nonDeterministicColumn(node.position, "sub-query");
                 try {
                     function.close();

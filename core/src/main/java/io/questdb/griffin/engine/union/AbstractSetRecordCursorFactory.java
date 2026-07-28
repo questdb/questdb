@@ -69,6 +69,13 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         return factoryA.isStableWithinExecution() && factoryB.isStableWithinExecution();
     }
 
+    // A set operation reads externally if either input does. getBaseFactory() cannot express this
+    // because it returns a single child, so the two-child propagation is explicit here.
+    @Override
+    public boolean usesExternalDataSource() {
+        return factoryA.usesExternalDataSource() || factoryB.usesExternalDataSource();
+    }
+
     @Override
     public String getBaseColumnName(int idx) {
         if (idx < factoryA.getMetadata().getColumnCount()) {
