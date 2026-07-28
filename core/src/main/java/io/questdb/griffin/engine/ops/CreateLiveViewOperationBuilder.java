@@ -24,163 +24,26 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.IQueryModel;
-import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
-import org.jetbrains.annotations.Nullable;
 
-public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
-    private @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec;
-    private String baseTableName;
-    private int baseTableNamePosition;
-    private long flushEveryInterval;
-    private char flushEveryIntervalUnit;
-    private boolean ignoreIfExists;
-    private long inMemoryInterval;
-    private char inMemoryIntervalUnit;
-    // Numbers.INT_NULL means "user did not specify PARTITION BY; inherit from base."
-    // Cannot reuse PartitionBy.NONE as the sentinel because the user-facing grammar
-    // accepts PARTITION BY NONE as the explicit "no partitioning" choice — collapsing
-    // the two would silently override an explicit NONE with the base's scheme.
-    // CairoEngine.createLiveView resolves this to a real PartitionBy value before
-    // persisting to _lv.
-    private int partitionBy = Numbers.INT_NULL;
-    private IQueryModel selectModel;
-    private String selectSql;
-    // The START FROM mode the user asked for. The parser always sets one - the clause is
-    // mandatory - so START_FROM_UNSET only survives a builder that was never parsed into.
-    private byte startFromKind = LiveViewDefinition.START_FROM_UNSET;
-    // START FROM '<timestamp>' text, verbatim and unquoted. Stays a string here: its
-    // precision follows the base table's designated timestamp type, which only
-    // CairoEngine.createLiveView knows, so it parses there and not in the parser.
-    private String startFromTimestamp;
-    private int startFromTimestampPosition;
-    private String viewName;
-    private int viewNamePosition;
+/**
+ * The execution model {@code CREATE LIVE VIEW} parses into, and the seam an edition can wrap.
+ * {@link io.questdb.griffin.SqlParserCallback#parseCreateLiveViewExt} hands the parsed
+ * {@link CreateLiveViewOperationBuilderImpl} to the callback and takes whatever implementation of
+ * this interface it returns, so an edition that extends the grammar (Enterprise appends
+ * {@code OWNED BY '<principal>'}) can decorate the operation the builder produces without the
+ * parser knowing about the extension. Mirrors {@link CreateViewOperationBuilder} and
+ * {@link CreateMatViewOperationBuilder}.
+ */
+public interface CreateLiveViewOperationBuilder extends ExecutionModel {
 
-    public CreateLiveViewOperation build(CharSequence sqlText) {
-        return new CreateLiveViewOperation(
-                viewName,
-                viewNamePosition,
-                baseTableName,
-                baseTableNamePosition,
-                selectSql,
-                flushEveryInterval,
-                flushEveryIntervalUnit,
-                inMemoryInterval,
-                inMemoryIntervalUnit,
-                partitionBy,
-                ignoreIfExists,
-                startFromKind,
-                startFromTimestamp,
-                startFromTimestampPosition,
-                anchorSpec
-        );
-    }
+    CreateLiveViewOperation build(CharSequence sqlText);
 
     @Override
-    public void clear() {
-        anchorSpec = null;
-        baseTableName = null;
-        baseTableNamePosition = 0;
-        ignoreIfExists = false;
-        flushEveryInterval = 0;
-        flushEveryIntervalUnit = 0;
-        inMemoryInterval = 0;
-        inMemoryIntervalUnit = 0;
-        partitionBy = Numbers.INT_NULL;
-        selectModel = null;
-        selectSql = null;
-        startFromKind = LiveViewDefinition.START_FROM_UNSET;
-        startFromTimestamp = null;
-        startFromTimestampPosition = 0;
-        viewName = null;
-        viewNamePosition = 0;
-    }
-
-    @Override
-    public int getModelType() {
+    default int getModelType() {
         return CREATE_LIVE_VIEW;
     }
 
-    @Override
-    public IQueryModel getQueryModel() {
-        return selectModel;
-    }
-
-    public String getViewName() {
-        return viewName;
-    }
-
-    public void setAnchorSpec(@Nullable LiveViewDefinition.LvAnchorSpec anchorSpec) {
-        this.anchorSpec = anchorSpec;
-    }
-
-    public void setBaseTableName(String baseTableName) {
-        this.baseTableName = baseTableName;
-    }
-
-    public void setBaseTableNamePosition(int baseTableNamePosition) {
-        this.baseTableNamePosition = baseTableNamePosition;
-    }
-
-    public void setFlushEveryInterval(long flushEveryInterval) {
-        this.flushEveryInterval = flushEveryInterval;
-    }
-
-    public void setFlushEveryIntervalUnit(char flushEveryIntervalUnit) {
-        this.flushEveryIntervalUnit = flushEveryIntervalUnit;
-    }
-
-    public void setIgnoreIfExists(boolean ignoreIfExists) {
-        this.ignoreIfExists = ignoreIfExists;
-    }
-
-    public void setInMemoryInterval(long inMemoryInterval) {
-        this.inMemoryInterval = inMemoryInterval;
-    }
-
-    public void setInMemoryIntervalUnit(char inMemoryIntervalUnit) {
-        this.inMemoryIntervalUnit = inMemoryIntervalUnit;
-    }
-
-    public void setPartitionBy(int partitionBy) {
-        this.partitionBy = partitionBy;
-    }
-
-    public void setSelectModel(IQueryModel selectModel) {
-        this.selectModel = selectModel;
-    }
-
-    public void setSelectSql(String selectSql) {
-        this.selectSql = selectSql;
-    }
-
-    public void setStartFromBeginning() {
-        this.startFromKind = LiveViewDefinition.START_FROM_BEGINNING;
-        this.startFromTimestamp = null;
-        this.startFromTimestampPosition = 0;
-    }
-
-    public void setStartFromNow() {
-        this.startFromKind = LiveViewDefinition.START_FROM_NOW;
-        this.startFromTimestamp = null;
-        this.startFromTimestampPosition = 0;
-    }
-
-    public void setStartFromTimestamp(String startFromTimestamp, int startFromTimestampPosition) {
-        this.startFromKind = LiveViewDefinition.START_FROM_TIMESTAMP;
-        this.startFromTimestamp = startFromTimestamp;
-        this.startFromTimestampPosition = startFromTimestampPosition;
-    }
-
-    public void setViewName(String viewName) {
-        this.viewName = viewName;
-    }
-
-    public void setViewNamePosition(int viewNamePosition) {
-        this.viewNamePosition = viewNamePosition;
-    }
+    void setSelectModel(IQueryModel selectModel);
 }

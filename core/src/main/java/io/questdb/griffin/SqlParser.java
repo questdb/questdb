@@ -43,6 +43,7 @@ import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
@@ -122,7 +123,7 @@ public class SqlParser {
     private final ObjectPool<CompileViewModel> compileViewModelPool;
     private final CairoConfiguration configuration;
     private final ObjectPool<ExportModel> copyModelPool;
-    private final CreateLiveViewOperationBuilder createLiveViewOperationBuilder = new CreateLiveViewOperationBuilder();
+    private final CreateLiveViewOperationBuilderImpl createLiveViewOperationBuilder = new CreateLiveViewOperationBuilderImpl();
     private final CreateMatViewOperationBuilderImpl createMatViewOperationBuilder = new CreateMatViewOperationBuilderImpl();
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
@@ -501,6 +502,17 @@ public class SqlParser {
         return Chars.equals(token, ZERO_OFFSET.token)
                 || Chars.equals(token, "'+00:00'")
                 || Chars.equals(token, "'-00:00'");
+    }
+
+    private static CreateLiveViewOperationBuilder parseCreateLiveViewExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence tok,
+            CreateLiveViewOperationBuilderImpl builder
+    ) throws SqlException {
+        CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
+        return sqlParserCallback.parseCreateLiveViewExt(lexer, executionContext, builder, nextToken);
     }
 
     private static CreateMatViewOperationBuilder parseCreateMatViewExt(
@@ -1284,7 +1296,7 @@ public class SqlParser {
             // failed CREATE cannot leave ANCHOR enabled for the next expr() call.
             expressionParser.setAnchorAllowed(true);
             try {
-                return parseCreateLiveView(lexer, sqlParserCallback);
+                return parseCreateLiveView(lexer, executionContext, sqlParserCallback);
             } finally {
                 expressionParser.setAnchorAllowed(executionContext.isLiveViewCompile());
             }
@@ -1300,9 +1312,10 @@ public class SqlParser {
 
     private ExecutionModel parseCreateLiveView(
             GenericLexer lexer,
+            SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final CreateLiveViewOperationBuilder builder = createLiveViewOperationBuilder;
+        final CreateLiveViewOperationBuilderImpl builder = createLiveViewOperationBuilder;
         builder.clear();
 
         expectTok(lexer, "view");
@@ -1590,7 +1603,13 @@ public class SqlParser {
         // build the LiveViewWindow without re-parsing the SELECT.
         builder.setAnchorSpec(captureAnchoredWindow(queryModel));
 
-        return builder;
+        // Hand any trailing token to the edition grammar hook, as CREATE TABLE / VIEW /
+        // MATERIALIZED VIEW already do. Enterprise consumes OWNED BY '<principal>' here; the OSS
+        // default rejects whatever is left over, which is what a bare trailing token did before
+        // this hook existed. SHOW CREATE LIVE VIEW emits the same clause, so its output has to
+        // parse back through this call.
+        tok = optTok(lexer);
+        return parseCreateLiveViewExt(lexer, executionContext, sqlParserCallback, tok, builder);
     }
 
     private LiveViewDefinition.LvAnchorSpec captureAnchoredWindow(IQueryModel queryModel) throws SqlException {

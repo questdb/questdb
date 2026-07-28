@@ -487,7 +487,7 @@ public class TableSequencerImpl implements TableSequencer {
         if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
         }
-        walDirectoryPolicy.initDirectory(path);
+        walDirectoryPolicy.initDirectory(path, tableToken);
         path.trimTo(rootLen);
         metadata.create(tableStruct, tableToken, path, rootLen, tableId);
         tableTransactionLog.create(path, timestamp);
