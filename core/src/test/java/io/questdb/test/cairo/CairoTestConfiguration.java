@@ -40,6 +40,7 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 
@@ -183,6 +184,35 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public boolean isMultiKeyDedupEnabled() {
         return true;
+    }
+
+    /**
+     * Keeps the on-disk answer when the test root sits on a RAM disk.
+     * <p>
+     * A developer can move the whole suite off their SSD by pointing {@code java.io.tmpdir} at tmpfs (see
+     * the {@code ram-disk-test-root} profile in core/pom.xml). tmpfs is not on QuestDB's
+     * supported-filesystem list, so {@link io.questdb.std.FilesFacadeImpl#allowMixedIO} answers false for
+     * it, and that answer reaches every writer through {@code writerMixedIOEnabled}: {@code O3CopyJob},
+     * {@code O3OpenColumnJob} and {@code ContiguousFileVarFrameColumn} would all silently take their
+     * non-mixed-IO variants. The local run would then exercise the OPPOSITE write path to the ext4/XFS
+     * agents in CI, and a local green would say nothing about the path that ships.
+     * <p>
+     * Answering true is not a fiction: tmpfs is page-cache backed, so mmap and write are coherent on it,
+     * which is the property mixed I/O actually needs. tmpfs is excluded from the supported list because it
+     * is volatile storage, not because mixed I/O misbehaves there.
+     * <p>
+     * Scoped to tmpfs alone; every other filesystem defers to the delegate, so a genuinely unsupported
+     * filesystem is still reported honestly. CI never runs on tmpfs, and its ZFS shard — which legitimately
+     * answers false — is untouched.
+     */
+    @Override
+    public boolean isWriterMixedIOEnabled() {
+        try (Path path = new Path()) {
+            if (Files.getFileSystemStatus(path.of(dbRoot).$()) == Files.TMPFS_MAGIC) {
+                return true;
+            }
+        }
+        return super.isWriterMixedIOEnabled();
     }
 
     @Override
