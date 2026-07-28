@@ -74,6 +74,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
+import io.questdb.std.IntLongHashMap;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -181,6 +182,12 @@ public class SqlParser {
     // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
+    // For each table (by id) whose EXPIRE ROWS policy this parse read straight from the table metadata while a
+    // SET/DROP EXPIRE was still in flight: the metadata version that read saw. The optimiser compares it
+    // against the version the reader opens and rejects the compile if they differ, so a filter chosen from the
+    // old policy is never paired with a reader on the new one. Empty unless a policy change is running at the
+    // same time as this compile.
+    private final IntLongHashMap pendingExpiryReadVersions = new IntLongHashMap();
     // Whether to apply the read-time row-expiry filter for the current parse. Set from the execution
     // context at parse() entry; the cleanup job disables it on its context so its survivor query is not
     // wrapped by the read filter (it uses its own authoritative keep-filter instead).
@@ -1402,10 +1409,11 @@ public class SqlParser {
             return null;
         }
         final MetadataCache metadataCache = cairoEngine.getMetadataCache();
+        final boolean isUpdatePending = metadataCache.isExpiryPolicyUpdatePending(tableToken);
         // During SET/DROP the cache deliberately retains P0 until authoritative _meta/_txn publish P1. Bypass
         // that stale entry while the transition is pending. A concurrent mark after this check advances the
         // policy epoch, so the compiler rejects and reparses any decision made here against P0.
-        if (!metadataCache.isExpiryPolicyUpdatePending(tableToken)) {
+        if (!isUpdatePending) {
             try (MetadataCacheReader metadataRO = metadataCache.readLock()) {
                 final CairoTable table = metadataRO.getTable(tableToken);
                 if (table != null) {
@@ -1423,6 +1431,14 @@ public class SqlParser {
         // Cache miss, or a policy transition in progress: fall back to authoritative table metadata. This
         // prevents a pending first/replacement SET or DROP from embedding the cache's previous policy state.
         try (TableMetadata metadata = cairoEngine.getTableMetadata(tableToken)) {
+            if (isUpdatePending) {
+                // The policy epoch counter ticks once before the metadata swap and once after it, so a compile
+                // that reads the counter both before and after but entirely between those two ticks sees the
+                // same value twice and cannot tell this pre-swap read from the new policy. The table's metadata
+                // version changes exactly at the swap, so record the version this read saw; the optimiser then
+                // rejects the compile if the reader opens a different one.
+                pendingExpiryReadVersions.put(tableToken.getTableId(), metadata.getMetadataVersion());
+            }
             final String predicate = metadata.getExpiryPredicate();
             if (predicate == null || predicate.isEmpty()) {
                 return null;
@@ -6459,6 +6475,7 @@ public class SqlParser {
         expiryFilterExecutionContext = null;
         expiryPolicyTable = null;
         expiryTimestampColumnName = null;
+        pendingExpiryReadVersions.clear();
     }
 
     ExpressionNode expr(
@@ -6492,6 +6509,10 @@ public class SqlParser {
     @TestOnly
     void expr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback) throws SqlException {
         expressionParser.parseExpr(lexer, listener, sqlParserCallback, null);
+    }
+
+    IntLongHashMap getPendingExpiryReadVersions() {
+        return pendingExpiryReadVersions;
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {

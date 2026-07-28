@@ -78,6 +78,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.IntLongHashMap;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.IntSortedList;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
@@ -211,6 +212,11 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntSortedList orderingStack = new IntSortedList();
     private final Path path;
+    // Shared with SqlParser (wired by SqlCompilerImpl): for each table, the metadata version the parser read an
+    // EXPIRE ROWS policy at while a policy change was in flight. enumerateColumns rejects the compile when the
+    // reader opens a different version. Null when the optimiser has no paired parser (some unit tests); the
+    // check skips itself then.
+    private IntLongHashMap pendingExpiryReadVersions;
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceIntHashMap pivotAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final IntHashSet postFilterRemoved = new IntHashSet();
@@ -4281,7 +4287,20 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void enumerateColumns(IQueryModel model, TableRecordMetadata metadata) throws SqlException {
-        model.setMetadataVersion(metadata.getMetadataVersion());
+        final long boundMetadataVersion = metadata.getMetadataVersion();
+        // If the parser chose an EXPIRE ROWS keep-filter for this table from a metadata version that a racing
+        // policy change has already moved past, the reader here opens the newer version and that filter is
+        // stale. Reject the compile so it re-parses against the current policy. (The policy epoch counter can
+        // read the same value before and after the change, so it cannot catch this; the metadata version can.)
+        // The map is empty unless a policy change is running alongside this compile, so the size() check keeps
+        // the normal cost at zero.
+        if (pendingExpiryReadVersions != null && pendingExpiryReadVersions.size() > 0) {
+            final long parsedMetadataVersion = pendingExpiryReadVersions.get(metadata.getTableId());
+            if (parsedMetadataVersion != -1 && parsedMetadataVersion != boundMetadataVersion) {
+                throw ExpiryPolicyVersionChangedException.INSTANCE;
+            }
+        }
+        model.setMetadataVersion(boundMetadataVersion);
         model.setTableId(metadata.getTableId());
         copyColumnsFromMetadata(model, metadata);
         if (model.isUpdate()) {
@@ -12737,6 +12756,10 @@ public class SqlOptimiser implements Mutable {
 
         // And then generate plan for UPDATE top level QueryModel
         validateUpdateColumns(updateQueryModel, metadata, sqlExecutionContext);
+    }
+
+    void setPendingExpiryReadVersions(IntLongHashMap pendingExpiryReadVersions) {
+        this.pendingExpiryReadVersions = pendingExpiryReadVersions;
     }
 
     void validateUpdateColumns(

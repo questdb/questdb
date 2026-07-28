@@ -184,6 +184,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
+    // Test hook: pauses an EXPIRE ROWS metadata rewrite after the change is marked pending but before the
+    // _meta/_txn swap, so a compiler on another thread can read the old policy while the change is in flight.
+    // Null in production; firing it is one volatile read and a null check.
+    @TestOnly
+    private static volatile Runnable expiryMetaSwapBarrier;
+    // Test hook: pauses an EXPIRE ROWS metadata rewrite after the _meta/_txn swap but before the policy epoch
+    // counter ticks the second time, so a compiler on another thread can open a reader at the new metadata
+    // version while the counter still holds its old value. Null in production; firing it is one volatile read
+    // and a null check.
+    @TestOnly
+    private static volatile Runnable expiryPolicyPublishBarrier;
     // Test seam: pauses a metadata rewrite after _meta and _txn publish the new metadata version but before
     // MetadataCache hydration. Null in production; the fire site is a single volatile read and null check.
     @TestOnly
@@ -658,6 +669,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Installs a one-shot test barrier that fires after a metadata version becomes reader-visible and before
      * the corresponding MetadataCache hydration. Pass null to uninstall.
      */
+    @TestOnly
+    public static void setExpiryMetaSwapBarrier(@Nullable Runnable barrier) {
+        expiryMetaSwapBarrier = barrier;
+    }
+
+    @TestOnly
+    public static void setExpiryPolicyPublishBarrier(@Nullable Runnable barrier) {
+        expiryPolicyPublishBarrier = barrier;
+    }
+
     @TestOnly
     public static void setMetadataVersionPublishedBarrier(@Nullable Runnable barrier) {
         metadataVersionPublishedBarrier = barrier;
@@ -4055,6 +4076,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 default:
                     nullers.add(NOOP);
             }
+        }
+    }
+
+    private static void fireExpiryMetaSwapBarrier() {
+        final Runnable barrier = expiryMetaSwapBarrier;
+        if (barrier != null) {
+            expiryMetaSwapBarrier = null;
+            barrier.run();
+        }
+    }
+
+    private static void fireExpiryPolicyPublishBarrier() {
+        final Runnable barrier = expiryPolicyPublishBarrier;
+        if (barrier != null) {
+            expiryPolicyPublishBarrier = null;
+            barrier.run();
         }
     }
 
@@ -14812,10 +14849,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         boolean isMetadataVersionPublished = false;
         try {
+            if (isExpiryPolicyUpdate) {
+                fireExpiryMetaSwapBarrier();
+            }
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
             isMetadataVersionPublished = true;
             if (isExpiryPolicyUpdate) {
+                fireExpiryPolicyPublishBarrier();
                 // Publish the policy epoch in the same writer thread immediately after the authoritative metadata
                 // version. A compiler that parsed the previous version will observe the epoch change and retry.
                 engine.getMetadataCache().publishExpiryPolicyUpdate();

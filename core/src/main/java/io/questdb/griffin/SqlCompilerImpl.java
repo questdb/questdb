@@ -276,6 +276,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     queryModelPool,
                     postOrderTreeTraversalAlgo
             );
+            // Give the optimiser the same map the parser fills in, so enumerateColumns can reject a compile
+            // whose EXPIRE ROWS keep-filter was chosen from a metadata version the reader has moved past.
+            optimiser.setPendingExpiryReadVersions(parser.getPendingExpiryReadVersions());
 
             alterOperationBuilder = createAlterOperationBuilder();
             dropOperationBuilder = new GenericDropOperationBuilder();
@@ -3298,21 +3301,42 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
-        final ExecutionModel model = parser.parse(lexer, executionContext, this);
-        try {
-            if (model.getModelType() != ExecutionModel.EXPLAIN) {
-                return compileExecutionModel0(executionContext, model);
-            } else {
-                final ExplainModel explainModel = (ExplainModel) model;
-                final ExecutionModel innerModel = compileExplainExecutionModel0(executionContext, explainModel.getInnerExecutionModel());
-                explainModel.setModel(innerModel);
-                return explainModel;
+        // Re-parse and re-optimise here when a racing EXPIRE ROWS change moves the metadata version past the
+        // one the parser chose the keep-filter from. This is the single place the throw comes from, so handling
+        // it here covers every caller - the first parse and every re-parse in the retry loops below - and none
+        // of them has to turn it into an error. Bounded so a burst of policy changes cannot loop forever.
+        int remainingExpiryPolicyRetries = maxRecompileAttempts;
+        for (; ; ) {
+            final ExecutionModel model = parser.parse(lexer, executionContext, this);
+            try {
+                if (model.getModelType() != ExecutionModel.EXPLAIN) {
+                    return compileExecutionModel0(executionContext, model);
+                } else {
+                    final ExplainModel explainModel = (ExplainModel) model;
+                    final ExecutionModel innerModel = compileExplainExecutionModel0(executionContext, explainModel.getInnerExecutionModel());
+                    explainModel.setModel(innerModel);
+                    return explainModel;
+                }
+            } catch (ExpiryPolicyVersionChangedException e) {
+                if (--remainingExpiryPolicyRetries < 0) {
+                    // Out of retries: enqueue view compiles the same way the general failure path below does
+                    // (a harmless re-check signal), then report a plain error. The earlier retries loop back
+                    // instead of returning, so they leave this out.
+                    if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
+                        enqueueCompileViews(model);
+                    }
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying model after row-expiry policy version change [fd=")
+                        .$(executionContext.getRequestFd()).I$();
+                clearExceptSqlText();
+                lexer.restart();
+            } catch (Throwable e) {
+                if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
+                    enqueueCompileViews(model);
+                }
+                throw e;
             }
-        } catch (Throwable e) {
-            if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
-                enqueueCompileViews(model);
-            }
-            throw e;
         }
     }
 

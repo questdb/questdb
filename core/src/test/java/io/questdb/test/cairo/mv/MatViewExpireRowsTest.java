@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryCleanupJob;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileReader;
@@ -42,8 +43,11 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.Job;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -138,6 +142,143 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                         C\t3.0
                         """
         );
+    }
+
+    @Test
+    public void testCachedPlanCompiledInExpirePublicationWindowHidesExpiredRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', 3.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)");
+            drainWalAndMatViewQueues();
+
+            // Before any policy, every row is visible. This also warms the metadata cache.
+            assertQuery("SELECT k, v FROM mv ORDER BY k").expectSize().noLeakCheck().returns("""
+                    k\tv
+                    A\t1.0
+                    B\t2.0
+                    C\t3.0
+                    """);
+
+            final AtomicReference<Throwable> applyError = new AtomicReference<>();
+            final AtomicReference<Throwable> compileError = new AtomicReference<>();
+            final AtomicReference<RecordCursorFactory> compiledFactory = new AtomicReference<>();
+
+            final CountDownLatch swapBarrierReached = new CountDownLatch(1);
+            final CountDownLatch resumeSwap = new CountDownLatch(1);
+            final CountDownLatch readerGateReached = new CountDownLatch(1);
+            final CountDownLatch resumeReaderOpen = new CountDownLatch(1);
+            final CountDownLatch publishBarrierReached = new CountDownLatch(1);
+            final CountDownLatch resumePublish = new CountDownLatch(1);
+
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < 2.0");
+
+            // The WAL-apply writer marks the change as pending, then pauses (a) just before the _meta/_txn
+            // swap and (b) just after the swap but before the policy epoch counter ticks the second time.
+            TableWriter.setExpiryMetaSwapBarrier(() -> {
+                swapBarrierReached.countDown();
+                awaitOrThrow(resumeSwap, "resume the _meta/_txn swap");
+            });
+            TableWriter.setExpiryPolicyPublishBarrier(() -> {
+                publishBarrierReached.countDown();
+                awaitOrThrow(resumePublish, "resume the policy epoch publish");
+            });
+
+            // This context makes the compiler wait at the point where it opens the mv reader, so the parse
+            // reads the old (no-policy) metadata before the swap and the reader opens the new metadata after it.
+            final SqlExecutionContextImpl gatedCtx = new SqlExecutionContextImpl(engine, 1) {
+                private boolean gateArmed = true;
+
+                @Override
+                public TableReader getReader(TableToken tableToken) {
+                    if (gateArmed && "mv".contentEquals(tableToken.getTableName())) {
+                        gateArmed = false;
+                        readerGateReached.countDown();
+                        awaitOrThrow(resumeReaderOpen, "resume the mv reader open");
+                    }
+                    return getCairoEngine().getReader(tableToken, getReaderPoolSupervisor());
+                }
+            };
+            gatedCtx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
+
+            final Thread applyThread = new Thread(() -> {
+                try {
+                    drainWalQueue();
+                } catch (Throwable th) {
+                    applyError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "expire-apply");
+
+            final Thread compileThread = new Thread(() -> {
+                try {
+                    compiledFactory.set(select("SELECT k, v FROM mv ORDER BY k", gatedCtx));
+                } catch (Throwable th) {
+                    compileError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "expire-compile");
+
+            try {
+                applyThread.start();
+                assertTrue("writer did not reach the pre-swap barrier", swapBarrierReached.await(30, TimeUnit.SECONDS));
+                // The change is pending and the counter has ticked once, but the on-disk metadata is still the
+                // old no-policy version.
+
+                compileThread.start();
+                assertTrue("compiler did not reach the mv reader gate", readerGateReached.await(30, TimeUnit.SECONDS));
+                // Parse read the old no-policy metadata, so the plan so far has no keep-filter.
+
+                resumeSwap.countDown();
+                assertTrue("writer did not reach the pre-publish barrier", publishBarrierReached.await(30, TimeUnit.SECONDS));
+                // The on-disk metadata now has the policy, but the policy epoch counter has not ticked the
+                // second time yet.
+
+                resumeReaderOpen.countDown();
+                compileThread.join(TimeUnit.SECONDS.toMillis(30));
+                assertFalse("compile did not finish", compileThread.isAlive());
+                if (compileError.get() != null) {
+                    throw new AssertionError("compile failed", compileError.get());
+                }
+
+                resumePublish.countDown();
+                applyThread.join(TimeUnit.SECONDS.toMillis(30));
+                assertFalse("WAL apply did not finish", applyThread.isAlive());
+                if (applyError.get() != null) {
+                    throw new AssertionError("WAL apply failed", applyError.get());
+                }
+                drainWalAndMatViewQueues();
+
+                // The cached plan must apply the new policy: row A (v < 2.0) has expired and must not appear.
+                try (RecordCursorFactory factory = compiledFactory.getAndSet(null)) {
+                    assertNotNull("compiler produced no factory", factory);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        assertCursor("""
+                                k\tv
+                                B\t2.0
+                                C\t3.0
+                                """, cursor, factory.getMetadata(), true);
+                    }
+                }
+            } finally {
+                resumeSwap.countDown();
+                resumeReaderOpen.countDown();
+                resumePublish.countDown();
+                TableWriter.setExpiryMetaSwapBarrier(null);
+                TableWriter.setExpiryPolicyPublishBarrier(null);
+                applyThread.join(TimeUnit.SECONDS.toMillis(30));
+                compileThread.join(TimeUnit.SECONDS.toMillis(30));
+                Misc.free(compiledFactory.get());
+                Misc.free(gatedCtx);
+            }
+        });
     }
 
     @Test
@@ -1654,5 +1795,16 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 applyThread.join(30_000);
             }
         });
+    }
+
+    private static void awaitOrThrow(CountDownLatch latch, String what) {
+        try {
+            if (!latch.await(30, TimeUnit.SECONDS)) {
+                throw new AssertionError("timed out waiting to " + what);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        }
     }
 }
