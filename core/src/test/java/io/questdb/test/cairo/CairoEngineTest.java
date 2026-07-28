@@ -61,6 +61,7 @@ import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -387,6 +388,43 @@ public class CairoEngineTest extends AbstractCairoTest {
                     Assert.assertTrue(cursor.hasNext());
                     Assert.assertEquals(1, cursor.getRecord().getLong(0));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testGetReaderWithRepairSkipsRepairUnderReconcileLock() throws Exception {
+        // M3: getReaderWithRepair caught EntryLockedException in its generic `catch (CairoException)`
+        // and ran tryRepairTable -- which opens a TableWriter (bypassing the write-suspend gate) and
+        // logs a misleading "starting table repair" -- even though the table is only locked by an
+        // in-progress RECONCILE, not corrupt. It must now rethrow EntryLockedException directly so the
+        // sole caller (DatabaseCheckpointAgent) retries once the reconcile releases the lock.
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into x values (1, '2024-01-01T00:00:00Z')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("x");
+
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            engine.lockReconcileReads(token);
+            try {
+                try {
+                    Misc.freeIfCloseable(engine.getReaderWithRepair(token));
+                    Assert.fail("expected EntryLockedException while the reconcile read lock is held");
+                } catch (EntryLockedException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), "reconcile in progress");
+                }
+                // The console log writer is async, so drain the FIFO past any repair log by emitting
+                // and waiting for a unique sentinel before asserting the repair message is absent.
+                execute("create table m3_repair_log_drain_sentinel (a int)");
+                capture.waitFor("m3_repair_log_drain_sentinel");
+                Assert.assertFalse(
+                        "getReaderWithRepair must not run tryRepairTable for a transient reconcile lock",
+                        capture.captured().contains("starting table repair"));
+            } finally {
+                engine.unlockReconcileReads(token);
+                capture.stop();
             }
         });
     }

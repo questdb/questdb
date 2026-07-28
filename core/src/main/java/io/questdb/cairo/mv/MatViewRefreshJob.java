@@ -35,6 +35,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -811,6 +812,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // A demote that flips the read-only flag mid-refresh makes the commit fence refuse from
                 // inside the pump; re-throw so the outer catch defers (retry-later) instead of invalidating.
                 rethrowReadOnlyRefusal(th);
+                // A reconcile apply holds the base table's read-lock, so engine.getReader(baseTableToken)
+                // threw EntryLockedException BEFORE any mutation (the truncateSoft below has not run yet).
+                // The view is intact -- defer (retry-later) instead of invalidating it and cascading to
+                // dependents; the reconcile lock is transient. Unlike an OOM after truncate (which must
+                // still invalidate), this is safe here because nothing was mutated.
+                if (th instanceof EntryLockedException && tryScheduleRetry(viewState, viewToken, th)) {
+                    return false;
+                }
                 LOG.error()
                         .$("could not perform full refresh [view=").$(viewToken)
                         .$(", baseTable=").$(baseTableToken)
@@ -868,7 +877,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * deferred and retried later instead of invalidating the materialized view.
      */
     private static boolean isRetriableRefreshError(Throwable th) {
-        return th instanceof EntryUnavailableException || CairoException.isCairoOomError(th);
+        // EntryLockedException is thrown by engine.getReader/getTableMetadata while a RECONCILE TABLE
+        // apply holds the base table's reconcile read-lock. It is transient (the lock releases when the
+        // apply completes), so treat it as retriable rather than a refresh failure that invalidates.
+        return th instanceof EntryUnavailableException
+                || th instanceof EntryLockedException
+                || CairoException.isCairoOomError(th);
     }
 
     private static CharSequence retriableReason(Throwable th) {
@@ -893,17 +907,26 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (!isRetriableRefreshError(th)) {
             return false;
         }
-        final int attempt = viewState.incrementRefreshRetryCount();
-        if (attempt > maxRefreshRetryAttempts) {
-            LOG.error().$("materialized view refresh retry limit exceeded, invalidating [view=").$(viewToken)
-                    .$(", attempts=").$(attempt - 1)
-                    .$(", limit=").$(maxRefreshRetryAttempts)
-                    .$(", reason=").$safe(retriableReason(th))
-                    .I$();
-            // The caller invalidates next; clear the retry state so an invalid view carries no stale
-            // backoff deadline.
-            viewState.resetRefreshRetry();
-            return false;
+        // A reconcile read-lock (EntryLockedException) is a transient "table busy" that can outlast the
+        // retry budget, so defer it indefinitely WITHOUT counting an attempt -- it must never trip the
+        // invalidation limit. Every other retriable error (reader / WAL-writer pool exhaustion, OOM)
+        // still counts and eventually invalidates so a genuinely stuck view does not defer forever.
+        final int attempt;
+        if (th instanceof EntryLockedException) {
+            attempt = -1;
+        } else {
+            attempt = viewState.incrementRefreshRetryCount();
+            if (attempt > maxRefreshRetryAttempts) {
+                LOG.error().$("materialized view refresh retry limit exceeded, invalidating [view=").$(viewToken)
+                        .$(", attempts=").$(attempt - 1)
+                        .$(", limit=").$(maxRefreshRetryAttempts)
+                        .$(", reason=").$safe(retriableReason(th))
+                        .I$();
+                // The caller invalidates next; clear the retry state so an invalid view carries no stale
+                // backoff deadline.
+                viewState.resetRefreshRetry();
+                return false;
+            }
         }
         final long retryAfterMicros = microsecondClock.getTicks() + busyRetryTimeoutUs;
         viewState.scheduleRefreshRetry(retryAfterMicros);
@@ -1721,7 +1744,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // inside insertAsSelect may have marked the view invalid in-memory and then had its
                 // WAL write (resetMatViewState) throw a retriable error that propagates here. Never
                 // arm a retry on an already-invalid view.
-                if (periodRefresh && !viewState.isInvalid() && tryScheduleRetry(viewState, viewToken, th)) {
+                // EntryLockedException (a reconcile read-lock on the base table, thrown by the
+                // getReader above) is deferred for BOTH period and user-range refreshes -- it is
+                // transient and must never invalidate; the periodRefresh gate only applies to the
+                // other retriable errors.
+                if ((periodRefresh || th instanceof EntryLockedException) && !viewState.isInvalid() && tryScheduleRetry(viewState, viewToken, th)) {
                     // Transient error (base table reader pool exhausted or out-of-memory) on a
                     // period refresh: defer instead of invalidating. MatViewTimerJob re-drives an
                     // incremental refresh once the backoff elapses; that incremental refresh

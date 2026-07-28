@@ -1149,6 +1149,14 @@ public class CairoEngine implements Closeable, WriterSource {
         verifyTableToken(tableToken);
         try {
             return getReader(tableToken);
+        } catch (EntryLockedException e) {
+            // A RECONCILE TABLE apply holds the reconcile read-lock on this table, so getReader throws
+            // EntryLockedException. This is a transient lock, NOT a corrupt table -- do NOT run
+            // tryRepairTable, which opens a TableWriter (bypassing the write-suspend gate) and logs a
+            // misleading "starting table repair". Rethrow so the caller (DatabaseCheckpointAgent)
+            // retries once the reconcile releases the lock. Matches the EntryLockedException-first
+            // catch pattern in SqlOptimiser.
+            throw e;
         } catch (CairoException e) {
             // Cannot open reader on existing table is pretty bad.
             // In some messed states, for example after _meta file swap failure Reader cannot be opened
