@@ -352,7 +352,7 @@ public class RecoveryCoordinator {
             fsyncDir(token, dir);
         }
 
-        // Restore _txn.epoch -> _txn, _cv.epoch -> _cv. ff.copy() (creat O_TRUNC)
+        // Restore _txn.epoch -> _txn, _cv.epoch -> _cv. TableUtils.replaceFileContent (truncate + transfer)
         // fully replaces the live, lazily-advanced files with the epoch's canonical A/B record. The
         // .epoch copies are immutable until the next epoch, so re-running this (a crash mid-recovery)
         // re-copies identical bytes and lands on the same cut -> idempotent.
@@ -363,7 +363,7 @@ public class RecoveryCoordinator {
         // never references column versions beyond it). The reverse would briefly leave _txn at the frontier
         // over an epoch _cv (a dangling reference). Recovery re-runs on the next boot and completes the pair.
         //
-        // NOTE: ff.copy() creat()-truncates its destination before writing, so a restore that fails
+        // NOTE: the restore truncates its destination before writing, so a restore that fails
         // mid-transfer leaves the live file torn. Recovery propagates that failure and startup aborts before
         // readers can observe it. The next startup retries from the immutable validated generation.
         restoreFile(token, src, dst, TableUtils.TXN_FILE_NAME, epochGeneration);
@@ -671,10 +671,13 @@ public class RecoveryCoordinator {
     private void restoreFile(TableToken token, Path src, Path dst, CharSequence fileName, int epochGeneration) {
         epochCopyPath(src, token, fileName, epochGeneration);
         tablePath(dst, token).concat(fileName);
-        if (ff.copy(src.$(), dst.$()) < 0) {
-            throw CairoException.critical(ff.errno())
+        try {
+            TableUtils.replaceFileContent(ff, src.$(), dst.$(), configuration.getWriterFileOpenOpts());
+        } catch (CairoException e) {
+            throw CairoException.critical(e.getErrno())
                     .put("adaptive epoch roll-forward failed to restore [table=").put(token.getTableName())
-                    .put(", src=").put(src).put(", dst=").put(dst).put(']');
+                    .put(", src=").put(src).put(", dst=").put(dst)
+                    .put(", reason=").put(e.getFlyweightMessage()).put(']');
         }
     }
 
@@ -684,10 +687,13 @@ public class RecoveryCoordinator {
         // Replace the existing inode in place so any pooled mmap observes the restored bytes. A crash can
         // tear this copy, but the bound immutable epoch metadata remains authoritative and the next startup's
         // no-retry metadata probe re-enters recovery and copies it again.
-        if (ff.copy(src.$(), dst.$()) < 0) {
-            throw CairoException.critical(ff.errno())
+        try {
+            TableUtils.replaceFileContent(ff, src.$(), dst.$(), configuration.getWriterFileOpenOpts());
+        } catch (CairoException e) {
+            throw CairoException.critical(e.getErrno())
                     .put("adaptive epoch roll-forward failed to restore metadata [table=").put(token.getTableName())
-                    .put(", src=").put(src).put(", dst=").put(dst).put(']');
+                    .put(", src=").put(src).put(", dst=").put(dst)
+                    .put(", reason=").put(e.getFlyweightMessage()).put(']');
         }
         fsyncFile(token, dst, TableUtils.META_FILE_NAME);
         try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {

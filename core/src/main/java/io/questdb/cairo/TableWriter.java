@@ -15062,7 +15062,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * (Plan 3): {@link RecoveryCoordinator} restores them over the live files to rewind the table to
      * the epoch cut after a power cut.
      * <p>
-     * The copy is taken by {@code ff.copy()} (creat O_TRUNC) of the LIVE committed file, which was just
+     * The copy is taken by {@link TableUtils#replaceFileContent} of the LIVE committed file, which was just
      * made durable by {@code txWriter.fsync()} / {@code columnVersionWriter.fsync()} a few lines up in
      * {@link #fsyncMaterializedState()} (the writer is held throughout, so the live file is a stable
      * cut and is not advancing). A direct file copy is byte-identical to the live file and therefore
@@ -15082,15 +15082,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (generation != SnapshotMarker.LEGACY_GENERATION) {
             path.put('.').put(generation);
         }
-        // ff.copy uses creat(O_TRUNC), so it both creates and fully replaces any prior copy; no explicit
-        // remove needed. Build the source path into `other` to avoid clobbering `path` (the dest).
+        // replaceFileContent truncates and rewrites the destination, so it both creates and fully replaces
+        // this generation's prior copy; no explicit remove needed, and no platform on which an existing
+        // destination is refused. Build the source path into `other` to avoid clobbering `path` (the dest).
         other.trimTo(pathSize).concat(baseFileName);
-        if (ff.copy(other.$(), path.$()) < 0) {
+        try {
+            TableUtils.replaceFileContent(ff, other.$(), path.$(), configuration.getWriterFileOpenOpts());
+        } catch (CairoException e) {
             other.trimTo(pathSize);
             path.trimTo(pathSize);
-            throw CairoException.critical(ff.errno())
+            throw CairoException.critical(e.getErrno())
                     .put("could not write durable epoch copy [table=").put(tableToken.getTableName())
-                    .put(", file=").put(baseFileName).put(TableUtils.EPOCH_COPY_SUFFIX).put(']');
+                    .put(", file=").put(baseFileName).put(TableUtils.EPOCH_COPY_SUFFIX)
+                    .put(", reason=").put(e.getFlyweightMessage()).put(']');
         }
         other.trimTo(pathSize);
         // Make the copy hard-durable: fsync the freshly-written .epoch file. The copy is immutable until

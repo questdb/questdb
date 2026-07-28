@@ -310,8 +310,15 @@ public final class DurableEpochManifest {
         final FilesFacade ff = configuration.getFilesFacade();
         src.of(tablePath).trimTo(rootLen).concat(name);
         dst.of(tablePath).trimTo(rootLen).concat(name).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
-        if (ff.copy(src.$(), dst.$()) < 0) {
-            throw CairoException.critical(ff.errno()).put("could not create initial adaptive epoch payload [path=").put(dst).put(']');
+        // Not ff.copy: a baseline is also published over a table that already carries generation-zero
+        // payloads (a restore re-enrolment), and a whole-file copy refuses an existing destination on
+        // Windows. See TableUtils.replaceFileContent.
+        try {
+            TableUtils.replaceFileContent(ff, src.$(), dst.$(), configuration.getWriterFileOpenOpts());
+        } catch (CairoException e) {
+            throw CairoException.critical(e.getErrno())
+                    .put("could not create initial adaptive epoch payload [path=").put(dst)
+                    .put(", reason=").put(e.getFlyweightMessage()).put(']');
         }
         final long fd = TableUtils.openRW(ff, dst.$(), LOG, configuration.getWriterFileOpenOpts());
         if (fd == -1) {

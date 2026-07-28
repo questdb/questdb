@@ -59,6 +59,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertTrue;
@@ -804,33 +805,13 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     public void testRecoverAbortsOnRestoreIoErrorBeforeServingSiblings() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
-        // A path-targeted copy fault: fail ONLY the target table's live _txn restore (_txn.epoch -> _txn),
-        // reporting ENOSPC (28 -> ErrorTag.DISK_FULL on linux). errno() returns the simulated code exactly
-        // once, right after the failed copy, so no other errno read is poisoned.
+        // A path-targeted transfer fault: fail ONLY the target table's live _txn restore
+        // (_txn.epoch -> _txn), reporting ENOSPC (28 -> ErrorTag.DISK_FULL on linux). errno() returns the
+        // simulated code exactly once, right after the failed transfer, so no other errno read is poisoned.
         final int simErrno = 28;
         final AtomicReference<String> failDirName = new AtomicReference<>();
         final AtomicBoolean justFailed = new AtomicBoolean(false);
-        final FilesFacade failingFf = new TestFilesFacadeImpl() {
-            @Override
-            public int copy(LPSZ from, LPSZ to) {
-                final String dir = failDirName.get();
-                // Match the target table's live _txn restore directly on the UTF-8 path (an LPSZ's
-                // toString is object identity, so match the sequence, not a decoded String). The _cv
-                // restore ("_cv") does not contain "_txn", and the restore dest is never the ".epoch" copy.
-                if (dir != null
-                        && Utf8s.containsAscii(to, dir)
-                        && Utf8s.containsAscii(to, TableUtils.TXN_FILE_NAME)) {
-                    justFailed.set(true);
-                    return -1;
-                }
-                return super.copy(from, to);
-            }
-
-            @Override
-            public int errno() {
-                return justFailed.compareAndSet(true, false) ? simErrno : super.errno();
-            }
-        };
+        final FilesFacade failingFf = new RestoreTransferFaultFacade(failDirName, justFailed, simErrno, TableUtils.TXN_FILE_NAME);
         final FilesFacade ffBefore = AbstractCairoTest.ff;
         try {
             // Two adaptive tables, each with a durable epoch + a lazy gap (live _txn ahead of the epoch),
@@ -886,8 +867,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
-     * SP-B / C2 (known limitation, documented in RecoveryCoordinator.recoverTable): ff.copy()
-     * creat()-truncates its destination, so a restore that fails mid-transfer leaves the LIVE file torn.
+     * SP-B / C2 (known limitation, documented in RecoveryCoordinator.recoverTable): the restore truncates
+     * its destination before transferring, so a restore that fails mid-transfer leaves the LIVE file torn.
      * Because recover() now SUSPENDS such a table instead of aborting boot (so healthy siblings still
      * recover), a read of the torn table must fail LOUD — it must NEVER silently serve wrong data. The
      * _txn/_cv A/B checksums + mmap bounds guarantee a loud CairoException / SIGBUS-InternalError, not a
@@ -902,30 +883,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         final int simErrno = 28;
         final AtomicBoolean justFailed = new AtomicBoolean(false);
         final AtomicReference<String> failDirName = new AtomicReference<>();
-        final FilesFacade failingFf = new TestFilesFacadeImpl() {
-            @Override
-            public int copy(LPSZ from, LPSZ to) {
-                final String dir = failDirName.get();
-                if (dir != null
-                        && Utf8s.containsAscii(to, dir)
-                        && Utf8s.containsAscii(to, TableUtils.COLUMN_VERSION_FILE_NAME)) {
-                    // Replicate the real ff.copy: creat(to) O_TRUNCs the live dest to 0 before the transfer
-                    // that then fails, leaving the live _cv torn (the C2 scenario).
-                    final long fd = super.openCleanRW(to, 0);
-                    if (fd != -1) {
-                        super.close(fd);
-                    }
-                    justFailed.set(true);
-                    return -1;
-                }
-                return super.copy(from, to);
-            }
-
-            @Override
-            public int errno() {
-                return justFailed.compareAndSet(true, false) ? simErrno : super.errno();
-            }
-        };
+        // The restore itself truncates the live _cv to 0 before the transfer this facade fails, so the
+        // torn-destination state is produced by the product code rather than staged by the test.
+        final FilesFacade failingFf = new RestoreTransferFaultFacade(
+                failDirName, justFailed, simErrno, TableUtils.COLUMN_VERSION_FILE_NAME);
         final FilesFacade ffBefore = AbstractCairoTest.ff;
         try {
             buildAdaptiveLazyGapTable("cvtorn");
@@ -957,6 +918,67 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             AbstractCairoTest.ff = ffBefore;
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        }
+    }
+
+    /**
+     * Fails the CONTENT TRANSFER of one named live file's restore, for one table dir.
+     * <p>
+     * The restore replaces a live file's content in place ({@code TableUtils.replaceFileContent}: open the
+     * destination read-write, truncate, transfer) rather than whole-file copying onto it, because a
+     * whole-file copy is refused on Windows once the destination exists. The fault therefore has to be
+     * injected on the transfer, and it is keyed by the destination FD learned from the read-write open —
+     * {@code copyData} sees fds, not paths. Matching {@code endsWith} keeps the {@code .epoch.N} sources
+     * out of it; those are opened read-only anyway.
+     */
+    private static final class RestoreTransferFaultFacade extends TestFilesFacadeImpl {
+        private final AtomicReference<String> failDirName;
+        private final CharSequence fileName;
+        private final AtomicBoolean justFailed;
+        private final int simErrno;
+        private final AtomicLong targetFd = new AtomicLong(-1);
+
+        RestoreTransferFaultFacade(
+                AtomicReference<String> failDirName,
+                AtomicBoolean justFailed,
+                int simErrno,
+                CharSequence fileName
+        ) {
+            this.failDirName = failDirName;
+            this.justFailed = justFailed;
+            this.simErrno = simErrno;
+            this.fileName = fileName;
+        }
+
+        @Override
+        public boolean close(long fd) {
+            targetFd.compareAndSet(fd, -1);
+            return super.close(fd);
+        }
+
+        @Override
+        public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
+            if (destFd == targetFd.get()) {
+                justFailed.set(true);
+                return -1;
+            }
+            return super.copyData(srcFd, destFd, offsetSrc, length);
+        }
+
+        @Override
+        public int errno() {
+            return justFailed.compareAndSet(true, false) ? simErrno : super.errno();
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            final String dir = failDirName.get();
+            // Match on the UTF-8 sequence: an LPSZ's toString is object identity, not the path.
+            if (fd > -1 && dir != null && Utf8s.containsAscii(name, dir) && Utf8s.endsWithAscii(name, fileName)) {
+                targetFd.set(fd);
+            }
+            return fd;
         }
     }
 

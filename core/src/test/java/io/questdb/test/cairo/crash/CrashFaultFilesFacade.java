@@ -316,6 +316,27 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         return rc;
     }
 
+    /**
+     * Same blind spot as {@link #copy(LPSZ, LPSZ)}, reached by fd instead of by path. An in-place content
+     * replacement ({@code TableUtils.replaceFileContent}: open read-write, truncate, transfer) moves its
+     * bytes through this call, which is the same sendfile family and so bypasses write()/msync tracking
+     * just as much. Untracked, {@code writtenDataEnd} stays 0 and {@link #crash} rolls the destination —
+     * a {@code _txn.epoch}/{@code _cv.epoch} payload, or a live file restored over — back to length 0.
+     */
+    @Override
+    public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
+        final long n = super.copyData(srcFd, destFd, offsetSrc, length);
+        trackTransferredData(destFd, n);
+        return n;
+    }
+
+    @Override
+    public long copyData(long srcFd, long destFd, long offsetSrc, long destOffset, long length) {
+        final long n = super.copyData(srcFd, destFd, offsetSrc, destOffset, length);
+        trackTransferredData(destFd, n);
+        return n;
+    }
+
     @Override
     public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
         long addr = super.mmap(fd, len, offset, flags, memoryTag);
@@ -1151,6 +1172,19 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             writtenDataEnd.put(path, 0L);
             syncedDataEnd.put(path, 0L);
             journaledDataEnd.put(path, 0L);
+        }
+    }
+
+    /**
+     * Records the destination of an fd-to-fd transfer, mirroring {@link #copy(LPSZ, LPSZ)}: after the
+     * transfer the real file length IS the written extent, because the caller truncated the destination
+     * before filling it.
+     */
+    private void trackTransferredData(long destFd, long transferred) {
+        final String p = fdToPath.get(destFd);
+        if (p != null && transferred > 0) {
+            track(p);
+            advanceWrittenDataEnd(p, super.length(destFd));
         }
     }
 

@@ -2648,6 +2648,54 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Replaces {@code dst}'s CONTENT with {@code src}'s, in place. The destination keeps its identity, so
+     * anything already holding it open or mapped observes the new bytes, and it never stops existing.
+     * <p>
+     * {@link FilesFacade#copy(LPSZ, LPSZ)} cannot do this portably. It is a whole-file copy that is only
+     * defined when the destination is ABSENT: on POSIX it is {@code creat(O_TRUNC)} and silently replaces
+     * whatever was there, while on Windows it is {@code CopyFileW(.., bFailIfExists=TRUE)} and fails with
+     * {@link Files#WINDOWS_ERROR_FILE_EXISTS} the moment the destination exists. Code that copies over a
+     * LIVE file therefore passes on Linux and fails on every Windows run.
+     * <p>
+     * Deleting the destination first (see {@code TableWriter#copyOverwrite}) restores portability but not
+     * safety on a durability path: it opens a window in which the file is absent altogether, a crash state
+     * no recovery here has to handle. Truncate-then-transfer adds no new state — a crash mid-transfer
+     * leaves the destination SHORT or TORN, which is exactly what the POSIX {@code creat(O_TRUNC)} copy
+     * already leaves, and every caller re-derives it from its immutable source on the next attempt.
+     * <p>
+     * Fail-stop throughout: a failed open, truncate or transfer throws, and both fds are closed on the way
+     * out so a durability failure cannot leak them.
+     */
+    public static void replaceFileContent(FilesFacade ff, LPSZ src, LPSZ dst, int fileOpenOpts) {
+        final long srcFd = openRO(ff, src, LOG);
+        try {
+            final long size = ff.length(srcFd);
+            if (size < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not read size of copy source [src=").put(src).put(']');
+            }
+            final long dstFd = openRW(ff, dst, LOG, fileOpenOpts);
+            try {
+                // Truncate FIRST so a stale tail can never survive a shorter replacement, mirroring O_TRUNC.
+                if (!ff.truncate(dstFd, 0)) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not truncate copy destination [dst=").put(dst).put(']');
+                }
+                final long copied = size > 0 ? ff.copyData(srcFd, dstFd, 0, size) : 0;
+                if (copied != size) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not copy file content [src=").put(src).put(", dst=").put(dst)
+                            .put(", size=").put(size).put(", copied=").put(copied).put(']');
+                }
+            } finally {
+                ff.close(dstFd);
+            }
+        } finally {
+            ff.close(srcFd);
+        }
+    }
+
     public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MemoryMARW mem) {
         mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
         mem.jumpTo(0);
