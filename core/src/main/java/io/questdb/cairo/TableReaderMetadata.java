@@ -550,15 +550,20 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             return;
         }
         long offset = TableUtils.getMetaExpiryPolicyOffset(mem, columnCount);
-        if (offset < 0 || offset + Integer.BYTES > mem.size()) {
+        long memSize = mem.size();
+        if (offset < 0 || offset + Integer.BYTES > memSize) {
+            return;
+        }
+        long predicateStorageLength = TableUtils.getMetaExpiryPredicateStorageLength(mem, offset, memSize);
+        if (predicateStorageLength < 0) {
             return;
         }
         CharSequence pred = mem.getStrA(offset);
-        offset += Vm.getStorageLength(pred);
         if (pred != null && pred.length() > 0) {
             this.expiryPredicate = Chars.toString(pred);
         }
-        if (offset + Long.BYTES <= mem.size()) {
+        offset += predicateStorageLength;
+        if (offset + Long.BYTES <= memSize) {
             this.expiryCleanupIntervalMicros = mem.getLong(offset);
         }
     }

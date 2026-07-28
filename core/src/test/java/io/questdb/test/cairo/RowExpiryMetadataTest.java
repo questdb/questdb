@@ -288,6 +288,116 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetMetaExpiryPolicyOffsetRejectsCorruptColumnNameLength() throws Exception {
+        // A corrupt (negative) column-name length in _meta must not send the policy-offset walk backward
+        // into a wild native read. getMetaExpiryPolicyOffset is the only name walker that runs BEFORE the
+        // column names are validated (MetadataCache.hydrateTableStartup passes a null name index), so it
+        // has to reject an out-of-range name length itself and report "no policy" (-1).
+        assertMemoryLeak(() -> {
+            execute("create table t (a int, b int, ts timestamp) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("t");
+            engine.releaseInactive();
+
+            try (
+                    MemoryMARW mem = Vm.getCMARWInstance();
+                    Path path = new Path()
+            ) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                final int columnCount = mem.getInt(TableUtils.META_OFFSET_COUNT);
+                final long nameOffset = TableUtils.getColumnNameOffset(columnCount);
+
+                // Happy path: the walk lands on a valid, in-bounds policy offset past the column names.
+                final long goodOffset = TableUtils.getMetaExpiryPolicyOffset(mem, columnCount);
+                assertTrue("expected a valid policy offset past the column names", goodOffset > nameOffset);
+
+                final int originalLen = mem.getInt(nameOffset);
+                try {
+                    // A small negative length would make Vm.getStorageLength move the offset backward; the
+                    // walk must bail out with -1 rather than dereference a wild address.
+                    mem.putInt(nameOffset, -2);
+                    assertEquals(-1L, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+
+                    // An over-255 length (a column name cannot exceed a filename) is out of range too.
+                    mem.putInt(nameOffset, 1_000);
+                    assertEquals(-1L, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+                } finally {
+                    // Restore the real length so teardown sees a valid _meta.
+                    mem.putInt(nameOffset, originalLen);
+                }
+                assertEquals(goodOffset, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+            }
+        });
+    }
+
+    @Test
+    public void testCorruptExpiryPredicateLengthReadsAsAbsent() throws Exception {
+        // A corrupt (negative) predicate length in the trailing policy section must not march the read
+        // offset backward into a wild getLong for the cleanup interval. Every reader must fall back to
+        // "no policy" (null predicate, 0 interval) instead of reading a garbage interval or faulting.
+        assertMemoryLeak(() -> {
+            execute("create table t (s symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("t");
+            final int columnCount;
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                columnCount = metadata.getColumnCount();
+            }
+
+            // Write a real policy, confirm it round-trips, then corrupt ONLY its predicate length prefix.
+            patchExpiryPolicy(token, columnCount, "v < 2.0", 30 * MICROS_PER_MINUTE);
+            reloadMetadata();
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            corruptExpiryPredicateLength(token, columnCount, -2);
+            reloadMetadata();
+
+            // Reader metadata / metadata cache.
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertNull("corrupt predicate length must read as no predicate", metadata.getExpiryPredicate());
+                assertEquals("corrupt predicate length must not yield a garbage interval", 0, metadata.getExpiryCleanupIntervalMicros());
+            }
+            // Writer metadata.
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                assertNull(writer.getExpiryPredicate());
+                assertEquals(0, writer.getExpiryCleanupIntervalMicros());
+            }
+        });
+    }
+
+    @Test
+    public void testExpiryPredicateLongerThan255CharsRoundTrips() throws Exception {
+        // The predicate is a SQL expression, not a filename, so it is NOT bounded to 255 chars. A reader
+        // that clamped the predicate length to [1, 255] (as a column name is) would corrupt-reject a long
+        // predicate; this pins that a >255-char predicate persists and reads back verbatim.
+        assertMemoryLeak(() -> {
+            execute("create table t (s symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("t");
+            final int columnCount;
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                columnCount = metadata.getColumnCount();
+            }
+
+            final String longPredicate = "v < 2.0 or ".repeat(30); // 330 chars, well past the 255 filename bound
+            assertTrue("predicate must exceed the 255-char filename bound", longPredicate.length() > 255);
+
+            patchExpiryPolicy(token, columnCount, longPredicate, 30 * MICROS_PER_MINUTE);
+            reloadMetadata();
+
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals(longPredicate, metadata.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, metadata.getExpiryCleanupIntervalMicros());
+            }
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                assertEquals(longPredicate, writer.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, writer.getExpiryCleanupIntervalMicros());
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewWithExpiryPersists() throws Exception {
         // Round-trip persistence: create a passthrough view with a policy, drop pooled readers, and assert the
         // predicate + interval read back from disk via BOTH the reader metadata and the writer metadata.
@@ -414,6 +524,21 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
             mem.putStr(offset, predicate);
             offset += Vm.getStorageLength(predicate);
             mem.putLong(offset, cleanupIntervalMicros);
+        }
+    }
+
+    // Overwrites ONLY the predicate length prefix in the trailing policy section with a raw value (which
+    // may be negative/corrupt), leaving the rest of _meta intact. The policy offset is located with the
+    // production walk so the corruption lands exactly where the readers will look for the predicate.
+    private void corruptExpiryPredicateLength(TableToken token, int columnCount, int rawLength) {
+        try (
+                MemoryMARW mem = Vm.getCMARWInstance();
+                Path path = new Path()
+        ) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+            mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+            final long policyOffset = TableUtils.getMetaExpiryPolicyOffset(mem, columnCount);
+            mem.putInt(policyOffset, rawLength);
         }
     }
 

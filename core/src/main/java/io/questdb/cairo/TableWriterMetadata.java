@@ -238,18 +238,22 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             }
         }
 
-        // Trailing row-expiry policy section. Use the shared offset helper so this stays byte-identical
-        // with TableReaderMetadata's reader, independent of the covering-population loop above.
+        // Trailing row-expiry policy section. Use the shared offset + predicate-length helpers so this
+        // stays byte-identical with TableReaderMetadata's reader, independent of the covering-population
+        // loop above.
         if (TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_EXPIRE_ROWS)) {
             long policyOffset = TableUtils.getMetaExpiryPolicyOffset(metaMem, columnCount);
             if (policyOffset >= 0 && policyOffset + Integer.BYTES <= metaSize) {
-                CharSequence pred = metaMem.getStrA(policyOffset);
-                policyOffset += Vm.getStorageLength(pred);
-                if (pred != null && pred.length() > 0) {
-                    this.expiryPredicate = Chars.toString(pred);
-                }
-                if (policyOffset + Long.BYTES <= metaSize) {
-                    this.expiryCleanupIntervalMicros = metaMem.getLong(policyOffset);
+                long predicateStorageLength = TableUtils.getMetaExpiryPredicateStorageLength(metaMem, policyOffset, metaSize);
+                if (predicateStorageLength >= 0) {
+                    CharSequence pred = metaMem.getStrA(policyOffset);
+                    if (pred != null && pred.length() > 0) {
+                        this.expiryPredicate = Chars.toString(pred);
+                    }
+                    policyOffset += predicateStorageLength;
+                    if (policyOffset + Long.BYTES <= metaSize) {
+                        this.expiryCleanupIntervalMicros = metaMem.getLong(policyOffset);
+                    }
                 }
             }
         }

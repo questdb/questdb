@@ -946,6 +946,69 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Computes the byte offset of the trailing row-expiry policy section: the offset just past the
+     * column-name section and the per-column covering-indices section. Returns -1 when the section is
+     * absent/truncated (older formats) or a column-name length prefix is out of range.
+     * <p>
+     * A column name has length in [1, 255] (the filename bound {@link #buildColumnListFromMetadataFile}
+     * enforces). Rejecting anything else keeps the name walk from moving the offset backward, which would
+     * otherwise dereference a wild native address; this walk runs before the names are validated in the
+     * MetadataCache startup path, so it cannot rely on a prior check.
+     * <p>
+     * This is the single source of truth for the _meta readers (TableReaderMetadata, TableWriterMetadata
+     * and MetadataCache), so the policy offset cannot drift between them.
+     */
+    public static long getMetaExpiryPolicyOffset(MemoryR metaMem, int columnCount) {
+        long memSize = metaMem.size();
+        long offset = getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            if (offset + Integer.BYTES > memSize) {
+                return -1;
+            }
+            int strLen = metaMem.getInt(offset);
+            if (strLen < 1 || strLen > 255) {
+                return -1;
+            }
+            offset += Vm.getStorageLength(strLen);
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (isColumnCovering(metaMem, i)) {
+                if (offset + Integer.BYTES > memSize) {
+                    return -1;
+                }
+                int includeCount = metaMem.getInt(offset);
+                offset += Integer.BYTES;
+                if (includeCount > 0) {
+                    if (offset + (long) includeCount * Integer.BYTES > memSize) {
+                        return -1;
+                    }
+                    offset += (long) includeCount * Integer.BYTES;
+                }
+            }
+        }
+        return offset;
+    }
+
+    /**
+     * Validates the row-expiry predicate string stored at {@code policyOffset} and returns the number
+     * of bytes it occupies ({@link Vm#getStorageLength}), or -1 when the stored length is corrupt. A
+     * negative length would make the caller's offset move backward into a wild native read, and an
+     * out-of-file length would read past the mapping. Unlike a column name, the predicate is an
+     * arbitrary SQL expression, so length 0 (the "no policy" case) and lengths above 255 are both valid.
+     *
+     * @param policyOffset offset of the predicate's length prefix; the caller must have already checked
+     *                     that {@code policyOffset + Integer.BYTES <= memSize}
+     */
+    public static long getMetaExpiryPredicateStorageLength(MemoryR metaMem, long policyOffset, long memSize) {
+        int predicateLen = metaMem.getInt(policyOffset);
+        if (predicateLen < 0) {
+            return -1;
+        }
+        long storageLength = Vm.getStorageLength(predicateLen);
+        return policyOffset + storageLength <= memSize ? storageLength : -1;
+    }
+
     public static long getNullLong(int columnType, int longIndex) {
         // In theory, we can have a column type where `NULL` value will be different `LONG` values,
         // then this should return different values on longIndex. At the moment there are no such types.
@@ -3147,42 +3210,6 @@ public final class TableUtils {
         // META_FORMAT_MINOR_VERSION_LATEST must not silently zero out TTL for older tables
         // that legitimately have it set (same rationale as hasParquetEncodingConfig).
         return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_TTL) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
-    }
-
-    /**
-     * Computes the byte offset of the trailing row-expiry policy section, i.e. the offset just
-     * past the column-name section and the per-column covering-indices section. Returns -1 when
-     * the covering section is truncated/absent (older formats), in which case there is no policy.
-     * <p>
-     * This is the single source of truth for both _meta readers (TableReaderMetadata and
-     * TableWriterMetadata), so the policy offset cannot drift between them.
-     */
-    static long getMetaExpiryPolicyOffset(MemoryR metaMem, int columnCount) {
-        long memSize = metaMem.size();
-        long offset = getColumnNameOffset(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            if (offset + Integer.BYTES > memSize) {
-                return -1;
-            }
-            int strLen = metaMem.getInt(offset);
-            offset += Vm.getStorageLength(strLen);
-        }
-        for (int i = 0; i < columnCount; i++) {
-            if (isColumnCovering(metaMem, i)) {
-                if (offset + Integer.BYTES > memSize) {
-                    return -1;
-                }
-                int includeCount = metaMem.getInt(offset);
-                offset += Integer.BYTES;
-                if (includeCount > 0) {
-                    if (offset + (long) includeCount * Integer.BYTES > memSize) {
-                        return -1;
-                    }
-                    offset += (long) includeCount * Integer.BYTES;
-                }
-            }
-        }
-        return offset;
     }
 
     static boolean isColumnCovering(MemoryR metaMem, int columnIndex) {

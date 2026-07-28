@@ -768,22 +768,26 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
-            // Read the trailing row-expiry policy (predicate + cleanup interval) in a SINGLE offset walk;
-            // calling the two TableUtils.getExpiry* helpers separately would walk the column section twice.
-            // Byte-identical to TableReaderMetadata.readExpiryPolicy / TableWriterMetadata, sharing the
-            // offset helper (the only drift-prone part).
+            // Read the trailing row-expiry policy (predicate + cleanup interval) in a SINGLE offset walk.
+            // Byte-identical to TableReaderMetadata.readExpiryPolicy / TableWriterMetadata: the shared
+            // getMetaExpiryPolicyOffset + getMetaExpiryPredicateStorageLength helpers keep the two
+            // drift-prone, corruption-sensitive steps in one place.
             String expiryPredicate = null;
             long expiryCleanupIntervalMicros = 0;
             if (TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_EXPIRE_ROWS)) {
                 long policyOffset = TableUtils.getMetaExpiryPolicyOffset(metaMem, columnCount);
-                if (policyOffset >= 0 && policyOffset + Integer.BYTES <= metaMem.size()) {
-                    CharSequence pred = metaMem.getStrA(policyOffset);
-                    policyOffset += Vm.getStorageLength(pred);
-                    if (pred != null && pred.length() > 0) {
-                        expiryPredicate = Chars.toString(pred);
-                    }
-                    if (policyOffset + Long.BYTES <= metaMem.size()) {
-                        expiryCleanupIntervalMicros = metaMem.getLong(policyOffset);
+                long memSize = metaMem.size();
+                if (policyOffset >= 0 && policyOffset + Integer.BYTES <= memSize) {
+                    long predicateStorageLength = TableUtils.getMetaExpiryPredicateStorageLength(metaMem, policyOffset, memSize);
+                    if (predicateStorageLength >= 0) {
+                        CharSequence pred = metaMem.getStrA(policyOffset);
+                        if (pred != null && pred.length() > 0) {
+                            expiryPredicate = Chars.toString(pred);
+                        }
+                        policyOffset += predicateStorageLength;
+                        if (policyOffset + Long.BYTES <= memSize) {
+                            expiryCleanupIntervalMicros = metaMem.getLong(policyOffset);
+                        }
                     }
                 }
             }
