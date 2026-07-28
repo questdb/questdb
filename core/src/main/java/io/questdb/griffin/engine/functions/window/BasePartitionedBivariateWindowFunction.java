@@ -52,11 +52,6 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     protected MemoryTracker memoryTracker;
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
-    // Reusable survivor probe for the frontier sweep, allocated only when the anchor
-    // map picked a different Map impl than this function's partition map. Built once
-    // and reused. See BasePartitionedWindowFunction. Holds this function's full value
-    // layout, not just keys -- that layout is what makes it select the same impl.
-    protected Map survivorProbe;
     // Live-view tombstone bookkeeping; mirrors BasePartitionedWindowFunction.
     // Subclasses set tombstoneValueIndex in their constructor.
     protected int tombstoneValueIndex = -1;
@@ -88,7 +83,6 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
         super.close();
         Misc.free(map);
         Misc.free(compactionScratch);
-        Misc.free(survivorProbe);
         Misc.freeObjList(partitionByRecord.getFunctions());
     }
 
@@ -152,7 +146,6 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     public void reset() {
         Misc.free(map);
         compactionScratch = Misc.free(compactionScratch);
-        survivorProbe = Misc.free(survivorProbe);
         tombstoneCount = 0;
     }
 
@@ -167,11 +160,7 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
         } else {
             compactionScratch.clear();
         }
-        final Map members = survivorMembers(survivingKeys, survivingKeySink);
-        if (members == null) {
-            return;
-        }
-        PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, members);
+        PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, survivingKeys, survivingKeySink);
         Map old = map;
         map = compactionScratch;
         compactionScratch = old;
@@ -197,20 +186,6 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     }
 
     /**
-     * Charges the freshly created survivor probe to the per-query tracker. Mirrors
-     * {@link #bindScratchTracker()}; unlike the scratch the probe is never promoted to
-     * the live map, but its malloc and free must still land on the same counter.
-     */
-    private void bindProbeTracker() {
-        if (memoryTracker == null || survivorProbe == null) {
-            return;
-        }
-        survivorProbe.close();
-        survivorProbe.setMemoryTracker(memoryTracker);
-        survivorProbe.reopen();
-    }
-
-    /**
      * Charges the freshly created compaction scratch to the per-query tracker.
      * Mirrors {@link BasePartitionedWindowFunction#bindScratchTracker()}: free the
      * untracked open backing, bind the tracker, then reopen so the scratch's malloc
@@ -224,29 +199,6 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
         compactionScratch.close();
         compactionScratch.setMemoryTracker(memoryTracker);
         compactionScratch.reopen();
-    }
-
-    /**
-     * Mirrors {@link BasePartitionedWindowFunction}: returns {@code survivingKeys} when it
-     * already shares this function's {@link Map} implementation, otherwise mirrors the
-     * survivors into a reusable same-implementation probe. Returns {@code null} when the
-     * function opts out of compaction.
-     */
-    private Map survivorMembers(Map survivingKeys, RecordSink survivingKeySink) {
-        if (survivingKeys.getClass() == map.getClass()) {
-            return survivingKeys;
-        }
-        if (survivorProbe == null) {
-            survivorProbe = newCompactionScratch();
-            if (survivorProbe == null) {
-                return null;
-            }
-            bindProbeTracker();
-        } else {
-            survivorProbe.clear();
-        }
-        PartitionStateEvictor.copySurvivorKeys(survivingKeys, survivingKeySink, survivorProbe);
-        return survivorProbe;
     }
 
     /**

@@ -57,14 +57,6 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // and so the binding survives the ping-pong swap that promotes the scratch to
     // the live map. Null until the owning cursor binds one (or for direct callers).
     protected MemoryTracker memoryTracker;
-    // Reusable survivor probe for the frontier sweep, used ONLY when the anchor map
-    // picked a different Map impl than this function's partition map (MapFactory
-    // selects on value size as well as key shape). Built once from this function's own
-    // layout -- so it matches by construction -- then cleared and reused by every later
-    // sweep. Stays null for functions whose impl already matches the anchor map, which
-    // is the common case; those never pay for it. Holds this function's full value
-    // layout, not just keys -- that layout is what makes it select the same impl.
-    protected Map survivorProbe;
     // Live-view tombstone bookkeeping. Subclasses set tombstoneValueIndex in
     // their constructor (= the BYTE slot index in the partition state map's
     // value layout); -1 means "no tombstone tracking" (non-LV mode or
@@ -95,7 +87,6 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         super.close();
         Misc.free(map);
         Misc.free(compactionScratch);
-        Misc.free(survivorProbe);
         Misc.freeObjList(partitionByRecord.getFunctions());
     }
 
@@ -194,11 +185,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
             // scratch consistent even if a prior sweep threw mid-rebuild.
             compactionScratch.clear();
         }
-        final Map members = survivorMembers(survivingKeys, survivingKeySink);
-        if (members == null) {
-            return;
-        }
-        PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, members);
+        PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, survivingKeys, survivingKeySink);
         // Ping-pong: the rebuilt scratch becomes the live map; the old live map
         // becomes the scratch for the next sweep. No allocation, no free.
         Map old = map;
@@ -211,7 +198,6 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     public void reset() {
         Misc.free(map);
         compactionScratch = Misc.free(compactionScratch);
-        survivorProbe = Misc.free(survivorProbe);
         tombstoneCount = 0;
     }
 
@@ -251,20 +237,6 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     }
 
     /**
-     * Charges the freshly created survivor probe to the per-query tracker. Mirrors
-     * {@link #bindScratchTracker()}; unlike the scratch the probe is never promoted to
-     * the live map, but its malloc and free must still land on the same counter.
-     */
-    private void bindProbeTracker() {
-        if (memoryTracker == null || survivorProbe == null) {
-            return;
-        }
-        survivorProbe.close();
-        survivorProbe.setMemoryTracker(memoryTracker);
-        survivorProbe.reopen();
-    }
-
-    /**
      * Charges the freshly created compaction scratch to the per-query tracker.
      * {@link #newCompactionScratch()} returns an OPEN map allocated under no tracker,
      * so - mirroring the deferred lifecycle the constructor gives the primary map -
@@ -280,38 +252,6 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         compactionScratch.close();
         compactionScratch.setMemoryTracker(memoryTracker);
         compactionScratch.reopen();
-    }
-
-    /**
-     * Returns the map {@link PartitionStateEvictor#rebuildKeepingMembers} should probe for
-     * surviving partitions.
-     * <p>
-     * Returns {@code survivingKeys} itself whenever it already shares this function's
-     * {@link Map} implementation - the common case, and the only one the sweep handled
-     * before. When the implementations differ, the survivors are mirrored into
-     * {@link #survivorProbe}, which is built from this function's own layout and so
-     * matches by construction. That mirroring is implementation-agnostic because
-     * {@code survivingKeySink} writes through the per-column putters rather than casting.
-     * <p>
-     * The probe is allocated at most once per function and then cleared and reused by
-     * every later sweep, so a sweep never allocates. Returns {@code null} when the
-     * function opts out of compaction.
-     */
-    private Map survivorMembers(Map survivingKeys, RecordSink survivingKeySink) {
-        if (survivingKeys.getClass() == map.getClass()) {
-            return survivingKeys;
-        }
-        if (survivorProbe == null) {
-            survivorProbe = newCompactionScratch();
-            if (survivorProbe == null) {
-                return null;
-            }
-            bindProbeTracker();
-        } else {
-            survivorProbe.clear();
-        }
-        PartitionStateEvictor.copySurvivorKeys(survivingKeys, survivingKeySink, survivorProbe);
-        return survivorProbe;
     }
 
     /**

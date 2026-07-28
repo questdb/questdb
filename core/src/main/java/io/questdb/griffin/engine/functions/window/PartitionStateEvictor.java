@@ -43,12 +43,12 @@ import io.questdb.cairo.map.MapValue;
  * derived from its own primary-size knowledge, avoiding intermediate rehashes
  * during the copy.
  * <p>
- * Cost is O(primary.size()) per invocation regardless of the survivor ratio —
- * every entry is probed for membership. If sweeps routinely drop only a small
- * fraction of keys, adding a per-entry remove primitive to the {@link Map}
- * interface (tombstone-based for hash maps, list-compaction for
- * {@code OrderedMap}) would reduce cost to O(evictedKeys) and remove the
- * scratch map entirely.
+ * Cost is O(survivingKeys.size()) per invocation — the sweep walks the survivor
+ * set and probes the primary for each key, so it never touches the entries it is
+ * about to drop. If sweeps routinely drop only a small fraction of keys, adding a
+ * per-entry remove primitive to the {@link Map} interface (tombstone-based for
+ * hash maps, list-compaction for {@code OrderedMap}) would reduce cost to
+ * O(evictedKeys) and remove the scratch map entirely.
  */
 public final class PartitionStateEvictor {
 
@@ -56,74 +56,60 @@ public final class PartitionStateEvictor {
     }
 
     /**
-     * Copies every key in {@code survivingKeys} into {@code dst}, which must be empty on
-     * entry. {@code survivingKeySink} reads the key columns straight off
+     * Walks {@code survivingKeys} and copies each entry {@code src} still holds for that
+     * key into {@code dst}; every {@code src} entry whose key is absent from
+     * {@code survivingKeys} is dropped by never being copied. Returns the number of
+     * entries copied.
+     * <p>
+     * {@code dst} must be empty on entry and share {@code src}'s key/value layout, since
+     * the caller promotes it to the live map afterwards. {@code survivingKeys} holds the
+     * survivor set and is read, never written.
+     * <p>
+     * No {@link Map} implementation has to match any other. The two key writes go through
+     * {@link MapKey#put(io.questdb.cairo.sql.Record, RecordSink)}, which writes via the
+     * per-column {@code RecordSinkSPI} putters every implementation supports, rather than
+     * {@link MapRecord#copyToKey(MapKey)}, which casts to the concrete implementation's
+     * key. That matters because {@code MapFactory.createUnorderedMap} selects on value
+     * size as well as key shape, so the anchor map and a window function's partition map
+     * legitimately diverge (the anchor map's value is 10 bytes; {@code covar_samp}'s is
+     * 49). {@code survivingKeySink} reads the partition-by columns straight off
      * {@code survivingKeys}' own {@link MapRecord} — map records lay value columns out
      * first and key columns after them, so the sink targets the tail slice.
      * <p>
-     * Unlike {@link MapRecord#copyToKey(MapKey)}, {@link MapKey#put(io.questdb.cairo.sql.Record, RecordSink)}
-     * writes through the per-column {@code RecordSinkSPI} putters that every {@link Map}
-     * implementation supports, so {@code dst} does NOT have to share an implementation
-     * with {@code survivingKeys}. That is what lets a caller mirror the anchor map's
-     * survivors into a probe built with a different implementation.
+     * The value copy is equally implementation-agnostic: every {@link Map} implementation
+     * backs {@link MapValue} with the same {@code FlyweightPackedMapValue}, whose
+     * {@link MapValue#copyFrom(MapValue)} is a flat {@code memcpy} of the value block. It
+     * therefore requires an identical value layout but no shared implementation, and it
+     * writes every value byte, so {@code dst} never depends on {@code createValue()}
+     * zero-filling (which {@code OrderedMap} does not guarantee).
      * <p>
      * The copy deliberately uses {@link MapKey#createValue()} rather than the
-     * hash-carrying overload: hashes are implementation-specific (see
-     * {@link #rebuildKeepingMembers}), so {@code dst} must compute its own.
-     * <p>
-     * Only keys are read, but {@code createValue()} still materialises {@code dst}'s full
-     * value block per entry, so the probe costs the caller's value width per survivor. A
-     * value-less probe is not an option: the value layout is what makes {@code dst} select
-     * the same {@link Map} implementation as the map it will be probed against.
-     */
-    public static void copySurvivorKeys(Map survivingKeys, RecordSink survivingKeySink, Map dst) {
-        MapRecordCursor cursor = survivingKeys.getCursor();
-        MapRecord record = survivingKeys.getRecord();
-        while (cursor.hasNext()) {
-            MapKey dstKey = dst.withKey();
-            dstKey.put(record, survivingKeySink);
-            dstKey.createValue();
-        }
-    }
-
-    /**
-     * Iterates {@code src} and copies each entry whose key is present in
-     * {@code survivingKeys} into {@code dst}; entries absent from
-     * {@code survivingKeys} are dropped. Returns the number of entries copied.
-     * <p>
-     * {@code dst} must be empty on entry; {@code survivingKeys} holds the survivor set and
-     * is read, never written. BOTH must use the same key layout AND the same {@link Map}
-     * implementation as {@code src}, because the membership probe and the copy both go
-     * through {@link MapRecord#copyToKey(MapKey)}, which casts to the concrete
-     * implementation's key. {@code dst} additionally reuses
-     * {@code src}'s {@link MapRecord#keyHashCode()} via {@link MapKey#createValue(long)},
-     * and hash functions differ per implementation (for a 4-byte key
-     * {@code Hash.hashInt64} zero-extends where {@code Hash.hashMem64} sign-extends), so a
-     * foreign hash would place entries that {@code findValue()} can never locate again.
-     * Do not relax either requirement.
-     * <p>
-     * A caller whose survivor set lives in a different implementation must mirror it into a
-     * matching probe first — see {@link #copySurvivorKeys}.
+     * hash-carrying overload: hash functions differ per implementation (for a 4-byte key
+     * {@code Hash.hashInt64} zero-extends where {@code Hash.hashMem64} sign-extends), so
+     * a hash borrowed from another map would place entries that {@code findValue()} could
+     * never locate again. Each map computes its own.
      * <p>
      * The live-view anchor runtime uses this to keep each anchored window
      * function's partition map in lockstep with the anchor map after a
      * frontier-gated sweep drops partitions whose bucket has fallen behind.
      */
-    public static long rebuildKeepingMembers(Map src, Map dst, Map survivingKeys) {
-        MapRecordCursor cursor = src.getCursor();
-        MapRecord record = src.getRecord();
+    public static long rebuildKeepingMembers(Map src, Map dst, Map survivingKeys, RecordSink survivingKeySink) {
+        MapRecordCursor cursor = survivingKeys.getCursor();
+        MapRecord survivorRecord = survivingKeys.getRecord();
         long kept = 0;
         while (cursor.hasNext()) {
-            MapKey probeKey = survivingKeys.withKey();
-            record.copyToKey(probeKey);
-            if (probeKey.findValue() == null) {
+            MapKey srcKey = src.withKey();
+            srcKey.put(survivorRecord, survivingKeySink);
+            // A survivor this function never saw a row for has no state to carry over.
+            MapValue srcValue = srcKey.findValue();
+            if (srcValue == null) {
                 continue;
             }
-            long srcKeyHash = record.keyHashCode();
             MapKey dstKey = dst.withKey();
-            record.copyToKey(dstKey);
-            MapValue dstValue = dstKey.createValue(srcKeyHash);
-            record.copyValue(dstValue);
+            dstKey.put(survivorRecord, survivingKeySink);
+            // srcValue stays valid across the dst insert: the two maps own separate
+            // flyweights over separate memory, so a dst resize cannot move it.
+            dstKey.createValue().copyFrom(srcValue);
             kept++;
         }
         return kept;

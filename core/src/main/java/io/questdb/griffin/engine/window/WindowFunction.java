@@ -608,15 +608,14 @@ public interface WindowFunction extends Function {
      * partition-by key layout, but NOT necessarily its {@link Map} implementation:
      * {@code MapFactory.createUnorderedMap} selects on value size as well as key shape,
      * and the anchor map's 10-byte value routinely lands on a different implementation
-     * than a function whose live-view value payload is larger. The membership probe in
-     * {@link io.questdb.griffin.engine.functions.window.PartitionStateEvictor#rebuildKeepingMembers}
-     * cannot cast across implementations, so an implementer that hits a mismatch mirrors
-     * the survivors into a matching probe with
-     * {@link io.questdb.griffin.engine.functions.window.PartitionStateEvictor#copySurvivorKeys}.
+     * than a function whose live-view value payload is larger.
      * <p>
      * {@code survivingKeySink} reads the partition-by key columns off
-     * {@code survivingKeys}' own map record and is what makes that mirroring
-     * implementation-agnostic. Default no-op for functions without per-partition state.
+     * {@code survivingKeys}' own map record, which is what lets
+     * {@link io.questdb.griffin.engine.functions.window.PartitionStateEvictor#rebuildKeepingMembers}
+     * bridge that gap: it writes keys through the per-column putters instead of casting to
+     * a concrete implementation's key, so an implementer never has to reconcile the two
+     * implementations itself. Default no-op for functions without per-partition state.
      */
     default void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
     }

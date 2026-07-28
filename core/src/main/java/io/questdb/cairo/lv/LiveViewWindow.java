@@ -355,11 +355,12 @@ public class LiveViewWindow implements QuietCloseable {
         // Built before the anchor map so a failure here cannot strand a tracked
         // allocation: the map has no owner until the constructor below takes it.
         RecordSink anchorKeySink = createAnchorKeySink(configuration, asm, mapKeyTypes);
-        // createUnorderedMap (not createOrderedMap) so the anchor map picks the same
-        // Map implementation the window functions use whenever the value sizes agree.
-        // They do not always agree -- MapFactory selects on value size as well as key
-        // shape -- so compact() also hands each function anchorKeySink, which lets it
-        // mirror the survivors into a matching probe. See retainPartitions.
+        // createUnorderedMap (not createOrderedMap) so the anchor map keeps the fastest
+        // implementation its key shape and 10-byte value allow. It need not agree with
+        // any window function's choice -- MapFactory also selects on value size, so a
+        // function with a wider live-view payload legitimately lands elsewhere -- because
+        // compact() hands each function anchorKeySink and the rebuild bridges the two
+        // implementations through it. See retainPartitions.
         Map map = createTrackedAnchorMap(configuration, mapKeyTypes, memoryTracker);
         int returnType = anchorExpression.getType();
         int tag = ColumnType.tagOf(returnType);
@@ -852,8 +853,9 @@ public class LiveViewWindow implements QuietCloseable {
      * The anchor map and a function's partition map may legitimately use different
      * {@link Map} implementations, because {@code MapFactory.createUnorderedMap} selects
      * on value size as well as key shape. The sweep therefore passes {@link #anchorKeySink}
-     * alongside the survivor map so such a function can mirror the survivors into a probe
-     * of its own implementation; membership probing never casts across implementations.
+     * alongside the survivor map: the rebuild writes keys through that sink's per-column
+     * putters instead of casting to a concrete implementation's key, so it never has to
+     * reconcile the two implementations.
      * <p>
      * Wired into {@link #processRow(Record)} via {@link #maybeCompact()} once the
      * anchor advances past a bucket boundary and the map exceeds
@@ -889,11 +891,10 @@ public class LiveViewWindow implements QuietCloseable {
             MapValue dstValue = dstKey.createValue(srcKeyHash);
             record.copyValue(dstValue);
         }
-        // Each function keeps only the partitions still in the survivor anchor map. A
-        // function whose partition map picked a different Map implementation than the
-        // anchor map (MapFactory selects on value size as well as key shape) mirrors the
-        // survivors into a probe of its own implementation using anchorKeySink; see
-        // WindowFunction.retainPartitions.
+        // Each function keeps only the partitions still in the survivor anchor map.
+        // anchorKeySink is what lets a function whose partition map picked a different
+        // Map implementation than the anchor map (MapFactory selects on value size as
+        // well as key shape) probe it anyway; see WindowFunction.retainPartitions.
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).retainPartitions(scratchAnchorMap, anchorKeySink);
         }
