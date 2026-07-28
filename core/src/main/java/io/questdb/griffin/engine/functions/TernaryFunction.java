@@ -96,11 +96,6 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default boolean isRowStable() {
-        return getLeft().isRowStable() && getCenter().isRowStable() && getRight().isRowStable();
-    }
-
-    @Override
     default boolean isRuntimeConstant() {
         boolean arc = getLeft().isRuntimeConstant();
         boolean brc = getCenter().isRuntimeConstant();

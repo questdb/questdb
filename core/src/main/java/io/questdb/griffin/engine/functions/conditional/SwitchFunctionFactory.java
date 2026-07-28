@@ -668,6 +668,8 @@ public class SwitchFunctionFactory implements FunctionFactory {
         // intToDouble / intToFloat map that onto the matching wide NULL exactly as the base
         // IntFunction getters do; a raw ternary over the int constants would instead widen
         // INT_NULL to -2147483648 / -2.147e9 and corrupt a wide-type CAST reading these getters.
+        // getTimestamp() and getDate() need no override: IntFunction spells them
+        // Numbers.intToLong(getInt()), which is what longThenValue / longElseValue hold.
         private final double doubleElseValue;
         private final double doubleThenValue;
         private final int elseValue;
@@ -723,22 +725,12 @@ public class SwitchFunctionFactory implements FunctionFactory {
             return keyFunction.getInt(rec) == resolvedKey ? longThenValue : longElseValue;
         }
 
-        // getTimestamp() is not overridden: IntFunction routes it to getLong(), which is widened
-        // above.
-
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             keyFunction.init(symbolTableSource, executionContext);
             final StaticSymbolTable symbolTable = keyFunction.getStaticSymbolTable();
             assert symbolTable != null;
             resolvedKey = symbolTable.keyOf(strKey);
-        }
-
-        @Override
-        public boolean isIntWidthStable() {
-            // getLong() serves Numbers.intToLong of the same constant getInt() serves, which is
-            // precisely what the base IntFunction getter computes per row. Only the widening moved.
-            return true;
         }
 
         @Override

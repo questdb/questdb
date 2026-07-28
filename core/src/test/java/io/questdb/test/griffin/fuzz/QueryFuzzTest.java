@@ -335,7 +335,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             // overload resolution can type a projection column DOUBLE where the literal form
             // types it INT. Reading the mask from the bind side alone would hand that integer
             // column the FP tolerance and silently absorb the one-unit divergence asserted
-            // above, on the very axis that surfaced the INT-overflow family.
+            // above.
             final boolean[] literalMask = {false, true};
             final boolean[] bindMask = {true, true};
             final boolean[] reconcileMask = QueryRunner.intersectFpColumnMasks(literalMask, bindMask);

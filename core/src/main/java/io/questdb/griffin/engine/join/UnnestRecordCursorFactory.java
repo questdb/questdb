@@ -102,34 +102,6 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isColumnIntWidthStable(int columnIndex) {
-        // UnnestRecord hands the base cursor's live record straight through for every column below
-        // the split - getInt/getLong delegate to baseRecord, and of() binds the master cursor's own
-        // record - so a widened INT projection on the master keeps its wide value at long width,
-        // exactly like a join master. The unnest columns above the split read a materialised array
-        // element and keep the default true.
-        //
-        // The split is this factory's OWN columnSplit, not the base metadata's column count: a
-        // standalone UNNEST has columnSplit == 0 while its synthetic long_sequence(1) base still
-        // reports one column, and a base-count guard would delegate for a column that is not there.
-        if (columnIndex < columnSplit) {
-            return baseFactory.isColumnIntWidthStable(columnIndex);
-        }
-        return true;
-    }
-
-    @Override
-    public boolean isColumnRowStable(int columnIndex) {
-        // Paired with isColumnIntWidthStable above, over the same split. An unnest column reads an
-        // element of the array materialised once per master row by UnnestSource#init, so reading it
-        // twice gives the same value.
-        if (columnIndex < columnSplit) {
-            return baseFactory.isColumnRowStable(columnIndex);
-        }
-        return true;
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

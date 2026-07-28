@@ -5752,15 +5752,18 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute(rows.formatted("tp"));
             execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
 
-            // (a*b) overflows INT for the first row: getInt() wraps, the widened product is 4e9. The
-            // parquet partition (day 1) runs the Java filter, the native partition (day 2) the compiled
-            // filter, so each differential exercises both within one query.
-            assertIntWidthNativeMatchesParquet("(a * b) IN (4_000_000_000)", "Async JIT Filter", "a\n2000000000\n");
+            // (a*b) overflows INT for the first row and wraps to -294_967_296, in the pushdown, the
+            // row filter and the cast alike. The parquet partition (day 1) runs the Java filter, the
+            // native partition (day 2) the compiled filter, so each differential exercises both
+            // within one query. The 4e9 bound now matches nothing, which is the point: the pushdown
+            // must not keep a row the filter drops.
+            assertIntWidthNativeMatchesParquet("(a * b) IN (4_000_000_000)", "Async JIT Filter", "a\n");
+            assertIntWidthNativeMatchesParquet("(a * b) IN (-294_967_296)", "Async JIT Filter", "a\n2000000000\n");
             assertIntWidthNativeMatchesParquet("(a * b) IN (null, 300)", "Async JIT Filter", "a\n100\nnull\n");
             // JIT declines the ::long cast of an arithmetic subtree, so these run the Java filter on
             // both tables (see the method comment). The "Async Filter" pin keeps that honest.
-            assertIntWidthNativeMatchesParquet("(a * b)::long > 1_000_000_000", "Async Filter", "a\n2000000000\n");
-            assertIntWidthNativeMatchesParquet("(a * b)::long = 4_000_000_000", "Async Filter", "a\n2000000000\n");
+            assertIntWidthNativeMatchesParquet("(a * b)::long > 1_000_000_000", "Async Filter", "a\n");
+            assertIntWidthNativeMatchesParquet("(a * b)::long = -294_967_296", "Async Filter", "a\n2000000000\n");
         });
     }
 

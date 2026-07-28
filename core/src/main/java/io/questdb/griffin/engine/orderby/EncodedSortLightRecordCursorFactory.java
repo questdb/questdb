@@ -89,19 +89,6 @@ public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public boolean isColumnIntWidthStable(int columnIndex) {
-        // A light sort stores row ids and re-positions the base record, so the base's answer holds.
-        return base.isColumnIntWidthStable(columnIndex);
-    }
-
-    @Override
-    public boolean isColumnRowStable(int columnIndex) {
-        // Paired with isColumnIntWidthStable above: the same record is handed through, so the same
-        // base column answers both questions.
-        return base.isColumnRowStable(columnIndex);
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

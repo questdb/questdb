@@ -75,32 +75,6 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
     }
 
     @Override
-    public boolean isColumnIntWidthStable(int columnIndex) {
-        // UNION distinct is a live pass-through: UnionRecord/UnionCastRecord delegate getInt/getLong to
-        // the active leg's record, so an overflowing INT projection on a leg keeps its wide value at long
-        // width - exactly like UNION ALL. The copier reads ONE width for the whole column across both
-        // legs, and getLong() is only safe on a width-unstable (function-backed) leg; a width-stable leg
-        // may be a real INT column whose getLong() would over-read its 4-byte slot. So the column may be
-        // reported unstable only when BOTH legs are unstable. The dedup map holds only membership keys and
-        // never materialises the returned value, so it does not narrow the width - it is leg A / leg B
-        // themselves that must both be function-backed.
-        //
-        // CAVEAT - same as UNION ALL's cast path: when a sibling column forces castIsRequired the cursor
-        // uses UnionCastRecord, which routes an INT->INT column through IntColumn.getLong() = a re-wrap. So
-        // a both-legs-unstable column that this reports unstable can still STORE the wrapped value on the
-        // cast path. Safe (no over-read either way), but the stored value can then depend on whether a
-        // sibling column forced the cast. Left documented rather than risked, exactly as in UNION ALL.
-        return factoryA.isColumnIntWidthStable(columnIndex) || factoryB.isColumnIntWidthStable(columnIndex);
-    }
-
-    @Override
-    public boolean isColumnRowStable(int columnIndex) {
-        // Paired with isColumnIntWidthStable above, but combined with AND rather than OR: either leg
-        // can be the active one, so the column is row stable only when both legs are.
-        return factoryA.isColumnRowStable(columnIndex) && factoryB.isColumnRowStable(columnIndex);
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

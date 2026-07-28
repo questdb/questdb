@@ -215,34 +215,6 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isColumnIntWidthStable(int columnIndex) {
-        // A window join hands the master cursor's live record straight through JoinRecord for columns
-        // below the split (master.getInt/getLong), while the window-aggregate columns at and above the
-        // split live in a materialised SimpleMapValue (groupByRecord). So master columns delegate to the
-        // master factory - like AbstractJoinRecordCursorFactory - and an overflowing INT master projection
-        // widens on store; aggregate columns keep the default true. When a projection cross-index is
-        // present the cursor wraps the join record in a SelectedRecord, so map the output column through
-        // it first.
-        final int joinColumnIndex = this.columnIndex != null ? this.columnIndex.getQuick(columnIndex) : columnIndex;
-        if (joinColumnIndex < masterFactory.getMetadata().getColumnCount()) {
-            return masterFactory.isColumnIntWidthStable(joinColumnIndex);
-        }
-        return true;
-    }
-
-    @Override
-    public boolean isColumnRowStable(int columnIndex) {
-        // Paired with isColumnIntWidthStable above, through the same cross index and master split.
-        // The window-aggregate columns live in a materialised SimpleMapValue, and reading a stored
-        // value twice gives the same bytes, so they are row stable.
-        final int joinColumnIndex = this.columnIndex != null ? this.columnIndex.getQuick(columnIndex) : columnIndex;
-        if (joinColumnIndex < masterFactory.getMetadata().getColumnCount()) {
-            return masterFactory.isColumnRowStable(joinColumnIndex);
-        }
-        return true;
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

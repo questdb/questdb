@@ -357,7 +357,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // A LONG column promotes the comparison to i64, so the fold stays at full
         // width as a single I8 IMM and never wraps.
         serialize("along > 100000 * 100000");
-        assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
+        assertIR("(i32 1410065408L)(i64 along)(>)(ret)");
     }
 
     @Test
@@ -371,18 +371,22 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testConstantArithFoldUnaryMinus() throws Exception {
         // Unary minus of an overflowing product is itself a fold root.
         serialize("along > -(100000 * 100000)");
-        assertIR("(i64 -10000000000L)(i64 along)(>)(ret)");
+        assertIR("(i32 -1410065408L)(i64 along)(>)(ret)");
     }
 
     @Test
     public void testConstantArithFoldVariousOps() throws Exception {
-        // Each arithmetic op participates in the long-precision evaluation.
+        // A constant subtree folds at its own DECLARED type. An operand outside the INT range makes
+        // the subtree LONG, so it folds at full width; an all-INT one folds at INT width and wraps,
+        // exactly as FunctionParser#functionToConstant0 does. The comparison peer does not enter
+        // into it - that is the whole point of the one-value rule.
         serialize("along > 5000000000 + 5000000000");
         assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
         serialize("along > 5000000000 - -5000000000");
         assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
+        // 100000 * 100000 is INT arithmetic: it wraps to 1410065408 here and in the Java filter.
         serialize("along > 100000 * 100000");
-        assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
+        assertIR("(i32 1410065408L)(i64 along)(>)(ret)");
         serialize("along > 10000000000 / 1");
         assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
     }
@@ -402,7 +406,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // + I8 (along) operands still drive the existing NarrowI64WidenDetector
         // path, which lifts the constant to i64 and sign-extends anint.
         serialize("along > anint * 100000");
-        assertIR("(i64 100000L)(i32 anint)(sx_i64)(*)(i64 along)(>)(ret)");
+        assertIR("(i32 100000L)(i32 anint)(*)(i64 along)(>)(ret)");
     }
 
     @Test
@@ -464,7 +468,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // inner operands while leaving along (already i64) and the leaf operand
         // of the long multiply alone.
         serialize("afloat <= along * (anint * 100000)");
-        assertIR("(i64 100000L)(i32 anint)(sx_i64)(*)(i64 along)(*)(f32 afloat)(<=)(ret)");
+        assertIR("(i32 100000L)(i32 anint)(*)(i64 along)(*)(f32 afloat)(<=)(ret)");
     }
 
     @Test
@@ -472,7 +476,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // anint * 9000000000 is already i64 (the constant overflows int), so the
         // long multiply promotes anint through convert(); no sx_i64 is needed.
         serialize("afloat <= along * (anint * 9000000000)");
-        assertIR("(i64 9000000000L)(i32 anint)(*)(i64 along)(*)(f32 afloat)(<=)(ret)");
+        assertIR("(i64 9000000000L)(i32 anint)(sx_i64)(*)(i64 along)(*)(f32 afloat)(<=)(ret)");
     }
 
     @Test
@@ -619,12 +623,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // sx_i64 and the four-lane backend compared an i64 key against four packed i32. The key now
         // takes the per-element override, so each pairing is emitted at its own width.
         int options = serialize("(0 in (anint, along)) and anint < along", false, false, false);
-        assertIR("(i64 along)(i32 anint)(sx_i64)(<)(i64 along)(i64 0L)(=)(i32 anint)(i32 0L)(=)(||)(&&)(ret)");
+        assertIR("(i64 along)(i32 anint)(sx_i64)(<)(i64 along)(i64 0L)(=)(i32 anint)(sx_i64)(i64 0L)(=)(||)(&&)(ret)");
         assertOptionsHint("(0 in (anint, along)) and anint < along", options, OptionsHint.WIDE_LANE);
 
         // Same without the widening sibling: the pairings are harmonised either way.
         serialize("0 in (anint, along)", false, false, false);
-        assertIR("(i64 along)(i64 0L)(=)(i32 anint)(i32 0L)(=)(||)(ret)");
+        assertIR("(i64 along)(i64 0L)(=)(i32 anint)(sx_i64)(i64 0L)(=)(||)(ret)");
 
         // A key no int can hold keeps I8 for BOTH pairings, and the INT element sign-extends to
         // meet it rather than the key narrowing onto a value it cannot represent.
@@ -650,7 +654,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         // A genuinely wide element widens the key and selects four-lane AVX2.
         options = serialize("anint IN (1, 5_000_000_000)", false, false, false);
-        assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(=)(i32 1L)(i32 anint)(=)(||)(ret)");
+        assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(=)(i64 1L)(i32 anint)(sx_i64)(=)(||)(ret)");
         assertOptionsHint("anint IN (1, 5_000_000_000)", options, OptionsHint.WIDE_LANE);
 
         // An arithmetic key wraps against the NULL element too: '=' resolves an untyped null to
@@ -661,21 +665,24 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i32 -2147483648L)(i32 2L)(i32 anint)(*)(=)(i32 1L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
         assertOptionsHint("anint * 2 IN (1, null)", arithOptions, OptionsHint.SINGLE_SIZE);
 
-        // A genuinely wide element widens the arithmetic key in four-lane AVX2. The in-range arm
-        // remains I4 so its product still wraps at INT width.
+        // A genuinely wide element pulls the pairing to 64 bits, but the arithmetic KEY computes at
+        // i32 and wraps, and SX_I64 is emitted per leaf - so its result cannot be sign-extended from
+        // the frontend. That leaves an i32-against-i64 pairing, which only the scalar backend's
+        // convert() reproduces, so the predicate drops out of the vectorized loop. The in-range
+        // element widens with it - the list is one 64-bit pairing set - while the product stays i32.
+        // This is the vectorization the one-value rule costs; see forceScalarOnUnharmonisedNarrowArith.
         arithOptions = serialize("anint * 2 IN (1, 5_000_000_000)", false, false, false);
-        assertIR("(i64 5000000000L)(i64 2L)(i32 anint)(sx_i64)(*)(=)(i32 1L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
-        assertOptionsHint("anint * 2 IN (1, 5_000_000_000)", arithOptions, OptionsHint.WIDE_LANE);
+        assertIR("(i64 5000000000L)(i32 2L)(i32 anint)(*)(=)(i64 1L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
+        assertOptionsHint("anint * 2 IN (1, 5_000_000_000)", arithOptions, OptionsHint.SCALAR);
 
-        // A NULL element beside an OBSERVED wide (LONG) COLUMN element must still keep its own pairing
-        // at I4: the null immediate is INT_NULL at I4 (matching the narrow column key read at getInt),
-        // not the observer's LONG_NULL at I8. The along pairing widens the key (sx_i64) and selects
-        // four-lane AVX2, where an I8 null immediate would compare i32-vs-i64 and match INT_NULL rows
-        // only in some lane positions (avx2.h#convert widens that pairing now, but only as a
-        // backstop - the frontend still has to pick the width the Java filter reads at). A wide CONSTANT element
-        // leaves the observer at I4 and so hides this; a wide COLUMN element is observed as I8.
+        // A NULL element beside a wide (LONG) COLUMN element takes the width the LIST settled on.
+        // The along pairing lifts the key to i64 (sx_i64), and the key is one node with one emitted
+        // width, so the NULL has to meet it there: LONG_NULL at I8. That is what the Java filter
+        // compares against too - it reads the key through getLong(), and
+        // Numbers.intToLong(INT_NULL) is LONG_NULL, so exactly the INT_NULL rows still match.
+        // Emitting INT_NULL at I4 here would leave an i32 immediate against the key's i64 lanes.
         options = serialize("anint IN (along, null)", false, false, false);
-        assertIR("(i32 -2147483648L)(i32 anint)(=)(i64 along)(i32 anint)(sx_i64)(=)(||)(ret)");
+        assertIR("(i64 -9223372036854775808L)(i32 anint)(sx_i64)(=)(i64 along)(i32 anint)(sx_i64)(=)(||)(ret)");
         assertOptionsHint("anint IN (along, null)", options, OptionsHint.WIDE_LANE);
     }
 
@@ -812,9 +819,14 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // Decide wide-lane capability before mixed column widths select scalar short-circuit IR.
         // The LONG element widens the INT key, so this whole tree is eligible for four-lane AVX2
         // and must use lane-wise boolean operators: AND_SC/OR_SC cannot branch per SIMD lane.
+        //
+        // The key is ONE node with one emitted width, so the 64-bit pairing pulls the whole list
+        // up: both key reads sign-extend and the in-range element widens alongside them. Widening
+        // is exact for a narrow leaf, and it is what keeps the four-lane loop from comparing a
+        // packed i32 half against the key's i64 lanes.
         int options = serialize("along = 1 and anint IN (2, 5_000_000_000)", false, false, false);
         assertIR(
-                "(i64 5000000000L)(i32 anint)(sx_i64)(=)(i32 2L)(i32 anint)(=)(||)" +
+                "(i64 5000000000L)(i32 anint)(sx_i64)(=)(i64 2L)(i32 anint)(sx_i64)(=)(||)" +
                         "(i64 1L)(i64 along)(=)(&&)(ret)"
         );
         assertOptionsHint("wide-lane IN in AND chain", options, OptionsHint.WIDE_LANE);
@@ -925,7 +937,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertOptionsHint("abyte IN (1, 2)", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("anint IN (1, 5_000_000_000)", false, false, true);
-        assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(=)(i32 1L)(i32 anint)(=)(||)(ret)");
+        assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(=)(i64 1L)(i32 anint)(sx_i64)(=)(||)(ret)");
         assertOptionsHint("anint IN (1, 5_000_000_000)", options, OptionsHint.WIDE_LANE);
     }
 
@@ -938,7 +950,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         int options = serialize("anint IN (:anint, $1)", false, false, true);
         // anint is INT; the $1 (LONG) key widens the column per element via sx_i64,
         // while the :anint (INT) key needs no widening.
-        assertIR("(i64 :0)(i32 anint)(sx_i64)(=)(i32 :1)(i32 anint)(=)(||)(ret)");
+        assertIR("(i64 :0)(i32 anint)(sx_i64)(=)(i32 :1)(sx_i64)(i32 anint)(sx_i64)(=)(||)(ret)");
         assertOptionsHint("mixed-width IN bind variables", options, OptionsHint.WIDE_LANE);
 
         Assert.assertEquals(2, bindVarFunctions.size());
@@ -992,7 +1004,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testMixedConstantColumnIntOverflow() throws Exception {
         serialize("anint * 2147483648 + 42.5 + adouble > 1");
-        assertIR("(i32 1L)(f64 adouble)(f64 42.5D)(i64 2147483648L)(i32 anint)(*)(+)(+)(>)(ret)");
+        assertIR("(i32 1L)(f64 adouble)(f64 42.5D)(i64 2147483648L)(i32 anint)(sx_i64)(*)(+)(+)(>)(ret)");
     }
 
     @Test

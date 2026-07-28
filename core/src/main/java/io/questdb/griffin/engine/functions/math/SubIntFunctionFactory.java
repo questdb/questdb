@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.LongWidthIntFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -69,7 +69,7 @@ public class SubIntFunctionFactory implements FunctionFactory {
         return new SubIntFunc(left, right);
     }
 
-    private static class SubIntFunc extends LongWidthIntFunction implements ArithmeticBinaryFunction {
+    private static class SubIntFunc extends IntFunction implements ArithmeticBinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -92,20 +92,6 @@ public class SubIntFunctionFactory implements FunctionFactory {
         @Override
         public Function getLeft() {
             return left;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            // Widen subtree operands to long so nested INT arithmetic stays
-            // at long width here too; calling getInt() recursively would let
-            // an inner INT*INT product wrap mod 2^32 before the outer
-            // promotion, diverging from the JIT widening path.
-            long l = left.getLong(rec);
-            long r = right.getLong(rec);
-            if (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL) {
-                return l - r;
-            }
-            return Numbers.LONG_NULL;
         }
 
         @Override

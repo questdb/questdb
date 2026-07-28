@@ -302,68 +302,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Returns true when this cursor's column {@code columnIndex} carries the same value at INT and
-     * at LONG width, so reading it at INT width and widening loses nothing. Only meaningful for a
-     * BYTE / SHORT / INT typed column.
-     * <p>
-     * A projection answers false for an overflowing INT expression, whose {@code getInt()} wraps
-     * mod 2^32 while {@code getLong()} keeps the full result - see
-     * {@link Function#isIntWidthStable()}. {@link io.questdb.griffin.RecordToRowCopierUtils} reads
-     * this so INSERT ... SELECT stores what an explicit cast of the same expression reads.
-     * <p>
-     * The rule is about the RECORD, not the operator: only a factory whose cursor hands the base
-     * record through - re-positioning it by row id counts - may delegate to its base. A factory
-     * that copies the value into its own storage must keep the default, because that storage gives
-     * an INT column 4 bytes, so the wrap has already happened and reading at long width would
-     * over-read. Hence delegating is opt-in rather than a {@link #getBaseFactory()} walk.
-     * <p>
-     * Delegating today: limit, filter, column selection, light sort / top-K, latest by, the
-     * query-progress and stale-view wrappers, the master columns of a join, the base columns of an
-     * extra-null-column pad, and UNION ALL - which hands its active leg through and so delegates a
-     * column only when both legs are width-unstable (if either leg is a real INT column, a long-width
-     * read would over-read that leg's 4-byte slot, so the whole column stays at INT width). Keeping
-     * the default: full sort, group by, distinct-over-map, the slave columns of a value-materialised
-     * join, the aggregate columns of a window join, other set operations - all map- or chain-backed. A
-     * record that is per-column hybrid must also keep the default unless it answers per column: a
-     * materialized sort key and a cached window column live in 4-byte-strided buffers while the rest of
-     * the record still comes from the base.
-     *
-     * @param columnIndex column index
-     * @return true if reading the column at INT width and widening equals reading it at LONG width
-     */
-    default boolean isColumnIntWidthStable(int columnIndex) {
-        return true;
-    }
-
-    /**
-     * Returns true when two reads of this cursor's column {@code columnIndex} within the same row
-     * are guaranteed to yield the same value - the {@link Function#isRowStable()} question, asked of
-     * a cursor rather than of a function.
-     * <p>
-     * A caller only needs it for a column that {@link #isColumnIntWidthStable(int)} reports false,
-     * because that is the only column a consumer reads at two widths (see
-     * {@code NullIfIntFunctionFactory}, {@code CoalesceFunctionFactory} and
-     * {@code InLongFunctionFactory}). Everywhere else the answer is unused, and a materialised
-     * column is row stable anyway - reading a stored value twice gives the same bytes.
-     * <p>
-     * The default is false, the opposite direction from {@link #isColumnIntWidthStable(int)},
-     * because the unsafe answer here is true: a consumer that believes a row-unstable expression can
-     * be read twice reads two different draws of it.
-     * <p>
-     * The two methods are a PAIR and must be overridden together. Answering the width question
-     * while leaving this one at the default does not merely lose precision: the consumers above
-     * select a different comparison width on it, so the same expression would yield different values
-     * depending on whether a delegating factory sits between the projection and its base - the
-     * plan-shape dependence the width rule exists to remove.
-     *
-     * @param columnIndex column index
-     * @return true if reading the column twice within one row is guaranteed to give the same value
-     */
-    default boolean isColumnRowStable(int columnIndex) {
-        return false;
-    }
-
-    /**
      * Returns true if the factory stands for nothing more but a projection, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the projection.
      * <p>

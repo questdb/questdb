@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.LongWidthIntFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -68,7 +68,7 @@ public class MulIntFunctionFactory implements FunctionFactory {
         return new Func(left, right);
     }
 
-    private static final class Func extends LongWidthIntFunction implements ArithmeticBinaryFunction {
+    private static final class Func extends IntFunction implements ArithmeticBinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -93,21 +93,6 @@ public class MulIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong(Record rec) {
-            // Widen subtree operands to long so nested INT arithmetic computes
-            // at long width here too. Calling getInt() recursively would let
-            // an inner INT*INT product wrap mod 2^32 before the outer cast
-            // promoted it to long, diverging from the JIT path which widens
-            // every narrow operand up front when the predicate has a LONG.
-            final long l = left.getLong(rec);
-            final long r = right.getLong(rec);
-            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
-                return Numbers.LONG_NULL;
-            }
-            return l * r;
-        }
-
-        @Override
         public String getName() {
             return "*";
         }
@@ -115,11 +100,6 @@ public class MulIntFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
-        }
-
-        @Override
-        public long getTimestamp(Record rec) {
-            return getLong(rec);
         }
 
         @Override

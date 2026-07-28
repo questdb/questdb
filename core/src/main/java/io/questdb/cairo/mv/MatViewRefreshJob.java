@@ -42,7 +42,6 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.FactoryColumnTypes;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
@@ -853,17 +852,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
         columnFilter.of(factory.getMetadata().getColumnCount());
-        // FactoryColumnTypes, not the bare metadata: a bare RecordMetadata answers isColumnIntWidthStable
-        // with the conservative default true, so an overflowing INT projection would store its wrapped
-        // value rather than its widened one. No view reaches that today - a view's column types derive
-        // from its own query, so an INT expression lands in an INT column, and widensIntSource only
-        // widens for a LONG / DATE / TIMESTAMP target - and ALTER MATERIALIZED VIEW cannot change a
-        // column type. This is consistency with the INSERT ... SELECT path in SqlCompilerImpl, which
-        // pairs the same wrapper with the same copier, not a fix for a reachable truncation. The wrapper
-        // borrows the factory for the (transient) copier build only.
         return RecordToRowCopierUtils.generateCopier(
                 compiler.getAsm(),
-                new FactoryColumnTypes(factory),
+                factory.getMetadata(),
                 tableWriter.getMetadata(),
                 columnFilter,
                 configuration

@@ -73,9 +73,7 @@ public abstract class IntFunction implements Function {
 
     @Override
     public long getDate(Record rec) {
-        // Reads getLong(), as getTimestamp() does. Both are 64-bit temporal reads of the same
-        // value, so they must not disagree: an overflowing INT arithmetic widens under either.
-        return getLong(rec);
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override
@@ -215,7 +213,7 @@ public abstract class IntFunction implements Function {
 
     @Override
     public long getTimestamp(Record rec) {
-        return getLong(rec);
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override
@@ -236,15 +234,5 @@ public abstract class IntFunction implements Function {
     @Override
     public final int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    /**
-     * This class widens getInt() in getLong(), so the two widths agree by construction. A subclass
-     * that overrides getLong() to compute at long width must override this back to false; see
-     * {@link Function#isIntWidthStable()}.
-     */
-    @Override
-    public boolean isIntWidthStable() {
-        return true;
     }
 }

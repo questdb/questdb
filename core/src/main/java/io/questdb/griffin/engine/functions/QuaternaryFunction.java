@@ -94,11 +94,6 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
-    default boolean isRowStable() {
-        return getFunc0().isRowStable() && getFunc1().isRowStable() && getFunc2().isRowStable() && getFunc3().isRowStable();
-    }
-
-    @Override
     default boolean isRuntimeConstant() {
         final boolean arc = getFunc0().isRuntimeConstant();
         final boolean brc = getFunc1().isRuntimeConstant();

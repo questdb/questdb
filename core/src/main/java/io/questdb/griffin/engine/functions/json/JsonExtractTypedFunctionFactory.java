@@ -81,12 +81,12 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "constant or bind variable expected");
         }
 
-        return new JsonExtractFunction(
-                parseTargetType(position, args.getQuick(2)),
-                json,
-                path,
-                configuration.getStrFunctionMaxBufferLength()
-        );
+        final int targetType = parseTargetType(position, args.getQuick(2));
+        final int maxSize = configuration.getStrFunctionMaxBufferLength();
+        // An INT target needs the one-value variant; every other target derives a single width.
+        return ColumnType.tagOf(targetType) == ColumnType.INT
+                ? new JsonExtractIntFunction(targetType, json, path, maxSize)
+                : new JsonExtractFunction(targetType, json, path, maxSize);
     }
 
     private static int parseTargetType(int position, Function targetTypeFn) throws SqlException {

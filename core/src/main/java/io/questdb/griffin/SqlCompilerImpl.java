@@ -3308,9 +3308,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final long metadataVersion = writerMetadata.getMetadataVersion();
             factory = generateSelectWithRetries(model.getQueryModel(), model, executionContext, true);
             final RecordMetadata cursorMetadata = factory.getMetadata();
-            // Carries each column's INT width stability alongside its type, so an overflowing INT
-            // expression stores what an explicit cast of it reads.
-            final ColumnTypes cursorColumnTypes = new FactoryColumnTypes(factory);
             // Convert sparse writer metadata into dense
             final int writerTimestampIndex = writerMetadata.getTimestampIndex();
             final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
@@ -3358,7 +3355,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (timestampIndexFound < 0 && writerTimestampIndex >= 0) {
                     throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
                 }
-                copier = RecordToRowCopierUtils.generateCopier(asm, cursorColumnTypes, writerMetadata, listColumnFilter, configuration);
+                copier = RecordToRowCopierUtils.generateCopier(asm, cursorMetadata, writerMetadata, listColumnFilter, configuration);
             } else {
                 // fail when target table requires chronological data and cursor cannot provide it
                 if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
@@ -3410,7 +3407,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 copier = RecordToRowCopierUtils.generateCopier(
                         asm,
-                        cursorColumnTypes,
+                        cursorMetadata,
                         writerMetadata,
                         entityColumnFilter,
                         configuration
@@ -4181,7 +4178,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             boolean isWalEnabled,
             RecordCursor cursor,
             RecordMetadata cursorMetadata,
-            ColumnTypes cursorColumnTypes,
             long batchSize,
             long o3MaxLag,
             CopyDataProgressReporter reporter
@@ -4216,7 +4212,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     writerMetadata,
                     RecordToRowCopierUtils.generateCopier(
                             asm,
-                            cursorColumnTypes,
+                            cursorMetadata,
                             writerMetadata,
                             entityColumnFilter,
                             configuration
@@ -4465,7 +4461,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     createTableOp.isWalEnabled(),
                                     cursor,
                                     metadata,
-                                    new FactoryColumnTypes(factory),
                                     createTableOp.getBatchSize(),
                                     createTableOp.getBatchO3MaxLag(),
                                     createTableOp.getCopyDataProgressReporter()

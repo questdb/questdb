@@ -339,37 +339,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
-     * Returns true when reading this function at long width is the same as reading it at INT
-     * width and widening, i.e. {@code getLong(rec) == Numbers.intToLong(getInt(rec))} for every
-     * record. Only meaningful for a BYTE / SHORT / INT typed function.
-     * <p>
-     * A caller that compares such a function against values of both widths - see
-     * {@link io.questdb.griffin.engine.functions.bool.InLongFunctionFactory} - has to read the key
-     * once per width when this is false, and reads it once when it is true.
-     * <p>
-     * The default is the conservative answer, so a function only claims width stability by deriving
-     * it. {@link io.questdb.griffin.engine.functions.IntFunction},
-     * {@link io.questdb.griffin.engine.functions.ShortFunction} and
-     * {@link io.questdb.griffin.engine.functions.ByteFunction} widen their own narrow accessor in
-     * getLong(), so they return true, and every function built on them - columns, constants, casts,
-     * bind variables - inherits it. Two kinds of function must not: one that overrides that
-     * getLong() to compute at long width, which overrides this method back to false - the INT
-     * arithmetic and bitwise operators, whose overflowing result wraps mod 2^32 under getInt() but
-     * keeps its full value under getLong(), and the conditionals that forward a branch of one
-     * (CASE, COALESCE, NULLIF); and one that implements {@link Function} directly and derives its
-     * two widths independently (json_extract), which simply inherits this default.
-     * <p>
-     * INT functions that compute a wider intermediate result extend
-     * {@link io.questdb.griffin.engine.functions.LongWidthIntFunction}, which declares that the two
-     * widths can differ.
-     *
-     * @return true if getLong() and getInt() carry the same value
-     */
-    default boolean isIntWidthStable() {
-        return false;
-    }
-
-    /**
      * Returns true if this function is non-deterministic.
      *
      * @return true if non-deterministic
@@ -389,26 +358,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default boolean isRandom() {
         return false;
-    }
-
-    /**
-     * Declares that two reads of this function within the SAME row are guaranteed to yield the same
-     * value. This is strictly weaker than {@link #isRuntimeConstant()}, which fixes the value for a
-     * whole cursor traversal, and it is a different question from {@link #isNonDeterministic()},
-     * which asks whether two separate EXECUTIONS of the same SQL agree.
-     * <p>
-     * Callers that read one function at two widths - {@code getInt()} and then {@code getLong()} on
-     * the same row - need this answer, not the non-determinism one. Reusing
-     * {@link #isNonDeterministic()} there over-approximates: a bind variable is non-deterministic
-     * across executions (it must not be baked into a materialized view) yet perfectly stable within
-     * a row.
-     * <p>
-     * The default is conservative and derived, so a function only has to override it when it is
-     * MORE stable than its non-determinism suggests. In particular the {@code rnd_*} family needs no
-     * override: it is non-deterministic and genuinely redraws per read.
-     */
-    default boolean isRowStable() {
-        return !isNonDeterministic();
     }
 
     /**

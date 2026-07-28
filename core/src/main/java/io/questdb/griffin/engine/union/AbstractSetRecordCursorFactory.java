@@ -87,31 +87,6 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public boolean isColumnIntWidthStable(int columnIndex) {
-        // EXCEPT / INTERSECT (and their ALL variants) emit only leg A's live record - getRecord()
-        // returns cursorA.getRecord(), and the maps hold nothing but dedup/membership keys - so the
-        // width answer depends solely on leg A, exactly like the master columns of a join delegate to
-        // the master factory. An overflowing INT projection on leg A widens through getLong() and must
-        // stay width-unstable on store; a real INT column on leg A keeps INT width so getLong() does not
-        // over-read its 4-byte slot. UNION and UNION ALL emit either leg and override this with the
-        // both-legs rule.
-        //
-        // CAVEAT - the cast path, the same one UNION ALL documents: when a sibling column forces
-        // castIsRequired the cursor becomes ExceptCastRecordCursor / IntersectCastRecordCursor, whose
-        // record still tracks leg A but routes an INT->INT column through IntColumn.getLong() = a
-        // re-wrap. A column this reports unstable then STORES the wrapped value on that path. Safe (no
-        // over-read either way), so it is left documented rather than risked.
-        return factoryA.isColumnIntWidthStable(columnIndex);
-    }
-
-    @Override
-    public boolean isColumnRowStable(int columnIndex) {
-        // Paired with isColumnIntWidthStable above: only leg A's record is emitted, so the answer is
-        // leg A's for this question too.
-        return factoryA.isColumnRowStable(columnIndex);
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return factoryA.recordCursorSupportsRandomAccess();
     }

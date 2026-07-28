@@ -46,12 +46,7 @@ import io.questdb.std.Numbers;
  * subtree as a double, as numeric promotion does) are inherited from the base class and route
  * through the native getter, so every conversion - including NULL handling - matches what a real
  * function of that type would return. A flat hand-rolled getter table would have to reproduce all
- * of that by hand, which is exactly where a wrong-field read can sneak in. The one exception is
- * {@link IntRuntimeConstFunction#getLong}: an overflowing INT arithmetic arg wraps in getInt() but
- * widens in getLong(), so for such an arg the widened long is not derivable from the wrapped int.
- * That subclass caches both widths, and reads the second getter only when the arg reports
- * {@link Function#isIntWidthStable()} false, which is exactly when the two can disagree (see its
- * comments).
+ * of that by hand, which is exactly where a wrong-field read can sneak in.
  * <p>
  * Every subclass is read-only after init(), so it inherits the argument's thread-safety
  * ({@link UnaryFunction#isThreadSafe()}) and a single instance serves every parallel worker.
@@ -461,7 +456,6 @@ public interface RuntimeConstFunction extends UnaryFunction {
 
     final class IntRuntimeConstFunction extends IntFunction implements RuntimeConstFunction {
         private final Function arg;
-        private long longValue;
         private int value;
 
         IntRuntimeConstFunction(Function arg) {
@@ -479,44 +473,14 @@ public interface RuntimeConstFunction extends UnaryFunction {
         }
 
         @Override
-        public long getLong(Record rec) {
-            return longValue;
-        }
-
-        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
-            // INT is the one foldable type whose getLong() need not be a pure function of getInt():
-            // an overflowing INT arithmetic arg (e.g. an INT*INT product) wraps mod 2^32 in getInt()
-            // but widens to the full-width result in getLong(). For + - * the two agree on their low
-            // 32 bits (a modular ring homomorphism), but division breaks even that:
-            // (1000000 * 1000000) / 7 wraps to -103911424 under getInt() yet widens to 142857142857
-            // under getLong(), whose low 32 bits (1123222089) are a different number.
-            //
-            // Those args report isIntWidthStable() false - LongWidthIntFunction, which all of them
-            // extend, declares it final - and only for them is the widened value underivable,
-            // so only they cost a second evaluation of the runtime-constant subtree. An INT function
-            // implementing Function directly (json_extract) derives its two widths independently and
-            // inherits the conservative default of false, so it keeps the second read too.
-            //
-            // Every other INT arg inherits IntFunction.getLong(), which IS Numbers.intToLong(getInt()),
-            // so the cached int already determines it. No INT function overrides getLong() while
-            // claiming width stability: SymbolSwitchConstIntFunction is the only one that does both,
-            // and it widens through Numbers.intToLong as well, so the derive would hold for it even
-            // though isComposite() means it never reaches this wrapper.
-            //
-            // Both fields are still written only here, preserving the thread safety the interface
-            // javadoc relies on. NULL flows through unchanged: Numbers.intToLong maps INT_NULL to
-            // LONG_NULL, exactly as IntFunction.getLong() does.
+            // The cached int determines every other width: this class inherits
+            // IntFunction.getLong(), which is Numbers.intToLong(getInt()), so one evaluation of the
+            // runtime-constant subtree suffices. The field is written only here, preserving the
+            // thread safety the interface javadoc relies on. NULL flows through unchanged, since
+            // Numbers.intToLong maps INT_NULL to LONG_NULL.
             value = arg.getInt(null);
-            longValue = arg.isIntWidthStable() ? Numbers.intToLong(value) : arg.getLong(null);
-        }
-
-        @Override
-        public boolean isIntWidthStable() {
-            // The wrapper caches whatever the arg reports at each width, so it diverges
-            // exactly where the arg does.
-            return arg.isIntWidthStable();
         }
     }
 

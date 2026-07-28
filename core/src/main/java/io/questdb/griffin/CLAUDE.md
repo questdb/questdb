@@ -305,237 +305,119 @@ Both paths **must produce identical results** for the same conversion. This mean
 
 ## INT Expression Width
 
-An INT-typed *expression* can carry a value its 4 bytes cannot hold. `2000000000 + 2000000000`
-is an INT expression whose `getInt()` wraps to `-294967296` and whose `getLong()` keeps
-`4000000000`. Both answers are wanted: the wrapped one so that the literal, column and
-bind-variable spellings of the same arithmetic agree, and the wide one so that an explicit
-widening cast is not silently truncated.
+An INT expression carries exactly one value: the value its four bytes hold. INT arithmetic wraps
+modulo 2^32 in every context, exactly as LONG arithmetic wraps modulo 2^64.
 
-That makes width a per-expression property rather than a property of the type, and the rule
-that keeps it coherent is:
+> **Width is a property of the declared type and nothing else. To compute at 64 bits, widen an
+> operand: `secs * 1_000_000L`, or `i::long * j`.**
 
-> **A read at 64-bit width returns the same value whether it is spelled as an explicit cast,
-> an implicit promotion, or a store into a 64-bit column.**
+`2000000000 + 2000000000` is an INT expression whose value is `-294967296`, and `::LONG`,
+`::TIMESTAMP`, `::DOUBLE`, a store into a LONG column, `to_utc(...)`, a comparison against a LONG
+column and an `UPDATE` into a TIMESTAMP column all read that same number, sign-extended where the
+target is 64 bits. `IntFunction.getLong()` / `getTimestamp()` / `getDate()` are all
+`Numbers.intToLong(getInt())`, and `Numbers.intToLong(INT_NULL) == LONG_NULL`, so an expression that
+lands on `-2^31` reads as NULL at every width.
 
-### `Function#isIntWidthStable()`
+Three properties follow, and they are the reason to prefer this over any context-dependent rule:
 
-The carrier of that property. It answers "does `getLong()` equal `getInt()` widened?" and
-defaults to the conservative `false`.
+- **`SELECT expr` shows exactly what every consumer received.** A user who gets a wrong timestamp
+  can inspect the arithmetic and see the wrap that caused it, in one step.
+- **Nullness stops depending on context.** `2147483647 + 1`, `-1073741824 * 2` and `~2147483647`
+  read as NULL everywhere, `::long` included.
+- **Every boundary reads a function at its declared type**, the engine's oldest and best-tested
+  contract. Nothing is left for a boundary to ask, so nothing is left for it to get wrong.
 
-| Reports | Who |
-|---|---|
-| `true` | `IntFunction` and everything built on it — columns, constants, casts, bind variables, memoizers |
-| `false` | `LongWidthIntFunction` subclasses: the INT arithmetic and bitwise operators (`+ - * / %`, `& \| ^ ~`, unary minus, `abs`), and the conditionals that forward one of their branches (`CASE`, `COALESCE`, `NULLIF`) |
-| `false` | a function implementing `Function` directly and deriving its two widths independently (`json_extract`) |
+### What this gives up
 
-`ColumnTypes` and `RecordCursorFactory` expose the same question as
-`isColumnIntWidthStable(int)`, so a consumer that holds a cursor rather than a function can
-ask it. Both default to `true`.
+GitHub issue [#4752](https://github.com/questdb/questdb/issues/4752) is reopened by this rule.
+`to_utc(1_720_468_802 * 1_000_000, tz)` returns a 1970 date. PR #4824 fixed it by giving the INT
+operators a `getLong()` that recomputed at 64 bits, and PR #7021 extended that to more operators;
+both are reverted here. The mitigation is the release note and the workaround the issue itself
+named (`1_000_000L`), not anything in the engine. `IntWidthWrapTest` pins the whole matrix,
+`MulIntFunctionFactoryTest#testTimestampIntOverflow` pins the repro, and `IntWidthContextTest` pins
+the three contexts that reach 64 bits through overload resolution rather than through syntax.
 
-### Which reads widen
+A designated timestamp target is the loudest case: the wrapped product is negative, so the writer
+refuses it with "designated timestamp before 1970-01-01 is not allowed" rather than storing a 1970
+date. An ingest that relied on the widening errors instead of inserting.
 
-| Read | Width | Why |
-|---|---|---|
-| `::LONG`, `::TIMESTAMP`, `::DATE` | long | the three 64-bit targets; `IntFunction.getLong/getTimestamp/getDate` all delegate to `getLong()` |
-| implicit store into a LONG / TIMESTAMP / DATE column | long | must match the cast above |
-| `::DOUBLE`, `::FLOAT`, `::DECIMAL*` | int | their `IntFunction` counterparts read `getInt()`, and QuestDB inserts no cast function for implicit numeric promotion, so `(i*j) + 0.0` wraps and the cast must agree |
-| plain INT projection | int | the value a user sees for an INT column |
+**Throw on overflow** — the Postgres / DuckDB behaviour — is the follow-up this unblocks. It is the
+same one-value architecture with a stricter value policy, and it fixes #4752 in *every* spelling
+with one rule and no context-dependence.
 
-Adding a widening read means changing **three** places together: the `CastIntTo*` factory, the
-matching `IntFunction` accessor, and `RecordToRowCopierUtils.widensIntSource`. Change one alone
-and the store stops matching the cast.
+### Constant folding
+
+`FunctionParser.functionToConstant0`'s INT arm folds to an `IntConstant` holding the wrap, or to
+`IntConstant.NULL` when `getInt()` carries the sentinel. The declared type of a constant expression
+no longer depends on its value, so:
+
+- `SELECT 1000000*1000000` is an INT column returning `-727379968`. Over pgwire the OID is `int4`.
+- `CREATE TABLE t AS (SELECT 1000000*1000000 AS v)` creates an **INT** column storing the wrap.
+- `INSERT INTO <existing INT column> SELECT 1000000*1000000` stores the wrap.
+
+The literal, column and bind-variable spellings of one constant arithmetic therefore agree exactly,
+which is what let the query fuzzer drop its int-overflow tolerance.
 
 ### The store path
 
-`RecordToRowCopierUtils` (two bytecode generators) and `LoopingRecordToRowCopier` read an INT
-source with `getInt()` unless `ColumnTypes.isColumnIntWidthStable(i)` says otherwise. The flag
-cannot be inferred from the type: a real stored INT column has only 4 bytes, and
-`PageFrameMemoryRecord.getLong()` would read 8 bytes at `rowIndex << 3`. Only a function-backed
-source can answer `false`.
-
-- **INSERT ... VALUES** — the `VirtualRecord` is passed as the copier's `ColumnTypes`, and it
-  answers from its own functions.
-- **INSERT ... SELECT** and **CTAS** — `FactoryColumnTypes` pairs the cursor metadata with the
-  factory's `isColumnIntWidthStable`.
-
-A factory answers `false` only if its cursor hands the base record through — re-positioning it
-by row id counts. Delegating today: limit, filter, column selection, light sort / top-K,
-latest by, query progress, stale view check, the **master columns of a join** (`JoinRecord`
-hands the master record straight through; the master is never value-materialised) — including
-the **master columns of the serial and fast window joins** (`WindowJoinRecordCursorFactory`,
-`WindowJoinFastRecordCursorFactory`), which delegate master columns to the master factory just like
-`AbstractJoinRecordCursorFactory` and keep the default on the window-aggregate columns — the **base
-columns of an extra-null-column pad**, **UNION ALL** and **UNION distinct**
-(`UnionRecordCursorFactory`) — live leg pass-throughs (`UnionRecord`/`UnionCastRecord` delegate
-`getInt`/`getLong` to the active leg) that delegate a column only when *both* legs are
-width-unstable, because if either leg is a real INT column its `getLong()` would over-read the
-4-byte slot, forcing the whole column to INT width — the **leg-A columns of EXCEPT / INTERSECT
-and their ALL variants**, which emit only leg A's live record (`getRecord()` returns
-`cursorA.getRecord()`, or — when a sibling column forces a cast — a `UnionCastRecord` pinned to leg A;
-the maps hold only dedup/membership keys either way) so the answer is leg A's. Those set ops carry the
-same cast-path caveat as UNION ALL: on the cast path an INT-to-INT column goes through
-`IntColumn.getLong()`, which re-wraps, so a column reported unstable still stores the wrapped value
-there — safe, never an over-read, but it makes the stored value depend on an unrelated sibling.
-Also delegating: the
-**base columns of the cached-window LIGHT factory** (`CachedWindowLightRecordCursorFactory`, where
-`WindowLightRecord` reads a base column from the live base cursor via a non-negative `sourceMap`
-code), and **`DistinctTimeSeries`**, whose cursor hands the base record straight through and uses
-its `dataMap` only to detect adjacent duplicates, never to materialise the returned value.
-Keeping the default `true`: full sort, group by — including the markout **HORIZON JOIN** family
-(`HorizonJoin{,NotKeyed}RecordCursorFactory`, `MultiHorizonJoin{,NotKeyed}RecordCursorFactory`),
-whose emitted record is a `VirtualRecord` over the aggregation map / `MapValue`, so the live join
-record is only the aggregation *input* and every output column is a materialised map slot — the
-async window/horizon joins (their master is a stored-column `PageFrameMemoryRecord`),
-**distinct-over-map** (`DistinctRecordCursorFactory`, whose cursor copies each row into a 4-byte
-map slot — not to be confused with the live `DistinctTimeSeriesRecordCursorFactory` above), the
-**slave columns of a value-materialised join**, the **aggregate columns of a window join** and the
-**narrow-chain (window-function) columns of the cached-window LIGHT factory** — all map- or
-chain-backed, where the value has already been copied into a 4-byte slot, so the wrap has genuinely
-happened and reading at long width would over-read. A per-column hybrid record
-(`SortKeyMaterializing`, `CachedWindowLight`) must answer per column, and both now do:
-`CachedWindowLight` via `sourceMap` (base columns delegate, window columns keep the default), and
-`SortKeyMaterializing` via the set of sort-key columns it materialised (a key reads its own
-width-strided buffer slot and keeps the default; every other column is a live pass-through to the
-base `VirtualRecordCursorFactory` and delegates). Answering either one blanket would be wrong in
-both directions — a blanket default truncates an overflowing INT pass-through on store, a blanket
-delegate takes 8 bytes off a 4-byte INT key slot.
-(`DistinctTimeSeries` itself is reachable only with the distinct-to-GROUP BY rewrite
-disabled — a test-only seam — since a running server always rewrites plain `SELECT DISTINCT` to
-GROUP BY; the delegation is a factory-consistency guarantee, not a production store path.)
-
-### Constant folding leaves an overflowing INT expression unfolded
-
-`FunctionParser.functionToConstant0`'s INT arm folds to an `IntConstant` only when both widths agree
-(and to `IntConstant.NULL` only when both carry the sentinel). An overflowing constant arithmetic —
-where `getInt()` wraps and `getLong()` does not — is handed back **unfolded**, so it keeps its INT
-type and its two widths.
-
-It used to fold to a `LongConstant`, which made the *declared type* of a compile-time-constant
-expression depend on its *runtime value*, and put the literal spelling at odds with the column one.
-Three user-visible consequences follow from removing that, and all three are the price of the
-"literal, column and bind-variable spellings agree" rule:
-
-- `SELECT 1000000*1000000` is an INT column returning `-727379968`, not a LONG returning
-  `1000000000000`. Over pgwire the OID moves from `int8` to `int4`.
-- `CREATE TABLE t AS (SELECT 1000000*1000000 AS v)` creates an **INT** column storing the wrap.
-  The persisted schema no longer depends on the arithmetic's value.
-- `INSERT INTO <existing INT column> SELECT 1000000*1000000` **stores the wrap** where it used to
-  throw `ImplicitCastException` ("inconvertible value") — the LONG source is gone, so
-  `SqlUtil.implicitCastLongAsInt` is no longer on the path. A loud error became a silent
-  truncation, matching what the column spelling has always done.
-
-`::LONG` still reaches the wide value on every spelling, and a CTAS over the cast still creates a
-LONG column. `IntArithmeticOverflowFoldingTest#testCtasOfOverflowingConstantKeepsIntColumnType` pins
-all of it.
-
-### Reading a function at two widths
-
-A caller that needs both `getInt()` and `getLong()` of the same expression on one row — the
-conditionals, `InLongFunctionFactory`'s split key — must not simply call both: a second read of
-a non-deterministic function is a fresh draw. Guard with `isIntWidthStable()` first (one read
-suffices), then `isRowStable()` (two reads are safe), and otherwise read once at long width.
-
-When that last arm moves a *comparison* to long width, it must move both operands. Reading one
-side at 64 bits and the other with a wrapping `getInt()` misses an equal pair — `nullif` handed
-back the very value it excludes for `nullif(<row-unstable>, a + b)`. Widening the other operand
-costs nothing when it is width stable, since `IntFunction.getLong()` is
-`Numbers.intToLong(getInt())`.
-
-### An alias is a column reference, and it must be transparent
-
-A projection that references a column by name does not pass the referenced function through — it
-creates a column function. `IntColumn` overrides only `getInt(rec)` and inherits
-`getLong() = Numbers.intToLong(getInt())` while reporting `isIntWidthStable() == true`, so it
-throws the wide half away. `a::LONG` over `SELECT i + j AS a` re-wrapped while `(i + j)::LONG`
-widened, and the *stored* value depended on plan shape: with no sibling column the outer projection
-is elided and the copier sees the arithmetic function (widens), with one it sees the column
-reference (wraps).
-
-`IntWideColumn` is the transparent variant — it reads the record at whichever width the caller
-asks for. `FunctionParser.createColumn` emits it in place of `IntColumn` when the metadata reports
-the referenced column width-unstable, which is exactly the condition under which `getLong()` on an
-INT column is legal. `PriorityMetadata` is the metadata that can answer: it snapshots the base
-factory's answers per column at construction, and reads the projection's own function list for a
-reference to an earlier column of the same projection.
-
-### `isColumnRowStable` — the other half of the answer
-
-A column function is a **proxy**, so it must report the referenced expression's row stability, not
-its own. The consumers above choose between one long-width read and two INT-width reads on that
-answer, and two reads of a non-deterministic expression are two different draws.
-
-`RecordCursorFactory#isColumnRowStable(int)` and `ColumnTypes#isColumnRowStable(int)` carry it.
-**The two methods are a pair: a factory that overrides `isColumnIntWidthStable` must override this
-one too.** Their defaults point in opposite directions — `true` for width (don't widen, never
-over-read) and `false` for row (don't read twice) — so answering only the first reports a column
-width-unstable *and* row-unstable, which changes what `nullif` / `coalesce` / `IN` return for it.
-That would make the value depend on whether a delegating wrapper sits between the projection and
-its base, i.e. re-create the plan-shape dependence the width rule exists to remove.
-
-Each override mirrors its width sibling through the identical index mapping. Two differences:
-
-- where the width sibling returns the constant `true` for a **materialised** column (join slave,
-  window aggregates, extra-null padding, the cached-window narrow chain), so does this one — reading
-  stored bytes twice gives the same value;
-- **UNION / UNION ALL combine with AND where width combines with OR.** Width needs *either* leg safe
-  to read at long width; row stability needs *both*, because either leg can be the active one.
-  EXCEPT / INTERSECT emit only leg A, so both methods read leg A.
-
-`IntWidthAnswerPairingTest` is the forcing function: it walks every compiled class and fails when a
-`RecordCursorFactory` declares one of the two without the other. A per-shape test can only cover the
-factories someone thought of, which is how the width enumeration was missed in the first place.
+`RecordToRowCopierUtils` (two bytecode generators) and `LoopingRecordToRowCopier` are purely
+type-directed: an INT source reads `getInt()` for every target and `SqlUtil.implicitCastIntAsLong`
+sign-extends it for a 64-bit one. There is no per-column width question, so no factory, metadata or
+`ColumnTypes` view has to answer one.
 
 ### The JIT
 
-`CompiledFilterIRSerializer` faces the same split, because the Java filter evaluates at the
-width the function factories pick while the IR types operands by their column widths. Two
-compensations exist, and both must run for *any* predicate shape, not only float-bearing ones:
+`CompiledFilterIRSerializer` derives every type from the AST plus metadata and never reads the
+function tree, so it has to reproduce the same rule by hand. The rule it implements is uniform:
+**compute an arithmetic subtree at its own width, sign-extend only at the comparison boundary.**
 
-- `markNarrowConstCmpWidenPair` / `maybeWidenCmpConstOperand` widen an out-of-INT-range constant
-  compared against a narrow-int operand. The first handles a bare leaf, the second an
-  arithmetic subtree such as `-i`.
-- `markFloatCmpConst` sends a constant with no exact float to the filter at double width, since
-  a FLOAT column always compares at DOUBLE width in Java. It runs for a bare FLOAT column and for
-  an arithmetic subtree that stays F4-typed.
-- `isWidthSensitiveInKey` accepts a numeric CONSTANT `IN` key, so the per-element override drives
-  the key's emitted width from each element in turn. Without it a key that fits in an int was still
-  emitted at I8 whenever anything else in the predicate was I8, leaving an i64 key against a
-  four-lane i32 element.
-- `isUnmatchableInPairing` folds an `IN` pairing that can never match — a NULL element against a
-  BYTE or SHORT key, neither of which has a NULL sentinel — into a comparison that is false on every
-  row, at the key's own lane width. CHAR shares the I2 type code but reads `(char) 0` as NULL, and a
-  GEOHASH has a NULL at every width, so both keep the ordinary pairing.
+`arithExprType` types a node by operand promotion alone, so an INT arithmetic subtree is `I4_TYPE`
+however large its mathematical result; only a genuine 64-bit operand promotes it. `descend()` folds
+a pure-constant subtree at that same type — the I4 arm reproduces the Java filter's per-op INT
+wrapping, which differs from `(int) longVal` for a non-modular operator such as division.
 
-The four-lane backend backstops the width question rather than owning it: `avx2::convert()` widens
-the i32 side of an `i32`-with-`i64` and an `i32`-with-`f64` pairing (both read only the low 128
-bits, so both are gated on wide-lane). A frontend gap therefore costs a tripwire failure under
-`-ea` instead of wrong rows — but the frontend still has to pick the width the Java filter reads
-at, because only it knows that.
+Three compensations survive, and all three are about a constant's emitted WIDTH rather than about
+arithmetic semantics:
 
-`isFloatLeaf` deliberately does NOT accept an F8-promoting subtree such as `f + 0.0`. Widening
-only the *bound* there is not enough, because the JIT also computes the arithmetic itself at f32
-while Java computes it at f64: for a value-preserving operand (`+ 0.0`, `* 1.0`) the two agree
-and widening the bound fixes the comparison, but for `f - 0.1` the f32 and f64 sums already
-differ, so widening the bound alone moves the divergence rather than removing it. Fixing that
-shape means promoting the whole subtree to f64, not just its bound.
+- `markNarrowConstCmpWidenPair` / `maybeWidenCmpConstOperand` sign-extend a narrow-int leaf and the
+  out-of-INT-range constant it is compared against (`WHERE i < 5_000_000_000`). The type observer
+  sees only 4-byte columns, so the constant would otherwise emit as a lossy F4.
+- `markFloatCmpConst` sends a constant with no exact float to the filter at double width, since a
+  FLOAT column always compares at DOUBLE width in Java.
+- `narrowKeptConstants` pins an integer constant operand of a NARROW arithmetic node to its own
+  width, so `i32 * 2` stays `int32_mul` even when a LONG elsewhere in the predicate makes the
+  observer type constants at I8.
 
-Promoting the subtree was attempted and reverted. Marking every constant operand of such a node
-does move the arithmetic to f64, but three things have to move with it and none of them is local:
-an INT literal operand is also claimed by `i64WrapLeaves`, which outranks the widen mark in
-`serializeConstant` and emits an `IMM I4` against an f64 (AVX2 `convert()` widens that pairing now,
-but the width still has to match what the JAVA filter reads at, so the frontend cannot simply lean
-on the backstop); an `IN` key needs its ELEMENTS widened too, which
-`markNarrowConstCmpWidenNode`'s IN branch does not do for an F8 key; and a constant sub-expression
-operand (`f * (1.0 / 3.0)`) is not a constant by
-`isWideLaneNumericConstant`, so the bound widens while the arithmetic does not. A correct promotion
-has to handle all three together, and extend `requiresWideLane` as well, or an exactly-representable
-bound drops the predicate out of the vectorized loop entirely.
+An `IN` list re-serializes its key once per element but the key is one node with one emitted width,
+so a single 64-bit pairing pulls the whole list to 64 bits: `markWidthSemantics` sign-extends the
+key and every narrow-int leaf element together.
 
-Missing either one does not merely lose rows — it can make the **scalar and vectorized backends
-disagree with each other**, so the same query on the same data returns different rows depending
-on whether the host has AVX2. `assertJitScalarAndVectorMatchJava` in
-`CompiledFilterRegressionTest` runs a query with JIT off, then `FORCE_SCALAR`, then vectorized,
-and is the guard for that class of bug.
+`forceScalarOnUnharmonisedNarrowArith` is the one place the JIT gives up performance for the rule.
+SX_I64 is emitted per LEAF, so there is no way to sign-extend a narrow arithmetic subtree's RESULT
+from the frontend, and the pairing reaches the backend as i32-against-i64 — which neither vectorized
+mode reproduces correctly. `WHERE i * j > long_col` therefore runs scalar. Teaching the IR to emit
+SX_I64 after an operator rather than after a leaf would recover it, and is the obvious follow-up.
+
+Missing a width compensation does not merely lose rows — it can make the **scalar and vectorized
+backends disagree with each other**, so the same query on the same data returns different rows
+depending on whether the host has AVX2. `assertJitScalarAndVectorMatchJava` in
+`CompiledFilterRegressionTest` runs a query with JIT off, then `FORCE_SCALAR`, then vectorized, and
+is the guard for that class of bug.
+
+`isFloatLeaf` deliberately does NOT accept an F8-promoting subtree such as `f + 0.0`. Widening only
+the *bound* there is not enough, because the JIT also computes the arithmetic itself at f32 while
+Java computes it at f64: for a value-preserving operand (`+ 0.0`, `* 1.0`) the two agree and
+widening the bound fixes the comparison, but for `f - 0.1` the f32 and f64 sums already differ, so
+widening the bound alone moves the divergence rather than removing it. Fixing that shape means
+promoting the whole subtree to f64, not just its bound.
+
+Promoting the subtree was attempted and reverted. Marking every constant operand of such a node does
+move the arithmetic to f64, but three things have to move with it and none of them is local: an `IN`
+key needs its ELEMENTS widened too, which `markNarrowConstCmpWidenNode`'s IN branch does not do for
+an F8 key; a constant sub-expression operand (`f * (1.0 / 3.0)`) is not a constant by
+`isWideLaneNumericConstant`, so the bound widens while the arithmetic does not; and `requiresWideLane`
+has to be extended as well, or an exactly-representable bound drops the predicate out of the
+vectorized loop entirely.
 
 ### Constant reassociation
 
@@ -622,13 +504,6 @@ must stay in sync.
 | `PageFrameMemoryRecord.java` | Query path: per-row lazy conversion at accessor level (zero-GC) |
 | `row_groups.rs` | Rust: type dispatch, `post_convert()`, boolean expansion, date/timestamp scaling |
 | `decode.rs` | Rust: physical parquet type → decoded values |
-| `Function.java` (cairo/sql) | `isIntWidthStable()` / `isRowStable()` — the INT-width contract |
-| `LongWidthIntFunction.java` | Base for the INT functions whose `getLong()` computes at long width |
-| `RecordToRowCopierUtils.java` | `widensIntSource()` and the two bytecode generators' INT source arm |
-| `LoopingRecordToRowCopier.java` | `intWidthUnstableColumns` snapshot for the wide-table copier |
-| `FactoryColumnTypes.java` | Pairs cursor metadata with a factory's `isColumnIntWidthStable` for INSERT ... SELECT / CTAS |
-| `IntWideColumn.java` | The transparent INT column reference — reads the record at the caller's width |
-| `PriorityMetadata.java` | Answers both width questions for a projection: base factory snapshot + the projection's own functions |
-| `IntWidthAnswerPairingTest.java` (test) | Forcing function: every factory answering one width question must answer the other |
-| `CompiledFilterIRSerializer.java` | `isFloatLeaf`, `maybeWidenCmpConstOperand`, `markNarrowConstCmpWidenPair` — the JIT's width compensations |
+| `CompiledFilterIRSerializer.java` | `markNarrowConstCmpWidenPair`, `maybeWidenCmpConstOperand`, `narrowKeptConstants`, `isFloatLeaf` — the JIT's surviving constant-width compensations |
+| `IntWidthWrapTest.java` (test) | The spelling matrix for the wrap-always rule, and the #4752 cost |
 | `ExpressionNode.java` (griffin/model) | `cacheConstantFold()` / `isReassociationSafe()` — the constant-reassociation guard |

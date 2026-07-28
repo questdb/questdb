@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.LongWidthIntFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -51,7 +51,7 @@ public class AbsIntFunctionFactory implements FunctionFactory {
         return new AbsIntFunction(args.getQuick(0));
     }
 
-    private static class AbsIntFunction extends LongWidthIntFunction implements ArithmeticUnaryFunction {
+    private static class AbsIntFunction extends IntFunction implements ArithmeticUnaryFunction {
         private final Function arg;
 
         public AbsIntFunction(Function arg) {
@@ -68,15 +68,6 @@ public class AbsIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             int value = arg.getInt(rec);
             return Math.abs(value);
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            // getLong() widens: nested INT arithmetic computes at long width, matching
-            // the widened arithmetic operators and explicit widening casts. Math.abs of
-            // the LONG null sentinel (Long.MIN_VALUE) overflows back to it, preserving
-            // NULL, exactly as getInt() relies on Math.abs(Integer.MIN_VALUE).
-            return Math.abs(arg.getLong(rec));
         }
 
         @Override

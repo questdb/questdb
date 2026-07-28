@@ -47,16 +47,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class InLongFunctionFactoryTest extends AbstractCairoTest {
-    // The rows whose INT-arithmetic key lands on LONG_NULL at long width: row 3's product
-    // overflows exactly onto it (its value is 0), row 5 is genuinely null. See
-    // testNarrowSplitKeyNullElementMatchesEqNull.
-    private static final String LONG_NULL_KEY_ROWS = """
-            rn
-            3
-            5
-            """;
-    // Only row 1, whose key overflows INT. Both width-rebind tests select it through whichever
-    // width their binding names, so a width mix-up returns nothing instead.
+    // Only row 1, whose key overflows INT. It carries ONE value - the wrap - so only a binding
+    // naming that value selects it; a binding naming the pre-wrap product selects nothing.
     private static final String MATCHED_ROW = """
             rn
             1
@@ -70,8 +62,8 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
             2
             5
             """;
-    // Row 1's key overflows INT: 100000*100000 is 10_000_000_000 read at long width and
-    // 1_410_065_408 read at INT width. Rows 2 and 3 stay small and match neither bound value.
+    // Row 1's key overflows INT: 100000*100000 wraps to 1_410_065_408 at every width, so the
+    // 10_000_000_000 binding matches nothing. Rows 2 and 3 stay small and match neither.
     private static final String WIDTH_SPLIT_TABLE = """
             CREATE TABLE x AS (SELECT
               cast(CASE WHEN x = 1 THEN 100000 ELSE 3 END AS INT) a,
@@ -350,18 +342,15 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNarrowSplitKeyNullElementMatchesEqNull() throws Exception {
-        // An untyped NULL element reads a narrow-int key at the width '=' reads it: INT.
-        // A split key - INT arithmetic, whose getInt() wraps mod 2^32 while getLong() widens -
-        // is NULL exactly when its getInt() carries INT_NULL, which is what '=', IS NULL and the
-        // projection all report. Reading the key at long width against the NULL element instead
-        // made IN (null) disagree with all three, in both directions:
-        //   - row 1 (65_536*32_768) and row 2 (-2^30 * 2) wrap onto INT_NULL, so they ARE null;
-        //     IN (null) missed them because their long-width products (+/-2^31) are not LONG_NULL.
-        //   - row 3 (2^30 * 8 * 2^30) has value 0, but its long-width product overflows exactly
-        //     onto LONG_NULL, so IN (null) matched a row whose value is not null.
-        // A LONG-typed null element (null::long) keeps long width: it matches '= null::long',
-        // which reads the key with getLong().
+    public void testNarrowIntArithKeyNullElementMatchesEqNull() throws Exception {
+        // An INT-arithmetic key is NULL exactly when its value is INT_NULL, which is what '=',
+        // IS NULL and a projection of the same expression all report. Every IN form has to agree
+        // with them, and with each other, whatever the element's declared type:
+        //   - row 1 (65_536*32_768) and row 2 (-2^30 * 2) wrap onto INT_NULL, so they ARE null.
+        //   - row 3 (2^30 * 8 * 2^30) has value 0, so it is NOT null - even though the product it
+        //     would have had at 64 bits lands exactly on LONG_NULL. Nothing computes that product.
+        // `null::long` agrees with the untyped null here, because a 64-bit read of the key
+        // sign-extends its value and Numbers.intToLong(INT_NULL) is LONG_NULL.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE x AS (SELECT
@@ -419,17 +408,20 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                                     4
                                     """);
 
-                    // The deeper key: row 3's long-width product lands exactly on LONG_NULL while its
-                    // value is 0, so a long-width probe matched it. It is not null and must not match.
+                    // The deeper key: row 3's long-width product would land exactly on LONG_NULL while
+                    // its value is 0. The key has one value now, so nothing computes that product and
+                    // row 3 cannot match a null element at any width.
                     assertQuery("SELECT rn FROM x WHERE (a*b*c) = null").noLeakCheck().returns(NULL_KEY_ROWS);
                     assertQuery("SELECT rn FROM x WHERE (a*b*c) IN (null)").noLeakCheck().returns(NULL_KEY_ROWS);
 
-                    // Control: a LONG-typed null element keeps long width on both sides, so IN (null::long)
-                    // and '= null::long' agree with each other - and select row 3, unlike the untyped null.
+                    // A LONG-typed null element now agrees with the untyped one, because the key has
+                    // a single value and every 64-bit read of it sign-extends that value:
+                    // Numbers.intToLong(INT_NULL) is LONG_NULL, so the same rows are null either way.
+                    // Under the split-key regime these selected row 3 instead - a row whose value is 0.
                     assertQuery("SELECT rn FROM x WHERE (a*b*c) = null::long")
-                            .noLeakCheck().returns(LONG_NULL_KEY_ROWS);
+                            .noLeakCheck().returns(NULL_KEY_ROWS);
                     assertQuery("SELECT rn FROM x WHERE (a*b*c) IN (null::long)")
-                            .noLeakCheck().returns(LONG_NULL_KEY_ROWS);
+                            .noLeakCheck().returns(NULL_KEY_ROWS);
 
                     // Control: a plain INT column key is not split - getInt() and getLong() carry the same
                     // number - so only the genuinely-null row matches, at either width.
@@ -546,11 +538,10 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
         // established pattern: QueryAssertion.assertBinds compiles once and re-binds per case, and
         // IndexedParameterLinkFunction.init() refreshes its type for exactly this reason.
         //
-        // Row 1's key overflows INT, so the two widths carry genuinely different numbers
-        // (100000*100000 = 10_000_000_000 widened, 1_410_065_408 wrapped). Each binding names its
-        // own width's value, so the row matches only if the element and the key are read at the
-        // SAME width - confusing them selects nothing. See the mirror in
-        // testBindVariableLongWidthCompileThenIntRebind.
+        // Row 1's key overflows INT and wraps to 1_410_065_408, whatever width reads it, so only
+        // the INT binding selects it. The re-bind still has to WORK - the point of this test is that
+        // a factory compiled with INT binds and re-bound to LONG ones answers rather than throwing.
+        // See the mirror in testBindVariableLongWidthCompileThenIntRebind.
         assertMemoryLeak(() -> {
             // The compiled filter freezes each bind variable's width into its IR at compile time and
             // does not re-serialize on a re-bind, so it answers this query at the compile-time width
@@ -567,7 +558,9 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                     bindVariableService.setInt(0, 1_410_065_408);
                     bindVariableService.setInt(1, 999);
                 }));
-                cases.add(BindVarTuple.ok("re-bound to long", MATCHED_ROW, bindVariableService -> {
+                cases.add(BindVarTuple.ok("re-bound to long", NO_ROWS, bindVariableService -> {
+                    // The key wraps, so the pre-wrap product matches nothing. The row this case
+                    // guards is that the re-bind is served at all.
                     bindVariableService.setLong(0, 10_000_000_000L);
                     bindVariableService.setLong(1, 999);
                 }));
@@ -613,10 +606,9 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBindVariableLongWidthCompileThenIntRebind() throws Exception {
-        // The mirror of testBindVariableIntWidthCompileThenLongRebind: compiled with LONG-width
-        // binds only the long set was allocated, so re-binding INT values sent parseToSets down the
-        // outIntSet.add() arm with a null set. Kept as its own test so each direction reds on its
-        // own - run together, the first crash would hide the second.
+        // The mirror of testBindVariableIntWidthCompileThenLongRebind: a factory compiled with
+        // LONG-width binds must serve a re-bind to INT ones. Kept as its own test so each direction
+        // reds on its own - run together, the first crash would hide the second.
         assertMemoryLeak(() -> {
             // The compiled filter freezes each bind variable's width into its IR at compile time and
             // does not re-serialize on a re-bind, so it answers this query at the compile-time width
@@ -629,7 +621,8 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                 execute(WIDTH_SPLIT_TABLE);
 
                 final ObjList<BindVarTuple> cases = new ObjList<>();
-                cases.add(BindVarTuple.ok("long binds", MATCHED_ROW, bindVariableService -> {
+                cases.add(BindVarTuple.ok("long binds", NO_ROWS, bindVariableService -> {
+                    // The key wraps, so the pre-wrap product matches nothing.
                     bindVariableService.setLong(0, 10_000_000_000L);
                     bindVariableService.setLong(1, 999);
                 }));
@@ -647,7 +640,7 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBindVariableSplitKeyMatchesEqNull() throws Exception {
+    public void testBindVariableIntArithKeyMatchesEqNull() throws Exception {
         // A bind variable is non-deterministic ACROSS EXECUTIONS but perfectly stable within a row,
         // so an INT-arithmetic key holding one is still safe to read at both widths. Reading the
         // non-determinism flag instead disqualified the key from the width split and probed it at
@@ -931,43 +924,42 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSplitKeyReadsSecondWidthOnlyOnMiss() throws Exception {
-        // A split key - an INT function that computes at long width under getLong() - is the only key
-        // whose two reads can disagree, so the IN list probes it at both widths. An element matching
-        // on the first width must not make the row pay for the other: each width is evaluated only
-        // when an element actually reaches it.
+    public void testIntArithKeyReadOnceAtLongWidth() throws Exception {
+        // The key carries one value, so the IN list reads it exactly ONCE per row - at long width,
+        // which for a narrow key is an exact sign extension of the value getInt() reports. Reading
+        // it twice would matter for a non-deterministic key, whose second read is a fresh draw.
         //
-        // The list below mixes widths on purpose: the INT element reads the key at INT width, the
-        // LONG one at long width. The key carries 7, so the INT element hits and the long read is
-        // never needed.
+        // The list mixes an INT element with a LONG one on purpose: under the old split-key regime
+        // that made the key read at both widths. Now the element's declared width decides only the
+        // element's own value, never the key's.
         assertMemoryLeak(() -> {
             try (CountingIntKey key = new CountingIntKey(7)) {
                 // two-constant path
                 try (Function f = newInFunction(key, new IntConstant(7), new LongConstant(5_000_000_000L))) {
                     Assert.assertTrue(f.getBool(null));
-                    Assert.assertEquals(1, key.intCalls);
-                    Assert.assertEquals(0, key.longCalls);
+                    Assert.assertEquals(0, key.intCalls);
+                    Assert.assertEquals(1, key.longCalls);
 
-                    // a miss on the INT element does reach the long width
+                    // a miss reads the key no more often than a hit
                     key.reset();
                     key.value = 11;
                     Assert.assertFalse(f.getBool(null));
-                    Assert.assertEquals(1, key.intCalls);
+                    Assert.assertEquals(0, key.intCalls);
                     Assert.assertEquals(1, key.longCalls);
                 }
 
-                // variable path: a non-constant element forces it, and is reached first
+                // variable path: a non-constant element forces it
                 key.reset();
                 key.value = 7;
                 try (Function f = newInFunction(key, new NonConstIntElement(7), new LongConstant(5_000_000_000L))) {
                     Assert.assertTrue(f.getBool(null));
-                    Assert.assertEquals(1, key.intCalls);
-                    Assert.assertEquals(0, key.longCalls);
+                    Assert.assertEquals(0, key.intCalls);
+                    Assert.assertEquals(1, key.longCalls);
 
                     key.reset();
                     key.value = 11;
                     Assert.assertFalse(f.getBool(null));
-                    Assert.assertEquals(1, key.intCalls);
+                    Assert.assertEquals(0, key.intCalls);
                     Assert.assertEquals(1, key.longCalls);
                 }
             }
@@ -975,13 +967,14 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSplitKeyVarListPartitionsConstantsByWidth() throws Exception {
-        // The var path hoists its constant elements into width-specific sets at construction, so the
-        // per-row loop probes them once each instead of scanning every constant on every row. A split
-        // key - INT arithmetic, whose getInt() wraps mod 2^32 while getLong() widens - is the only key
-        // that can tell the two sets apart, so it is what pins the partition: (a * 5) reads 705_032_704
-        // at INT width and 5_000_000_000 at long width for the same row, and each constant must land in
-        // the set whose width '=' would compare it at.
+    public void testVarListConstantsCompareAtOneKeyWidth() throws Exception {
+        // The var path hoists its constant elements into a set at construction so the per-row loop
+        // probes them once instead of scanning every constant on every row. The key has one value,
+        // so there is one set and one key read: an element's declared width decides that element's
+        // own value and nothing about the key's.
+        //
+        // (a * 5) is 705_032_704 for row 1 - the wrap - at every width. An element naming the
+        // pre-wrap 5_000_000_000 therefore matches nothing, whatever type it carries.
         assertMemoryLeak(() -> {
             // Take the JIT out of it: this is about the interpreted InLong path.
             final int jitMode = sqlExecutionContext.getJitMode();
@@ -993,35 +986,33 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                           cast(CASE WHEN x = 1 THEN 0 WHEN x = 2 THEN 7 ELSE 3 END AS INT) el
                         FROM long_sequence(3))""");
 
-                // The oracle: what the key expression carries at each width.
-                assertQuery("SELECT a, (a * 5) wrapped, (a * 5)::long widened FROM z")
+                // The oracle: the key expression carries the same number at both widths.
+                assertQuery("SELECT a, (a * 5) narrow, (a * 5)::long wide FROM z")
                         .noLeakCheck()
                         .expectSize()
                         .returns("""
-                                a\twrapped\twidened
-                                1000000000\t705032704\t5000000000
+                                a\tnarrow\twide
+                                1000000000\t705032704\t705032704
                                 2\t10\t10
                                 null\tnull\tnull
                                 """);
 
-                // An INT-typed constant wraps the key; a LONG-typed one widens it. Each selects the
-                // same row through a different set, and neither matches the other's value.
+                // The wrapped value selects the row through an INT element and a LONG one alike;
+                // the pre-wrap product selects nothing.
                 assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, 705_032_704) ORDER BY a")
                         .noLeakCheck().returns("a\n1000000000\n");
-                assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, 5_000_000_000) ORDER BY a")
-                        .noLeakCheck().returns("a\n1000000000\n");
                 assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, 705_032_704::long) ORDER BY a")
+                        .noLeakCheck().returns("a\n1000000000\n");
+                assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, 5_000_000_000) ORDER BY a")
                         .noLeakCheck().returns("a\n");
 
-                // A numeric string carries no declared width, so it takes the one its value would have
-                // as a literal: an INT-range value wraps the key, a wider one widens it.
+                // A numeric string carries no declared width and follows the same rule.
                 assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, '705032704') ORDER BY a")
                         .noLeakCheck().returns("a\n1000000000\n");
                 assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, '5000000000') ORDER BY a")
-                        .noLeakCheck().returns("a\n1000000000\n");
+                        .noLeakCheck().returns("a\n");
 
-                // Both sets at once, next to the dynamic element: an untyped null joins the INT-width
-                // set (as '=' resolves it on a narrow key), so the null row matches through it.
+                // Mixed widths next to the dynamic element: the untyped null matches the null key.
                 assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, 705_032_704, 5_000_000_000, null) ORDER BY a")
                         .noLeakCheck().returns("""
                                 a
@@ -1031,11 +1022,7 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
 
                 // The dynamic element still decides its own rows: el + 3 is the key on the a = 2 row.
                 assertQuery("SELECT a FROM z WHERE (a * 5) IN (el + 3, 5_000_000_000) ORDER BY a")
-                        .noLeakCheck().returns("""
-                                a
-                                2
-                                1000000000
-                                """);
+                        .noLeakCheck().returns("a\n2\n");
             } finally {
                 sqlExecutionContext.setJitMode(jitMode);
             }
@@ -1186,11 +1173,6 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
         public long getLong(Record rec) {
             longCalls++;
             return value;
-        }
-
-        @Override
-        public boolean isIntWidthStable() {
-            return false;
         }
 
         @Override

@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.Function;
-
 public interface ColumnTypes {
 
     /**
@@ -52,43 +50,4 @@ public interface ColumnTypes {
     int getColumnCount();
 
     int getColumnType(int columnIndex);
-
-    /**
-     * Returns true when column {@code columnIndex} carries the same value at INT and at LONG
-     * width, i.e. reading it at INT width and widening loses nothing. Only meaningful for a
-     * BYTE / SHORT / INT typed column.
-     * <p>
-     * A stored column always answers true: its bytes are exactly as wide as its type, and a
-     * reader that took them at LONG width would read past the value. An expression does not
-     * have to - overflowing INT arithmetic wraps mod 2^32 under {@code getInt()} while
-     * {@code getLong()} keeps the full result (see {@link Function#isIntWidthStable}).
-     * <p>
-     * {@link io.questdb.griffin.RecordToRowCopierUtils} consults this to decide whether an
-     * INT source feeding a 64-bit column reads {@code getInt()} or {@code getLong()}, so that
-     * the value a row keeps matches the value an explicit cast of the same expression reads.
-     * The conservative default is true, which reproduces the INT-width read.
-     *
-     * @param columnIndex column index
-     * @return true if reading the column at INT width and widening equals reading it at LONG width
-     */
-    default boolean isColumnIntWidthStable(int columnIndex) {
-        return true;
-    }
-
-    /**
-     * Returns true when two reads of column {@code columnIndex} within the same row are guaranteed
-     * to yield the same value - the {@link Function#isRowStable()} question, asked of a column.
-     * <p>
-     * Only consulted for a column that {@link #isColumnIntWidthStable(int)} reports false, since
-     * that is the only column anything reads at two widths. The default is false because the unsafe
-     * answer is true: a consumer that believes a row-unstable expression can be read twice reads two
-     * different draws of it. A type list that answers the width question must answer this one too -
-     * see {@link io.questdb.cairo.sql.RecordCursorFactory#isColumnRowStable(int)}.
-     *
-     * @param columnIndex column index
-     * @return true if reading the column twice within one row is guaranteed to give the same value
-     */
-    default boolean isColumnRowStable(int columnIndex) {
-        return false;
-    }
 }

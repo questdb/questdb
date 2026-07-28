@@ -200,27 +200,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public boolean isColumnIntWidthStable(int columnIndex) {
-        // SelectedRecord reads the base record through the cross index, so the answer is the
-        // base column's, taken at the mapped index. IntList.getQuick is unchecked, so an index
-        // the map does not cover takes the conservative INT-width answer.
-        if (columnIndex < 0 || columnIndex >= columnCrossIndex.size()) {
-            return true;
-        }
-        return base.isColumnIntWidthStable(columnCrossIndex.getQuick(columnIndex));
-    }
-
-    @Override
-    public boolean isColumnRowStable(int columnIndex) {
-        // Paired with isColumnIntWidthStable above, through the same cross index. An index the map
-        // does not cover takes this method's own conservative answer, which is false.
-        if (columnIndex < 0 || columnIndex >= columnCrossIndex.size()) {
-            return false;
-        }
-        return base.isColumnRowStable(columnCrossIndex.getQuick(columnIndex));
-    }
-
-    @Override
     public boolean isProjection() {
         return true;
     }

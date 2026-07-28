@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.LongWidthIntFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -53,7 +53,7 @@ public class BitwiseNotIntFunctionFactory implements FunctionFactory {
         return new BitNotIntFunction(args.getQuick(0));
     }
 
-    public static final class BitNotIntFunction extends LongWidthIntFunction implements ArithmeticUnaryFunction {
+    public static final class BitNotIntFunction extends IntFunction implements ArithmeticUnaryFunction {
         private final Function value;
 
         public BitNotIntFunction(Function value) {
@@ -69,14 +69,6 @@ public class BitwiseNotIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final int val = value.getInt(rec);
             return val != Numbers.INT_NULL ? ~val : Numbers.INT_NULL;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            // Sign extension commutes with '~', so a plain INT operand is unaffected.
-            // See Function#isIntWidthStable for why the operand recurses via getLong().
-            final long val = value.getLong(rec);
-            return val != Numbers.LONG_NULL ? ~val : Numbers.LONG_NULL;
         }
 
         @Override

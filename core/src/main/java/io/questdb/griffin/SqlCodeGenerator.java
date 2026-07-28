@@ -1569,7 +1569,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 stolenFilter,
                 executionContext.getSharedQueryWorkerCount(),
                 stolenFilterExpr,
-                new FactoryMetadata(pageFrameLeaf)
+                pageFrameLeaf.getMetadata()
         );
 
         return new AsyncTopKRecordCursorFactory(
@@ -1845,14 +1845,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     /**
      * Re-compiles the filter expression once per worker, for a filter that is not thread safe.
      * <p>
-     * {@code metadata} must be the SAME metadata the caller compiled its own copy of
-     * {@code filter} against, not merely one describing the same columns. A clone compiled against
-     * a bare {@link RecordMetadata} where the original saw a {@link FactoryMetadata} emits
-     * {@code IntColumn} where the original emits {@code IntWideColumn}, and the rows a query
-     * returns would then depend on which worker reduced a given page frame. A caller that holds
-     * the base factory should pass {@code new FactoryMetadata(base)}; only a composed metadata
-     * with no single factory behind it - a join's {@code JoinRecordMetadata} - has cause to pass
-     * the bare form.
+     * {@code metadata} must describe the same columns the caller compiled its own copy of
+     * {@code filter} against, so every clone resolves a column reference the same way and the rows
+     * a query returns cannot depend on which worker reduced a given page frame.
      */
     private @Nullable ObjList<Function> compileWorkerFiltersConditionally(
             SqlExecutionContext executionContext,
@@ -4332,16 +4327,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         backupWhereClause(filterExpr);
         model.setWhereClause(null);
 
-        // A bare RecordMetadata cannot answer the INT width question and takes the conservative
-        // width-stable default, so a filter over an alias to an overflowing INT expression emitted
-        // IntColumn and read the alias at INT width while the projection above it read the same
-        // alias wide. Compile every copy of the filter - this one and the per-worker clones below -
-        // against the factory's own answers instead, so the two halves of a query agree.
-        // collectColumnIndexes(), the JIT serializer and the parquet pushdown extractor keep the
-        // bare metadata: none of them creates a column function, so the width answer cannot reach
-        // them. The JIT could not see a width-unstable column anyway - only a function-backed
-        // column answers false, and no factory that computes a column supports page frames.
-        final RecordMetadata filterCompileMetadata = new FactoryMetadata(factory);
+        final RecordMetadata filterCompileMetadata = factory.getMetadata();
         final Function filter;
         try {
             filter = compileBooleanFilter(filterExpr, filterCompileMetadata, executionContext);
@@ -4957,7 +4943,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     filter,
                     workerCount,
                     filterExpr,
-                    new FactoryMetadata(masterFactory)
+                    masterFactory.getMetadata()
             );
 
             // Transfer ownership of resources to factory/atom constructor. keyFunctions is
@@ -5633,13 +5619,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // Apply post-UNNEST filter (e.g., WHERE u.val > 3.0)
                         ExpressionNode unnestFilter = slaveModel.getPostJoinWhereClause();
                         if (unnestFilter != null) {
-                            // The width-aware view rather than the bare metadata, for the reason
-                            // spelled out in generateFilter0: UnnestRecord hands the master's live
-                            // record through below the split, so a master column can be a
-                            // width-unstable INT expression that this filter has to read wide.
                             master = new FilteredRecordCursorFactory(
                                     master,
-                                    compileBooleanFilter(unnestFilter, new FactoryMetadata(master), executionContext)
+                                    compileBooleanFilter(unnestFilter, master.getMetadata(), executionContext)
                             );
                         }
                         continue;
@@ -6164,7 +6146,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         masterFilter,
                                                         executionContext.getSharedQueryWorkerCount(),
                                                         masterFilterExpr,
-                                                        new FactoryMetadata(master)
+                                                        master.getMetadata()
                                                 );
                                             } catch (Throwable th) {
                                                 Misc.freeObjList(fastWorkerJoinFilters, th);
@@ -6261,7 +6243,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         masterFilter,
                                                         executionContext.getSharedQueryWorkerCount(),
                                                         masterFilterExpr,
-                                                        new FactoryMetadata(master)
+                                                        master.getMetadata()
                                                 );
                                             } catch (Throwable th) {
                                                 Misc.freeObjList(stdWorkerJoinFilters, th);
@@ -6571,14 +6553,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // check if there are post-filters
                 ExpressionNode filterExpr = slaveModel.getPostJoinWhereClause();
                 if (filterExpr != null) {
-                    // The width-aware view rather than the bare metadata, for the reason spelled
-                    // out in generateFilter0: JoinRecord hands the master's live record straight
-                    // through, so a master column can be a width-unstable INT expression that this
-                    // post-join filter has to read wide. One instance for every compile of this
-                    // predicate - both arms, and the per-worker clones inside the parallel one -
-                    // so the width the filter reads at can depend neither on whether the parallel
-                    // filter is enabled nor on which thread reduced a given page frame.
-                    final RecordMetadata postJoinFilterMetadata = new FactoryMetadata(master);
+                    final RecordMetadata postJoinFilterMetadata = master.getMetadata();
                     if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
                         final Function filter = compileJoinFilter(
                                 filterExpr,
@@ -7578,7 +7553,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     filter,
                     workerCount,
                     filterExpr,
-                    new FactoryMetadata(masterFactory)
+                    masterFactory.getMetadata()
             );
 
             if (keyTypesCopy.getColumnCount() == 0) {
@@ -9556,7 +9531,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 filter,
                                 executionContext.getSharedQueryWorkerCount(),
                                 filterExpr,
-                                new FactoryMetadata(factory)
+                                factory.getMetadata()
                         );
 
                         // Transfer ownership to the factory constructor.
@@ -9612,7 +9587,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             filter,
                             executionContext.getSharedQueryWorkerCount(),
                             filterExpr,
-                            new FactoryMetadata(factory)
+                            factory.getMetadata()
                     );
 
                     // Transfer ownership to the factory constructor. The factory adopts the
@@ -9772,15 +9747,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<Function> functions = new ObjList<>(virtualColumnReservedSlots);
         final RecordMetadata baseMetadata = factory.getMetadata();
         // Lookup metadata will resolve column references, prioritising references to the projection
-        // over the references to the base table. It also carries the base factory and the growing
-        // function list, so that a column reference can be resolved at the width the referenced
-        // column actually carries - see PriorityMetadata#isColumnIntWidthStable.
-        final PriorityMetadata priorityMetadata = new PriorityMetadata(
-                virtualColumnReservedSlots,
-                baseMetadata,
-                factory,
-                functions
-        );
+        // over the references to the base table.
+        final PriorityMetadata priorityMetadata = new PriorityMetadata(virtualColumnReservedSlots, baseMetadata);
         final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
         try {
             // attempt to preserve timestamp on new data set

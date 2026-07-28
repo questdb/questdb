@@ -50,7 +50,6 @@ import io.questdb.griffin.engine.functions.GeoShortFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.LongWidthIntFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -158,22 +157,14 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                 f.close();
             }
         }
-        // INT overflow widening: an overflowing INT arithmetic arg wraps mod 2^32 in getInt() but
-        // widens to the full-width product in getLong()/getTimestamp() (the dual behavior the
-        // constant folder preserves). The wrapper must serve the widened value, not re-wrap the
-        // cached int - otherwise a LONG-promoting context (e.g. INT*LONG) over the memoized
-        // constant disagrees with the same expression over a column. -2_856_928_958 wraps to
-        // +1_438_038_338 as INT.
+        // INT overflow: an overflowing INT arithmetic arg wraps mod 2^32, and every width the
+        // wrapper serves is that wrapped value sign-extended - the wrapper caches one int and
+        // inherits IntFunction's wider getters, so no context can see the pre-wrap product.
         {
-            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new LongWidthIntFunction() {
+            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
                 @Override
                 public int getInt(Record rec) {
                     return (int) -2_856_928_958L; // +1_438_038_338
-                }
-
-                @Override
-                public long getLong(Record rec) {
-                    return -2_856_928_958L;
                 }
 
                 @Override
@@ -184,10 +175,9 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             try {
                 f.init(null, sqlExecutionContext);
                 assertEquals(1_438_038_338, f.getInt(null));
-                assertEquals(-2_856_928_958L, f.getLong(null));
-                // IntRuntimeConstFunction.getTimestamp is inherited from IntFunction and delegates to
-                // getLong(), so it serves the widened value without consulting the arg's own getTimestamp.
-                assertEquals(-2_856_928_958L, f.getTimestamp(null));
+                assertEquals(1_438_038_338L, f.getLong(null));
+                assertEquals(1_438_038_338L, f.getTimestamp(null));
+                assertEquals(1_438_038_338L, f.getDate(null));
             } finally {
                 f.close();
             }
@@ -323,10 +313,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             }, c, f -> f.getChar(null), 'Q');
         }
 
-        // INT - the one wrapper that caches two widths. This arg does not override getLong(), so it
-        // is width-stable and init() derives the long from the cached int instead of evaluating the
-        // subtree a second time. The divergent arg, which must still be read twice, is covered by
-        // testIntRuntimeConstReadsTheArgOnlyFromInit.
+        // INT - one cached value serves every width, so init() reads the subtree exactly once.
         {
             final int[] c = {0};
             assertCachedRoundTrip(new IntFunction() {
@@ -569,13 +556,11 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertTrue(inner instanceof UnaryFunction);
         assertFalse(((UnaryFunction) inner).getArg() instanceof RuntimeConstFunction);
 
-        // behavioral: the subtree is evaluated in init(), never per row. rc_unary is a plain INT
-        // pass-through, so it inherits IntFunction.getLong() and reports isIntWidthStable() == true;
-        // the wrapper derives its cached long from the cached int rather than walking the subtree a
-        // second time. What matters most is that the count does not grow with the row count.
+        // behavioral: the subtree is evaluated in init(), never per row. What matters most is that
+        // the count does not grow with the row count.
         f.init(null, sqlExecutionContext);
         final int afterInit = evalCounter.get();
-        assertEquals("a width-stable INT subtree is read once in init()", 1, afterInit);
+        assertEquals("an INT subtree is read once in init()", 1, afterInit);
         for (int i = 0; i < 100; i++) {
             assertEquals(7, f.getInt(null));
         }
@@ -588,16 +573,12 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         // Every wrapper, INT included, is read-only after init(), so all of them inherit the arg's
         // thread-safety (UnaryFunction.isThreadSafe) and one instance serves every parallel worker.
         //
-        // The INT wrapper is the one that could plausibly justify an override: its getLong() serves a
-        // widened value that getInt() cannot produce. Deriving it lazily on the first LONG-promoting
-        // read would mutate state outside init() and force isThreadSafe()=false, which costs far more
-        // than the second init() evaluation it saves. BinaryFunction.isThreadSafe() ANDs its children,
-        // so a single false anywhere in a predicate makes SqlCodeGenerator.compileWorkerFiltersConditionally
-        // re-parse and re-compile the *whole* filter once per shared query worker - an ordinary prepared
-        // statement like "WHERE i = :x + 1" wraps ":x + 1" as an INT runtime constant and would pay N
-        // compiles on an N-worker box. init() therefore reads both widths eagerly - and for that
-        // shape it really does read the arg twice, since AddIntFunc extends LongWidthIntFunction and
-        // so reports isIntWidthStable() false.
+        // A lazy getter that derived a value outside init() would mutate state after init() and
+        // force isThreadSafe()=false. BinaryFunction.isThreadSafe() ANDs its children, so a single
+        // false anywhere in a predicate makes SqlCodeGenerator.compileWorkerFiltersConditionally
+        // re-parse and re-compile the *whole* filter once per shared query worker - an ordinary
+        // prepared statement like "WHERE i = :x + 1" wraps ":x + 1" as an INT runtime constant and
+        // would pay N compiles on an N-worker box.
         //
         // This pins that: an override would flip the first assertion.
         final RuntimeConstFunction intFn = RuntimeConstFunction.newInstance(new IntFunction() {
@@ -694,23 +675,15 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     @Test
     public void testIntRuntimeConstReadsTheArgOnlyFromInit() throws SqlException {
         // The thread-safety report above is only sound while no getter touches the arg or writes a
-        // field. This arg diverges between widths, so it reports isIntWidthStable() false and init()
-        // reads getInt() and getLong() exactly once each - two evaluations of the runtime-constant
-        // subtree per cursor, the most any arg costs - and every row after that is served from the
-        // cached fields. A lazy getLong() would show up here as a third evaluation on the first LONG
-        // read. A width-stable arg reads once instead; testAllFoldableTypesCacheAndRoundTrip pins that.
+        // field. init() reads the arg exactly once - one value serves every width - and every row
+        // after that is served from the cached field. A lazy wide getter would show up here as a
+        // second evaluation on the first LONG read.
         final int[] argReads = {0};
-        final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new LongWidthIntFunction() {
+        final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
             @Override
             public int getInt(Record rec) {
                 argReads[0]++;
                 return (int) -2_856_928_958L; // +1_438_038_338 as INT
-            }
-
-            @Override
-            public long getLong(Record rec) {
-                argReads[0]++;
-                return -2_856_928_958L; // an overflowing INT product widens instead of wrapping
             }
 
             @Override
@@ -720,37 +693,29 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         });
         try {
             f.init(null, sqlExecutionContext);
-            assertEquals("init() must read the arg exactly twice, once per width", 2, argReads[0]);
+            assertEquals("init() must read the arg exactly once", 1, argReads[0]);
 
             for (int i = 0; i < 100; i++) {
                 assertEquals(1_438_038_338, f.getInt(null));
-                assertEquals(-2_856_928_958L, f.getLong(null));
-                assertEquals(-2_856_928_958L, f.getTimestamp(null)); // IntFunction.getTimestamp -> getLong
+                assertEquals(1_438_038_338L, f.getLong(null));
+                assertEquals(1_438_038_338L, f.getTimestamp(null));
             }
-            assertEquals("no getter may read the arg after init()", 2, argReads[0]);
+            assertEquals("no getter may read the arg after init()", 1, argReads[0]);
         } finally {
             f.close();
         }
     }
 
     @Test
-    public void testIntRuntimeConstReInitRefreshesWidenedLong() throws SqlException {
-        // init() runs once per cursor and must refresh both cached widths, so re-running the same
+    public void testIntRuntimeConstReInitRefreshesCachedValue() throws SqlException {
+        // init() runs once per cursor and must refresh the cached value, so re-running the same
         // factory for a new cursor (a re-bound prepared statement) re-evaluates the arg instead of
-        // serving the previous cursor's values. Model an overflowing-INT-style arg whose getLong() is
-        // not derivable from getInt() and whose value changes between inits: dropping either
-        // assignment in init() would make the second cursor serve the first one's stale value.
+        // serving the previous cursor's value.
         final int[] narrow = {10};
-        final long[] wide = {10_000_000_000L}; // distinct from the wrapped int, as a division/overflow widen would be
-        final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new LongWidthIntFunction() {
+        final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
             @Override
             public int getInt(Record rec) {
                 return narrow[0];
-            }
-
-            @Override
-            public long getLong(Record rec) {
-                return wide[0];
             }
 
             @Override
@@ -762,14 +727,13 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             // first cursor
             f.init(null, sqlExecutionContext);
             assertEquals(10, f.getInt(null));
-            assertEquals(10_000_000_000L, f.getLong(null));
+            assertEquals(10L, f.getLong(null));
 
-            // re-bind / re-cursor: the arg now evaluates to new values
+            // re-bind / re-cursor: the arg now evaluates to a new value
             narrow[0] = 20;
-            wide[0] = 20_000_000_000L;
             f.init(null, sqlExecutionContext);
             assertEquals(20, f.getInt(null));
-            assertEquals(20_000_000_000L, f.getLong(null));
+            assertEquals(20L, f.getLong(null));
         } finally {
             f.close();
         }
@@ -1100,10 +1064,10 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         // wrapper instance regardless of what the wrapper reports - a wrapper that mutated a field on the
         // first getLong() would race here. The wrapper is now read-only after init(), so sharing is safe.
         //
-        // 166_478 * 17_161 = 2_856_928_958 overflows INT: getInt() wraps to -1_438_038_338, getLong()
-        // widens to +2_856_928_958. l is LONG, so "l > product" promotes the product to LONG and must read
-        // the widened value. Reading the wrapped int instead would compare against a negative threshold,
-        // flipping every row's boolean from false to true and every group's mode from false to true.
+        // 786_870_912 * 8 = 6_294_967_296 overflows INT and wraps to 2_000_000_000. l is LONG, so
+        // "l > product" resolves the LONG comparison, which reads the INT product through getLong() -
+        // an exact sign extension of the wrap. Every worker must see that same threshold: reading a
+        // stale or re-derived value here would move the boundary and change each group's mode.
         final WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
@@ -1117,25 +1081,25 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                     );
 
                     // prove the async (parallel) GROUP BY path is taken for this table/config
-                    assertQuery("SELECT k, mode(l > 166_478 * 17_161::SHORT) m FROM t ORDER BY k")
+                    assertQuery("SELECT k, mode(l > 786_870_912 * 8::SHORT) m FROM t ORDER BY k")
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
                             .assertsPlanContaining("Async Group By");
 
-                    // l straddles the widened threshold, so the booleans genuinely vary inside every group
-                    // (429 of the 1000 rows are true) and each group's mode still resolves to false.
-                    assertQuery("SELECT k, mode(l > 166_478 * 17_161::SHORT) m FROM t ORDER BY k")
+                    // l straddles the wrapped threshold, so the booleans genuinely vary inside every
+                    // group (600 of the 1000 rows are true) and each group's mode resolves to true.
+                    assertQuery("SELECT k, mode(l > 786_870_912 * 8::SHORT) m FROM t ORDER BY k")
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
                             .expectSize()
                             .returns("""
                                     k\tm
-                                    0\tfalse
-                                    1\tfalse
-                                    2\tfalse
-                                    3\tfalse
+                                    0\ttrue
+                                    1\ttrue
+                                    2\ttrue
+                                    3\ttrue
                                     """);
 
                     sqlExecutionContext.getBindVariableService().clear();

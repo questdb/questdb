@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.LongWidthIntFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -52,7 +52,7 @@ public class BitwiseAndIntFunctionFactory implements FunctionFactory {
         return new BitAndIntFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    public static final class BitAndIntFunction extends LongWidthIntFunction implements ArithmeticBinaryFunction {
+    public static final class BitAndIntFunction extends IntFunction implements ArithmeticBinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -71,15 +71,6 @@ public class BitwiseAndIntFunctionFactory implements FunctionFactory {
         @Override
         public Function getLeft() {
             return left;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            // Sign extension commutes with '&', so a plain INT operand is unaffected.
-            // See Function#isIntWidthStable for why the operands recurse via getLong().
-            final long l = left.getLong(rec);
-            final long r = right.getLong(rec);
-            return l != Numbers.LONG_NULL && r != Numbers.LONG_NULL ? l & r : Numbers.LONG_NULL;
         }
 
         @Override

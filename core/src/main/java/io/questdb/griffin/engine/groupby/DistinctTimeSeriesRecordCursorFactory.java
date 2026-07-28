@@ -112,24 +112,6 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
     }
 
     @Override
-    public boolean isColumnIntWidthStable(int columnIndex) {
-        // The cursor hands the base record through (getRecord/getRecordB/recordAt all delegate to the
-        // base cursor); the dataMap only detects adjacent duplicates and never materialises the returned
-        // value. So, like the other live pass-throughs (filter, limit, latest-by), the base's answer
-        // holds. Unlike the map-backed DistinctRecordCursorFactory, whose cursor copies the value into a
-        // 4-byte slot, this factory must not keep the conservative default true - that would truncate an
-        // overflowing INT projection on store.
-        return base.isColumnIntWidthStable(columnIndex);
-    }
-
-    @Override
-    public boolean isColumnRowStable(int columnIndex) {
-        // Paired with isColumnIntWidthStable above: the same record is handed through, so the same
-        // base column answers both questions.
-        return base.isColumnRowStable(columnIndex);
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

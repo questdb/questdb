@@ -87,24 +87,6 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
     }
 
     @Override
-    public boolean isColumnIntWidthStable(int columnIndex) {
-        // MaterializedRecord splits per column: a sort key it materialised reads from its own
-        // buffer slot, every other column reads the live base record straight through. A key slot
-        // is strided by the column's own width, so a 4-byte INT key must keep the default true -
-        // delegating there would make getLong() take 8 bytes off it. A pass-through column carries
-        // whatever the base projection carries, so an overflowing INT expression must widen on
-        // store exactly as it does without the sort.
-        return materializedColumns.get(columnIndex) || base.isColumnIntWidthStable(columnIndex);
-    }
-
-    @Override
-    public boolean isColumnRowStable(int columnIndex) {
-        // Paired with isColumnIntWidthStable above, through the same split. A materialised key has
-        // been copied into its slot, and reading stored bytes twice gives the same value.
-        return materializedColumns.get(columnIndex) || base.isColumnRowStable(columnIndex);
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

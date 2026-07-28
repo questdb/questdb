@@ -74,7 +74,6 @@ import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
 import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
 import io.questdb.griffin.engine.functions.columns.IPv4Column;
 import io.questdb.griffin.engine.functions.columns.IntColumn;
-import io.questdb.griffin.engine.functions.columns.IntWideColumn;
 import io.questdb.griffin.engine.functions.columns.IntervalColumn;
 import io.questdb.griffin.engine.functions.columns.Long128Column;
 import io.questdb.griffin.engine.functions.columns.Long256Column;
@@ -187,13 +186,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.BYTE -> ByteColumn.newInstance(index);
             case ColumnType.SHORT -> ShortColumn.newInstance(index);
             case ColumnType.CHAR -> new CharColumn(index);
-            // A column reference over a function-backed column must keep the wide half of an INT
-            // expression, or an alias would re-wrap what the un-aliased spelling widens. Only a
-            // metadata that can see the producing functions answers false here, and that answer is
-            // exactly the guarantee that getLong() on the column is legal.
-            case ColumnType.INT -> metadata.isColumnIntWidthStable(index)
-                    ? IntColumn.newInstance(index)
-                    : IntWideColumn.newInstance(index, metadata.isColumnRowStable(index));
+            case ColumnType.INT -> IntColumn.newInstance(index);
             case ColumnType.LONG -> LongColumn.newInstance(index);
             case ColumnType.FLOAT -> FloatColumn.newInstance(index);
             case ColumnType.DOUBLE -> DoubleColumn.newInstance(index);
@@ -1426,34 +1419,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof IntConstant) {
                     return function;
                 } else {
-                    int intConst = function.getInt(null);
-                    long longConst = function.getLong(null);
-                    // A genuine null reads as the sentinel at BOTH widths: every INT function
-                    // maps INT_NULL onto LONG_NULL in getLong(), and the arithmetic overrides
-                    // propagate a LONG_NULL operand. Fold only that to the shared NULL constant.
-                    //
-                    // LONG_NULL alone does not prove nullness: getLong() computes at long width,
-                    // so a deep enough INT chain can land on -2^63 (1073741824 * 8 * 1073741824
-                    // is exactly 2^63) while getInt() wraps to a plain 0 - the same 0 the column
-                    // path produces. Folding that to NULL would print null where c1 * c2 * c3
-                    // over the same values prints 0.
-                    //
-                    // An INT arithmetic that lands on -2^31 is not null either: getInt() shows
-                    // the sentinel but getLong()/getTimestamp() must widen like the column/bind
-                    // path. That happens two ways, both left unfolded: overflow wrap
-                    // (2147483647 + 1: intConst != longConst) and genuine -2^31 (~2147483647,
-                    // -1073741824 * 2: intConst == longConst == INT_NULL). Folding either to
-                    // IntConstant.NULL would read LONG_NULL under a wider cast.
-                    if (intConst == Numbers.INT_NULL && longConst == Numbers.LONG_NULL) {
-                        return IntConstant.NULL;
-                    } else if (intConst == longConst && intConst != Numbers.INT_NULL) {
-                        // Clean in-range value: both getters agree and it is not the sentinel.
-                        return IntConstant.newInstance(intConst);
-                    } else {
-                        // Overflow wrap OR genuine -2^31: leave unfolded so getInt() wraps like
-                        // the runtime path while getLong()/getTimestamp() widen for wider casts.
-                        return function;
-                    }
+                    final int intConst = function.getInt(null);
+                    return intConst == Numbers.INT_NULL ? IntConstant.NULL : IntConstant.newInstance(intConst);
                 }
             case ColumnType.BOOLEAN:
                 if (function instanceof BooleanConstant) {
