@@ -154,9 +154,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
-                    sender.table("qwp_udp_named_ts")
-                            .designatedTimestampName("event_time")
-                            .longColumn("v", 42)
+                    sender.table("qwp_udp_named_ts").tableOptions()
+                            .designatedTimestamp("event_time");
+                    sender.longColumn("v", 42)
                             .at(1_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }

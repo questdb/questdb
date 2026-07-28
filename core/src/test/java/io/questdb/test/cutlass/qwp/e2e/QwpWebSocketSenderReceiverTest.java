@@ -355,13 +355,13 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     public void testAutoCreateWithDesignatedTimestampNames() throws Exception {
         runInContext((port) -> {
             try (Sender sender = createSender(port)) {
-                sender.table("ws_named_explicit_ts")
-                        .designatedTimestampName("event_time")
-                        .longColumn("v", 42)
+                sender.table("ws_named_explicit_ts").tableOptions()
+                        .designatedTimestamp("event_time");
+                sender.longColumn("v", 42)
                         .at(1_000_000L, ChronoUnit.MICROS);
-                sender.table("ws_named_server_ts")
-                        .designatedTimestampName("ingested_at")
-                        .longColumn("v", 84)
+                sender.table("ws_named_server_ts").tableOptions()
+                        .designatedTimestamp("ingested_at");
+                sender.longColumn("v", 84)
                         .atNow();
                 sender.flush();
             }
@@ -389,9 +389,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     + "TIMESTAMP(actual_ts) PARTITION BY DAY WAL");
 
             try (Sender sender = createSender(port)) {
-                sender.table("ws_existing_named_ts")
-                        .designatedTimestampName("bad/name")
-                        .longColumn("v", 7)
+                sender.table("ws_existing_named_ts").tableOptions()
+                        .designatedTimestamp("bad/name");
+                sender.longColumn("v", 7)
                         .at(2_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
@@ -425,9 +425,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             );
 
             try (Sender sender = createSender(port)) {
-                sender.table("ws_valid_after_named_ts_rejection")
-                        .designatedTimestampName("event_time")
-                        .longColumn("v", 1)
+                sender.table("ws_valid_after_named_ts_rejection").tableOptions()
+                        .designatedTimestamp("event_time");
+                sender.longColumn("v", 1)
                         .at(3_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
@@ -4482,9 +4482,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         }, 1);
         SenderError.Category expectedTerminalCategory = null;
         try {
-            sender.table(tableName)
-                    .designatedTimestampName(designatedTimestampName)
-                    .longColumn(columnName, 1)
+            sender.table(tableName).tableOptions()
+                    .designatedTimestamp(designatedTimestampName);
+            sender.longColumn(columnName, 1)
                     .at(1_000_000L, ChronoUnit.MICROS);
             try {
                 sender.flush();
