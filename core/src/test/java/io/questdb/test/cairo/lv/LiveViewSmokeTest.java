@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -1570,6 +1571,15 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // A persist failure mid-flush that neither dropped nor duplicated a row keeps
     // this equality; a double-emit or a lost row breaks it. ORDER BY sym, ts is a
     // total order (timestamps are unique per sym).
+    // The live view TABLE's own durable row count, read straight off a reader rather than
+    // through a query. A query over the view routes through the in-mem tier, whose seam can
+    // mask rows the table actually holds - which is exactly what a re-flushed lead produces.
+    private void assertLvTableRowCount(LiveViewInstance instance, long expected) {
+        try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
+            Assert.assertEquals("live view table row count", expected, reader.size());
+        }
+    }
+
     private void assertRunningSumLvMatchesRecompute() throws SqlException {
         TestUtils.assertSqlCursors(
                 engine,
@@ -5841,6 +5851,87 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 // equal to a recompute - no lost or duplicated rows.
                 assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
                 assertRunningSumLvMatchesRecompute();
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFlushPersistFailureDoesNotReflushDurableLead() throws Exception {
+        // flushLead commits the LV WAL block, inline-applies it (the rows are durable
+        // on disk from here on), and only then persists _lv.s. Both persist attempts
+        // can throw - advanceLiveViewConsumedSeqTxn and the persistState fallback write
+        // the same file - and the trailing setLeadRowCount(0) has to run anyway, or the
+        // tier keeps counting rows that ARE on disk as un-flushed lead. The next flush
+        // then materialises them a second time and the LV TABLE durably holds duplicate
+        // rows. This asserts the LV table's own row count, not a query result: the seam
+        // hid the duplicate from the record path (seamTs sat at the minimum timestamp,
+        // so the disk side served nothing) while count(*) and every page-frame read
+        // returned it.
+        final AtomicInteger failLvStateWrites = new AtomicInteger(0);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)
+                        && failLvStateWrites.get() > 0) {
+                    failLvStateWrites.decrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertLvTableRowCount(instance, 1);
+
+                // Fail both _lv.s writes of one flush. The row is committed and applied
+                // before either fires, so disk gains it and the retry budget ticks.
+                setCurrentMicros(2_000_000L);
+                failLvStateWrites.set(2);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 2)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("both _lv.s writes of the failing flush must have fired",
+                        0, failLvStateWrites.get());
+                Assert.assertTrue("persist failure must tick the flush-retry budget",
+                        instance.getFlushRetryCount() > 0);
+                assertLvTableRowCount(instance, 2);
+                Assert.assertEquals("the durable row must not still count as un-flushed lead",
+                        0, instance.getLeadRowCount());
+
+                // The next clean flush must append only the new row.
+                setCurrentMicros(4_000_000L);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:04.000000Z', 'a', 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertLvTableRowCount(instance, 3);
+                assertRunningSumLvMatchesRecompute();
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+                // The page-frame path cuts the seam by row count, so it sees a duplicated
+                // LV row even when the record path's seam hides it. Assert both agree.
+                assertQuery("SELECT ts, x FROM lv WHERE x >= 0")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\tx\n" +
+                                "2026-04-01T00:00:00.000000Z\t1\n" +
+                                "2026-04-01T00:00:02.000000Z\t2\n" +
+                                "2026-04-01T00:00:04.000000Z\t3\n");
             }
 
             execute("DROP LIVE VIEW lv");

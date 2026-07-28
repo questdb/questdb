@@ -2141,6 +2141,45 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testSeamCutIsByRowCountNotSeamTs() throws Exception {
+        // The seam serves the disk scan's leading (diskSize - leadStart) rows, cut by
+        // ROW COUNT - the identity size(), skipRows() and LiveViewPageFrameCursor all
+        // use. seamTs names the same boundary while the write side keeps them aligned
+        // (the retention cut is firstRowAtOrAbove, which never splits a run of equal
+        // timestamps), but nothing enforced that alignment on the read side, so the
+        // record path and the frame path could disagree. Stamping a seamTs that
+        // disagrees with the row count pins which of the two the read obeys: a
+        // timestamp cut would serve all 5 disk rows and then the slot on top, emitting
+        // the 2 overlap rows twice while size() still said 5.
+        assertMemoryLeak(() -> {
+            createSeamSplitLv();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            LiveViewInMemoryBuffer slot = tier.getSlot(tier.getPublishedIdx());
+            Assert.assertEquals("published slot retains only the recent cycle", 2, slot.rowCount());
+            Assert.assertEquals("both slot rows are flushed overlap, not lead", 0, slot.leadRowCount());
+
+            slot.setSeamTs(Long.MAX_VALUE);
+
+            InnerRead read = readInner("SELECT * FROM lv");
+            Assert.assertEquals(LiveViewRecordCursor.ROUTING_SEAM, read.routingMode);
+            Assert.assertEquals("the slot's 2 rows still come from RAM", 2, read.inMemRowsServed);
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertQuery("SELECT ts, x FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\n" +
+                            "2023-11-14T22:13:20.000001Z\t1\n" +
+                            "2023-11-14T22:13:20.000002Z\t2\n" +
+                            "2023-11-14T22:13:20.000003Z\t3\n" +
+                            "2023-11-14T22:13:25.000001Z\t4\n" +
+                            "2023-11-14T22:13:25.000002Z\t5\n");
+        });
+    }
+
+    @Test
     public void testModeBServesEntireSlotWhenWindowCoversAll() throws Exception {
         assertMemoryLeak(() -> {
             createIngestRefresh();

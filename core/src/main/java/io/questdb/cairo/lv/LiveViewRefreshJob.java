@@ -2713,19 +2713,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long lvAppliedSeqTxn = lvTracker.getWriterTxn();
         boolean lvConsumedPersisted = false;
         try {
-            engine.advanceLiveViewConsumedSeqTxn(token, advanceTo, blockFileWriter, path);
-            lvConsumedPersisted = true;
-        } catch (CairoException e) {
-            LOG.critical().$("could not advance live view consumed seqTxn after flush [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", advanceTo=").$(advanceTo)
-                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            try {
+                engine.advanceLiveViewConsumedSeqTxn(token, advanceTo, blockFileWriter, path);
+                lvConsumedPersisted = true;
+            } catch (CairoException e) {
+                LOG.critical().$("could not advance live view consumed seqTxn after flush [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", advanceTo=").$(advanceTo)
+                        .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            }
+            if (!lvConsumedPersisted) {
+                persistState(instance);
+            }
+        } finally {
+            // The lead is now on disk; reset the in-RAM lead count unconditionally. This
+            // sits in a finally because persistState writes the very _lv.s file whose
+            // failure routed us here, so it commonly throws too - and that throw used to
+            // skip the reset, leaving rows that are ALREADY durable still counted as
+            // un-flushed lead. The next flush then materialised them a second time and
+            // the LV table durably held duplicate rows, which the record path's seam hid
+            // (seamTs sat at or below them, so disk served nothing) while count(*) and
+            // every page-frame read exposed it.
+            // See LiveViewSmokeTest.testFlushPersistFailureDoesNotReflushDurableLead.
+            instance.setLeadRowCount(0);
         }
-        if (!lvConsumedPersisted) {
-            persistState(instance);
-        }
-        // The lead is now on disk; reset the in-RAM lead count unconditionally.
-        instance.setLeadRowCount(0);
         if (lvConsumedPersisted) {
             // The just-flushed lead's new symbols are now committed at the ids the
             // drain assigned, so the next window resolves them via the disk reader's
