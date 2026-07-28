@@ -102,6 +102,52 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDenseRankStreamingSinkCapNamesDenseRankOwner() throws Exception {
+        // DenseRankFunctionFactory reuses RankFunctionFactory.RankFunction, which owns the
+        // SingleRecordSink pair, so the budget message is produced by shared code that only sees
+        // the dense flag. It used to hard-code the RANK() owner, which told a DENSE_RANK() user to
+        // go look at a function their query never mentioned.
+        //
+        // Same shape as testRankStreamingSinkCapNamesRankOwner: a two-column (SYMBOL, TIMESTAMP)
+        // window ORDER BY serializes to 12 bytes and so outgrows the sink's 8-byte initial
+        // capacity, which is what takes the query into resize().
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 64);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 0);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (sym SYMBOL INDEX, l LONG, ts TIMESTAMP)
+                      TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO tab VALUES
+                      ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                      ('b', 2, '2024-01-01T00:00:01.000000Z'),
+                      ('a', 3, '2024-01-01T00:00:02.000000Z'),
+                      ('b', 4, '2024-01-01T00:00:03.000000Z')""");
+
+            try {
+                printSql("SELECT sym, ts, dense_rank() OVER (ORDER BY sym, ts) FROM tab" +
+                        " WHERE ts IN '2024-01-01' ORDER BY sym, ts");
+                Assert.fail("expected LimitOverflowException");
+            } catch (LimitOverflowException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "memory exceeded in DENSE_RANK() window function (raise cairo.sql.window.store.max.pages)");
+            }
+
+            // The sibling test pins the same path for rank(), so assert here that the two owners
+            // stay distinct rather than both drifting onto one name.
+            try {
+                printSql("SELECT sym, ts, rank() OVER (ORDER BY sym, ts) FROM tab" +
+                        " WHERE ts IN '2024-01-01' ORDER BY sym, ts");
+                Assert.fail("expected LimitOverflowException");
+            } catch (LimitOverflowException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "memory exceeded in RANK() window function (raise cairo.sql.window.store.max.pages)");
+            }
+        });
+    }
+
+    @Test
     public void testEncodedSortCapFires() throws Exception {
         // An encoded-eligible ORDER BY key (the designated timestamp) takes the encoded sort
         // buffer, not the tree. The buffer must still honor the window-specific memory caps, so a

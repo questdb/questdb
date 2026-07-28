@@ -44,6 +44,7 @@ import org.jetbrains.annotations.Nullable;
 
 public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenable {
     public static final String OWNER_ASOF_JOIN = "ASOF join";
+    public static final String OWNER_DENSE_RANK_WINDOW_FUNCTION = "DENSE_RANK() window function";
     public static final String OWNER_RANK_WINDOW_FUNCTION = "RANK() window function";
     private static final int INITIAL_CAPACITY_BYTES = 8;
     // Property to raise when the budget is exceeded. Null when the owner has no single knob.
@@ -54,7 +55,9 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     private final long maxHeapSize;
     private final int memoryTag;
     // Names the feature that owns this sink, so that an exceeded budget blames the query the
-    // user actually ran. The same sink backs ASOF joins and the RANK() window function.
+    // user actually ran. The same sink backs ASOF joins and both the RANK() and DENSE_RANK()
+    // window functions, and those two share one implementation class, so the name has to come
+    // from the owner rather than from the class holding the sink.
     @NotNull
     private final String ownerName;
     private long appendAddress;

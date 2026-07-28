@@ -122,6 +122,49 @@ public class SingleRecordSinkTest extends AbstractTest {
         });
     }
 
+    @Test
+    public void testPutAfterCloseWithoutReopen() throws Exception {
+        // close() zeroes heapLimit along with heapStart, so a closed sink is indistinguishable
+        // from a freshly constructed one. heapLimit is an absolute address, not a size: leaving it
+        // behind makes checkCapacity() compare appendAddress 0 against the freed heap's end
+        // address, find room the sink does not own, skip resize() and write through address 0.
+        // Production owners all reopen() before their next put - the ASOF factories inside of(),
+        // the RANK window function through Reopenable.reopen() - so this pins the class invariant
+        // rather than a live code path.
+        assertMemoryLeak(() -> {
+            try (
+                    SingleRecordSink sink = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test sink");
+                    // Never closed, so it stays in the pristine unallocated state the closed sink
+                    // has to match.
+                    SingleRecordSink reference = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test sink")
+            ) {
+                // Grow the heap so that close() has a non-zero limit to leave behind.
+                for (int i = 0; i < 64; i++) {
+                    sink.putInt(i);
+                }
+                sink.close();
+
+                // skip() is the one RecordSinkSPI method that consults heapLimit without writing
+                // through appendAddress, so it reports the stale limit as a clean throw rather
+                // than a fault: a request no budget can satisfy has to reach resize() and be
+                // rejected there, which it only does once heapLimit reads 0.
+                try {
+                    sink.skip(Integer.MAX_VALUE);
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 1024 memory exceeded in test sink");
+                }
+
+                // resize() threw before skip() advanced anything, so the sink is still pristine and
+                // has to allocate rather than write through address 0, landing the value exactly
+                // where a never-opened sink would. This half also pins the alloc/free balance.
+                sink.putInt(7);
+                reference.putInt(7);
+                Assert.assertTrue(sink.memeq(reference));
+            }
+        });
+    }
+
     @Test(expected = LimitOverflowException.class)
     public void testPutIntExceedsMaxSize() throws Exception {
         runWithSink(sink -> {

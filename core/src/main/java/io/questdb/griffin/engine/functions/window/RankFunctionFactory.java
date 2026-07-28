@@ -213,10 +213,16 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                     chainTypes.add(metadata.getColumnType(i));
                 }
                 recordSink = RecordSinkFactory.getInstance(configuration, sqlGenerator.getAsm(), chainTypes, listColumnFilter);
-                singleRecordSinkA = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_RANK_WINDOW_FUNCTION,
-                        PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath());
-                singleRecordSinkB = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_RANK_WINDOW_FUNCTION,
-                        PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath());
+                final long sinkBudget = (long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2;
+                // DENSE_RANK() reuses this class, so the budget message has to name whichever of
+                // the two the user actually ran. Reporting RANK() for a dense_rank() query defeats
+                // the point of carrying an owner name at all.
+                final String owner = dense
+                        ? SingleRecordSink.OWNER_DENSE_RANK_WINDOW_FUNCTION
+                        : SingleRecordSink.OWNER_RANK_WINDOW_FUNCTION;
+                final String configKey = PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath();
+                singleRecordSinkA = new SingleRecordSink(sinkBudget, MemoryTag.NATIVE_RECORD_CHAIN, owner, configKey);
+                singleRecordSinkB = new SingleRecordSink(sinkBudget, MemoryTag.NATIVE_RECORD_CHAIN, owner, configKey);
             } else {
                 if (orderIndices == null) {
                     orderIndices = sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);

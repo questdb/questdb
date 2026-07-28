@@ -437,7 +437,7 @@ public class OrderedMap implements Map, Reopenable {
     public void pokeRawSlot(int index, int rawOffset, int hashCodeLo) {
         assert index >= 0 && index < keyCapacity;
         // 0 is the empty marker: planting it would free a slot without crediting back free.
-        assert rawOffset != 0;
+        assert !isEmptySlot(rawOffset);
         long offsetAddr = offsetsAddr + ((long) index << 3);
         Unsafe.putInt(offsetAddr, rawOffset);
         Unsafe.putInt(offsetAddr + 4, hashCodeLo);
@@ -585,9 +585,20 @@ public class OrderedMap implements Map, Reopenable {
         return (int) ((offset >> 3) + 1);
     }
 
-    // Callers must have established that rawOffset != 0, i.e. that the slot is occupied.
+    // Callers must have established that the slot is occupied, i.e. that isEmptySlot() is false.
     private static long decompressOffset(int rawOffset) {
         return (Integer.toUnsignedLong(rawOffset) - 1) << 3;
+    }
+
+    /**
+     * Tests a hash table slot for emptiness. A compressed offset is an UNSIGNED 32-bit value, so
+     * this has to be {@code rawOffset == 0} and never {@code rawOffset <= 0}: because of the +1
+     * shift, every offset from 16GB - 8 upwards has its top bit set, and a signed test reads those
+     * live entries as empty slots. Every slot scan goes through here so the predicate cannot drift
+     * apart across the probe, rehash and merge loops - hand-copying it is what got it wrong.
+     */
+    private static boolean isEmptySlot(int rawOffset) {
+        return rawOffset == 0;
     }
 
     private static void validateBatchAddressable(long sizeBytes) {
@@ -629,7 +640,7 @@ public class OrderedMap implements Map, Reopenable {
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
             long srcP = srcMap.offsetsAddr + ((long) i << 3);
             int srcRawOffset = Unsafe.getInt(srcP);
-            if (srcRawOffset == 0) {
+            if (isEmptySlot(srcRawOffset)) {
                 continue;
             }
 
@@ -639,7 +650,7 @@ public class OrderedMap implements Map, Reopenable {
 
             int destRawOffset;
             long destP = offsetsAddr + ((long) index << 3);
-            while ((destRawOffset = Unsafe.getInt(destP)) != 0) {
+            while (!isEmptySlot(destRawOffset = Unsafe.getInt(destP))) {
                 long destOffset = decompressOffset(destRawOffset);
                 if (
                         hashCodeLo == Unsafe.getInt(destP + 4)
@@ -682,7 +693,7 @@ public class OrderedMap implements Map, Reopenable {
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
             long srcOffsetAddr = srcMap.offsetsAddr + ((long) i << 3);
             int srcRawOffset = Unsafe.getInt(srcOffsetAddr);
-            if (srcRawOffset == 0) {
+            if (isEmptySlot(srcRawOffset)) {
                 continue;
             }
 
@@ -693,7 +704,7 @@ public class OrderedMap implements Map, Reopenable {
 
             int destRawOffset;
             long destOffsetAddr = offsetsAddr + ((long) index << 3);
-            while ((destRawOffset = Unsafe.getInt(destOffsetAddr)) != 0) {
+            while (!isEmptySlot(destRawOffset = Unsafe.getInt(destOffsetAddr))) {
                 long destOffset = decompressOffset(destRawOffset);
                 if (
                         hashCodeLo == Unsafe.getInt(destOffsetAddr + 4)
@@ -737,7 +748,7 @@ public class OrderedMap implements Map, Reopenable {
         // Layout: [rawOffset (4 bytes) | hashCodeLo (4 bytes)]
         long slotValue = Unsafe.getLong(offsetAddr);
         int rawOffset = Numbers.decodeLowInt(slotValue);
-        while (rawOffset != 0) {
+        while (!isEmptySlot(rawOffset)) {
             int storedHash = Numbers.decodeHighInt(slotValue);
             if (hashCodeLo == storedHash) {
                 long offset = decompressOffset(rawOffset);
@@ -875,7 +886,7 @@ public class OrderedMap implements Map, Reopenable {
         // Read offset and hash as a single 64-bit value to reduce memory accesses.
         long slotValue = Unsafe.getLong(offsetAddr);
         int rawOffset = Numbers.decodeLowInt(slotValue);
-        while (rawOffset != 0) {
+        while (!isEmptySlot(rawOffset)) {
             int storedHash = Numbers.decodeHighInt(slotValue);
             if (hashCodeLo == storedHash) {
                 long offset = decompressOffset(rawOffset);
@@ -911,14 +922,14 @@ public class OrderedMap implements Map, Reopenable {
         for (int i = 0; i < keyCapacity; i++) {
             long offsetAddr = offsetsAddr + ((long) i << 3);
             int rawOffset = Unsafe.getInt(offsetAddr);
-            if (rawOffset == 0) {
+            if (isEmptySlot(rawOffset)) {
                 continue;
             }
             int hashCodeLo = Unsafe.getInt(offsetAddr + 4);
             int index = hashCodeLo & newMask;
 
             long newOffsetAddr = newOffsetsAddr + ((long) index << 3);
-            while (Unsafe.getInt(newOffsetAddr) != 0) {
+            while (!isEmptySlot(Unsafe.getInt(newOffsetAddr))) {
                 index = (index + 1) & newMask;
                 newOffsetAddr = newOffsetsAddr + ((long) index << 3);
             }

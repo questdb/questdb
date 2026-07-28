@@ -1746,6 +1746,76 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergeTopBitOffsetSourceSlotIsNotSkipped() throws Exception {
+        // The merge source scan decides a slot is empty on "raw offset == 0" alone. A signed test
+        // reads every entry from 16GB up - exactly the offsets whose top bit is set - as an empty
+        // slot and drops it, which is the parallel GROUP BY shard-merge silently losing a group
+        // with no exception raised.
+        //
+        // A planted source offset cannot address a real entry without a 16GB heap, and the merge
+        // dereferences it as soon as it decides to process the slot. So the observable is the step
+        // immediately before that dereference: against a destination heap that is exactly full,
+        // copying the entry has to ask resize() for room, and resize() rejects it at the ceiling
+        // before reading a single source byte. Skipping the slot never reaches resize() at all.
+        //
+        // Only the fixed-size-key merge can be driven this way - mergeVarSizeKey() reads the key
+        // length off the source address before it probes - but both scans share isEmptySlot(), so
+        // this pins the predicate they both depend on.
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            // LONG key plus LONG value is a 16-byte entry, so a 32-byte ceiling holds exactly the
+            // two entries seeded below and has no room for a third.
+            final long maxHeapSize = 32;
+            try (
+                    OrderedMap dest = new OrderedMap(32, keyTypes, valueTypes, 16, 0.5, Integer.MAX_VALUE, true, maxHeapSize);
+                    OrderedMap src = new OrderedMap(1024, keyTypes, valueTypes, 16, 0.5, Integer.MAX_VALUE)
+            ) {
+                for (int i = 0; i < 2; i++) {
+                    MapKey destKey = dest.withKey();
+                    destKey.putLong(i);
+                    destKey.createValue().putLong(0, i);
+
+                    // The same keys in the source, so every live source entry merges into an
+                    // existing destination entry and never asks the destination heap for room.
+                    MapKey srcKey = src.withKey();
+                    srcKey.putLong(i);
+                    srcKey.createValue().putLong(0, i);
+                }
+                // A destination heap with room to spare would dereference the planted offset
+                // instead of throwing, so assert the precondition rather than assume it.
+                Assert.assertEquals(maxHeapSize, dest.getUsedHeapSize());
+                Assert.assertEquals(maxHeapSize, dest.getHeapSize());
+
+                // Control: the very same merge without a planted slot must complete. It makes the
+                // throw below differential - a live key that stopped matching its destination entry
+                // would ask the full heap for room and fail here, rather than leave the test green
+                // for a reason that has nothing to do with the planted slot.
+                dest.merge(src, new TestMapValueMergeFunction());
+                Assert.assertEquals(2, dest.size());
+                Assert.assertEquals(maxHeapSize, dest.getUsedHeapSize());
+
+                // The lowest offset that compresses with its top bit set already needs a 16GB
+                // heap, so the slot has to be planted rather than grown into.
+                final int plantedOffset = 0x8000_0001;
+                final int plantedHash = 0x5EED_BEEF;
+                // Keeping the planted hash off every live key's keeps the destination probe on the
+                // hash-mismatch branch, which never dereferences the offset it is walking past.
+                assertHashUnused(dest, plantedHash);
+                src.pokeRawSlot(firstEmptySlot(src), plantedOffset, plantedHash);
+
+                try {
+                    dest.merge(src, new TestMapValueMergeFunction());
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 32 memory exceeded in FastMap");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMergeVarSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
@@ -2608,6 +2678,19 @@ public class OrderedMapTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertHashUnused(OrderedMap map, int hashCodeLo) {
+        for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
+            long slot = map.rawSlotAt(i);
+            if (Numbers.decodeLowInt(slot) != 0) {
+                Assert.assertNotEquals(
+                        "planted hash must not collide with a live key",
+                        hashCodeLo,
+                        Numbers.decodeHighInt(slot)
+                );
+            }
+        }
+    }
+
     /**
      * Plants an occupied slot with the top bit set in the destination table, right where the source
      * key probes to, then merges. The merge probe has to walk over the planted slot; reading it as
@@ -2673,6 +2756,16 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static int firstEmptySlot(OrderedMap map) {
+        for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
+            if (Numbers.decodeLowInt(map.rawSlotAt(i)) == 0) {
+                return i;
+            }
+        }
+        Assert.fail("expected a free slot to plant into");
+        return -1;
     }
 
     private static int occupiedSlotCount(OrderedMap map) {
