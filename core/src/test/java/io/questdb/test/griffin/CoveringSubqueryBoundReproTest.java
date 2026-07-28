@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -698,6 +699,47 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
                     "select ts, value from sensor where ts = '2021-11-23T17:59:17.060338000Z'",
                     prefixAndOrOneEmpty
             );
+        });
+    }
+
+    // Negated sibling of testPrefixAndWithAllEmptyOrDisjunctsReturnsNoRows. `ts != $1` is extracted
+    // as a SUBTRACT interval intrinsic with its residual REMOVED from the filter
+    // (WhereClauseParser sets intrinsicValue = TRUE), so the interval model is solely responsible
+    // for the answer - nothing downstream can reject a wrong row. With every OR disjunct empty the
+    // accumulator is an established empty set sitting at divider == 0; a negated NULL bound that
+    // keyed on divider alone re-seeded the full [MIN, MAX] domain and returned the ENTIRE table for
+    // a predicate that cannot match anything.
+    @Test
+    public void testPrefixNotEqualsNullWithAllEmptyOrDisjunctsReturnsNoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createSchema();
+            seedData();
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+
+            final String allEmpty = "select ts, value from sensor where ts != $1 " +
+                    "and (ts = (select lo from bounds where sel = 999) or ts = (select hi from bounds where sel = 999))";
+            // the OR group must still be consumed as a runtime interval union (no filter fallback),
+            // otherwise a residual scan would mask the model's answer and the test would pass for
+            // the wrong reason
+            assertPlanContains(allEmpty, "Interval forward scan on: sensor");
+            assertSqlCursors("select ts, value from sensor limit 0", allEmpty);
+
+            // control: one live disjunct survives the same negated-NULL path (ts != NULL removes
+            // nothing in QuestDB's NULL semantics, so the live point must be kept)
+            final String oneLive = "select ts, value from sensor where ts != $1 " +
+                    "and (ts = (select lo from bounds where sel = 999) or ts = (select hi from bounds where sel = 100))";
+            assertSqlCursors(
+                    "select ts, value from sensor where ts = '2021-11-23T17:59:17.060338000Z'",
+                    oneLive
+            );
+
+            // control: all-empty OR with a NON-NULL negated bound already returned no rows.
+            // the bind variable is a micro TIMESTAMP widened to the ns column by the driver, so
+            // the value is 2021-11-23T12:51:23.700716Z expressed in MICROseconds
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_637_672_483_700_716L);
+            assertSqlCursors("select ts, value from sensor limit 0", allEmpty);
         });
     }
 
