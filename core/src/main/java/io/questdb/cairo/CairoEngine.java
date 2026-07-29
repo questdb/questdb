@@ -857,6 +857,13 @@ public class CairoEngine implements Closeable, WriterSource {
                         // register an instance - WalPurgeJob clamps the base WAL floor to every
                         // registered view's lvConsumedSeqTxn, so an unattended one would pin the base
                         // WAL forever. The view stays on disk and returns when the flag is back on.
+                        //
+                        // The flag is necessary but not sufficient for a refresh job: setupDedicatedPools
+                        // also requires !isReadOnlyInstance() and a positive mat-view refresh worker
+                        // count. Registering anyway in those configurations is deliberate - the view
+                        // stays queryable (serving its last materialised state) exactly as an unattended
+                        // mat view does, rather than vanishing from the catalogue on restart. See the
+                        // matching note in WalPurgeJob.getSafeToPurgeUpToTxn for the retention side.
                         continue;
                     }
                     try {

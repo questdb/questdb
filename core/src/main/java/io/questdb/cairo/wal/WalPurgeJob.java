@@ -553,6 +553,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // values would pin the base WAL forever while the base keeps ingesting. The mat-view arm
         // gets this free (NoOp state store -> null state -> floor released); the LV arm reads the
         // registry directly, so it needs the gate.
+        //
+        // The flag is a necessary condition for a refresh job, not a sufficient one: ServerMain also
+        // requires !isReadOnlyInstance() and a positive mat-view refresh worker count (they share one
+        // pool). Read-only is covered because ServerMain creates no WalPurgeJob at all in that case,
+        // so this method never runs there. A zero worker count is NOT covered - the views register,
+        // nothing refreshes them, and this clamp holds the base WAL at their genesis watermarks.
+        // Deliberately left as-is: the mat-view arm above pins identically in that configuration
+        // (lastRefreshBaseTxn also freezes), so the gap belongs to the shared refresh pool, and
+        // releasing the floor here would purge WAL a view still needs the moment the pool is
+        // reconfigured. Fix it by giving live views a pool that is really governed by their own flag.
+        //
+        // Keep the predicate identical to CairoEngine.buildViewGraphs' registration guard: this
+        // clamps exactly what that method registers.
         if (!engine.getConfiguration().isLiveViewEnabled()) {
             return safeToPurgeTxn;
         }
