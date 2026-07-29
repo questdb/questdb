@@ -120,6 +120,12 @@ public interface GroupByFunction extends Function, Mutable {
      * {@link #setEmpty(MapValue)} (see {@link io.questdb.cairo.map.Map#setBatchEmptyValue}),
      * so overrides may safely skip the {@code isNew} branch when
      * {@code computeNext} on the empty state yields the right result.
+     * <p>
+     * The batch arrives in ascending rowId order. A last-wins function should therefore walk it
+     * backwards: scanning forwards rewrites a key's entry once per later qualifying row - O(N)
+     * writes against O(K) for K keys - and reaches the same answer, since only a key's highest-rowId
+     * qualifying row can win. The {@code isNew} row is a key's first, so a backwards walk visits it
+     * last, where it loses to the entry already written.
      *
      * @param record        page frame record, positioned via setRowIndex
      * @param mapValue      pre-allocated packed flyweight, reused per row

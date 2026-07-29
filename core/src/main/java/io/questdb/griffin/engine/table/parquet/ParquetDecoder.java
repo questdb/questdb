@@ -187,4 +187,25 @@ public interface ParquetDecoder {
      * Used together with {@link #getFileAddr()} for file identity checks.
      */
     long getFileSize();
+
+    /**
+     * Releases a native resource previously handed out by {@link #takeDecodeResource()}.
+     * No-op for {@code 0} and for decoders that hold no per-decode resource.
+     *
+     * @param resource an opaque handle from {@link #takeDecodeResource()}
+     */
+    default void releaseDecodeResource(long resource) {
+    }
+
+    /**
+     * Returns and clears any native resource the most recent {@code decodeRowGroup*}
+     * call acquired and that must outlive the decoded buffers. Decoders whose decoded
+     * buffers reference bytes the decoder itself keeps mapped (the mmap-backed paths)
+     * own no transferable resource and return {@code 0}.
+     *
+     * @return an opaque resource handle, or {@code 0} when there is nothing to hold
+     */
+    default long takeDecodeResource() {
+        return 0;
+    }
 }

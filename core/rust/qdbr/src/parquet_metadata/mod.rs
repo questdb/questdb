@@ -25,11 +25,12 @@
 //! `_pm` parquet partition metadata.
 //!
 //! Format primitives (readers, writers, footer/header/row-group/column-chunk
-//! types) live in the shared `qdb-parquet-meta` crate so that both `qdbr`
-//! (OSS) and `qdb-ent` (enterprise) can parse `_pm` independently. This
-//! module retains qdbr-only pieces: write-path conversion helpers
-//! (`convert`), JNI thunks (`jni`), and row-group filter pushdown that
-//! delegates to `crate::parquet_read::ParquetDecoder` (`skip`).
+//! types) live in the shared `qdb-parquet-meta` crate so any crate that
+//! needs to parse `_pm` can link the format types without depending on the
+//! qdbr write/read pipeline. This module retains qdbr-only pieces:
+//! write-path conversion helpers (`convert`), JNI thunks (`jni`), and
+//! row-group filter pushdown that delegates to
+//! `crate::parquet_read::ParquetDecoder` (`skip`).
 //!
 //! The format specification lives in `docs/parquet-metadata.md`.
 
