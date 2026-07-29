@@ -583,8 +583,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // T"; the threshold node is the side that is NOT the timestamp column. A "T < <ts>" / "<ts> > T"
             // ("expire recent, keep old") shape is deliberately NOT accepted here: its DROP direction is the
             // opposite of the partition-bounds fast path.
-            final boolean tsOnLeft = node.lhs.type == ExpressionNode.LITERAL && Chars.equals(node.lhs.token, timestampColumn);
-            final boolean tsOnRight = node.rhs.type == ExpressionNode.LITERAL && Chars.equals(node.rhs.token, timestampColumn);
+            // Resolve the operand by column index (unquote, strip qualifier, case-insensitive), the same way
+            // the monotonicity classifier does in expiryTimestampThresholdNode. A case- or quote-mismatched
+            // spelling of the timestamp column must take the same bounds fast path; otherwise the classifier
+            // proves the policy monotonic while this method returns LONG_NULL, and the cleanup job falls to
+            // the survivor scan with the SKIP generation cache on.
+            final boolean tsOnLeft = node.lhs.type == ExpressionNode.LITERAL
+                    && resolvePredicateColumnIndex(metadata, node.lhs.token) == tsIndex;
+            final boolean tsOnRight = node.rhs.type == ExpressionNode.LITERAL
+                    && resolvePredicateColumnIndex(metadata, node.rhs.token) == tsIndex;
             final ExpressionNode thresholdNode;
             if (tsOnLeft && (Chars.equals(node.token, "<") || Chars.equals(node.token, "<="))) {
                 thresholdNode = node.rhs;

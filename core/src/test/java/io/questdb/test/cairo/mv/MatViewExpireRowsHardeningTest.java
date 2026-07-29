@@ -59,8 +59,10 @@ import org.junit.Test;
  */
 public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
+    private static final long FEB_10 = 1_707_523_200_000_000L; // 2024-02-10T00:00:00Z
     private static final long JAN_10 = 1_704_844_800_000_000L; // 2024-01-10T00:00:00Z
     private static final long JAN_25 = 1_706_140_800_000_000L; // 2024-01-25T00:00:00Z
+    private static final long MAR_01 = 1_709_251_200_000_000L; // 2024-03-01T00:00:00Z
 
     @Before
     public void setUp() {
@@ -871,6 +873,96 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')")
                     .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
             assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nMID\nNEW\n");
+        });
+    }
+
+    @Test
+    public void testCaseMismatchedClockThresholdReclaimsViaFastPath() throws Exception {
+        // A micros designated timestamp whose EXPIRE predicate spells the column in a different case (TS vs
+        // ts). The monotonicity classifier resolves the column case-insensitively and proves the policy
+        // monotonic, so cleanup runs; the bounds fast path must resolve the operand the same way. If it does
+        // not, the sweep falls to the survivor scan with the SKIP generation cache ON, and that content-keyed
+        // cache remembers a still-live partition as SKIP and never reclaims it as now() advances past the
+        // threshold. One job instance sweeps twice (the cache lives on the job) with the clock advanced
+        // between, so a stalled second sweep is observable.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(FEB_10);
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('OLD', 1.0, '2024-01-15T00:00:00.000000Z'),
+                    ('NEW', 2.0, '2024-06-01T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            // The column is `ts`; the policy spells it `TS`.
+            execute("create materialized view mv as (select * from base) expire rows when TS < dateadd('d', -30, now())");
+            drainWalAndMatViewQueues();
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate = expiryPredicate("mv");
+            Assert.assertEquals("TS < dateadd('d', -30, now())", predicate);
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                // Sweep 1 at 2024-02-10: 30-day threshold is 2024-01-11, so OLD (2024-01-15) is still fully
+                // live -> classified SKIP by the bounds fast path.
+                Assert.assertFalse("nothing expired at the first sweep", job.cleanupTable(token, predicate));
+                drainWalAndMatViewQueues();
+                assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+
+                // Advance ~3 weeks: threshold 2024-01-31 now exceeds OLD's day, so the SECOND sweep of the
+                // SAME job must reclaim OLD. A content-keyed SKIP cache would stall here.
+                setCurrentMicros(MAR_01);
+                Assert.assertTrue("OLD must reclaim once now() advances past the threshold",
+                        job.cleanupTable(token, predicate));
+                // The case-mismatched operand still takes the no-scan bounds fast path: a wholly-expired
+                // partition is classified from its [floor, nextFloor) bounds, so no survivor scan runs.
+                Assert.assertEquals("case-mismatched operand must take the no-scan bounds fast path",
+                        0, job.getScalarPartitionScanCount());
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n1\n");
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\n");
+        });
+    }
+
+    @Test
+    public void testNanosClockThresholdReclaimsAsClockAdvances() throws Exception {
+        // A TIMESTAMP_NS designated column. expiryTimestampThresholdMicros returns LONG_NULL for any non-micros
+        // timestamp, so a clock policy on an NS view always runs through the survivor scan with the SKIP
+        // generation cache eligible. The cache is keyed only by partition content, so a still-live partition
+        // cached as SKIP at one sweep must not suppress its reclamation once now() advances past the threshold.
+        // One job instance sweeps twice (the cache lives on the job) with the clock advanced between.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(FEB_10);
+            execute("create table base (sym symbol, v double, ts timestamp_ns) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('OLD', 1.0, '2024-01-15T00:00:00.000000Z'),
+                    ('NEW', 2.0, '2024-06-01T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when ts < dateadd('d', -30, now())");
+            drainWalAndMatViewQueues();
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate = expiryPredicate("mv");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+            // The NS-vs-micros clock comparison hides OLD only once now() advances: at 2024-02-10 both rows are
+            // within the 30-day window and visible.
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\nOLD\n");
+
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                // Sweep 1 at 2024-02-10: threshold 2024-01-11, so OLD (2024-01-15) is still fully live -> SKIP.
+                Assert.assertFalse("nothing expired at the first sweep", job.cleanupTable(token, predicate));
+                drainWalAndMatViewQueues();
+                assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+
+                // Advance ~3 weeks: threshold 2024-01-31 now exceeds OLD's day, so the SECOND sweep of the SAME
+                // job must reclaim OLD. A content-keyed SKIP cache would stall here.
+                setCurrentMicros(MAR_01);
+                Assert.assertTrue("OLD must reclaim once now() advances past the threshold",
+                        job.cleanupTable(token, predicate));
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n1\n");
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\n");
         });
     }
 

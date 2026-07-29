@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
@@ -242,6 +243,12 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // A non-monotonic policy (e.g. "ts > now()") would have cleanup delete a row a later read must show;
         // for such a policy we skip reclamation entirely and let the read filter enforce retention.
         boolean isCleanupMonotonic = false;
+        // Whether the predicate is clock-free (deterministic). The SKIP generation cache is keyed only by
+        // partition content, so it may memoize a SKIP verdict only when that verdict cannot change as time
+        // passes -- i.e. for a deterministic predicate. A monotonic clock threshold (e.g.
+        // "ts < dateadd('d', -30, now())") is excluded even though reclamation under it is safe: its per-row
+        // verdict advances with now(), so a still-live partition cached now must be re-scanned as it ages.
+        boolean isPredicateDeterministic = false;
         // The applied sequencer txn this sweep's reader reflects; the destructive-commit gate is baselined on
         // it (not a fresh txnTracker.getSeqTxn() after the reader closes) so the predicate and the gate share
         // one snapshot -- see the authoritative-predicate re-read inside the reader block.
@@ -317,16 +324,24 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 }
             }
 
-            // Resolve the cleanup-safety (monotonicity) gate and the fast-path timestamp threshold once per
-            // table (now() was already frozen above). The gate authoritatively decides whether physical
-            // reclamation is safe; only a scalar "<ts> < T" WHEN predicate additionally has a bounds threshold.
+            // Resolve the cleanup-safety (monotonicity) gate, whether the predicate is clock-free, and the
+            // fast-path timestamp threshold once per table (now() was already frozen above). The gate
+            // authoritatively decides whether physical reclamation is safe; the clock-free flag decides
+            // whether the SKIP generation cache is sound; only a scalar "<ts> < T" WHEN predicate additionally
+            // has a bounds threshold.
             if (partitionFloors.size() > 0) {
-                final String source = RowExpiryUtil.quoteIdentifier(tableName);
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    isCleanupMonotonic = compiler.isExpiryCleanupMonotonic(
-                            sqlExecutionContext, metadata, source, predicate, timestampColumnName);
+                    // One classification pass yields both the monotonicity gate and the clock-free flag.
+                    final ExpiryValidationResult classification =
+                            compiler.validateExpiryPredicateOnMetadata(sqlExecutionContext, metadata, predicate, 0);
+                    isCleanupMonotonic = classification.isMonotonic();
+                    isPredicateDeterministic = classification.isDeterministic();
                     timestampThreshold = compiler.expiryTimestampThresholdMicros(
                             sqlExecutionContext, metadata, predicate, timestampColumnName);
+                } catch (SqlException e) {
+                    // A predicate that fails to classify is treated as non-monotonic: skip reclamation and let
+                    // the read filter stay authoritative (mirrors isExpiryCleanupMonotonic's swallow-and-skip).
+                    return false;
                 }
             }
         }
@@ -341,7 +356,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         }
 
         boolean isWorkDone = false;
-        final boolean isScalarGenerationCacheEnabled = timestampThreshold == Numbers.LONG_NULL;
+        // Enable the SKIP generation cache only when the bounds fast path is unavailable AND the predicate is
+        // clock-free. The cache key is partition content alone, so for a clock-based threshold the same data
+        // yields a different expiry verdict as now() advances; caching a SKIP there would suppress the later
+        // re-scan that must reclaim the partition once it ages past the threshold.
+        final boolean isScalarGenerationCacheEnabled = timestampThreshold == Numbers.LONG_NULL && isPredicateDeterministic;
         if (scalarPartitionGenerations.size() > 16_384) {
             scalarPartitionGenerations.clear();
         }
