@@ -153,13 +153,23 @@ public class ColumnPurgeOperator implements Closeable {
         return false;
     }
 
+    /**
+     * True when the table's durable epoch cut still sits inside the superseded range, so recovery would
+     * restore a {@code _txn}/{@code _cv} that names these column files. Separate from the reader check
+     * because it holds even when no reader does -- notably at startup, where there are no readers by
+     * construction but the on-disk anchor is exactly what the next recovery will restore to.
+     */
+    private boolean checkEpochHoldsVersion(long columnVersion, ColumnPurgeTask task) {
+        return task.getTableToken().isWal()
+                && !engine.getTableSequencerAPI().getTxnTracker(task.getTableToken())
+                .isRangeAvailableToEpoch(columnVersion + 1, task.getUpdateTxn());
+    }
+
     private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {
         long updateTxn = task.getUpdateTxn();
         try {
             return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn)
-                    || task.getTableToken().isWal()
-                    && !engine.getTableSequencerAPI().getTxnTracker(task.getTableToken())
-                    .isRangeAvailableToEpoch(columnVersion + 1, updateTxn);
+                    || checkEpochHoldsVersion(columnVersion, task);
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
@@ -393,7 +403,15 @@ public class ColumnPurgeOperator implements Closeable {
                     if (columnVersion < minUnlockedTxnRangeStarts) {
                         // When a backup checkpoint is in progress, defer column purge — the
                         // checkpoint may reference these column versions via snapshotted metadata.
+                        //
+                        // The epoch is consulted in EVERY mode, including STARTUP_ONLY. That mode skips the
+                        // reader check because at startup there are no readers to hold anything -- but the
+                        // durable epoch is not a reader, it is the cut the next recovery restores to. Purging
+                        // a version the anchor still names leaves recovery restoring a _txn/_cv whose column
+                        // files are gone, which surfaces later as "SymbolMap does not exist" when the writer
+                        // reopens, and suspends the table.
                         if (engine.getCheckpointStatus().isInProgress()
+                                || checkEpochHoldsVersion(columnVersion, task)
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task))) {
                             // Reader lock still exists
                             allDone = false;
