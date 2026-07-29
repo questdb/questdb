@@ -952,7 +952,7 @@ public class RecordSinkFactory {
                 switch (targetTag) {
                     case ColumnType.FLOAT:
                         asm.invokeStatic(numbersLongToFloat);
-                        asm.invokeInterface(wPutFloat, 2);
+                        asm.invokeInterface(wPutFloat, 1);
                         break;
                     case ColumnType.DOUBLE:
                         asm.invokeStatic(numbersLongToDouble);
