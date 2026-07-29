@@ -219,10 +219,14 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
     }
 
     public boolean tryAcquirePublication() {
+        final boolean isCurrentFiberOwned = runtime.isCurrentFiberOwned();
         while (true) {
             final long current = publicationAdmission.get();
             if ((current & PUBLICATION_OPEN) == 0) {
                 return false;
+            }
+            if (isCurrentFiberOwned) {
+                throw new IllegalStateException("page frame owner cannot publish work to its current fiber runtime");
             }
             if ((current & PUBLICATION_PERMIT_MASK) == PUBLICATION_PERMIT_MASK) {
                 throw new IllegalStateException("page frame publication admission overflow");

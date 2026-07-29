@@ -288,6 +288,14 @@ public final class FiberRuntime {
         Fiber.initializeCarrier();
     }
 
+    public boolean isCurrentFiberOwned() {
+        if (!Fiber.isMounted()) {
+            return false;
+        }
+        final Fiber fiber = Fiber.current();
+        return fiber != null && !fiber.isForeignTo(this);
+    }
+
     public LaunchResult launch(FiberTask task) {
         return launch(task, task.getIncarnation());
     }
