@@ -1822,9 +1822,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .I$();
-            // The last partition is parquet, so bitmap index files do not exist for
-            // indexed symbol columns.  Skip indexing here - rebuildPartitionIndexFiles()
-            // will create the indexes after the conversion to native.
+            // The last partition is parquet, so native index files do not exist in the
+            // writer's own partition dir for indexed symbol columns. Skip indexing here -
+            // restoreIndexFilesAfterParquetToNative() links (or, failing that, rebuilds)
+            // them into the new native dir after the conversion.
             avoidIndexOnCommit = true;
             commit();
         }
@@ -5524,6 +5525,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp) {
+        configureCoveringIfNeeded(indexer.getWriter(), columnIndex, partitionTimestamp);
+    }
+
+    private void configureCoveringIfNeeded(IndexWriter indexer, int columnIndex, long partitionTimestamp) {
         TableColumnMetadata colMeta = metadata.getColumnMetadata(columnIndex);
         IntList coveringCols = colMeta.getCoveringColumnIndices();
         if (coveringCols == null || coveringCols.size() == 0) {
@@ -5619,30 +5624,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // entries must live in the rebuilt index directly.
                     // Applies to both BITMAP (BitmapIndexFwdReader) and POSTING
                     // (PostingIndexFwdReader synthesizes only while colTop > 0).
-                    final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
-                    final long dataSize = (partitionRowCount - colTop) * Integer.BYTES;
-                    final long dataAddr = TableUtils.mapRO(ff, dFile(path.trimTo(srcDirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
-                    IndexWriter iw = IndexFactory.createWriter(indexType, configuration);
-                    try {
-                        iw.of(other.trimTo(dstDirLen), columnName, columnNameTxn, indexValueBlockCapacity);
-                        // copyOrRebuildColumnIndexes runs during native->parquet
-                        // conversion before txWriter.commit; tag the chain
-                        // entry with the upcoming committed txn.
-                        iw.setNextTxnAtSeal(txWriter.getTxn() + 1);
-                        final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
-                        for (long row = 0; row < colTop; row++) {
-                            iw.add(nullKey, row);
-                        }
-                        for (long row = colTop; row < partitionRowCount; row++) {
-                            final int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - colTop) * Integer.BYTES));
-                            iw.add(key, row);
-                        }
-                        iw.setMaxValue(partitionRowCount - 1);
-                        iw.seal();
-                    } finally {
-                        Misc.free(iw);
-                        ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
-                    }
+                    rebuildColumnIndex(
+                            columnIndex,
+                            columnName,
+                            columnNameTxn,
+                            indexType,
+                            colTop,
+                            colTop,
+                            partitionRowCount,
+                            partitionTimestamp,
+                            path,
+                            srcDirLen,
+                            other,
+                            dstDirLen
+                    );
                 } else {
                     // colTop == 0: no NULL prefix to materialise, just hard-link the
                     // existing index trio (key + value + posting aux).
@@ -12344,56 +12339,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * Rebuild index files for indexed symbol columns from the data
-     * files in {@code other}.  Both the data files (.d) and the newly
-     * created index files reside in the same directory whose
-     * length on {@code other} is {@code dirLen}.
-     */
-    private void rebuildPartitionIndexFiles(long partitionTimestamp, int dirLen, long partitionRowCount) {
+    private void rebuildColumnIndex(
+            int columnIndex,
+            CharSequence columnName,
+            long columnNameTxn,
+            byte indexType,
+            long columnTop,
+            long nullPrefixRows,
+            long partitionRowCount,
+            long partitionTimestamp,
+            Path dataDir,
+            int dataDirLen,
+            Path indexDir,
+            int indexDirLen
+    ) {
+        final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
+        final long dataSize = (partitionRowCount - columnTop) * Integer.BYTES;
+        final long dataAddr = TableUtils.mapRO(ff, dFile(dataDir.trimTo(dataDirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+        // createWriter inside the try: both copies this replaces created the writer
+        // outside it, so a throw there stranded the mapping. Misc.free ignores null.
+        IndexWriter iw = null;
         try {
-            final int columnCount = metadata.getColumnCount();
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
-                    final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                    if (columnTop == -1 || columnTop >= partitionRowCount) {
-                        continue;
-                    }
-
-                    final String columnName = metadata.getColumnName(columnIndex);
-                    final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
-                    final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
-                    final byte indexType = metadata.getColumnIndexType(columnIndex);
-
-                    // Map data file for reading
-                    final long dataSize = (partitionRowCount - columnTop) * Integer.BYTES;
-                    final long dataAddr = TableUtils.mapRO(ff, dFile(other.trimTo(dirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
-                    IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
-                    try {
-                        indexWriter.of(other.trimTo(dirLen), columnName, columnNameTxn, indexValueBlockCapacity);
-                        // rebuildPartitionIndexFiles runs during parquet->native
-                        // conversion before txWriter.commit; tag the chain
-                        // entry with the upcoming committed txn.
-                        indexWriter.setNextTxnAtSeal(txWriter.getTxn() + 1);
-                        for (long row = columnTop; row < partitionRowCount; row++) {
-                            int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - columnTop) * Integer.BYTES));
-                            indexWriter.add(key, row);
-                        }
-                        indexWriter.setMaxValue(partitionRowCount - 1);
-                        indexWriter.seal();
-                    } finally {
-                        ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
-                        Misc.free(indexWriter);
-                    }
-                }
+            iw = IndexFactory.createWriter(indexType, configuration);
+            iw.of(indexDir.trimTo(indexDirLen), columnName, columnNameTxn, indexValueBlockCapacity);
+            // Both callers run during a partition format conversion before
+            // txWriter.commit; tag the chain entry with the upcoming committed txn.
+            iw.setNextTxnAtSeal(txWriter.getTxn() + 1);
+            // A non-covering rebuild would leave the partition without its
+            // .pci/.pc* sidecars, and every covered value would read back as NULL.
+            configureCoveringIfNeeded(iw, columnIndex, partitionTimestamp);
+            iw.setCoveredPartitionPath(dataDir.trimTo(dataDirLen));
+            final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
+            for (long row = 0; row < nullPrefixRows; row++) {
+                iw.add(nullKey, row);
             }
-        } catch (CairoException e) {
-            LOG.error().$("could not rebuild index files [table=").$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .$(", error=").$safe(e.getMessage()).I$();
-            throw e;
+            for (long row = columnTop; row < partitionRowCount; row++) {
+                final int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - columnTop) * Integer.BYTES));
+                iw.add(key, row);
+            }
+            iw.setMaxValue(partitionRowCount - 1);
+            iw.seal();
         } finally {
-            other.trimTo(pathSize);
+            // munmap first: Misc.free(iw) can throw out of close().
+            ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+            Misc.free(iw);
         }
     }
 
@@ -13158,23 +13147,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3PartitionUpdateSink.setBlockSize(PARTITION_SINK_SIZE_LONGS + metadata.getColumnCount());
     }
 
-    /**
-     * Restores the symbol index files for a partition just decoded from Parquet
-     * back to native. The index content is invariant across a pure format
-     * conversion: row ids are preserved and POSTING covering sidecars
-     * (.pci/.pc*) are storage-independent value copies. So wherever the Parquet
-     * partition still holds the index files -- the common case, since
-     * {@link #convertPartitionNativeToParquet} linked or rebuilt them into the
-     * partition dir alongside data.parquet -- we hard-link them into the new
-     * native dir. That carries the covering sidecars verbatim; a fresh rebuild
-     * builds only the non-covering .pv, so covering scans over the reconverted
-     * partition would resolve every covered value as NULL.
-     * <p>
-     * A column whose index files are absent from the Parquet dir (e.g. an index
-     * added while the column had no rows in this partition) falls back to a
-     * rebuild from the freshly decoded native column data -- the same rebuild
-     * the whole path used before covering-aware linking.
-     */
     private void restoreIndexFilesAfterParquetToNative(
             long partitionTimestamp,
             long parquetNameTxn,
@@ -13198,35 +13170,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final String columnName = metadata.getColumnName(columnIndex);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
-                // Prefer linking the existing index files from the Parquet
-                // partition dir: that preserves the POSTING covering sidecars a
-                // rebuild would drop. The .pk/.k key file gates existence.
+                // Prefer linking the existing index files
                 if (ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
                     linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType, partitionTimestamp, parquetNameTxn);
                     continue;
                 }
 
-                // Fallback: rebuild from the freshly decoded native column data.
-                final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
-                final long dataSize = (partitionRowCount - columnTop) * Integer.BYTES;
-                final long dataAddr = TableUtils.mapRO(ff, dFile(other.trimTo(dstDirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
-                IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
-                try {
-                    indexWriter.of(other.trimTo(dstDirLen), columnName, columnNameTxn, indexValueBlockCapacity);
-                    // Runs during parquet->native conversion before
-                    // txWriter.commit; tag the chain entry with the upcoming
-                    // committed txn.
-                    indexWriter.setNextTxnAtSeal(txWriter.getTxn() + 1);
-                    for (long row = columnTop; row < partitionRowCount; row++) {
-                        int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - columnTop) * Integer.BYTES));
-                        indexWriter.add(key, row);
-                    }
-                    indexWriter.setMaxValue(partitionRowCount - 1);
-                    indexWriter.seal();
-                } finally {
-                    ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
-                    Misc.free(indexWriter);
-                }
+                // Fallback: rebuild from the freshly decoded native column data
+                rebuildColumnIndex(
+                        columnIndex,
+                        columnName,
+                        columnNameTxn,
+                        indexType,
+                        columnTop,
+                        0,
+                        partitionRowCount,
+                        partitionTimestamp,
+                        other,
+                        dstDirLen,
+                        other,
+                        dstDirLen
+                );
             }
         } catch (CairoException e) {
             LOG.error().$("could not restore index files [table=").$(tableToken)
