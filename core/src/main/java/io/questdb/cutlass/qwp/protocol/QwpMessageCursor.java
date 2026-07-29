@@ -93,6 +93,7 @@ public class QwpMessageCursor implements Mutable {
         deltaSymbolDictEnabled = false;
         connectionSymbolDict = null;
         symbolDictRedefined = false;
+        dictRollbackScratch.clear();
     }
 
     /**
@@ -342,6 +343,14 @@ public class QwpMessageCursor implements Mutable {
                 connectionSymbolDict.setQuick(dictIndex, symbol);
             }
             committed = true;
+            // Every entry this frame's delta overwrote is now superseded by the value
+            // just written into connectionSymbolDict; the pre-overwrite copy has no
+            // further use. Without this, a full-dictionary re-send (or an
+            // orphan-adoption replay) leaves every entry double-pinned here, on a
+            // pooled HttpConnectionContext, until the NEXT delta frame happens to
+            // overlap and clear it at the top of this method -- or never, on a
+            // connection that sends no further overlapping delta.
+            dictRollbackScratch.clear();
         } finally {
             if (!committed) {
                 // Content first, then length: setQuick asserts index < pos, so shrinking
