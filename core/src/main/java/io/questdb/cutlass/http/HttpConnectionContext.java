@@ -160,27 +160,47 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.activeConnectionTracker = activeConnectionTracker;
         final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
         this.nf = contextConfiguration.getNetworkFacade();
-        this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
-        this.headerParser = configuration.getFactoryProvider().getHttpHeaderParserFactory().newParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
-        this.multipartContentHeaderParser = new HttpHeaderParser(contextConfiguration.getMultipartHeaderBufferSize(), csPool);
-        this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
-        this.responseSink = new HttpResponseSink(configuration);
-        this.recvBufferSize = configuration.getRecvBufferSize();
-        this.preAllocateBuffers = configuration.preAllocateBuffers();
-        if (preAllocateBuffers) {
-            recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-            this.responseSink.open(configuration.getSendBufferSize());
+        // Both header parsers, the response sink and the receive buffer allocate natively. A throw
+        // past any of them used to leave a half-built context that the pool never sees and nothing
+        // ever closes, leaking everything taken so far. Locals mirror the owners because the catch
+        // cannot read a blank final the failing statement never assigned.
+        HttpHeaderParser parser = null;
+        HttpHeaderParser multipartParser = null;
+        HttpResponseSink sink = null;
+        long recvBuf = 0;
+        try {
+            this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
+            this.headerParser = parser = configuration.getFactoryProvider().getHttpHeaderParserFactory().newParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
+            this.multipartContentHeaderParser = multipartParser = new HttpHeaderParser(contextConfiguration.getMultipartHeaderBufferSize(), csPool);
+            this.multipartContentParser = new HttpMultipartContentParser(multipartParser);
+            this.responseSink = sink = new HttpResponseSink(configuration);
+            this.recvBufferSize = configuration.getRecvBufferSize();
+            this.preAllocateBuffers = configuration.preAllocateBuffers();
+            if (preAllocateBuffers) {
+                recvBuffer = recvBuf = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+                this.responseSink.open(configuration.getSendBufferSize());
+            }
+            this.multipartIdleSpinCount = contextConfiguration.getMultipartIdleSpinCount();
+            this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
+            // This is default behaviour until the security context is overridden with correct principal.
+            this.securityContext = DenyAllSecurityContext.INSTANCE;
+            this.metrics = contextConfiguration.getMetrics();
+            this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
+            this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
+            this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();
+            this.recvBufferReadSize = Math.min(forceFragmentationReceiveChunkSize, recvBufferSize);
+            this.selectCache = selectCache;
+        } catch (Throwable th) {
+            // Reverse order of acquisition. multipartContentParser only delegates close() to the
+            // parser it wraps, so freeing that parser once covers both.
+            if (recvBuf != 0) {
+                this.recvBuffer = Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            }
+            Misc.free(sink, th);
+            Misc.free(multipartParser, th);
+            Misc.free(parser, th);
+            throw th;
         }
-        this.multipartIdleSpinCount = contextConfiguration.getMultipartIdleSpinCount();
-        this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
-        // This is default behaviour until the security context is overridden with correct principal.
-        this.securityContext = DenyAllSecurityContext.INSTANCE;
-        this.metrics = contextConfiguration.getMetrics();
-        this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
-        this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
-        this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();
-        this.recvBufferReadSize = Math.min(forceFragmentationReceiveChunkSize, recvBufferSize);
-        this.selectCache = selectCache;
     }
 
     // called when returning the context back to a pool (=connection closed)

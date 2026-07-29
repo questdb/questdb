@@ -234,7 +234,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private void checkClosed() {
         if (isClosed()) {
             LOG.debug().$("is closed").$();
-            throw PoolClosedException.instance();
+            throw PoolClosedException.INSTANCE;
         }
     }
 

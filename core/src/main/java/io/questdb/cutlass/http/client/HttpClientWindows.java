@@ -37,8 +37,18 @@ public class HttpClientWindows extends HttpClient {
 
     public HttpClientWindows(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         super(configuration, socketFactory);
-        this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
-        this.sf = configuration.getSelectFacade();
+        try {
+            this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
+            this.sf = configuration.getSelectFacade();
+        } catch (Throwable th) {
+            // super() has already taken the socket, both buffers and the response parser. A throw
+            // here leaves a half-built client the caller never receives, so nothing would close it.
+            // super.close() rather than close(): fdSet is released here directly because the
+            // override would also touch it, and only the base class holds anything else.
+            fdSet = Misc.free(fdSet);
+            super.close();
+            throw th;
+        }
     }
 
     @Override

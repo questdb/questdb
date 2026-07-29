@@ -32,16 +32,8 @@ public class LimitOverflowException extends CairoException {
 
     public static LimitOverflowException instance() {
         LimitOverflowException ex = tlException.get();
-        // Reset through clear() rather than by hand: this is a recycled per-carrier flyweight, so
-        // flags, messagePosition and the native backtrace all have to go back to their defaults.
-        // Callers stamp state onto a caught CairoException in place. SqlCompilerImpl does it on
-        // the CREATE TABLE / MATERIALIZED VIEW / VIEW AS SELECT paths, which wrap the cursor copy
-        // and so can catch exactly this exception, and on ALTER TABLE RESUME and SUSPEND.
-        // compileAlterTable() and compileAlterMatView() stamp only when the position still reads 0,
-        // so a stale non-zero one there does not merely linger - it suppresses the position those
-        // two would otherwise set. Without the full reset that
-        // state reappears on the next limit overflow raised on the same carrier.
-        ex.clear(NON_CRITICAL);
+        ex.message.clear();
+        ex.errno = NON_CRITICAL;
         return ex;
     }
 }

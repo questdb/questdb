@@ -53,11 +53,6 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     public static final String CONFIG_KEYS_ASOF_JOIN =
             PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE.getPropertyPath()
                     + " or " + PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath();
-    // RANK halves the product of the two window-store knobs to size each of its two sinks. The
-    // halving is not spelled out in the message: at stock settings the product is
-    // 1 MiB * Integer.MAX_VALUE, so the budget is ~1 PB and unreachable, and the only configuration
-    // that reaches the message at all is *.max.pages == 0 - where the product is 0, the floor
-    // decides the limit, and "half the product" would be plainly false.
     public static final String CONFIG_KEYS_WINDOW_STORE =
             PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE.getPropertyPath()
                     + " or " + PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath();
@@ -84,15 +79,8 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     // Per-query native memory tracker bound by the owning factory at cursor open time. Null when
     // no per-query limit applies. The class is lazy by design (constructor does not allocate;
     // reopen() does), so a factory that binds a tracker does so before calling reopen().
-    // The six ASOF join sinks bind one. The two RANK()/DENSE_RANK() sinks deliberately do not:
-    // each holds exactly one record's serialized ORDER BY key, so the footprint is bounded by the
-    // key width rather than by row count, and there is no runaway to catch. Their own maxHeapSize
-    // caps nothing in practice - at stock settings it works out to ~1 PB - so the reason to leave
-    // them on the global counter is lifetime, not size: RankFunction.close() frees them and
-    // RankFunction.reset() does not, so they outlive the cursor and belong to the factory. A
-    // tracker bound at cursor open would have freed its native {used, limit} block by the time
-    // these sinks release their memory, making the free a use-after-write on that block. Tracking
-    // them means freeing them in reset() first, so that their lifetime matches a cursor's.
+    // RANK's sinks stay on the global counter because RankFunction.reset() does not free them, so
+    // they outlive the cursor a tracker is scoped to.
     @Nullable
     private MemoryTracker memoryTracker;
 
@@ -103,16 +91,8 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
 
     public SingleRecordSink(long maxHeapSizeBytes, int memoryTag, @NotNull String ownerName, @Nullable String configKey) {
         this.memoryTag = memoryTag;
-        // Floor at the allocation unit, which is the same rule the five other budgeted structures
-        // follow - but their unit is one page and this one's is INITIAL_CAPACITY_BYTES, so the
-        // floors differ by construction rather than by oversight. LongChain, AbstractRedBlackTree
-        // and both tree chains reopen() into a full page, so a budget below a page would leave them
-        // holding bytes they had no budget for; this sink reopen()s into 8 bytes and grows 8 * 2^k,
-        // never a page. Storing a smaller budget verbatim left it in that same position: a
-        // *.max.pages of 0 yields a 0-byte budget that an 8-byte key still satisfies, and the
-        // overflow message then reports "limit of 0", which is neither what was configured nor what
-        // is actually allowed. Flooring at a page instead would hand a misconfigured query 128 KiB
-        // for a structure that holds exactly one serialized key.
+        // reopen() allocates INITIAL_CAPACITY_BYTES regardless, so a smaller budget would report a
+        // limit the sink has already exceeded.
         this.maxHeapSize = Math.max(maxHeapSizeBytes, INITIAL_CAPACITY_BYTES);
         this.ownerName = ownerName;
         this.configKey = configKey;

@@ -29,14 +29,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordRandomAccess;
 import io.questdb.griffin.engine.AbstractRedBlackTree;
-import io.questdb.griffin.engine.CompressedOffsets;
-import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.TestOnly;
 
@@ -65,23 +62,14 @@ import org.jetbrains.annotations.TestOnly;
  * Values are stored on a heap. Value chain addresses are 4-byte aligned.
  */
 public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Reopenable {
-    // value marks end of value chain
-    private static final int CHAIN_END = -1;
-    private static final long CHAIN_VALUE_SIZE = 12;
     // marks value chain entry as unused (belonging to a node on the freelist)
     // it's meant to avoid unnecessary reallocations when removing nodes and adding nodes
     private static final long FREE_SLOT = -2;
-    // Upper bound enforced by the compressed-offset encoding (offsets are 4-byte-aligned and
-    // stored as 32-bit ints), independent of any user-supplied byte cap.
-    private static final long MAX_VALUE_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
     // LIFO list of free blocks to reuse, allocated on the value chain
     private final DirectIntList chainFreeList;
     private final LimitedSizeLongTreeChain.TreeCursor cursor = new LimitedSizeLongTreeChain.TreeCursor();
     // LIFO list of nodes to reuse, instead of releasing and reallocating
     private final DirectIntList freeList;
-    private final long initialValueHeapSize;
-    private final long maxValueHeapSize;
-    private final String valueHeapConfigKey;
     private int comparatorLeftSideValidForFrame = -1;
     // number of all values stored in tree (including repeating ones)
     private int currentValues = 0;
@@ -94,10 +82,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     //  - record with max value for firstN/bottomN query
     //  - record with min value for lastN/topN query
     private long minMaxRowId = -1;
-    private long valueHeapLimit;
-    private long valueHeapPos;
-    private long valueHeapSize;
-    private long valueHeapStart;
 
     public LimitedSizeLongTreeChain(
             long keyPageSize,
@@ -119,24 +103,22 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             String valueHeapConfigKey,
             boolean openOnInit
     ) {
-        super(keyPageSize, maxKeyHeapBytes, keyHeapConfigKey, openOnInit);
+        super(
+                keyPageSize,
+                maxKeyHeapBytes,
+                valuePageSize,
+                maxValueHeapBytes,
+                keyHeapConfigKey,
+                valueHeapConfigKey,
+                "LimitedSizeLongTreeChain",
+                openOnInit
+        );
         try {
             // DirectIntList freelists are small (64 bytes apiece) and stay on the global
             // counter only; this PR wires the tree's key and value heaps, not the
             // auxiliary freelists.
             freeList = new DirectIntList(16, MemoryTag.NATIVE_TREE_CHAIN);
             chainFreeList = new DirectIntList(16, MemoryTag.NATIVE_TREE_CHAIN);
-            // value page must hold at least one chain entry (config rejects sub-block sizes).
-            assert valuePageSize >= CHAIN_VALUE_SIZE;
-            valueHeapSize = initialValueHeapSize = valuePageSize;
-            maxValueHeapSize = Math.min(Math.max(maxValueHeapBytes, valuePageSize), MAX_VALUE_HEAP_SIZE_LIMIT);
-            this.valueHeapConfigKey = valueHeapConfigKey;
-            if (openOnInit) {
-                valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
-                valueHeapLimit = valueHeapStart + valueHeapSize;
-            }
-            // else: valueHeapStart stays 0; first reopen() allocates initial backing
-            // under whatever MemoryTracker is bound at that time.
         } catch (Throwable th) {
             close();
             throw th;
@@ -146,7 +128,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     @Override
     public void clear() {
         super.clear();
-        valueHeapPos = valueHeapStart;
         comparatorLeftSideValidForFrame = -1;
         minMaxRowId = -1;
         minMaxNode = EMPTY;
@@ -169,11 +150,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         cursor.clear();
         Misc.free(freeList);
         Misc.free(chainFreeList);
-        if (valueHeapStart != 0) {
-            valueHeapStart = Unsafe.free(valueHeapStart, valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
-            valueHeapLimit = valueHeapPos = 0;
-            valueHeapSize = 0;
-        }
     }
 
     // returns offset of node containing searchRecord; otherwise returns EMPTY
@@ -381,14 +357,16 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
     @Override
     public void reopen() {
+        // Heaps first, freelists second. A throw from super.reopen() - the value-heap malloc
+        // breaching the RSS limit - therefore leaves the freelists closed, which is safe:
+        // DirectIntList.size() reads 0 while closed, so allocateBlock()'s freeList.size() > 0
+        // guards take the else branch, and the first appendValue() re-enters this method through
+        // growValueHeap() and reopens both lists before any add() can run. Keep this order:
+        // reopening the lists first would only widen the window in which they are open but the
+        // value heap is not.
         super.reopen();
         freeList.reopen();
         chainFreeList.reopen();
-        if (valueHeapStart == 0) {
-            valueHeapSize = initialValueHeapSize;
-            valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
-            valueHeapLimit = valueHeapStart + valueHeapSize;
-        }
     }
 
     @Override
@@ -399,28 +377,17 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     public void updateLimits(boolean isFirstN, long limit) {
         // Callers must not flip isFirstN against a populated tree. minMaxNode/minMaxRowId name one
         // end of it, chosen by isFirstN, and nothing here re-derives them for the other end - the
-        // top of put() reads minMaxRowId before any refresh can run. That precondition predates the
-        // incremental cache: LimitedSizeSortedLightRecordCursorFactory.initialize() reaches this
-        // ahead of cursor.of(), which is what clear()s the chain, so it holds only because the
-        // factory keeps isFirstN fixed for the life of the cursor. Deliberately not an assert: no
-        // test drives a direction flip, so one here would be an unproven -ea landmine.
+        // top of put() reads minMaxRowId before any refresh can run.
+        // A cached factory does flip the direction: computeLimits() re-derives isFirstN from the
+        // bind variables on every execution, so a re-bound LIMIT that changes sign reaches this
+        // with the opposite value. What keeps the precondition true is clear(), not a fixed
+        // direction - LimitedSizeSortedLightRecordCursorFactory.initialize() calls this ahead of
+        // cursor.of(), and of() clear()s the chain before the first put(). Every throw in between
+        // routes through getCursor()'s catch to Misc.free(cursor) -> chain.close(), which resets
+        // the same state. Keep that ordering: moving updateLimits() after of() would leave the
+        // cache naming the wrong end of a populated tree and silently emit the wrong top-N rows.
         this.isFirstN = isFirstN;
         this.limit = limit;
-    }
-
-    private int appendValue(long value, int prevValueOffset) {
-        checkValueCapacity();
-        final int offset = CompressedOffsets.compressAligned4(valueHeapPos - valueHeapStart);
-        Unsafe.putLong(valueHeapPos, value);
-        Unsafe.putInt(valueHeapPos + 8, prevValueOffset);
-        valueHeapPos += CHAIN_VALUE_SIZE;
-        return offset;
-    }
-
-    private void checkValueCapacity() {
-        if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
-            growValueHeap();
-        }
     }
 
     private void clearBlock(int position) {
@@ -445,57 +412,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             counter++;
         }
         return counter;
-    }
-
-    private void growValueHeap() {
-        if (valueHeapStart == 0) {
-            // Not covered by tests: every put path reaches allocateBlock() -> growKeyHeap() ->
-            // reopen() before appendValue(), so this branch needs a reopen() whose key-heap malloc
-            // succeeded and whose value-heap malloc then threw. That is an RSS/OOM interleaving with
-            // no injectable seam, and replacing this guard with if (false) leaves the whole suite
-            // green. It stays because reopen() is the only recovery point and a partial one has to
-            // be survivable, not because anything exercises it.
-            // See AbstractRedBlackTree.growKeyHeap: the heaps are unallocated before the
-            // first reopen() and after close(), and valueHeapSize still carries the configured
-            // page size in the never-opened case, so growing from here would book a delta against
-            // memory nothing ever charged. The unallocated state always reaches this branch,
-            // because close() and the lazy constructor leave valueHeapPos and valueHeapLimit at 0
-            // alongside valueHeapStart, so the caller's 0 + CHAIN_VALUE_SIZE > 0 test is already
-            // true. Testing valueHeapStart here rather than in checkValueCapacity() keeps the
-            // per-row fast path to a single load-compare-branch.
-            assert valueHeapPos == 0 && valueHeapLimit == 0;
-            reopen();
-            if (valueHeapPos + CHAIN_VALUE_SIZE <= valueHeapLimit) {
-                return;
-            }
-        }
-        final long required = valueHeapPos - valueHeapStart + CHAIN_VALUE_SIZE;
-        // Doubling alone falls short whenever the heap is smaller than one value, which the
-        // config floors rule out but they do not run in every embedding.
-        long newHeapSize = Math.max(valueHeapSize << 1, required);
-        if (newHeapSize > maxValueHeapSize) {
-            if (required > maxValueHeapSize) {
-                LimitOverflowException ex = LimitOverflowException.instance();
-                ex.put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LimitedSizeLongTreeChain");
-                if (valueHeapConfigKey != null) {
-                    ex.put(" (raise ").put(valueHeapConfigKey).put(')');
-                }
-                throw ex;
-            }
-            // Doubling overshoots a cap that is rarely a power of two, so rejecting here
-            // would strand part of the configured budget: the largest reachable heap would be
-            // the largest pageSize * 2^k not exceeding the cap. The value we have to fit still
-            // fits, so clamp to the cap instead.
-            newHeapSize = maxValueHeapSize;
-        }
-        long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
-
-        valueHeapSize = newHeapSize;
-        long delta = newHeapPos - valueHeapStart;
-        valueHeapPos += delta;
-
-        this.valueHeapStart = newHeapPos;
-        this.valueHeapLimit = newHeapPos + newHeapSize;
     }
 
     private boolean hasMoreThanOneValue(int position) {
@@ -527,10 +443,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             p = leftOf(p);
         }
         return p;
-    }
-
-    private int nextValueOffset(int valueOffset) {
-        return Unsafe.getInt(valueAddress(valueOffset) + 8);
     }
 
     private void prepareComparatorLeftSideIfAtMaxCapacity(RecordRandomAccess sourceCursor, Record ownedRecord, RecordComparator comparator, int currentFrameIndex) {
@@ -567,27 +479,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         setNextValueOffset(ref, CHAIN_END);
 
         chainFreeList.add(ref);
-    }
-
-    private long rowId(int valueOffset) {
-        return Unsafe.getLong(valueAddress(valueOffset));
-    }
-
-    private void setNextValueOffset(int valueOffset, int nextValueOffset) {
-        Unsafe.putInt(valueAddress(valueOffset) + 8, nextValueOffset);
-    }
-
-    private void setRowId(int valueOffset, long rowId) {
-        Unsafe.putLong(valueAddress(valueOffset), rowId);
-    }
-
-    // Holds both the sentinel check and the widening so the four accessors above stay small
-    // enough for the JIT to inline them - the assert prologue sits in the class file whether or
-    // not -ea is on, and inlined into each accessor it pushed them past MaxInlineSize.
-    // AbstractRedBlackTree.blockAddress() plays the same role for the node getters.
-    private long valueAddress(int valueOffset) {
-        assert valueOffset != CHAIN_END;
-        return valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset);
     }
 
     // if not empty - reuses most recently deleted node from freelist; otherwise allocates a new node

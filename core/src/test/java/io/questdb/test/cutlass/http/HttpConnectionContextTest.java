@@ -29,11 +29,37 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.network.PlainSocketFactory;
-import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.AbstractOomSweepTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class HttpConnectionContextTest extends AbstractCairoTest {
+public class HttpConnectionContextTest extends AbstractOomSweepTest {
+
+    @Test
+    public void testConstructorFailureFreesNativeAllocations() throws Exception {
+        // The constructor takes both header parsers, the response sink and - when the server
+        // pre-allocates - the receive buffer, in that order. A ceiling tripped at any of those
+        // points used to strand everything acquired before it: the half-built context never
+        // reaches the connection pool, so nothing ever calls close() on it.
+        //
+        // Sweeping the ceiling covers every allocation point rather than one hand-picked value,
+        // and assertOomSweep's own brackets fail loudly if the range stops short of the
+        // failing-to-succeeding transition. assertMemoryLeak is the assertion that matters: each
+        // point either builds a context and closes it, or throws and must leave nothing behind.
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            // The default context allocates roughly 4.8 KiB here - a 4096-byte request header
+            // buffer and a 512-byte multipart one, each with its own 64-byte boundary augmenter
+            // and 32-byte sink - so the step has to be finer than the smallest of those to land
+            // between allocation points rather than skipping the whole span in one stride.
+            assertOomSweep(16 * 1024, 64, null, () -> {
+                //noinspection EmptyTryBlock
+                try (HttpConnectionContext ignore = new HttpConnectionContext(httpConfig, PlainSocketFactory.INSTANCE)) {
+                    // built without tripping the ceiling; close() releases it
+                }
+            });
+        });
+    }
 
     @Test
     public void testClearDisarmsBreakerOnPoolReturnWhileProtocolSwitched() throws Exception {

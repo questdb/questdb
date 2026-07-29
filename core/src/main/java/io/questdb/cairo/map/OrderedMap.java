@@ -431,18 +431,12 @@ public class OrderedMap implements Map, Reopenable {
 
     /**
      * Writes a raw [compressed offset, hash code] pair straight into a hash table slot, bypassing
-     * the key heap. A real map only produces a compressed offset with the top bit set once its heap
-     * passes the 16GB mark, so this lets a test drive the probe, rehash and merge loops against the
-     * unsigned-sentinel contract without allocating such a heap. The planted offset does not address
-     * a real entry, so the caller must keep the planted hash code distinct from every live key's:
-     * that keeps every consumer on the hash-mismatch branch, which never dereferences the offset.
-     * The poke does not touch {@code size}, since no entry was added to the heap, but it does debit
-     * {@code free} when it fills a previously empty slot, so that the load factor accounts for a
-     * slot that really does occupy the table. {@code rehash()} recomputes {@code free} from the
-     * capacity delta, so the debit survives a resize. The debit does not by itself keep a test off
-     * a full table: {@code asNew()} triggers the rehash on {@code --free == 0}, an equality test, so
-     * a poke that drove {@code free} to exactly 0 would leave the next {@code asNew()} taking it to
-     * -1 and never rehashing again. Callers must therefore leave slack, as every current one does.
+     * the key heap, so a test can drive the probe, rehash and merge loops against the
+     * unsigned-sentinel contract without allocating a 16GB heap. Caller contracts:
+     * keep the planted hash code distinct from every live key's, so consumers stay on the
+     * hash-mismatch branch and never dereference the offset; the poke debits {@code free} but not
+     * {@code size}; and it must leave slack, because {@code asNew()} rehashes on {@code --free == 0}
+     * and a table driven to exactly 0 free would skip past it and never rehash again.
      */
     @TestOnly
     public void pokeRawSlot(int index, int rawOffset, int hashCodeLo) {
@@ -603,16 +597,6 @@ public class OrderedMap implements Map, Reopenable {
         return CompressedOffsets.uncompressBiased8(rawOffset);
     }
 
-    /**
-     * Tests a hash table slot for emptiness. All eight slot scans in this class go through here, so
-     * the predicate cannot drift apart across the probe, rehash and merge loops, and the encoding
-     * it belongs to owns the contract - see {@link CompressedOffsets#isEmptyBiased8(int)} for why
-     * a signed test loses live entries. Seven of the eight have a test that fails when the
-     * predicate regresses, including mergeFixedSizeKey()'s source scan. Only mergeVarSizeKey()'s
-     * source scan has none: the smallest offset a signed test misreads sits 16GB into the heap, and
-     * that loop dereferences the source address before it probes, so planting one aborts the fork
-     * rather than failing an assertion.
-     */
     private static boolean isEmptySlot(int rawOffset) {
         return CompressedOffsets.isEmptyBiased8(rawOffset);
     }
@@ -656,7 +640,6 @@ public class OrderedMap implements Map, Reopenable {
         OUTER:
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
             // Read the slot as a single 64-bit value, as probe0 does.
-            // Layout: [rawOffset (4 bytes) | hashCodeLo (4 bytes)]
             long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + ((long) i << 3));
             int srcRawOffset = Numbers.decodeLowInt(srcSlot);
             if (isEmptySlot(srcRawOffset)) {
@@ -712,7 +695,6 @@ public class OrderedMap implements Map, Reopenable {
         OUTER:
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
             // Read the slot as a single 64-bit value, as probe0 does.
-            // Layout: [rawOffset (4 bytes) | hashCodeLo (4 bytes)]
             long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + ((long) i << 3));
             int srcRawOffset = Numbers.decodeLowInt(srcSlot);
             if (isEmptySlot(srcRawOffset)) {
@@ -770,7 +752,6 @@ public class OrderedMap implements Map, Reopenable {
     private FlyweightPackedMapValue probe0(Key keyWriter, int index, int hashCodeLo, long keySize, FlyweightPackedMapValue value) {
         long offsetAddr = offsetsAddr + ((long) index << 3);
         // Read offset and hash as a single 64-bit value to reduce memory accesses.
-        // Layout: [rawOffset (4 bytes) | hashCodeLo (4 bytes)]
         long slotValue = Unsafe.getLong(offsetAddr);
         int rawOffset = Numbers.decodeLowInt(slotValue);
         while (!isEmptySlot(rawOffset)) {

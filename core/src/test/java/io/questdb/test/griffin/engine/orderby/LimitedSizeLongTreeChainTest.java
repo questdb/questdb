@@ -25,11 +25,13 @@
 package io.questdb.test.griffin.engine.orderby;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -587,6 +589,60 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
             );
             chain.updateLimits(true, 1_000);
             Assert.assertEquals(3, fillUntilOverflow("limit of 36 memory exceeded in LimitedSizeLongTreeChain"));
+            chain.close();
+        });
+    }
+
+    @Test
+    public void testValueHeapAllocatesAfterPartialReopen() throws Exception {
+        // Twin of LongTreeChainTest#testValueHeapAllocatesAfterPartialReopen. The growValueHeap()
+        // guard itself lives once, in AbstractRedBlackTree, so this is not here to re-cover it -
+        // it is here for the state only this subclass can reach. reopen() takes the two heaps
+        // before the two freelists, so a value-heap malloc that breaches the RSS limit returns with
+        // the key heap open, the value heap null and both freelists still closed.
+        //
+        // The load-bearing part is the FIRST put(): allocateBlock() reads freeList.size() and
+        // chainFreeList.size() while both lists are genuinely closed, before appendValue() reaches
+        // growValueHeap() and re-enters reopen() to repair them. That read is safe only because a
+        // closed DirectIntList reports size 0. Reaching add() on a closed list is impossible by
+        // construction - it needs currentValues == limit > 0, hence a prior appendValue(), which is
+        // itself what repairs the lists - so the evictions below run against reopened lists and
+        // demonstrate that the repair happened.
+        chain.close();
+        assertMemoryLeak(() -> {
+            chain = new LimitedSizeLongTreeChain(
+                    64,             // key page, allocated first
+                    Long.MAX_VALUE,
+                    1024,           // value page, allocated second - the one that must fail
+                    Long.MAX_VALUE,
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
+                    false
+            );
+            // The constructor opens the freelists eagerly, so close them first - otherwise the
+            // partial reopen below leaves them open and the state under test never arises.
+            chain.close();
+
+            final long savedLimit = Unsafe.getRssMemLimit();
+            try {
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 768);
+                chain.reopen();
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                TestUtils.assertContains(e.getFlyweightMessage(), "size=1024");
+            } finally {
+                Unsafe.setRssMemLimit(savedLimit);
+            }
+
+            chain.updateLimits(true, 4);
+            // Descending, deliberately. put() pins the comparator to the cached maximum once the
+            // chain is full, so an ascending tail would take the isFirstN && cmp <= 0 reject branch
+            // and never evict - assertChainHolds(1,2,3,4) would then pass without removeAndCache()
+            // ever running. Descending forces the else branch on each of the last four rows, so the
+            // same assertion can only hold if eviction really ran: reject-only would leave 5,6,7,8.
+            createTree(8, 7, 6, 5, 4, 3, 2, 1);
+            assertChainHolds(1, 2, 3, 4);
             chain.close();
         });
     }

@@ -565,7 +565,7 @@ public class TableSequencerAPI implements QuietCloseable {
     private void throwIfClosed() {
         if (closed) {
             LOG.info().$("is closed").$();
-            throw PoolClosedException.instance();
+            throw PoolClosedException.INSTANCE;
         }
     }
 

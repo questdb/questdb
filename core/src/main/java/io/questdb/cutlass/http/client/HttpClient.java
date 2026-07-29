@@ -83,16 +83,37 @@ public abstract class HttpClient implements QuietCloseable {
 
     public HttpClient(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         this.nf = configuration.getNetworkFacade();
-        this.socket = socketFactory.newInstance(nf, LOG);
-        this.defaultTimeout = configuration.getTimeout();
-        this.cookieHandler = configuration.getCookieHandlerFactory().getInstance();
-        this.bufferSize = configuration.getInitialRequestBufferSize();
-        this.maxBufferSize = configuration.getMaximumRequestBufferSize();
-        this.responseParserBufSize = configuration.getResponseBufferSize();
-        this.fixBrokenConnection = configuration.fixBrokenConnection();
-        this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        this.responseParserBufLo = Unsafe.malloc(responseParserBufSize, MemoryTag.NATIVE_DEFAULT);
-        this.responseHeaders = new ResponseHeaders(responseParserBufLo, responseParserBufSize, defaultTimeout, 4096, csPool);
+        // Locals mirror the resources the constructor takes. A throw past the first of them - the
+        // ResponseHeaders parser allocates natively, and so do both mallocs - leaves a half-built
+        // client that no caller can reach, so close() will never run and the catch has to free
+        // what was taken. The catch cannot read a blank final the failing statement never
+        // assigned, hence the locals. Sizes are read up front for the same reason.
+        final int requestBufSize = configuration.getInitialRequestBufferSize();
+        final int responseBufSize = configuration.getResponseBufferSize();
+        Socket socket = null;
+        long requestBuf = 0;
+        long responseBuf = 0;
+        try {
+            this.socket = socket = socketFactory.newInstance(nf, LOG);
+            this.defaultTimeout = configuration.getTimeout();
+            this.cookieHandler = configuration.getCookieHandlerFactory().getInstance();
+            this.bufferSize = requestBufSize;
+            this.maxBufferSize = configuration.getMaximumRequestBufferSize();
+            this.responseParserBufSize = responseBufSize;
+            this.fixBrokenConnection = configuration.fixBrokenConnection();
+            this.bufLo = requestBuf = Unsafe.malloc(requestBufSize, MemoryTag.NATIVE_DEFAULT);
+            this.responseParserBufLo = responseBuf = Unsafe.malloc(responseBufSize, MemoryTag.NATIVE_DEFAULT);
+            this.responseHeaders = new ResponseHeaders(responseBuf, responseBufSize, defaultTimeout, 4096, csPool);
+        } catch (Throwable th) {
+            if (responseBuf != 0) {
+                this.responseParserBufLo = Unsafe.free(responseBuf, responseBufSize, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (requestBuf != 0) {
+                this.bufLo = Unsafe.free(requestBuf, requestBufSize, MemoryTag.NATIVE_DEFAULT);
+            }
+            Misc.free(socket, th);
+            throw th;
+        }
     }
 
     @Override

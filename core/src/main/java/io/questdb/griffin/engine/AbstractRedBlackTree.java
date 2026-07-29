@@ -42,23 +42,36 @@ import org.jetbrains.annotations.Nullable;
  */
 public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     protected static final byte BLACK = 0;
+    // Marks the end of a node's value chain. A different namespace from the EMPTY block
+    // sentinel, which happens to share the same numeric value.
+    protected static final int CHAIN_END = -1;
     protected static final int EMPTY = -1; // empty reference; used to mark leaves/sentinels
     // parent is at offset 0
     protected static final long OFFSET_LEFT = 4;
     protected static final byte RED = 1;
     // P + L + R + C + REF + LAST_REF
     private static final long BLOCK_SIZE = 4 + 4 + 4 + 4 + 4 + 4; // 24, must be divisible by 8
+    // rowId + nextValueOffset
+    private static final long CHAIN_VALUE_SIZE = 12;
     // Upper bound enforced by the compressed-offset encoding (offsets are 8-byte-aligned and
     // stored as 32-bit ints), independent of any user-supplied byte cap.
     private static final long MAX_KEY_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
+    // Same bound for the value heap, whose offsets are 4-byte-aligned.
+    private static final long MAX_VALUE_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
     private static final long OFFSET_COLOUR = 12;
     // offset to last reference in value chain (kept to avoid having to traverse whole chain on each addition)
     private static final long OFFSET_LAST_REF = 20;
     private static final long OFFSET_REF = 16;
     private static final long OFFSET_RIGHT = 8;
     private final long initialKeyHeapSize;
+    private final long initialValueHeapSize;
     private final String keyHeapConfigKey;
     private final long maxKeyHeapSize;
+    private final long maxValueHeapSize;
+    private final String valueHeapConfigKey;
+    // Names the concrete tree in the value-heap overflow message; the key heap reports the
+    // shared "RedBlackTree" instead, so the two budgets stay distinguishable in a log.
+    private final String valueHeapOwnerName;
     // Per-query native memory tracker bound by the owning factory at cursor start.
     // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
     // degrade to the global-only overloads in that case.
@@ -69,21 +82,47 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     private long keyHeapPos;
     private long keyHeapSize;
     private long keyHeapStart;
+    private long valueHeapLimit;
+    private long valueHeapPos;
+    private long valueHeapSize;
+    private long valueHeapStart;
 
-    public AbstractRedBlackTree(long keyPageSize, long maxKeyHeapBytes, String keyHeapConfigKey) {
-        this(keyPageSize, maxKeyHeapBytes, keyHeapConfigKey, true);
-    }
-
-    public AbstractRedBlackTree(long keyPageSize, long maxKeyHeapBytes, String keyHeapConfigKey, boolean openOnInit) {
+    public AbstractRedBlackTree(
+            long keyPageSize,
+            long maxKeyHeapBytes,
+            long valuePageSize,
+            long maxValueHeapBytes,
+            String keyHeapConfigKey,
+            String valueHeapConfigKey,
+            String valueHeapOwnerName,
+            boolean openOnInit
+    ) {
         assert keyPageSize >= BLOCK_SIZE;
+        // value page must hold at least one chain entry (config rejects sub-block sizes).
+        assert valuePageSize >= CHAIN_VALUE_SIZE;
         keyHeapSize = initialKeyHeapSize = keyPageSize;
         maxKeyHeapSize = Math.min(Math.max(maxKeyHeapBytes, keyPageSize), MAX_KEY_HEAP_SIZE_LIMIT);
         this.keyHeapConfigKey = keyHeapConfigKey;
+        valueHeapSize = initialValueHeapSize = valuePageSize;
+        maxValueHeapSize = Math.min(Math.max(maxValueHeapBytes, valuePageSize), MAX_VALUE_HEAP_SIZE_LIMIT);
+        this.valueHeapConfigKey = valueHeapConfigKey;
+        this.valueHeapOwnerName = valueHeapOwnerName;
         if (openOnInit) {
             keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
             keyHeapLimit = keyHeapStart + keyHeapSize;
+            try {
+                valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
+                valueHeapLimit = valueHeapStart + valueHeapSize;
+            } catch (Throwable th) {
+                // Release the key heap by hand rather than through close(): close() is virtual and
+                // a subclass override runs against fields its own constructor has not reached yet.
+                keyHeapStart = Unsafe.free(keyHeapStart, keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
+                keyHeapLimit = keyHeapPos = 0;
+                keyHeapSize = 0;
+                throw th;
+            }
         }
-        // else: keyHeapStart stays 0; first reopen() allocates initial backing under
+        // else: both heap starts stay 0; the first reopen() allocates the initial backing under
         // whatever MemoryTracker is bound at that time.
     }
 
@@ -91,6 +130,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     public void clear() {
         root = EMPTY;
         keyHeapPos = keyHeapStart;
+        valueHeapPos = valueHeapStart;
     }
 
     @Override
@@ -101,6 +141,11 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
             keyHeapLimit = keyHeapPos = 0;
             keyHeapSize = 0;
         }
+        if (valueHeapStart != 0) {
+            valueHeapStart = Unsafe.free(valueHeapStart, valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
+            valueHeapLimit = valueHeapPos = 0;
+            valueHeapSize = 0;
+        }
     }
 
     @Override
@@ -109,6 +154,11 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
             keyHeapSize = initialKeyHeapSize;
             keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
             keyHeapLimit = keyHeapStart + keyHeapSize;
+        }
+        if (valueHeapStart == 0) {
+            valueHeapSize = initialValueHeapSize;
+            valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
+            valueHeapLimit = valueHeapStart + valueHeapSize;
         }
     }
 
@@ -133,6 +183,12 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     private void checkKeyCapacity() {
         if (keyHeapPos + BLOCK_SIZE > keyHeapLimit) {
             growKeyHeap();
+        }
+    }
+
+    private void checkValueCapacity() {
+        if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
+            growValueHeap();
         }
     }
 
@@ -184,6 +240,45 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         this.keyHeapLimit = newHeapPos + newHeapSize;
     }
 
+    private void growValueHeap() {
+        if (valueHeapStart == 0) {
+            // Never-opened or closed heap: valueHeapSize still carries the configured page size, so
+            // growing from here would realloc off a null pointer and book only the doubling delta.
+            assert valueHeapPos == 0 && valueHeapLimit == 0;
+            reopen();
+            if (valueHeapPos + CHAIN_VALUE_SIZE <= valueHeapLimit) {
+                return;
+            }
+        }
+        final long required = valueHeapPos - valueHeapStart + CHAIN_VALUE_SIZE;
+        // Doubling alone does not necessarily cover the entry: it falls short whenever the
+        // heap is smaller than one entry, which the constructor's assert and the config
+        // floors rule out but neither runs in every embedding.
+        long newHeapSize = Math.max(valueHeapSize << 1, required);
+        if (newHeapSize > maxValueHeapSize) {
+            if (required > maxValueHeapSize) {
+                LimitOverflowException ex = LimitOverflowException.instance();
+                ex.put("limit of ").put(maxValueHeapSize).put(" memory exceeded in ").put(valueHeapOwnerName);
+                if (valueHeapConfigKey != null) {
+                    ex.put(" (raise ").put(valueHeapConfigKey).put(')');
+                }
+                throw ex;
+            }
+            // Doubling overshoots a cap that is rarely a power of two, so rejecting here
+            // would strand part of the configured budget. The entry we have to fit still
+            // fits, so clamp to the cap instead.
+            newHeapSize = maxValueHeapSize;
+        }
+        long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
+
+        valueHeapSize = newHeapSize;
+        long delta = newHeapPos - valueHeapStart;
+        valueHeapPos += delta;
+
+        this.valueHeapStart = newHeapPos;
+        this.valueHeapLimit = newHeapPos + newHeapSize;
+    }
+
     private void rotateLeft(int p) {
         if (p != EMPTY) {
             final int r = rightOf(p);
@@ -228,6 +323,15 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         }
     }
 
+    // Holds both the sentinel check and the widening so the four value accessors stay small
+    // enough for the JIT to inline them - the assert prologue sits in the class file whether or
+    // not -ea is on, and inlined into each accessor it pushed them past MaxInlineSize.
+    // blockAddress() plays the same role for the node getters.
+    private long valueAddress(int valueOffset) {
+        assert valueOffset != CHAIN_END;
+        return valueHeapStart + CompressedOffsets.uncompressAligned4(valueOffset);
+    }
+
     protected int allocateBlock() {
         checkKeyCapacity();
         final int offset = CompressedOffsets.compressAligned8(keyHeapPos - keyHeapStart);
@@ -235,6 +339,19 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         setRight(offset, EMPTY);
         setColor(offset, BLACK);
         keyHeapPos += BLOCK_SIZE;
+        return offset;
+    }
+
+    /**
+     * Appends a value-chain entry and returns its compressed offset. Pass {@link #CHAIN_END} as
+     * {@code nextValueOffset} to start a new chain, or an existing offset to link onto it.
+     */
+    protected int appendValue(long value, int nextValueOffset) {
+        checkValueCapacity();
+        final int offset = CompressedOffsets.compressAligned4(valueHeapPos - valueHeapStart);
+        Unsafe.putLong(valueHeapPos, value);
+        Unsafe.putInt(valueHeapPos + 8, nextValueOffset);
+        valueHeapPos += CHAIN_VALUE_SIZE;
         return offset;
     }
 
@@ -398,6 +515,10 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         return blockOffset == EMPTY ? EMPTY : Unsafe.getInt(keyHeapStart + CompressedOffsets.uncompressAligned8(blockOffset) + OFFSET_LEFT);
     }
 
+    protected int nextValueOffset(int valueOffset) {
+        return Unsafe.getInt(valueAddress(valueOffset) + 8);
+    }
+
     protected int parent2Of(int blockOffset) {
         return parentOf(parentOf(blockOffset));
     }
@@ -454,6 +575,10 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         return blockOffset == EMPTY ? EMPTY : Unsafe.getInt(keyHeapStart + CompressedOffsets.uncompressAligned8(blockOffset) + OFFSET_RIGHT);
     }
 
+    protected long rowId(int valueOffset) {
+        return Unsafe.getLong(valueAddress(valueOffset));
+    }
+
     protected void setColor(int blockOffset, byte colour) {
         Unsafe.putByte(blockAddress(blockOffset) + OFFSET_COLOUR, colour);
     }
@@ -466,6 +591,10 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         Unsafe.putInt(blockAddress(blockOffset) + OFFSET_LEFT, left);
     }
 
+    protected void setNextValueOffset(int valueOffset, int nextValueOffset) {
+        Unsafe.putInt(valueAddress(valueOffset) + 8, nextValueOffset);
+    }
+
     protected void setParent(int blockOffset, int parent) {
         Unsafe.putInt(blockAddress(blockOffset), parent);
     }
@@ -476,6 +605,10 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
 
     protected void setRight(int blockOffset, int right) {
         Unsafe.putInt(blockAddress(blockOffset) + OFFSET_RIGHT, right);
+    }
+
+    protected void setRowId(int valueOffset, long rowId) {
+        Unsafe.putLong(valueAddress(valueOffset), rowId);
     }
 
     protected int successor(int current) {

@@ -25,21 +25,7 @@
 package io.questdb.cairo.pool.ex;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.CarrierLocal;
 
 public class PoolClosedException extends CairoException {
-    private static final CarrierLocal<PoolClosedException> tlException = new CarrierLocal<>(PoolClosedException::new);
-
-    public static PoolClosedException instance() {
-        PoolClosedException ex = tlException.get();
-        // A single shared static instance had no reset hook, and SqlCompilerImpl stamps the
-        // statement position onto a caught CairoException in place - so one stamp stuck for the
-        // life of the process, on every thread at once. A per-carrier flyweight keeps the throw
-        // allocation-free while confining that state to one carrier.
-        // Reset to errno 0, not NON_CRITICAL: the old instance never assigned errno, so
-        // isCritical() reported true, and NON_CRITICAL would demote the log level at every
-        // isCritical() call site and flip the QWP reply to NOT_ACCEPTING_WRITES.
-        ex.clear(0);
-        return ex;
-    }
+    public static final PoolClosedException INSTANCE = new PoolClosedException();
 }

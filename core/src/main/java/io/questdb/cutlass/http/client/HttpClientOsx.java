@@ -35,10 +35,19 @@ public class HttpClientOsx extends HttpClient {
 
     public HttpClientOsx(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         super(configuration, socketFactory);
-        this.kqueue = new Kqueue(
-                configuration.getKQueueFacade(),
-                configuration.getWaitQueueCapacity()
-        );
+        try {
+            this.kqueue = new Kqueue(
+                    configuration.getKQueueFacade(),
+                    configuration.getWaitQueueCapacity()
+            );
+        } catch (Throwable th) {
+            // super() has already taken the socket, both buffers and the response parser. A throw
+            // here leaves a half-built client the caller never receives, so nothing would close it.
+            // super.close() rather than close(): kqueue is still null and only the base class holds
+            // anything to release.
+            super.close();
+            throw th;
+        }
     }
 
     @Override

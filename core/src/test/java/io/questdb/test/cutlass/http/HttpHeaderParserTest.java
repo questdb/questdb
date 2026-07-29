@@ -199,11 +199,17 @@ public class HttpHeaderParserTest {
     }
 
     @Test
-    public void testConstructorFailureFreesFieldAllocations() throws Exception {
-        // boundaryAugmenter and sink are field initialisers, so they hold native blocks before the
-        // constructor body's own malloc runs. That malloc throws once the global RSS limit is
-        // breached, and nothing ever closes the half-built parser, so both blocks used to leak.
-        // Leave just enough headroom for the field initialisers and none for the header buffer.
+    public void testConstructorFailureFreesNativeAllocations() throws Exception {
+        // The constructor takes the boundary augmenter and the sink as its first two statements
+        // inside its try, then mallocs the header buffer. That malloc throws once the global RSS
+        // limit is breached, and nothing ever closes the half-built parser, so every block it took
+        // has to be released by the catch. Leave headroom for the first two and none for the buffer.
+        //
+        // Note what this cannot reach: only the header malloc and the augmenter's go through
+        // Unsafe.malloc and so see the RSS ceiling. DirectUtf8Sink allocates through the native
+        // implCreate, which bypasses checkAllocLimit entirely, so a throw from the sink is not
+        // reproducible here. Keeping both allocations inside the try - rather than in field
+        // initialisers, which run before the try is entered - is what covers that window.
         TestUtils.assertMemoryLeak(() -> {
             final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 8);
             final long savedLimit = Unsafe.getRssMemLimit();
@@ -214,7 +220,7 @@ public class HttpHeaderParserTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
                 // Pin which allocation ran out of room. Without this the test passes vacuously if
-                // the headroom ever stops covering the field initialisers: the augmenter would
+                // the headroom ever stops covering the first two allocations: the augmenter would
                 // throw first, the sink would never allocate, and nothing would leak either way.
                 TestUtils.assertContains(e.getFlyweightMessage(), "size=1048576");
             } finally {

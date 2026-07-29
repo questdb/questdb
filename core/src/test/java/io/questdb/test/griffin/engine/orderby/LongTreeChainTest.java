@@ -25,16 +25,46 @@
 package io.questdb.test.griffin.engine.orderby;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LongTreeChain;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class LongTreeChainTest extends AbstractCairoTest {
+
+    @Test
+    public void testConstructorFailureFreesKeyHeap() throws Exception {
+        // An eager constructor mallocs the key heap and then the value heap, so an RSS limit sized
+        // between the two makes the second one throw. The constructor has to release the key heap
+        // by hand: the half-built chain never escapes, so no caller can close it. assertMemoryLeak
+        // is the whole assertion - drop the hand-free and the 64-byte key heap leaks.
+        assertMemoryLeak(() -> {
+            final long savedLimit = Unsafe.getRssMemLimit();
+            try {
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 768);
+                new LongTreeChain(
+                        64,             // key page, allocated first
+                        Long.MAX_VALUE,
+                        1024,           // value page, allocated second - the one that must fail
+                        Long.MAX_VALUE,
+                        PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                        PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+                );
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                TestUtils.assertContains(e.getFlyweightMessage(), "size=1024");
+            } finally {
+                Unsafe.setRssMemLimit(savedLimit);
+            }
+        });
+    }
 
     @Test
     public void testKeyHeapAcceptsRequiredEqualToMaxHeapSize() throws Exception {
@@ -134,6 +164,69 @@ public class LongTreeChainTest extends AbstractCairoTest {
                     )
             ) {
                 Assert.assertEquals(3, fillUntilOverflow(chain, "limit of 36 memory exceeded in LongTreeChain"));
+            }
+        });
+    }
+
+    @Test
+    public void testValueHeapAllocatesAfterPartialReopen() throws Exception {
+        // reopen() takes the key heap first and the value heap second, so an RSS limit sized to sit
+        // between the two mallocs leaves the tree half-open: key heap allocated, value heap still
+        // null - but valueHeapSize already committed to the configured page size, because reopen()
+        // assigns it before the malloc that throws.
+        //
+        // The next put() therefore reaches growValueHeap() with valueHeapStart == 0. Its guard must
+        // allocate rather than grow: a realloc off a null pointer books only the doubling delta
+        // (newHeapSize - valueHeapSize) while really allocating newHeapSize, so the counters come up
+        // one page short of what close() later frees. assertMemoryLeak observes exactly that.
+        assertMemoryLeak(() -> {
+            try (
+                    LongTreeChain chain = new LongTreeChain(
+                            64,             // key page, allocated first
+                            Long.MAX_VALUE,
+                            1024,           // value page, allocated second - the one that must fail
+                            Long.MAX_VALUE,
+                            PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                            PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
+                            false           // lazy: nothing allocated until reopen()
+                    )
+            ) {
+                final long savedLimit = Unsafe.getRssMemLimit();
+                try {
+                    // Headroom for the 64-byte key heap but not the 1024-byte value heap. The band
+                    // tolerates up to 704 bytes of concurrent drift before the key malloc would
+                    // start failing instead, and the size= assertion below catches it if it does.
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 768);
+                    chain.reopen();
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                    // Pin WHICH malloc failed. Both emit the same prefix, so without this a drifted
+                    // key-heap failure would leave the test green while covering growKeyHeap's
+                    // guard - which testLazyChainAllocatesOnFirstPutWithoutReopen already covers -
+                    // instead of the value-heap guard this test exists for.
+                    TestUtils.assertContains(e.getFlyweightMessage(), "size=1024");
+                } finally {
+                    Unsafe.setRssMemLimit(savedLimit);
+                }
+
+                final long[] values = new long[8];
+                for (int i = 0; i < values.length; i++) {
+                    values[i] = i;
+                }
+                final TestRecordCursor cursor = new TestRecordCursor(values);
+                final Record left = cursor.getRecord();
+                final Record placeholder = cursor.getRecordB();
+                final RecordComparator comparator = new TestRecordComparator();
+
+                int inserted = 0;
+                while (cursor.hasNext()) {
+                    chain.put(left, cursor, placeholder, comparator);
+                    inserted++;
+                }
+
+                Assert.assertEquals(values.length, inserted);
+                assertReadsBack(chain, inserted);
             }
         });
     }

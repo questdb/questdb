@@ -36,10 +36,19 @@ public class HttpClientLinux extends HttpClient {
 
     public HttpClientLinux(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         super(configuration, socketFactory);
-        epoll = new Epoll(
-                configuration.getEpollFacade(),
-                configuration.getWaitQueueCapacity()
-        );
+        try {
+            epoll = new Epoll(
+                    configuration.getEpollFacade(),
+                    configuration.getWaitQueueCapacity()
+            );
+        } catch (Throwable th) {
+            // super() has already taken the socket, both buffers and the response parser. A throw
+            // here leaves a half-built client the caller never receives, so nothing would close it.
+            // super.close() rather than close(): epoll is still null and only the base class holds
+            // anything to release.
+            super.close();
+            throw th;
+        }
     }
 
     @Override
