@@ -8689,6 +8689,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (instance.isDropped() || instance.isInvalid()) {
                 continue;
             }
+            // Deferred-name transient, the same one scanForLaggingViews skips on. Both loaders publish
+            // the refresh instance BEFORE they commit the view's table name - createLiveView through
+            // commitDeferredTableNameAndRelease, and a replica's registration path through the token
+            // commit that follows its sidecar rebuild - so a base-table commit landing inside that
+            // window reaches a view whose name does not resolve yet. Refreshing it anyway costs more
+            // than the failed turn: refreshInstance burns the SINGLE-SHOT checkpoint-restore flag
+            // before getWalWriter throws "table does not exist", and the flag flips true whether the
+            // restore ran or not - so a view with a real _checkpoints/ timeline (a re-registration, or
+            // a restored data directory) permanently loses its resume and drains over durable output
+            // with cold accumulators. Skipping costs nothing: the fallback scan re-drives the view by
+            // comparing its watermark against the base head, so no notification is lost, only delayed.
+            // getTableTokenIfExists returns null for a locked/absent name - exactly the transient.
+            if (engine.getTableTokenIfExists(instance.getLiveViewToken().getTableName()) == null) {
+                continue;
+            }
             if (instance.getDefinition().getBaseTableToken() == null) {
                 // A definition registered before its base table resolved (replica download-order
                 // race) can reach this path after a promote. The notification carries the base
