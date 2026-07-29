@@ -38,14 +38,18 @@ public class HttpClientWindows extends HttpClient {
     public HttpClientWindows(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         super(configuration, socketFactory);
         try {
-            this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
+            // Read the facade before taking the FD set, so nothing between that acquisition and the
+            // end of the constructor can throw. That leaves the catch with only the base class to
+            // release, and drops a partial-FDSet branch that Linux and macOS CI could never reach:
+            // FDSet's first statement touches the Windows-only SelectAccessor natives, so a test
+            // cannot get past it to fail anything later.
             this.sf = configuration.getSelectFacade();
+            this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
         } catch (Throwable th) {
             // super() has already taken the socket, both buffers and the response parser. A throw
             // here leaves a half-built client the caller never receives, so nothing would close it.
-            // super.close() rather than close(): fdSet is released here directly because the
-            // override would also touch it, and only the base class holds anything else.
-            fdSet = Misc.free(fdSet);
+            // super.close() rather than close(): fdSet is still null and only the base class holds
+            // anything to release.
             super.close();
             throw th;
         }

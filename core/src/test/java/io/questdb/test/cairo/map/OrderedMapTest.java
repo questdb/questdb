@@ -75,6 +75,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -1758,11 +1759,12 @@ public class OrderedMapTest extends AbstractCairoTest {
         // before reading a single source byte. Skipping the slot never reaches resize() at all.
         //
         // Only the fixed-size-key merge can be driven this way - mergeVarSizeKey() reads the key
-        // length off the source address before it probes - but both scans share isEmptySlot(), so
-        // this pins the predicate they both depend on. CompressedOffsetsTest pins the predicate
-        // itself at the boundary, which is the only cover the var-size scan can get: no planted
-        // offset both sets the top bit and lands inside a test-sized heap, since the smallest such
-        // offset decodes to 17,179,869,176 bytes.
+        // length off the source address before it probes, and no planted offset both sets the top
+        // bit and lands inside a test-sized heap, since the smallest such offset decodes to
+        // 17,179,869,176 bytes. That is why both merge loops resolve their source slot through the
+        // single OrderedMap.srcEntryAddr(): this test therefore covers the line the var-size loop
+        // actually executes, not a copy of it. CompressedOffsetsTest pins the underlying predicate
+        // at the boundary as well.
         //
         // The throw below depends on resize() rejecting the entry before the Unsafe.copyMemory on
         // the next line, which holds today but is statement ordering rather than a contract. A
@@ -2332,6 +2334,33 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestoreInitialCapacityHeapFailureLeavesMapClosed() throws Exception {
+        // restoreInitialCapacity() reallocs the key heap and then the offsets array, and rolls the
+        // whole thing back through close() if either throws. A lazily opened map reaches that path
+        // from reopen(): both reallocs grow from address and size zero, so a per-query limit can
+        // reject them.
+        //
+        // Note what this does and does not prove. The PR's change here - committing heapSize only
+        // after the realloc returns - has no observable failure mode of its own: with heapAddr != 0
+        // the restore realloc is always a shrink, and both limit checks bail out on a non-positive
+        // delta, so the mis-sized free the old ordering could produce is unreachable. This is
+        // therefore forward coverage for the rollback itself, which is reachable and was untested.
+        // This half pins the tag the breach reports and the map being reusable once the limit is
+        // lifted; close() has nothing to do here, since the failing realloc left heapAddr at 0.
+        assertRestoreInitialCapacityRollback(16, "memoryTag=" + MemoryTag.NATIVE_FAST_MAP);
+    }
+
+    @Test
+    public void testRestoreInitialCapacityOffsetsFailureLeavesMapClosed() throws Exception {
+        // A limit of exactly initialHeapSize lets the heap realloc through - the check is
+        // used + size > limit, so 0 + 32 > 32 is false - and stops the offsets realloc that follows
+        // it. That is the half-restored state the catch has to unwind, and the only one of the two
+        // that pins close() staying in the catch: drop it and the map is left open on a heap with a
+        // stale key capacity.
+        assertRestoreInitialCapacityRollback(32, "memoryTag=" + MemoryTag.NATIVE_FAST_MAP_INT_LIST);
+    }
+
+    @Test
     public void testRowIdAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 10000;
@@ -2739,6 +2768,60 @@ public class OrderedMapTest extends AbstractCairoTest {
                     Assert.assertEquals(2, dest.getRecord().getValue().getLong(0));
                     Assert.assertFalse(destCursor.hasNext());
                 }
+            }
+        });
+    }
+
+    /**
+     * Drives {@code restoreInitialCapacity()} on a lazily opened map under a per-query limit tight
+     * enough to fail one of its two reallocs, and asserts the rollback: the breach surfaces as an
+     * out-of-memory {@code CairoException} naming the expected memory tag, the map is left fully
+     * closed with nothing charged to the tracker, and it is reusable once the limit is lifted.
+     * <p>
+     * The tracker rather than the RSS ceiling, because {@code used + size > limit} selects the
+     * failing allocation byte-exactly, while the process-wide ceiling moves under other threads.
+     */
+    private static void assertRestoreInitialCapacityRollback(long limitBytes, String expectedTag) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+            final SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+            // openOnInit = false: the constructor allocates nothing, so initialHeapSize is 32 and
+            // initialKeyCapacity is 32 - a 256-byte offsets array - and reopen() has to grow both
+            // from zero. An eagerly opened map cannot reach a failing realloc here at all: the
+            // restore would be a shrink, and a non-positive delta bypasses the limit check.
+            try (
+                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(limitBytes);
+                    OrderedMap map = new OrderedMap(32, keyTypes, valueTypes, 16, 0.5, 1024, false)
+            ) {
+                map.setMemoryTracker(tracker);
+                try {
+                    map.reopen();
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    // Pins which of the two reallocs failed. Without it the test passes vacuously
+                    // when a sizing change moves the breach to the other allocation.
+                    TestUtils.assertContains(e.getFlyweightMessage(), expectedTag);
+                }
+
+                Assert.assertFalse("the failed restore must leave the map closed", map.isOpen());
+                Assert.assertEquals(0, map.getHeapSize());
+                Assert.assertEquals("the rollback must return every tracker-charged byte", 0, tracker.getUsed());
+
+                // Recovery: with room to spare the same map reopens and round trips a key.
+                tracker.setLimit(64 * 1024);
+                map.reopen();
+                Assert.assertTrue(map.isOpen());
+                MapKey key = map.withKey();
+                key.putLong(42);
+                key.createValue().putLong(0, 7);
+                Assert.assertEquals(1, map.size());
+                key = map.withKey();
+                key.putLong(42);
+                MapValue value = key.findValue();
+                Assert.assertNotNull(value);
+                Assert.assertEquals(7, value.getLong(0));
             }
         });
     }

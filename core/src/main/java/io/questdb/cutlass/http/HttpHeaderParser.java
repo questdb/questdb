@@ -109,8 +109,15 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         BoundaryAugmenter augmenter = null;
         DirectUtf8Sink utf8Sink = null;
         try {
-            this.boundaryAugmenter = augmenter = new BoundaryAugmenter();
+            // The sink goes first on purpose. Its native implCreate bypasses
+            // Unsafe.checkAllocLimit, so no test can fail it, whereas the augmenter's and the
+            // header buffer's mallocs both honour the RSS ceiling. Acquiring the untestable one
+            // first leaves it with nothing to roll back, and every rollback that does have work to
+            // do is reachable from a test - testConstructorFailureFreesTheSink fails the augmenter
+            // with the sink live, and testConstructorFailureFreesNativeAllocations fails the header
+            // buffer with both live.
             this.sink = utf8Sink = new DirectUtf8Sink(0);
+            this.boundaryAugmenter = augmenter = new BoundaryAugmenter();
             this.csPool = csPool;
             this.cookiePool = new ObjectPool<>(HttpCookie::new, 16);
             this.headerPtr = this._wptr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
@@ -124,15 +131,16 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             // rather than through close(): HttpClient.ResponseHeaders overrides close() to keep
             // parser memory alive for the client to free later and to disconnect the outer client's
             // socket, so routing this path through it would dispatch into a subclass
-            // mid-construction, tear down a live socket, and skip the frees entirely.
+            // mid-construction, tear down a live socket, and skip the frees entirely. Release in
+            // reverse order of acquisition.
             if (headerPtr != 0) {
                 headerPtr = _wptr = hi = Unsafe.free(headerPtr, hi - headerPtr, MemoryTag.NATIVE_HTTP_CONN);
             }
-            if (utf8Sink != null) {
-                utf8Sink.close();
-            }
             if (augmenter != null) {
                 augmenter.close();
+            }
+            if (utf8Sink != null) {
+                utf8Sink.close();
             }
             throw th;
         }

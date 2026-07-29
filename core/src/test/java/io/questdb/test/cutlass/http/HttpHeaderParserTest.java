@@ -96,20 +96,31 @@ public class HttpHeaderParserTest {
     public void testBoundaryAugmenterReopenAfterCloseRestoresLimit() throws Exception {
         // close() zeroes lim, so reopen() has to commit INITIAL_CAPACITY back alongside the block
         // it allocates. The two assertions below split that in half. The first covers the malloc:
-        // reopen() sizes it from the constant rather than from lim, so it can no longer ask for a
-        // zero-length block whichever order the two commits land in. The second covers the commit
-        // itself, which the first cannot see - drop `lim = INITIAL_CAPACITY` and the malloc still
-        // runs, but lim stays 0 while lo holds a 64-byte block, so the of() below takes the resize
-        // path it should have skipped and reallocs against an oldSize of 0.
+        // reopen() sizes it from the constant rather than from lim, so a grown-then-closed augmenter
+        // comes back at 64 bytes instead of retaining the grown capacity across the connection reuse
+        // that HttpHeaderParser.reopen() drives. Growing past 64 first is what makes this assertion
+        // load-bearing - a boundary that always fitted the initial block leaves lim at 64 either
+        // way, so malloc(lim) and malloc(INITIAL_CAPACITY) ask for the same size and the two
+        // implementations are indistinguishable. The second assertion covers the commit itself,
+        // which the first cannot see - drop `lim = INITIAL_CAPACITY` and the malloc still runs, but
+        // lim stays 0 while lo holds a 64-byte block, so the of() below takes the resize path it
+        // should have skipped and reallocs against an oldSize of 0.
         TestUtils.assertMemoryLeak(() -> {
+            // 200 chars + the 4-byte prefix rounds up to a 256-byte block, so lim ends up four
+            // times the initial capacity.
+            final StringSink grown = new StringSink();
+            for (int i = 0; i < 200; i++) {
+                grown.put('a');
+            }
+
             try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
-                TestUtils.assertEquals("\r\n--first", augmenter.of(new Utf8String("first")));
+                TestUtils.assertEquals("\r\n--" + grown, augmenter.of(new Utf8String(grown)));
                 augmenter.close();
 
                 final long usedAfterClose = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
                 augmenter.reopen();
                 Assert.assertEquals(
-                        "reopen() must restore the initial capacity, not malloc a zero-length block",
+                        "reopen() must restore the initial capacity, not the grown one",
                         usedAfterClose + 64,
                         Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN)
                 );
@@ -210,7 +221,7 @@ public class HttpHeaderParserTest {
 
     @Test
     public void testConstructorFailureFreesNativeAllocations() throws Exception {
-        // The constructor takes the boundary augmenter and the sink as its first two statements
+        // The constructor takes the sink and the boundary augmenter as its first two statements
         // inside its try, then mallocs the header buffer. That malloc throws once the global RSS
         // limit is breached, and nothing ever closes the half-built parser, so every block it took
         // has to be released by the catch. Leave headroom for the first two and none for the buffer.
@@ -218,8 +229,10 @@ public class HttpHeaderParserTest {
         // Note what this cannot reach: only the header malloc and the augmenter's go through
         // Unsafe.malloc and so see the RSS ceiling. DirectUtf8Sink allocates through the native
         // implCreate, which bypasses checkAllocLimit entirely, so a throw from the sink is not
-        // reproducible here. Keeping both allocations inside the try - rather than in field
-        // initialisers, which run before the try is entered - is what covers that window.
+        // reproducible here - which is why the constructor takes it first, leaving that one
+        // unreachable failure with nothing to roll back. Keeping both allocations inside the try -
+        // rather than in field initialisers, which run before the try is entered - is what covers
+        // this window; testConstructorFailureFreesTheSink covers the one in between.
         TestUtils.assertMemoryLeak(() -> {
             final int headerBufferSize = 1_048_576;
             final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 8);
@@ -238,6 +251,43 @@ public class HttpHeaderParserTest {
                 // the headroom ever stops covering the first two allocations: the augmenter would
                 // throw first, the sink would never allocate, and nothing would leak either way.
                 TestUtils.assertContains(e.getFlyweightMessage(), "size=" + headerBufferSize);
+            } finally {
+                Unsafe.setRssMemLimit(savedLimit);
+                Misc.free(parser);
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorFailureFreesTheSink() throws Exception {
+        // The constructor takes the sink first and the boundary augmenter second, so this covers the
+        // window the other constructor test cannot reach: the augmenter's malloc fails with the sink
+        // already built and nothing else acquired, and the catch has to hand the sink back on its
+        // own. DirectUtf8Sink's native implCreate bypasses Unsafe.checkAllocLimit but still books
+        // the block through recordMemAlloc, so the sink goes through under any ceiling and shifts
+        // usage before the augmenter's Unsafe.malloc is checked.
+        //
+        // The headroom is exactly the augmenter's 64 bytes, which is what makes the size assertion
+        // below pin the acquisition order rather than merely the amount. Sink first: the sink's
+        // booking pushes usage above the ceiling, so the augmenter's 64-byte malloc is refused. Swap
+        // the two statements back and the augmenter allocates into an untouched 64-byte headroom -
+        // checkAllocLimit refuses only usage + size > limit - and the throw moves to the header
+        // buffer, i.e. a different size. Without the headroom both orders report size=64 and a
+        // reorder would leave the sink with nothing to roll back and this test silently vacuous.
+        TestUtils.assertMemoryLeak(() -> {
+            final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 8);
+            final long savedLimit = Unsafe.getRssMemLimit();
+            // Holds the parser on the path where the constructor unexpectedly succeeds. Dropping it
+            // there would leak a built parser and make the enclosing leak check fail on top of the
+            // Assert.fail below, burying the failure that matters.
+            HttpHeaderParser parser = null;
+            try {
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 64);
+                parser = new HttpHeaderParser(1024, csPool);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                TestUtils.assertContains(e.getFlyweightMessage(), "size=64");
             } finally {
                 Unsafe.setRssMemLimit(savedLimit);
                 Misc.free(parser);

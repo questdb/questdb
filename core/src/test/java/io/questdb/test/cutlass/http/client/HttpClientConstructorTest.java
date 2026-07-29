@@ -28,8 +28,20 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.client.HttpClientLinux;
+import io.questdb.cutlass.http.client.HttpClientOsx;
+import io.questdb.cutlass.http.client.HttpClientWindows;
+import io.questdb.log.Log;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.KqueueFacade;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.PlainSocket;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.SelectFacade;
+import io.questdb.network.Socket;
+import io.questdb.network.SocketFactory;
 import io.questdb.test.AbstractOomSweepTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class HttpClientConstructorTest extends AbstractOomSweepTest {
@@ -61,5 +73,92 @@ public class HttpClientConstructorTest extends AbstractOomSweepTest {
                 // built without tripping the ceiling; close() releases it
             }
         }));
+    }
+
+    @Test
+    public void testLinuxConstructorFailureClosesBaseClient() throws Exception {
+        assertSubclassConstructorRollback(new DefaultHttpClientConfiguration() {
+            @Override
+            public EpollFacade getEpollFacade() {
+                throw new InjectedFailure();
+            }
+        }, HttpClientLinux::new);
+    }
+
+    @Test
+    public void testOsxConstructorFailureClosesBaseClient() throws Exception {
+        assertSubclassConstructorRollback(new DefaultHttpClientConfiguration() {
+            @Override
+            public KqueueFacade getKQueueFacade() {
+                throw new InjectedFailure();
+            }
+        }, HttpClientOsx::new);
+    }
+
+    @Test
+    public void testWindowsConstructorFailureClosesBaseClient() throws Exception {
+        assertSubclassConstructorRollback(new DefaultHttpClientConfiguration() {
+            @Override
+            public SelectFacade getSelectFacade() {
+                throw new InjectedFailure();
+            }
+        }, HttpClientWindows::new);
+    }
+
+    /**
+     * Drives one platform subclass's constructor rollback on any host. {@code HttpClientFactory}
+     * picks a single implementation from {@code Os.type}, so the sweep above can only ever reach the
+     * subclass the test host runs on; these tests instantiate each one directly instead.
+     * <p>
+     * The failure comes from the platform facade getter rather than from the poller it feeds. That
+     * keeps the test host-independent in both directions: the getter is evaluated as a constructor
+     * argument, so {@code new Kqueue(...)} / {@code new FDSet(...)} is never invoked and neither
+     * {@code KqueueAccessor} nor {@code SelectAccessor} - whose natives ship only in the macOS and
+     * Windows builds - is ever initialised. By that point {@code super()} has taken the socket, both
+     * client buffers and the response parser, so the subclass catch has to hand all of them back.
+     */
+    private static void assertSubclassConstructorRollback(
+            HttpClientConfiguration configuration,
+            ClientFactory clientFactory
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            final CountingSocketFactory socketFactory = new CountingSocketFactory();
+            try {
+                // Closing here keeps the leak check honest on the path where the constructor
+                // unexpectedly succeeds: dropping a built client would leak on top of the assertion
+                // below and bury it.
+                clientFactory.newInstance(configuration, socketFactory).close();
+                Assert.fail("expected InjectedFailure");
+            } catch (InjectedFailure ignore) {
+                // the injected facade getter threw
+            }
+            Assert.assertEquals("the constructor must close the socket it took", 1, socketFactory.closeCount);
+        });
+    }
+
+    @FunctionalInterface
+    private interface ClientFactory {
+        HttpClient newInstance(HttpClientConfiguration configuration, SocketFactory socketFactory);
+    }
+
+    private static class CountingSocketFactory implements SocketFactory {
+        int closeCount;
+
+        @Override
+        public Socket newInstance(NetworkFacade nf, Log log) {
+            return new PlainSocket(nf, log) {
+                @Override
+                public void close() {
+                    closeCount++;
+                    super.close();
+                }
+            };
+        }
+    }
+
+    private static class InjectedFailure extends RuntimeException {
+        InjectedFailure() {
+            super("injected facade failure", null, false, false);
+        }
     }
 }

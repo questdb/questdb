@@ -167,6 +167,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         HttpHeaderParser parser = null;
         HttpHeaderParser multipartParser = null;
         HttpResponseSink sink = null;
+        HttpAuthenticator auth = null;
         long recvBuf = 0;
         try {
             this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
@@ -185,7 +186,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             // This is default behaviour until the security context is overridden with correct principal.
             this.securityContext = DenyAllSecurityContext.INSTANCE;
             this.metrics = contextConfiguration.getMetrics();
-            this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
+            this.authenticator = auth = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
             this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
             this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();
             this.recvBufferReadSize = Math.min(forceFragmentationReceiveChunkSize, recvBufferSize);
@@ -193,12 +194,21 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         } catch (Throwable th) {
             // Reverse order of acquisition. multipartContentParser only delegates close() to the
             // parser it wraps, so freeing that parser once covers both.
+            Misc.free(auth, th);
+            // The sink owns the send buffer that responseSink.open() took after the receive buffer,
+            // and its close() releases both, so it goes before the receive buffer.
+            Misc.free(sink, th);
             if (recvBuf != 0) {
                 this.recvBuffer = Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
             }
-            Misc.free(sink, th);
             Misc.free(multipartParser, th);
             Misc.free(parser, th);
+            // IOContext took the socket before this try was entered, so it is the one resource the
+            // catch has to reach past its own acquisitions for. Only close() releases it, and the
+            // half-built context never gets there. Both the socket factory and the authenticator
+            // above come from FactoryProvider, an extension point whose implementations may own
+            // native state even though the OSS defaults are lightweight.
+            Misc.free(socket, th);
             throw th;
         }
     }

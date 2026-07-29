@@ -601,6 +601,24 @@ public class OrderedMap implements Map, Reopenable {
         return CompressedOffsets.isEmptyBiased8(rawOffset);
     }
 
+    /**
+     * Resolves one source slot for both merge loops: returns the heap address of the entry it holds,
+     * or 0 when the slot is empty. A live entry can never sit at address 0, so the caller can test
+     * the return value instead of repeating the emptiness predicate.
+     * <p>
+     * Both {@link #mergeFixedSizeKey} and {@link #mergeVarSizeKey} route their source scan through
+     * here on purpose. The predicate has to be the exact empty sentinel - a signed offset test reads
+     * every entry from 16GB up as an empty slot and silently drops it - and only the fixed-size loop
+     * can be driven with a planted top-bit offset, because the var-size loop reads the key length off
+     * the source address before it can reach any observable step. Sharing the one line means
+     * {@code OrderedMapTest.testMergeTopBitOffsetSourceSlotIsNotSkipped} covers the code the
+     * var-size loop actually executes rather than a copy of it.
+     */
+    private static long srcEntryAddr(OrderedMap srcMap, long srcSlot) {
+        final int srcRawOffset = Numbers.decodeLowInt(srcSlot);
+        return isEmptySlot(srcRawOffset) ? 0 : srcMap.heapAddr + decompressOffset(srcRawOffset);
+    }
+
     private static void validateBatchAddressable(long sizeBytes) {
         // A silent truncation here would feed corrupted offsets into every batched
         // probe; fail loudly instead of producing wrong aggregation results.
@@ -641,12 +659,11 @@ public class OrderedMap implements Map, Reopenable {
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
             // Read the slot as a single 64-bit value, as probe0 does.
             long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + ((long) i << 3));
-            int srcRawOffset = Numbers.decodeLowInt(srcSlot);
-            if (isEmptySlot(srcRawOffset)) {
+            long srcStartAddr = srcEntryAddr(srcMap, srcSlot);
+            if (srcStartAddr == 0) {
                 continue;
             }
 
-            long srcStartAddr = srcMap.heapAddr + decompressOffset(srcRawOffset);
             int hashCodeLo = Numbers.decodeHighInt(srcSlot);
             int index = hashCodeLo & mask;
 
@@ -696,12 +713,11 @@ public class OrderedMap implements Map, Reopenable {
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
             // Read the slot as a single 64-bit value, as probe0 does.
             long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + ((long) i << 3));
-            int srcRawOffset = Numbers.decodeLowInt(srcSlot);
-            if (isEmptySlot(srcRawOffset)) {
+            long srcStartAddr = srcEntryAddr(srcMap, srcSlot);
+            if (srcStartAddr == 0) {
                 continue;
             }
 
-            long srcStartAddr = srcMap.heapAddr + decompressOffset(srcRawOffset);
             int srcKeySize = Unsafe.getInt(srcStartAddr);
             int hashCodeLo = Numbers.decodeHighInt(srcSlot);
             int index = hashCodeLo & mask;
