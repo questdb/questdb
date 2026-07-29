@@ -120,11 +120,18 @@ public class RecoveryCoordinator {
                     // On cold boot this may read _meta. Any inability to determine or restore an adaptive
                     // table's replay floor aborts initialization; sequencer suspension does not fence readers.
                     final boolean metadataBoundEpoch = hasMetadataBoundEpoch(token, dir);
+                    final boolean enrolledAdaptive;
                     try {
                         final int effectiveMode = metadataBoundEpoch
                                 ? resolveEffectiveCommitModeNoRetry(token, dir)
                                 : engine.getTableSequencerAPI().resolveEffectiveCommitMode(token);
-                        if (effectiveMode != CommitMode.ADAPTIVE) {
+                        // The effective mode says how this table will be written NEXT; the enrolled record
+                        // says how its materialized state was LEFT. A table applied lazily under adaptive is
+                        // torn ahead of its durable epoch no matter what the config file says on the way back
+                        // up, so an operator turning adaptive off must not turn the repair off with it.
+                        // Skipping requires BOTH: not adaptive now, and no lazy state to reconcile.
+                        enrolledAdaptive = readEnrolledCommitMode(token, dir) == CommitMode.ADAPTIVE;
+                        if (effectiveMode != CommitMode.ADAPTIVE && !enrolledAdaptive) {
                             continue;
                         }
                         failIfRecoveryDisabled(token);
@@ -157,9 +164,17 @@ public class RecoveryCoordinator {
                         checkpointEnrollments.add(token);
                         continue;
                     }
-                    if (!ff.exists(dir.$()) && isLegacyAdaptiveEnrollmentCandidate(token, dir)) {
-                        // Pre-commit-mode tables cannot have an anchor. Their TableWriter constructor performs
-                        // the crash-safe metadata-discriminated enrollment before adaptive apply.
+                    if (!ff.exists(dir.$()) && !enrolledAdaptive) {
+                        // A table that was never enrolled cannot have an anchor, and cannot have been applied
+                        // lazily either -- enrollment is what permits lazy apply, and it publishes the anchor
+                        // first. Its live state is exactly as durable as the mode it was written under
+                        // promised, so there is nothing here to roll forward. The TableWriter constructor
+                        // performs the crash-safe enrollment (baseline at the live cut, then the record)
+                        // before this table can be applied lazily for the first time.
+                        //
+                        // This is the ONLY case in which an absent anchor is not a hard failure. An enrolled
+                        // table with no anchor falls through to recoverTable and is refused: its state may be
+                        // ahead of a cut nothing can name any more.
                         continue;
                     }
                     recoverTable(token, src, dst, dir);
@@ -258,14 +273,27 @@ public class RecoveryCoordinator {
         }
     }
 
-    private boolean isLegacyAdaptiveEnrollmentCandidate(TableToken token, Path metaPath) {
+    /**
+     * The commit mode this table's materialized state is enrolled under, read straight from {@code _meta}
+     * (see {@link TableUtils#META_OFFSET_ENROLLED_COMMIT_MODE}). {@link CommitMode#ADAPTIVE} means the state
+     * may be lazily ahead of the durable epoch; anything else means it may not.
+     * <p>
+     * Fails closed on an unreadable {@code _meta} rather than defaulting to "not enrolled": the caller uses
+     * a non-ADAPTIVE answer to permit an absent anchor, and inferring that from a file it could not read
+     * would turn a corrupt table into a silent live-state fallback. The callers reach here only after the
+     * effective-mode resolution above has already read the same file, so this throws only if it became
+     * unreadable in between.
+     */
+    private int readEnrolledCommitMode(TableToken token, Path metaPath) {
         tablePath(metaPath, token).concat(TableUtils.META_FILE_NAME);
         final long size = ff.length(metaPath.$());
         if (size <= 0) {
-            return false;
+            throw CairoException.critical(ff.errno())
+                    .put("could not read table metadata to resolve adaptive enrollment [table=")
+                    .put(token.getTableName()).put(", path=").put(metaPath).put(']');
         }
         try (MemoryCMR metaMem = Vm.getCMRInstance(ff, metaPath.$(), size, MemoryTag.MMAP_TABLE_READER)) {
-            return !TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_COMMIT_MODE);
+            return TableUtils.getEnrolledCommitMode(metaMem);
         }
     }
 

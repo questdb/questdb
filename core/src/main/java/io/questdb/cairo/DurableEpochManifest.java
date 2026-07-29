@@ -20,6 +20,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
@@ -137,7 +138,84 @@ public final class DurableEpochManifest {
             // _snapshot is newly created for generation zero. Its own fsync does not make the parent
             // directory entry durable, so publish that dentry before table-name/sequencer registration.
             fsyncDirectory(configuration, tablePath, rootLen);
+            if (requireInitialSeqTxn) {
+                // CREATE and the REBASE staging clone only. A checkpoint/backup restore or a replica demote
+                // also publishes a baseline here, but those tables are not necessarily adaptive and their
+                // record must stay whatever it was: the first writer to open one enrolls it if, and only if,
+                // the table actually resolves to ADAPTIVE. Recording it for them would assert lazy state on a
+                // table that may never have any.
+                recordEnrollment(configuration, tableToken, tablePath, rootLen);
+            }
         }
+    }
+
+    /**
+     * Records in {@code _meta} that the anchor just published covers this table, so the first
+     * {@code TableWriter} to open it does not have to enroll it — which would rewrite {@code _meta} and bump
+     * the metadata version of every newly created adaptive table.
+     *
+     * <p>Runs AFTER the marker is published and its directory entry is durable, never before. That ordering
+     * is what makes the write safe to do in place: once the anchor exists, EVERY outcome of this 4-byte
+     * write is correct. The new value is correct because the anchor it speaks for is on disk. The old value
+     * (UNSET) is correct because it only means "not enrolled yet", and the next writer to open the table
+     * enrolls it — finding the anchor already naming the live cut, so it publishes no new epoch and merely
+     * records. A torn value is correct as whichever of those two it reads as. Recording BEFORE the anchor
+     * would have no such property: it would claim durable state that is not on disk yet.
+     *
+     * <p>The generation-zero payload copy of {@code _meta} predates this write and so still reads UNSET.
+     * That is deliberate and harmless: a recovery that restores the payload reverts the record to "not
+     * enrolled", and the next writer re-records it against the same, still-valid anchor.
+     */
+    private static void recordEnrollment(CairoConfiguration configuration, TableToken tableToken, Path tablePath, int rootLen) {
+        writeEnrollmentRecord(configuration, tableToken, tablePath, rootLen, CommitMode.ADAPTIVE);
+    }
+
+    /**
+     * Clears the enrolment record of a table that is being built by COPYING another table's {@code _meta}
+     * and is not receiving an anchor — an {@code ALTER TABLE ... REBASE WAL} staging clone whose effective
+     * mode is not adaptive.
+     *
+     * <p>Without this the clone inherits the source's record. The source can legitimately still say ADAPTIVE
+     * while resolving to something else (a table left enrolled by a crash, awaiting the reconciliation its
+     * next writer performs), and the clone would then be a table claiming lazy state with no anchor to
+     * rewind to — which recovery refuses, taking the whole instance down. The clone has no lazy state by
+     * construction: its {@code _txn}/{@code _meta} were just reset and its files freshly written.
+     */
+    public static void clearEnrollmentRecord(CairoConfiguration configuration, TableToken tableToken, Path tablePath, int rootLen) {
+        writeEnrollmentRecord(configuration, tableToken, tablePath, rootLen, CommitMode.UNSET);
+    }
+
+    private static void writeEnrollmentRecord(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            Path tablePath,
+            int rootLen,
+            int enrolledCommitMode
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        tablePath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
+        final long fd = TableUtils.openRW(ff, tablePath.$(), LOG, configuration.getWriterFileOpenOpts());
+        if (fd == -1) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not open table metadata to record adaptive enrollment [table=")
+                    .put(tableToken.getTableName()).put(", path=").put(tablePath).put(']');
+        }
+        final long tempMem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
+        try {
+            TableUtils.writeIntOrFail(
+                    ff,
+                    fd,
+                    TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE,
+                    enrolledCommitMode,
+                    tempMem,
+                    tablePath
+            );
+            ff.fsync(fd);
+        } finally {
+            Unsafe.free(tempMem, Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
+            ff.close(fd);
+        }
+        tablePath.trimTo(rootLen);
     }
 
     public static boolean isMetadataBound(CairoConfiguration configuration, TableToken tableToken, int generation) {

@@ -72,25 +72,22 @@ import static org.junit.Assert.assertTrue;
  */
 public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
+    /**
+     * A table created while the instance ran nosync has no anchor: the generation-zero baseline is
+     * published at CREATE only when the effective mode is already adaptive. Turning adaptive on globally --
+     * unpinning {@code cairo.commit.mode}, or upgrading to a build where it is the default -- must not
+     * refuse that table. It has nothing to roll forward: enrollment is what permits lazy apply, and it
+     * publishes the anchor first, so a table that was never enrolled cannot be ahead of a cut.
+     *
+     * <p>This test replaces one that pinned the opposite (the refusal, which failed the whole engine
+     * component and so took the instance down over a single table). The discriminator that makes the
+     * difference is the ENROLLED commit mode recorded in {@code _meta}: absent/non-adaptive here, which is
+     * what lets recovery permit the missing anchor instead of guessing.
+     * {@link #testEnrolledTableWithLostAnchorStillRefusesLiveStateFallback()} is the other half -- the same
+     * missing anchor on an ENROLLED table is still a hard refusal.
+     */
     @Test
-    public void testTableCreatedUnderNosyncRefusesAGlobalSwitchToAdaptive() throws Exception {
-        // KNOWN GAP, pinned here so it is visible rather than folklore. The generation-zero anchor is
-        // published at CREATE only when the table's effective mode is already adaptive, so a table
-        // created while the server ran nosync has none. Nothing later gives it one: the enrolment paths
-        // cover a restore and a pre-commit-mode _meta, and this table is neither -- its _meta carries the
-        // commit-mode field and says UNSET, so it simply inherits the server default.
-        //
-        // Flip that default to adaptive -- unpinning cairo.commit.mode, or upgrading to a build where
-        // adaptive is the default -- and recoverTable finds an adaptive table with no anchor. It refuses,
-        // and because the refusal fails the engine component the whole instance stops starting, not just
-        // this table. The per-table route does NOT have this problem: ALTER ... SET PARAM commit_mode
-        // publishes a baseline first (TableWriter.setMetaCommitMode).
-        //
-        // Publishing an anchor at CREATE unconditionally does not fix it and makes it worse: a nosync
-        // table's anchor would sit frozen at generation zero while the table grew, so the flip would
-        // rewind the materialized table to empty and replay WAL that nosync's purge floor may already
-        // have deleted. A fix has to enrol at the LIVE cut, which needs a durable way to tell a table
-        // that was never adaptive from one whose anchor was lost -- a design decision, not a patch.
+    public void testTableCreatedUnderNosyncEnrolsOnGlobalSwitchToAdaptive() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         try {
             execute("create table mode_flip (ts timestamp, v long) timestamp(ts) partition by day wal");
@@ -101,23 +98,87 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
                 Assert.assertFalse(
-                        "a nosync-created table is expected to have no anchor; if this now holds, the"
-                                + " create path changed and this gap may be closed",
+                        "precondition: a nosync-created table has no anchor",
                         TestFilesFacadeImpl.INSTANCE.exists(path.$())
                 );
             }
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
-            // A live SeqTxnTracker still remembers the mode this table was written under, which would
-            // let recovery skip it and hide the gap. Drop the cached sequencer and tracker so the mode
-            // is resolved from _meta and the server default, as it is on a cold start.
+            // A live SeqTxnTracker still remembers the mode this table was written under, which would let
+            // recovery resolve the mode from memory and skip the table entirely -- the flip would not be
+            // modelled at all. Drop the cached sequencer and tracker, as a cold start has.
             engine.getTableSequencerAPI().resetForReboot(token);
 
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            // Boots. Recovery permits the absent anchor because _meta does not record the table as enrolled.
+            new RecoveryCoordinator(engine).recover();
+
+            // The first writer to open the table enrols it: baseline at the LIVE cut, then the record.
+            try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
+                Assert.assertEquals(CommitMode.ADAPTIVE, writer.getEffectiveCommitMode());
+                Assert.assertEquals("enrollment must not disturb the declared per-table override",
+                        CommitMode.UNSET, writer.getMetadata().getCommitMode());
+            }
+            engine.releaseAllWriters();
+
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                Assert.assertTrue("enrollment must publish the anchor",
+                        TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+            }
+            try (TableReaderMetadata md = new TableReaderMetadata(engine.getConfiguration(), token)) {
+                md.loadMetadata();
+                Assert.assertEquals("the anchor is only trustworthy if _meta records the enrollment with it",
+                        CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+            }
+
+            // The row written under nosync is still there, and the anchor now published is one an ordinary
+            // startup validates rather than merely tolerates.
+            new RecoveryCoordinator(engine).recover();
+            try (io.questdb.cairo.TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals("the row written under nosync must survive enrollment", 1L, reader.size());
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * The safety half of {@link #testTableCreatedUnderNosyncEnrolsOnGlobalSwitchToAdaptive()}: permitting an
+     * absent anchor for a never-enrolled table must not make the refusal unreachable. An ENROLLED table has
+     * been applied lazily, so its live state may sit ahead of a durable cut that nothing can name any more.
+     * That is still fail-closed.
+     */
+    @Test
+    public void testEnrolledTableWithLostAnchorStillRefusesLiveStateFallback() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            execute("create table lost_anchor (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into lost_anchor values ('2024-09-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("lost_anchor");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            try (TableReaderMetadata md = new TableReaderMetadata(engine.getConfiguration(), token)) {
+                md.loadMetadata();
+                Assert.assertEquals("precondition: an adaptive table is enrolled by its first writer",
+                        CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+            }
+
+            // Lose the anchor the way a filesystem or a stray hand would: the artifacts go, the record stays.
+            try (Path path = new Path()) {
+                final int tableRootLen = path.of(engine.getConfiguration().getDbRoot()).concat(token).size();
+                RecoveryCoordinator.removeAdaptiveEpochArtifacts(
+                        engine.getConfiguration().getFilesFacade(), path, tableRootLen);
+            }
+            engine.getTableSequencerAPI().resetForReboot(token);
+
             try {
                 new RecoveryCoordinator(engine).recover();
-                Assert.fail("expected the markerless adaptive table to be refused");
+                Assert.fail("expected an enrolled table with no anchor to be refused");
             } catch (CairoException expected) {
                 TestUtils.assertContains(expected.getFlyweightMessage(), "adaptive epoch marker is absent");
             }

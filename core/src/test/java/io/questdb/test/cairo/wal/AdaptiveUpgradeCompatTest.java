@@ -124,8 +124,14 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
 
                 // Flip meta minor version 3 -> 2 (keep the checksum low short) => a valid pre-v3 meta.
                 final int cur = peekInt(ff, metaPath, TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
-                Assert.assertEquals("precondition: fresh table is written at the commit-mode meta version",
-                        TableUtils.META_FORMAT_MINOR_VERSION_COMMIT_MODE, Numbers.decodeHighShort(cur));
+                // The invariant this precondition needs is that the field is LIVE in the file we are about
+                // to downgrade, not that the file sits at any particular version: META_FORMAT_MINOR_VERSION
+                // _LATEST legitimately moves whenever a tail field is added (it went 3 -> 4 with the enrolled
+                // commit mode). Pinning the exact value would fail on every such addition while proving
+                // nothing about the gate under test.
+                Assert.assertTrue("precondition: fresh table must be written at or above the commit-mode meta"
+                                + " version, or the field being downgraded away is not live to begin with",
+                        Numbers.decodeHighShort(cur) >= TableUtils.META_FORMAT_MINOR_VERSION_COMMIT_MODE);
                 final int downgraded = Numbers.encodeLowHighShorts(
                         Numbers.decodeLowShort(cur),                         // keep the checksum valid
                         TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT);  // (short) 2 -> pre-commit-mode

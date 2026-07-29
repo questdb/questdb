@@ -34,6 +34,9 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
@@ -5100,6 +5103,67 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
             assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
         });
+    }
+
+    /**
+     * A REBASE clone copies the source's {@code _meta}, enrolment record and all, but publishes an adaptive
+     * anchor only when the clone itself resolves to adaptive. A source can legitimately still be recorded as
+     * enrolled while resolving to something else — that is precisely a table whose adaptive tenure ended
+     * with a crash and whose next writer has not reconciled it yet — so a clone that inherited the record
+     * without an anchor would be a table claiming lazy state with nothing to rewind to. Recovery refuses
+     * that, and the refusal fails the engine component: one rebased table would stop the instance booting.
+     *
+     * <p>Modelled here by creating the table under adaptive (which records the enrolment) and flipping the
+     * instance to nosync without letting a writer reconcile it — the precondition below asserts the source
+     * really is in that state, so this cannot pass vacuously.
+     */
+    @Test
+    public void testRebaseWalCloneDoesNotInheritTheSourceEnrolmentWithoutAnAnchor() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+                execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken oldToken = engine.verifyTableName("t");
+                engine.releaseInactive();
+
+                // The operator turns adaptive off. Nothing opens the table in between, so its record still
+                // says enrolled -- the state a crash under adaptive leaves behind.
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                try (TableReaderMetadata md = new TableReaderMetadata(configuration, oldToken)) {
+                    md.loadMetadata();
+                    Assert.assertEquals("precondition: the source must still be recorded as enrolled, or this"
+                                    + " test proves nothing about inheriting that record",
+                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+                }
+
+                execute("alter table t suspend wal");
+                execute("alter table t rebase wal");
+                drainWalQueue();
+
+                final TableToken newToken = engine.verifyTableName("t");
+                Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+
+                final FilesFacade ff = configuration.getFilesFacade();
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(newToken).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    Assert.assertFalse("a nosync clone publishes no anchor", ff.exists(path.$()));
+                }
+                try (TableReaderMetadata md = new TableReaderMetadata(configuration, newToken)) {
+                    md.loadMetadata();
+                    Assert.assertNotEquals("a clone with no anchor must not claim to be enrolled",
+                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+                }
+
+                // The consequence: a startup validates the clone instead of refusing to serve the instance.
+                new RecoveryCoordinator(engine).recover();
+                assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
     }
 
     @Test

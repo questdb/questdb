@@ -341,7 +341,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // setApplyLazy, partition split/squash, parquet rebuild) uses THIS, not configuration.getCommitMode(),
     // so the table behaves per its own mode even when the instance default differs. See Deferred 1.
     private int effectiveCommitMode = CommitMode.UNSET;
-    private boolean legacyAdaptiveEnrollmentPending;
+    // This table resolves to ADAPTIVE but its _meta does not yet record it as enrolled: it needs a durable
+    // baseline published at the LIVE cut before a single commit may be applied lazily.
+    private boolean adaptiveEnrollmentPending;
+    // The mirror: _meta records the state as enrolled under ADAPTIVE but the table no longer resolves to it
+    // (a per-table ALTER, or the instance default changing under an UNSET table). The lazily-applied state
+    // must be reconciled durably before the record can stop saying "may be ahead of the epoch".
+    private boolean adaptiveExitPending;
     private IndexBuilder attachIndexBuilder;
     private long attachMaxTimestamp;
     private MemoryCMR attachMetaMem;
@@ -531,15 +537,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             this.metadata = new TableWriterMetadata(this.tableToken);
             openMetaFile(ff, path, pathSize, ddlMem, metadata);
-            this.legacyAdaptiveEnrollmentPending = metadata.isWalEnabled()
-                    && !metadata.isCommitModeFieldPresent()
-                    && configuration.getCommitMode() == CommitMode.ADAPTIVE;
-            // A legacy table cannot use lazy adaptive apply until a full durable baseline has been
+            final int resolvedCommitMode = CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode());
+            // Enrollment is driven by the ENROLLED record in _meta, not by the metadata FORMAT. A legacy
+            // table (no commit-mode field at all) reads back UNSET and is therefore covered by the same
+            // rule as a table that was created while the instance ran nosync and only became adaptive when
+            // the default changed under it. Both have no anchor, both must get one at their live cut.
+            this.adaptiveEnrollmentPending = metadata.isWalEnabled()
+                    && resolvedCommitMode == CommitMode.ADAPTIVE
+                    && metadata.getEnrolledCommitMode() != CommitMode.ADAPTIVE;
+            this.adaptiveExitPending = metadata.isWalEnabled()
+                    && resolvedCommitMode != CommitMode.ADAPTIVE
+                    && metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE;
+            // An unenrolled table cannot use lazy adaptive apply until a full durable baseline has been
             // published. Open/configure it with eager SYNC semantics, then enroll it at the end of
             // construction before publishing ADAPTIVE to the tracker.
-            this.effectiveCommitMode = legacyAdaptiveEnrollmentPending
-                    ? CommitMode.SYNC
-                    : CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode());
+            this.effectiveCommitMode = adaptiveEnrollmentPending ? CommitMode.SYNC : resolvedCommitMode;
             // Publish the table's mode to the _txn writer as soon as it is known, BEFORE any commit can run.
             // TxWriter otherwise falls back to the instance-global mode (see TxWriter.resolveCommitMode).
             this.txWriter.setCommitMode(this.effectiveCommitMode);
@@ -653,8 +665,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // wal specific
             segmentFileCache = metadata.isWalEnabled() ? new TableWriterSegmentFileCache(tableToken, configuration) : null;
-            if (legacyAdaptiveEnrollmentPending) {
-                enrollLegacyTableInAdaptiveMode();
+            if (adaptiveEnrollmentPending) {
+                enrollTableInAdaptiveMode();
+            } else if (adaptiveExitPending) {
+                reconcileAdaptiveExit(effectiveCommitMode);
             }
             // Publish this table's effective commit mode to the per-table tracker so the WAL-side jobs
             // (purge floor, durable-epoch trigger, recovery, wal_tables) read the same value this writer
@@ -3694,45 +3708,91 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void enrollLegacyTableInAdaptiveMode() {
+    private void enrollTableInAdaptiveMode() {
         publishAdaptiveBaselineOrFail();
-        // Rewriting _meta after the baseline is the durable enrollment discriminator. A crash before
-        // this point leaves legacy metadata and retries enrollment; a crash after it always has a valid
-        // adaptive anchor. Keep UNSET so the table continues to inherit the server default.
-        metadata.setCommitMode(CommitMode.UNSET);
+        // COVERING BARRIER: publishAdaptiveBaselineOrFail() has forced the whole materialized state durable
+        // and re-read the marker to confirm the anchor names exactly this (txn, seqTxn). Only now may _meta
+        // record the state as lazily-applicable. A crash before this point leaves the record unenrolled and
+        // re-enrolls on the next open (publishing a fresh baseline); a crash after it always has a validated
+        // anchor to rewind to. The declared per-table override is left exactly as it was -- a table that
+        // inherits the server default keeps inheriting it.
+        metadata.setEnrolledCommitMode(CommitMode.ADAPTIVE);
         writeMetadataToDisk();
         effectiveCommitMode = CommitMode.ADAPTIVE;
-        legacyAdaptiveEnrollmentPending = false;
+        adaptiveEnrollmentPending = false;
         publishEffectiveCommitMode();
         reapplyColumnCommitMode(effectiveCommitMode);
+    }
+
+    /**
+     * The table was left enrolled under ADAPTIVE but no longer resolves to it. Reconcile the lazily-applied
+     * state durably, then stop claiming it may be ahead of the epoch.
+     *
+     * <p>Ordering is the mirror of {@link #enrollTableInAdaptiveMode()} and matters for the same reason: the
+     * record is what {@link RecoveryCoordinator} consults to decide whether a crash left this table torn
+     * ahead of its durable cut. Writing it before the reconciliation would tell the next startup to skip the
+     * roll-forward for a table that still needs one -- which is not a boot failure but a silently wrong read.
+     *
+     * <p>From here the table has exactly the durability its new mode promises. Under NOSYNC that is none:
+     * a later crash can tear it, and no epoch will rewind it. That is the configured behaviour, not a
+     * regression -- what this method guarantees is that the state inherited from the ADAPTIVE tenure is
+     * whole and durable at the moment the mode changes.
+     */
+    private void reconcileAdaptiveExit(int targetCommitMode) {
+        publishAdaptiveBaselineOrFail();
+        metadata.setEnrolledCommitMode(targetCommitMode);
+        writeMetadataToDisk();
+        adaptiveExitPending = false;
+        // Release the epoch pin only after the record is durable. A crash in between leaves the record
+        // saying ADAPTIVE, so the next startup rolls forward to this epoch -- which must therefore still
+        // hold its partitions against purge.
+        releaseEpochPin();
+    }
+
+    private void releaseEpochPin() {
+        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        final long pinnedTxn = tracker.getPinnedEpochTxn();
+        if (pinnedTxn >= 0) {
+            txnScoreboard.releaseTxn(
+                    tracker.isPinnedEpochSlotA() ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B,
+                    pinnedTxn
+            );
+        }
+        tracker.clearPinnedEpoch();
     }
 
     @Override
     public void setMetaCommitMode(int commitMode) {
         commit();
         final int newEffectiveCommitMode = CommitMode.effectiveCommitMode(commitMode, configuration.getCommitMode());
-        if (metadata.isWalEnabled()
-                && effectiveCommitMode != CommitMode.ADAPTIVE
-                && newEffectiveCommitMode == CommitMode.ADAPTIVE) {
-            // The epoch must be durable before _meta can classify the table as adaptive. Any failure leaves
-            // the old metadata authoritative and the newly written inactive artifacts harmless.
+        final int oldEffectiveCommitMode = effectiveCommitMode;
+        final boolean entersAdaptive = metadata.isWalEnabled()
+                && oldEffectiveCommitMode != CommitMode.ADAPTIVE
+                && newEffectiveCommitMode == CommitMode.ADAPTIVE;
+        final boolean leavesAdaptive = metadata.isWalEnabled()
+                && metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE
+                && newEffectiveCommitMode != CommitMode.ADAPTIVE;
+        if (entersAdaptive || leavesAdaptive) {
+            // Both directions take the same barrier, for the same reason: _meta is about to make a durability
+            // claim about the materialized state, so the state has to be made to match FIRST. Entering, the
+            // epoch must exist before the table may be applied lazily; leaving, the lazily-applied state must
+            // be reconciled before the record stops saying it may be ahead of the epoch. A failure in either
+            // direction leaves the old metadata authoritative and the newly written artifacts harmless.
             publishAdaptiveBaselineOrFail();
         }
-        final int oldEffectiveCommitMode = effectiveCommitMode;
         metadata.setCommitMode(commitMode);
+        if (entersAdaptive || leavesAdaptive) {
+            metadata.setEnrolledCommitMode(newEffectiveCommitMode);
+        }
         writeMetadataToDisk();
         this.effectiveCommitMode = newEffectiveCommitMode;
+        adaptiveEnrollmentPending = false;
+        adaptiveExitPending = false;
         publishEffectiveCommitMode();
-        if (oldEffectiveCommitMode == CommitMode.ADAPTIVE && newEffectiveCommitMode != CommitMode.ADAPTIVE) {
-            final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-            final long pinnedTxn = tracker.getPinnedEpochTxn();
-            if (pinnedTxn >= 0) {
-                txnScoreboard.releaseTxn(
-                        tracker.isPinnedEpochSlotA() ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B,
-                        pinnedTxn
-                );
-            }
-            tracker.clearPinnedEpoch();
+        if (leavesAdaptive) {
+            // After the record is durable, never before: a crash in between must leave the next startup
+            // rolling forward to this epoch, which requires its partitions to still be pinned.
+            releaseEpochPin();
         }
         reapplyColumnCommitMode(effectiveCommitMode);
     }
@@ -3750,10 +3810,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void publishAdaptiveBaselineOrFail0() {
+        // A COMPLETED epoch that already names this exact cut is the barrier we need; taking another one
+        // would flush state that is provably durable already. This is the ordinary case for a table created
+        // under adaptive: CREATE published the generation-zero anchor and the first writer to open the table
+        // finds it naming (txn=0, seqTxn=0), the cut it is sitting on. Nothing can have moved in between --
+        // this writer holds the table lock, and every mutation of the materialized state advances txn.
+        //
+        // The check is the same one recovery uses to decide the anchor is trustworthy (identical tuple plus
+        // a validated binding manifest), so "valid at the live cut" means exactly "recovery would restore
+        // this state". A stale or wrong-cut anchor fails it and we publish a fresh baseline below.
+        //
+        // No scoreboard pin is taken on this path, and none is needed. A pin keeps the partition versions an
+        // epoch references alive against purge; the only way an UNENROLLED table can have an anchor naming
+        // its live cut is the creation baseline, taken at txn 0 where the table references no partitions at
+        // all. Every other caller either already holds a pin (a recovered epoch pinned by recovery, or one
+        // this writer published) or is on its way to releasing it (the exit path).
+        if (adaptiveBaselineValidAtLiveCut()) {
+            return;
+        }
         // Enrollment is itself the operation that establishes the required anchor. It must not be
         // suppressed by the replica/demotion cadence gate: checkpoint restore and metadata publication
         // may otherwise leave a current-format adaptive table markerless on the next restart.
         advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L, true);
+        if (!adaptiveBaselineValidAtLiveCut()) {
+            throw CairoException.critical(0)
+                    .put("could not publish adaptive enrollment baseline [table=").put(tableToken.getTableName())
+                    .put(", seqTxn=").put(getSeqTxn()).put(", txn=").put(getTxn()).put(']');
+        }
+    }
+
+    /**
+     * True iff a durable epoch generation on disk names EXACTLY the cut this writer is sitting on — the same
+     * (seqTxn, txn) and a binding manifest that validates against the live column and metadata versions.
+     * Because an epoch's publication force-flushes the materialized state before recording itself, this
+     * answering true means the state at the live cut is already durable.
+     */
+    private boolean adaptiveBaselineValidAtLiveCut() {
         final long expectedSeqTxn = getSeqTxn();
         final long expectedTxn = getTxn();
         boolean valid = false;
@@ -3784,11 +3876,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         path.trimTo(pathSize);
-        if (!valid) {
-            throw CairoException.critical(0)
-                    .put("could not publish adaptive enrollment baseline [table=").put(tableToken.getTableName())
-                    .put(", seqTxn=").put(expectedSeqTxn).put(", txn=").put(expectedTxn).put(']');
-        }
+        return valid;
     }
 
     /**
@@ -13841,6 +13929,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getTableFormat());
             ddlMem.putInt(metadata.getCommitMode());
+            ddlMem.putInt(metadata.getEnrolledCommitMode());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {

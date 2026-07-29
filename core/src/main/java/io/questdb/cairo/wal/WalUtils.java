@@ -254,6 +254,14 @@ public class WalUtils {
                     configuration.getMicrosecondClock().getTicks() / 1000L
             );
             dstDir.trimTo(dstLen);
+        } else {
+            // No anchor for this clone, so it must not inherit the SOURCE's enrolment record either -- the
+            // copied _meta carries it, and a source left enrolled by a crash (awaiting the reconciliation
+            // its next writer performs) would hand the clone a claim of lazy state with nothing to rewind
+            // to, which recovery refuses. Symmetric to excluding the source's epoch artifacts from the copy:
+            // the clone's _txn/_meta were just reset, so it has no lazy state by construction.
+            DurableEpochManifest.clearEnrollmentRecord(configuration, newToken, dstDir.trimTo(dstLen), dstLen);
+            dstDir.trimTo(dstLen);
         }
 
         // Mark the new table rebased while it is still invisible in the staging dir, so the permanent

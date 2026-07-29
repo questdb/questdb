@@ -38,6 +38,7 @@ import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
     private int commitMode = CommitMode.UNSET;
     private boolean commitModeFieldPresent;
+    private int enrolledCommitMode;
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -81,6 +82,19 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     public boolean isCommitModeFieldPresent() {
         return commitModeFieldPresent;
+    }
+
+    /**
+     * The commit mode this table's materialized state is enrolled under — see
+     * {@link TableUtils#META_OFFSET_ENROLLED_COMMIT_MODE}. {@link CommitMode#ADAPTIVE} means the state may
+     * be lazily ahead of the durable epoch and must not be trusted without one.
+     */
+    public int getEnrolledCommitMode() {
+        return enrolledCommitMode;
+    }
+
+    public void setEnrolledCommitMode(int commitMode) {
+        this.enrolledCommitMode = commitMode;
     }
 
     @Override
@@ -177,6 +191,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.tableFormat = TableUtils.getTableFormat(metaMem);
         this.commitModeFieldPresent = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_COMMIT_MODE);
         this.commitMode = TableUtils.getCommitMode(metaMem);
+        this.enrolledCommitMode = TableUtils.getEnrolledCommitMode(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
