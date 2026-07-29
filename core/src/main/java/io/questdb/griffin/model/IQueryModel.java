@@ -199,6 +199,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void addJoinModel(IQueryModel joinModel);
 
+    void addLateralCountTemplate(QueryColumn template);
+
     void addLatestBy(ExpressionNode latestBy);
 
     boolean addModelAliasIndex(ExpressionNode node, int index);
@@ -312,6 +314,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     ObjList<IQueryModel> getJoinModels();
 
     int getJoinType();
+
+    ObjList<QueryColumn> getLateralCountTemplates();
 
     ObjList<ExpressionNode> getLatestBy();
 

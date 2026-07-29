@@ -262,32 +262,33 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testGeneratedColumnWildcardMetadataLifecycle() {
         QueryColumn column = new QueryColumn().of("generated", null);
         Assert.assertFalse(column.isGenerated());
-        Assert.assertFalse(column.isLateralScalarCount());
 
         column.setGenerated(true);
-        column.setLateralScalarCount(true);
         column.of("renamed", null);
         Assert.assertTrue(column.isGenerated());
-        Assert.assertTrue(column.isLateralScalarCount());
 
         column.clear();
         Assert.assertFalse(column.isGenerated());
-        Assert.assertFalse(column.isLateralScalarCount());
         Assert.assertTrue(column.isIncludeIntoWildcard());
     }
 
+    // Exercises the model-replacement flag transfer directly via a @TestOnly accessor.
+    // The same regression is also covered black-box by the LATERAL-count assertQuery
+    // tests; this pins the unit-level contract of replaceAndTransferDependents.
     @Test
     public void testLateralCountModelReplacementLifecycle() {
         QueryModel oldModel = QueryModel.FACTORY.newInstance();
         QueryModel newModel = QueryModel.FACTORY.newInstance();
         oldModel.setLateralCountCoalesceRequired(true);
+        QueryColumn template = new QueryColumn().of("cnt", null);
+        oldModel.addLateralCountTemplate(template);
 
-        // Exercises the model-replacement flag transfer directly via a @TestOnly accessor (no
-        // reflection). The same regression is also covered black-box by the LATERAL-count
-        // assertQuery tests; this pins the unit-level contract of replaceAndTransferDependents.
         Assert.assertSame(newModel, SqlOptimiser.replaceAndTransferDependentsForTesting(oldModel, newModel));
         Assert.assertTrue(newModel.isLateralCountCoalesceRequired());
         Assert.assertFalse(oldModel.isLateralCountCoalesceRequired());
+        Assert.assertEquals(1, newModel.getLateralCountTemplates().size());
+        Assert.assertSame(template, newModel.getLateralCountTemplates().getQuick(0));
+        Assert.assertEquals(0, oldModel.getLateralCountTemplates().size());
     }
 
     @Test
@@ -669,6 +670,1711 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftLateralApproxCountDistinctZeroOnNoMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (order_id INT, venue_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO fills VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (1, 10, '2024-01-01T00:30:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.venues
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT approx_count_distinct(venue_id) AS venues
+                        FROM fills
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tvenues
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.c, sub.d
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS c, count(*) + 2 AS d
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc\td
+                            1\t2\t4
+                            2\t1\t3
+                            3\t0\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic * 10 AS scaled
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY sub.arithmetic, o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tscaled
+                            3\t20
+                            2\t30
+                            1\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticAggregateOverInnerLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS v
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS c FROM trades WHERE order_id = o.id
+                        ) s
+                        WHERE t1.k = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t3
+                            2\t2
+                            3\t2
+                            """);
+        });
+    }
+
+    // bind variables are not captured by compensation templates: the projection
+    // stays uncompensated on unmatched rows
+    @Test
+    public void testLeftLateralCountArithmeticBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 2L);
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + $1 AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 0L);
+            assertQuery("""
+                    SELECT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.cnt = $1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticDistinctConsumer() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT DISTINCT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tarithmetic
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT DISTINCT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tcnt
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+
+            assertQuery("""
+                    SELECT DISTINCT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT c.* FROM (
+                            SELECT count(*) AS cnt
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) c
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tcnt
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticFilteredByParent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.arithmetic = 2
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.cnt = 0
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticInCte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    WITH w AS (
+                        SELECT o.id AS id, sub.arithmetic AS v
+                        FROM orders o
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + 2 AS arithmetic
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) sub
+                    )
+                    SELECT * FROM w ORDER BY id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticMixedAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.mixed
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + sum(qty) AS mixed
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tmixed
+                            1\t32
+                            2\t41
+                            3\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.val
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT CASE WHEN count() = 0 THEN 2 ELSE sum(qty) END AS val
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tval
+                            1\t30
+                            2\t40
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticMultipleJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("INSERT INTO fills VALUES (1, '2024-01-01T00:10:00.000000Z')");
+
+            assertQuery("""
+                    SELECT o.id, s1.v, s2.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS v FROM trades WHERE order_id = o.id
+                    ) s1
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 5 AS v FROM fills WHERE order_id = o.id
+                    ) s2
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\tv1
+                            1\t4\t6
+                            2\t3\t5
+                            3\t2\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticConstantColumnCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'LSE', '2024-01-01T00:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.c, sub.z, sub.oid
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS c, 5 AS z, o.id AS oid FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc\tz\toid
+                            1\t1\t5\t1
+                            2\t0\t5\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticImplicitKeyNotCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'LSE', '2024-01-01T00:10:00.000000Z')
+                    """);
+
+            // the body groups by venue, so an unmatched outer row yields no inner row at all
+            assertQuery("""
+                    SELECT o.id, sub.k, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT venue AS k, count(*) + 2 AS c FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tk\tc
+                            1\tLSE\t3
+                            2\t\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.k, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT venue AS k, approx_count_distinct(order_id) AS c FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tk\tc
+                            1\tLSE\t1
+                            2\t\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS c FROM trades WHERE order_id = o.id SAMPLE BY 1h
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t3
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticNestedBodyDoesNotExplode() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'LSE', '2024-01-01T00:10:00.000000Z')
+                    """);
+
+            StringBuilder body = new StringBuilder("SELECT count(*) AS v0 FROM trades WHERE order_id = o.id");
+            for (int i = 1; i <= 24; i++) {
+                body.insert(0, "SELECT v" + (i - 1) + " + v" + (i - 1) + " AS v" + i + " FROM (").append(')');
+            }
+            // the template budget degrades to uncompensated NULL instead of expanding 2^24 nodes
+            assertQuery("SELECT o.id, sub.v24 FROM orders o LEFT JOIN LATERAL (" + body + ") sub ORDER BY o.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv24
+                            1\t16777216
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testScalarAggregateBodyExcludesWindowJoinBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE instruments (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (instrument_id INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO instruments VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, 'A', '2024-01-01T00:01:00.000000Z'),
+                    (1, 11.0, 'A', '2024-01-01T00:02:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    (9.5, 'A', '2024-01-01T00:00:30.000000Z')
+                    """);
+
+            // the WINDOW JOIN aggregates per driving row, so instrument 2 keeps no row at all
+            assertQuery("""
+                    SELECT i.id, sub.c
+                    FROM instruments i
+                    JOIN LATERAL (
+                        SELECT count(*) AS c
+                        FROM trades t
+                        WINDOW JOIN quotes q ON tag
+                            RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                        WHERE t.instrument_id = i.id
+                    ) sub
+                    ORDER BY i.id, sub.c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testScalarCountBodyPreservesCrossLateralRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'LSE', '2024-01-01T00:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.cnt
+                    FROM orders o
+                    CROSS JOIN LATERAL (
+                        SELECT count(*) AS cnt FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.m
+                    FROM orders o
+                    CROSS JOIN LATERAL (
+                        SELECT max(ts) AS m FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tm
+                            1\t2024-01-01T00:10:00.000000Z
+                            2\t
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.m
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT max(ts) AS m FROM trades WHERE order_id = o.id
+                    ) sub ON true
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tm
+                            1\t2024-01-01T00:10:00.000000Z
+                            2\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticNegativeGuards() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT sum(qty) + 1 AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("coalesce")
+                    .returns("""
+                            id\tv
+                            1\t31
+                            2\t41
+                            3\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                        LIMIT 0
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\tnull
+                            2\tnull
+                            3\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                        GROUP BY order_id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t4
+                            2\t3
+                            3\tnull
+                            """);
+        });
+    }
+
+    // Known limitation: compensation does not reach a column referenced only in
+    // ORDER BY, so the unmatched row sorts as NULL (first) instead of as 10.
+    @Test
+    public void testLeftLateralCountArithmeticOrderByOnlyNotCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT 10 - count(*) AS inv
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY sub.inv, o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id
+                            3
+                            1
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticOuterRef() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.val
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) * 10 + o.id AS val
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tval
+                            1\t21
+                            2\t12
+                            3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticRenamed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic AS foo
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tfoo
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT sub.arithmetic AS v, count(*) AS n
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    GROUP BY sub.arithmetic
+                    ORDER BY v
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            v\tn
+                            2\t1
+                            3\t1
+                            4\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticRepeatedLeaf() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + count(*) AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("values: [count(*)]")
+                    .returns("""
+                            id\tv
+                            1\t4
+                            2\t2
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticSumWithOuterRef() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + sum(qty + o.id) AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t34
+                            2\t43
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticUnaliased() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    )
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticUnionConsumer() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    UNION ALL
+                    SELECT o.id + 10, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            1\t4
+                            2\t3
+                            3\t2
+                            11\t4
+                            12\t3
+                            13\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    UNION
+                    SELECT 99, 0 FROM long_sequence(1)
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt
+                            1\t2
+                            2\t1
+                            3\t0
+                            99\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWhereMixedTerms() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.arithmetic = 2 OR o.id = 1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            1\t4
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.arithmetic = 2 AND o.id > 1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.arithmetic - o.id = -1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.arithmetic - o.id = 1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            2\t3
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.arithmetic = 2 OR o.ts > '2024-06-01'
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWhereOnlyRef() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.cnt = 0
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWhereUnqualified() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE arithmetic = 2
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("INSERT INTO trades VALUES (1, '2024-01-01T00:10:00.000000Z')");
+
+            assertQuery("""
+                    SELECT o.id, sub.*
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            1\t3
+                            2\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWildcardRenamed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.*
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT c.other AS v, c.*
+                        FROM (
+                            SELECT min(qty) AS other, count(*) + 2 AS v
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) c
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\tother\tv1
+                            1\t10\t10\t4
+                            2\t40\t40\t3
+                            3\tnull\tnull\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v1
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT c.other AS v, c.*
+                        FROM (
+                            SELECT min(qty) AS other, count(*) + 2 AS v
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) c
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv1
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWrapped() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT c + 2 AS arithmetic FROM (
+                            SELECT count(*) AS c
+                            FROM trades
+                            WHERE order_id = o.id
+                        )
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWrappedSubqueryWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT o.id, sub.cnt
+                        FROM orders o
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) sub
+                    ) WHERE cnt = 0
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tcnt
+                            3\t0
+                            """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT o.id, sub.arithmetic
+                        FROM orders o
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + 2 AS arithmetic
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) sub
+                    ) WHERE arithmetic = 2
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountCarrierAliasCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT)");
+            execute("CREATE TABLE trades (order_id INT)");
+            execute("INSERT INTO orders VALUES (1), (2)");
+            execute("INSERT INTO trades VALUES (1)");
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic, sub."__qdb_count_carrier__0"
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic, count(*) AS "__qdb_count_carrier__0"
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic\t__qdb_count_carrier__0
+                            1\t3\t1
+                            2\t2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic, sub."__qdb_count_carrier__0"
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT c.arithmetic, c.cnt AS "__qdb_count_carrier__0"
+                        FROM (
+                            SELECT count(*) + 2 AS arithmetic, count(*) AS cnt
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) c
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic\t__qdb_count_carrier__0
+                            1\t3\t1
+                            2\t2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountCase() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.val
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT CASE WHEN count() = 0 THEN 7 ELSE count() END AS val
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tval
+                            1\t2
+                            2\t1
+                            3\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountCoalesceWrapped() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT coalesce(count(*), 5) AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountDistinctArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (order_id INT, venue_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO fills VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (1, 10, '2024-01-01T00:30:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.venues
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count_distinct(venue_id) + 1 AS venues
+                        FROM fills
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("values: [count_distinct(venue_id)]")
+                    .returns("""
+                            id\tvenues
+                            1\t3
+                            2\t2
+                            3\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountDistinctZeroOnNoMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (order_id INT, venue_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO fills VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (1, 10, '2024-01-01T00:30:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.venues
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count_distinct(venue_id) AS venues
+                        FROM fills
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tvenues
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.venues, sub.total
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count_distinct(venue_id) AS venues, sum(venue_id) AS total
+                        FROM fills
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tvenues\ttotal
+                            1\t2\t40
+                            2\t1\t20
+                            3\t0\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testLeftLateralCountMixedPrefixColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE fx_trades (timestamp TIMESTAMP, symbol SYMBOL, price DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY");
@@ -727,10 +2433,114 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .timestamp("timestamp")
                     .noRandomAccess()
                     .returns("""
-                            timestamp	symbol	price	symbol1	c
-                            2024-01-01T00:00:00.000000Z	EUR/USD	1.1	EUR/USD	1
-                            2024-01-01T01:00:00.000000Z	EUR/USD	1.2		0
-                            2024-01-01T02:00:00.000000Z	GBP/USD	1.3		0
+                            timestamp\tsymbol\tprice\tsymbol1\tc
+                            2024-01-01T00:00:00.000000Z\tEUR/USD\t1.1\tEUR/USD\t1
+                            2024-01-01T01:00:00.000000Z\tEUR/USD\t1.2\t\tnull
+                            2024-01-01T02:00:00.000000Z\tGBP/USD\t1.3\t\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountQuotedDottedAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub."c.dot"
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS "c.dot"
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc.dot
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    // Window functions have no meaningful zero-on-empty value; template extraction
+    // must reject them and keep the uncompensated NULL on unmatched rows.
+    @Test
+    public void testLeftLateralWindowFunctionBodyNotCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.wcnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT wcnt FROM (
+                            SELECT count(*) OVER () AS wcnt, cnt FROM (
+                                SELECT count(*) AS cnt
+                                FROM trades
+                                WHERE order_id = o.id
+                            )
+                        )
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\twcnt
+                            1\t1
+                            2\t1
+                            3\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.wv
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT wcnt + cnt AS wv FROM (
+                            SELECT row_number() OVER () AS wcnt, cnt FROM (
+                                SELECT count(*) AS cnt
+                                FROM trades
+                                WHERE order_id = o.id
+                            )
+                        )
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\twv
+                            1\t3
+                            2\t2
+                            3\tnull
                             """);
         });
     }
@@ -868,6 +2678,39 @@ public class LateralJoinTest extends AbstractCairoTest {
                             a\tcnt
                             1\t1
                             2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountBranchArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) + 2 AS val
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t4
+                            2\t2
                             """);
         });
     }
@@ -2050,6 +3893,45 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedLateralLeftCountDirectBodyWindowJoinArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t0 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T00:01:00.000000Z')
+                    """);
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+            execute("CREATE TABLE q (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO q VALUES
+                    (10, '2024-01-01T00:00:00.000000Z'),
+                    (20, '2024-01-01T00:01:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.arithmetic, sum(q.v) AS window_sum
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM t2
+                        WHERE t2.x = t0.a
+                    ) l1
+                    WINDOW JOIN q
+                        RANGE BETWEEN 0 SECONDS PRECEDING AND CURRENT ROW
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tarithmetic\twindow_sum
+                            1\t3\t10
+                            2\t2\t20
+                            """);
+        });
+    }
+
+    @Test
     public void testNestedLateralLeftCountDirectBodyWindowJoinExpressions() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -2532,6 +4414,65 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // The intermediate body carries templates transferred by the inner lateral's
+    // decorrelation; the LIMIT rewrite must keep them on the wrapped model, where
+    // the l2 join alias is still visible.
+    @Test
+    public void testNestedLateralLeftCountLimitBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t1 (k INT, cnt INT)");
+            execute("INSERT INTO t1 VALUES (1, null), (2, 7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt, l1.c2
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.cnt AS cnt, l2.cnt AS c2
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t1.k
+                        ) l2
+                        WHERE t1.k = t0.a
+                        LIMIT 5
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\tc2
+                            1\tnull\t2
+                            2\t7\t0
+                            3\tnull\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.v
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.v
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + 2 AS v FROM t2 WHERE t2.x = t1.k
+                        ) l2
+                        WHERE t1.k = t0.a
+                        LIMIT 5
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tv
+                            1\t4
+                            2\t2
+                            3\tnull
+                            """);
+        });
+    }
+
     // Regression: a row-preserving LIMIT must keep the coalesce(count, 0) compensation
     // so a no-match outer row still yields 0 rather than NULL. Covers non-literal forms
     // (1+1, abs(1)) which the head revision silently dropped the compensation for.
@@ -2928,6 +4869,79 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // The compensation template captures t0.a, which is not a visible alias inside
+    // the outer lateral body that receives the template; resolution must skip the
+    // template and keep the uncompensated NULL instead of failing to compile.
+    @Test
+    public void testNestedLateralLeftCountOuterRefFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.val
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + t0.a AS val
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t3
+                            2\tnull
+                            """);
+        });
+    }
+
+    // Same fallback through the wildcard/marker path: the template's outer ref is
+    // not visible in the receiving body scope, so resolution must drop it.
+    @Test
+    public void testNestedLateralLeftCountOuterRefFallbackWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT c.* FROM (
+                                SELECT count(*) + t0.a AS val
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) c
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t3
+                            2\tnull
+                            """);
+        });
+    }
+
     @Test
     public void testNestedLateralLeftCountOuterRefKeyPhysicalColumnCharacterization() throws Exception {
         // T11 (characterization, pre-existing boundary): a physical column
@@ -3291,40 +5305,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Same shape as testNestedLateralLeftCountSkipLevelQualified, but the
-    // innermost correlated reference to t0.a is unqualified, so the rewriter
-    // must recognize it through its lateralDepth tag.
-    @Test
-    public void testNestedLateralLeftCountSkipLevelUnqualified() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT, b INT)");
-            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
-
-            assertQuery("""
-                    SELECT t0.a, t0.b, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT l2.cnt
-                        FROM t1
-                        CROSS JOIN LATERAL (
-                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = a
-                        ) l2
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tb\tcnt
-                            1\t10\t1
-                            2\t20\t0
-                            """);
-        });
-    }
-
     // The intermediate lateral projection renames the count column
     // (l2.cnt AS c2); the coalesce compensation must follow the rename when
     // wrapping the outer reference l1.c2.
@@ -3359,6 +5339,40 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // Same shape as testNestedLateralLeftCountSkipLevelQualified, but the
+    // innermost correlated reference to t0.a is unqualified, so the rewriter
+    // must recognize it through its lateralDepth tag.
+    @Test
+    public void testNestedLateralLeftCountSkipLevelUnqualified() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, t0.b, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tcnt
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+        });
+    }
+
     // LEFT lateral over an intermediate LEFT lateral count: the LEFT inner
     // branch takes the join-branch push-down path instead of the per-side
     // push, and must produce the same cnt=0 compensation.
@@ -3380,6 +5394,68 @@ public class LateralJoinTest extends AbstractCairoTest {
                         FROM t1
                         LEFT JOIN LATERAL (
                             SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tcnt
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftOverLeftCountArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, t0.b, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.val
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + 2 AS val FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tval
+                            1\t10\t3
+                            2\t20\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftOverLeftCountDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, t0.b, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count_distinct(x) AS cnt FROM t2 WHERE t2.x = t0.a
                         ) l2
                     ) l1
                     ORDER BY t0.a
@@ -3490,11 +5566,22 @@ public class LateralJoinTest extends AbstractCairoTest {
         } catch (UnsupportedOperationException ignored) {
         }
 
+        QueryColumn template = new QueryColumn().of("cnt", null);
+        try {
+            wrapper.addLateralCountTemplate(template);
+            Assert.fail("QueryModelWrapper must remain read-only");
+        } catch (UnsupportedOperationException ignored) {
+        }
+        model.addLateralCountTemplate(template);
+        Assert.assertEquals(1, model.getLateralCountTemplates().size());
+        Assert.assertSame(template, wrapper.getLateralCountTemplates().getQuick(0));
+
         model.clear();
         Assert.assertFalse(model.isLateralCountCoalesceRequired());
         Assert.assertFalse(model.isOuterRefWildcardExcluded());
         Assert.assertFalse(wrapper.isLateralCountCoalesceRequired());
         Assert.assertFalse(wrapper.isOuterRefWildcardExcluded());
+        Assert.assertEquals(0, wrapper.getLateralCountTemplates().size());
     }
 
     @Test
@@ -4432,7 +6519,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id	n	avg_mid
                             1	1	100.0
                             2	1	200.0
-                            3	0	null
+                            3	null	null
                             """);
         });
     }
@@ -6304,7 +8391,8 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // SAMPLE BY with count: order 3 has no trades → LEFT JOIN fills count with 0
+            // a SAMPLE BY body is keyed, so order 3 produces no row at all and the
+            // LEFT JOIN null-extends every column rather than compensating cnt to 0
             assertQuery("""
                     SELECT o.id, t.ts, t.cnt, t.total
                     FROM orders o
@@ -6322,7 +8410,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t2024-01-01T00:00:00.000000Z\t1\t10.0
                             1\t2024-01-01T00:30:00.000000Z\t1\t20.0
                             2\t2024-01-01T01:00:00.000000Z\t1\t30.0
-                            3\t\t0\tnull
+                            3\t\tnull\tnull
                             """);
         });
     }
@@ -6729,7 +8817,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 2, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // order 3 has no trades → INNER JOIN drops it
+            // the body is a scalar aggregate, so it yields one row per outer row
             assertQuery("""
                     SELECT o.id, t.cnt
                     FROM orders o
@@ -6741,6 +8829,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\tcnt
                             1\t2
                             2\t1
+                            3\t0
                             """);
         });
     }
@@ -7863,7 +9952,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1\t10
                             1\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:30:00.000000Z\t1\t20
                             2\t2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t1\t30
-                            3\t2024-01-01T02:00:00.000000Z\t\t0\tnull
+                            3\t2024-01-01T02:00:00.000000Z\t\tnull\tnull
                             """);
         });
     }
@@ -10831,33 +12920,31 @@ public class LateralJoinTest extends AbstractCairoTest {
                             Encode sort
                               keys: [id]
                                 VirtualRecord
-                                  functions: [id,cnt]
-                                    VirtualRecord
-                                      functions: [id,coalesce(cnt,0)]
-                                        SelectedRecord
-                                            Hash Left Outer Join Light
-                                              condition: sub.__qdb_outer_ref__0_id=o.id
-                                              filter: true
-                                                Async JIT Filter workers: 1
-                                                  filter: status='ACTIVE'
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: orders
-                                                Hash
-                                                    GroupBy vectorized: false
-                                                      keys: [__qdb_outer_ref__0_id]
-                                                      values: [count(*)]
-                                                        Filter filter: (trades.order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and trades.order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
-                                                            Cross Join
+                                  functions: [id,coalesce(cnt,0)]
+                                    SelectedRecord
+                                        Hash Left Outer Join Light
+                                          condition: sub.__qdb_outer_ref__0_id=o.id
+                                          filter: true
+                                            Async JIT Filter workers: 1
+                                              filter: status='ACTIVE'
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: orders
+                                            Hash
+                                                GroupBy vectorized: false
+                                                  keys: [__qdb_outer_ref__0_id]
+                                                  values: [count(*)]
+                                                    Filter filter: (trades.order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and trades.order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                        Cross Join
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: trades
+                                                            Async JIT Group By workers: 1
+                                                              keys: [__qdb_outer_ref__0_id]
+                                                              filter: status='ACTIVE'
                                                                 PageFrame
                                                                     Row forward scan
-                                                                    Frame forward scan on: trades
-                                                                Async JIT Group By workers: 1
-                                                                  keys: [__qdb_outer_ref__0_id]
-                                                                  filter: status='ACTIVE'
-                                                                    PageFrame
-                                                                        Row forward scan
-                                                                        Frame forward scan on: orders
+                                                                    Frame forward scan on: orders
                             """)
                     .returns("""
                             id\tcnt
@@ -10902,33 +12989,31 @@ public class LateralJoinTest extends AbstractCairoTest {
                             Encode sort
                               keys: [id]
                                 VirtualRecord
-                                  functions: [id,cnt]
-                                    VirtualRecord
-                                      functions: [id,coalesce(cnt,0)]
-                                        SelectedRecord
-                                            Hash Left Outer Join Light
-                                              condition: sub.__qdb_outer_ref__0_id=o.id
-                                              filter: true
-                                                Async Filter workers: 1
-                                                  filter: 1<abs(id)
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: orders
-                                                Hash
-                                                    GroupBy vectorized: false
-                                                      keys: [__qdb_outer_ref__0_id]
-                                                      values: [count(*)]
-                                                        Filter filter: (trades.order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and trades.order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
-                                                            Cross Join
+                                  functions: [id,coalesce(cnt,0)]
+                                    SelectedRecord
+                                        Hash Left Outer Join Light
+                                          condition: sub.__qdb_outer_ref__0_id=o.id
+                                          filter: true
+                                            Async Filter workers: 1
+                                              filter: 1<abs(id)
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: orders
+                                            Hash
+                                                GroupBy vectorized: false
+                                                  keys: [__qdb_outer_ref__0_id]
+                                                  values: [count(*)]
+                                                    Filter filter: (trades.order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and trades.order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                        Cross Join
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: trades
+                                                            Async Group By workers: 1
+                                                              keys: [__qdb_outer_ref__0_id]
+                                                              filter: 1<abs(id)
                                                                 PageFrame
                                                                     Row forward scan
-                                                                    Frame forward scan on: trades
-                                                                Async Group By workers: 1
-                                                                  keys: [__qdb_outer_ref__0_id]
-                                                                  filter: 1<abs(id)
-                                                                    PageFrame
-                                                                        Row forward scan
-                                                                        Frame forward scan on: orders
+                                                                    Frame forward scan on: orders
                             """)
                     .returns("""
                             id\tcnt
@@ -10982,47 +13067,50 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .withPlan("""
                             Encode sort
                               keys: [id]
-                                SelectedRecord
-                                    Hash Join Light
-                                      condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
-                                      symbolKeyJoin: true
-                                        Hash Join Light
-                                          condition: t2.t1_id=t1.id
-                                            Async JIT Filter workers: 1
-                                              filter: status='ACTIVE'
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
+                                VirtualRecord
+                                  functions: [id,category,coalesce(cnt,0)]
+                                    SelectedRecord
+                                        Hash Left Outer Join Light
+                                          condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
+                                          symbolKeyJoin: true
+                                          filter: true
+                                            Hash Join Light
+                                              condition: t2.t1_id=t1.id
+                                                Async JIT Filter workers: 1
+                                                  filter: status='ACTIVE'
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t1
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
                                             Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t2
-                                        Hash
-                                            GroupBy vectorized: false
-                                              keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
-                                              values: [count(*)]
-                                                Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
-                                                    Hash Join Light
-                                                      condition: __qdb_outer_ref__0_category=t3.b
-                                                      symbolKeyJoin: true
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t3
-                                                        Hash
-                                                            GroupBy vectorized: false
-                                                              keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
-                                                                SelectedRecord
-                                                                    Hash Join Light
-                                                                      condition: t2.t1_id=t1.id
-                                                                        Async JIT Filter workers: 1
-                                                                          filter: status='ACTIVE'
-                                                                            PageFrame
-                                                                                Row forward scan
-                                                                                Frame forward scan on: t1
-                                                                        Hash
-                                                                            PageFrame
-                                                                                Row forward scan
-                                                                                Frame forward scan on: t2
+                                                GroupBy vectorized: false
+                                                  keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
+                                                  values: [count(*)]
+                                                    Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_category=t3.b
+                                                          symbolKeyJoin: true
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: t3
+                                                            Hash
+                                                                GroupBy vectorized: false
+                                                                  keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
+                                                                    SelectedRecord
+                                                                        Hash Join Light
+                                                                          condition: t2.t1_id=t1.id
+                                                                            Async JIT Filter workers: 1
+                                                                              filter: status='ACTIVE'
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: t1
+                                                                            Hash
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: t2
                             """)
                     .returns("""
                             id\tcategory\tcnt
@@ -11076,42 +13164,45 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .withPlan("""
                             Encode sort
                               keys: [id]
-                                SelectedRecord
-                                    Hash Join Light
-                                      condition: sub.__qdb_outer_ref__0_val=t2.val and sub.__qdb_outer_ref__0_id=t1.id
-                                        Filter filter: t2.val<t1.val
-                                            Hash Join Light
-                                              condition: t2.t1_id=t1.id
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
+                                VirtualRecord
+                                  functions: [id,t2_val,coalesce(cnt,0)]
+                                    SelectedRecord
+                                        Hash Left Outer Join Light
+                                          condition: sub.__qdb_outer_ref__0_val=t2.val and sub.__qdb_outer_ref__0_id=t1.id
+                                          filter: true
+                                            Filter filter: t2.val<t1.val
+                                                Hash Join Light
+                                                  condition: t2.t1_id=t1.id
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t2
-                                        Hash
-                                            GroupBy vectorized: false
-                                              keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
-                                              values: [count(*)]
-                                                Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
-                                                    Hash Join Light
-                                                      condition: __qdb_outer_ref__0_val=t3.b
+                                                        Frame forward scan on: t1
+                                                    Hash
                                                         PageFrame
                                                             Row forward scan
-                                                            Frame forward scan on: t3
-                                                        Hash
-                                                            GroupBy vectorized: false
-                                                              keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
-                                                                SelectedRecord
-                                                                    Hash Join Light
-                                                                      condition: t2.t1_id=t1.id
-                                                                        PageFrame
-                                                                            Row forward scan
-                                                                            Frame forward scan on: t1
-                                                                        Hash
+                                                            Frame forward scan on: t2
+                                            Hash
+                                                GroupBy vectorized: false
+                                                  keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
+                                                  values: [count(*)]
+                                                    Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_val=t3.b
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: t3
+                                                            Hash
+                                                                GroupBy vectorized: false
+                                                                  keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
+                                                                    SelectedRecord
+                                                                        Hash Join Light
+                                                                          condition: t2.t1_id=t1.id
                                                                             PageFrame
                                                                                 Row forward scan
-                                                                                Frame forward scan on: t2
+                                                                                Frame forward scan on: t1
+                                                                            Hash
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: t2
                             """)
                     .returns("""
                             id\tt2_val\tcnt

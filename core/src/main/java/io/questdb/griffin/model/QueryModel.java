@@ -79,6 +79,7 @@ public class QueryModel implements IQueryModel {
     private final HorizonJoinContext horizonJoinContext = new HorizonJoinContext();
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final ObjList<IQueryModel> joinModels = new ObjList<>();
+    private final ObjList<QueryColumn> lateralCountTemplates = new ObjList<>();
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     // Named window definitions from WINDOW clause (e.g., WINDOW w AS (PARTITION BY ...))
@@ -301,6 +302,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void addLateralCountTemplate(QueryColumn template) {
+        lateralCountTemplates.add(template);
+    }
+
+    @Override
     public void addLatestBy(ExpressionNode latestBy) {
         this.latestBy.add(latestBy);
     }
@@ -457,6 +463,7 @@ public class QueryModel implements IQueryModel {
         isLateralCountCoalesceRequired = false;
         lateralCountCoalesceGuard = null;
         isOuterRefWildcardExcluded = false;
+        lateralCountTemplates.clear();
         modelType = ExecutionModel.QUERY;
         updateSetColumns.clear();
         updateTableColumnTypes.clear();
@@ -573,7 +580,6 @@ public class QueryModel implements IQueryModel {
             final CharSequence alias = aliases.getQuick(i);
             QueryColumn qc = otherMap.get(alias);
             boolean isGenerated = qc.isGenerated();
-            boolean isLateralScalarCount = qc.isLateralScalarCount();
             if (qc.getAst().type != ExpressionNode.LITERAL) {
                 qc = queryColumnPool.next().of(
                         alias,
@@ -586,7 +592,6 @@ public class QueryModel implements IQueryModel {
                         qc.isIncludeIntoWildcard()
                 );
                 qc.setGenerated(isGenerated);
-                qc.setLateralScalarCount(isLateralScalarCount);
             }
             aliasToColumnMap.put(alias, qc);
         }
@@ -831,6 +836,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public int getJoinType() {
         return joinType;
+    }
+
+    @Override
+    public ObjList<QueryColumn> getLateralCountTemplates() {
+        return lateralCountTemplates;
     }
 
     @Override
@@ -1440,7 +1450,6 @@ public class QueryModel implements IQueryModel {
                 QueryColumn col = queryColumnPool.next();
                 col.of(thisColumn.getAlias(), thatColumn.getAst(), thisColumn.isIncludeIntoWildcard());
                 col.setGenerated(thisColumn.isGenerated());
-                col.setLateralScalarCount(thisColumn.isLateralScalarCount() || thatColumn.isLateralScalarCount());
                 bottomUpColumns.setQuick(i, col);
 
                 int index = aliasToColumnMap.keyIndex(thisColumn.getAlias());

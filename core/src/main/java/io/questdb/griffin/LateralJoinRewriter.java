@@ -32,6 +32,7 @@ import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
@@ -43,9 +44,10 @@ import io.questdb.std.ObjectPool;
 
 import java.util.ArrayDeque;
 
-import static io.questdb.griffin.SqlOptimiser.checkForChildWindowFunctions;
-import static io.questdb.griffin.SqlOptimiser.replaceAndTransferDependents;
+import static io.questdb.griffin.SqlOptimiser.*;
+import static io.questdb.griffin.model.IQueryModel.isHorizonJoin;
 import static io.questdb.griffin.model.IQueryModel.isLateralJoin;
+import static io.questdb.griffin.model.IQueryModel.isWindowJoin;
 
 /**
  * Decorrelates lateral joins into standard hash joins,
@@ -64,6 +66,7 @@ class LateralJoinRewriter implements Mutable {
     private static final int CORRELATED_LIMIT = CORRELATED_LATEST_BY << 1;
     private static final int CORRELATED_JOIN_ON = CORRELATED_LIMIT << 1;
 
+    private static final String COUNT_CARRIER_PREFIX = "__qdb_count_carrier__";
     private static final String COUNT_DRIVER_PREFIX = "__qdb_count_driver__";
     // sentinel for a LIMIT term that is not a compile-time constant; a bare
     // CONSTANT token is unsigned so a real limit can never collide with it
@@ -72,10 +75,17 @@ class LateralJoinRewriter implements Mutable {
     private static final int LIMIT_KEEPS_ROW = 0;
     private static final int LIMIT_UNPROVABLE = 2;
     private static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
+    private static final int SCALAR_BODY_NONE = 0;
+    private static final int SCALAR_BODY_PLAIN = 1;
+    private static final int SCALAR_BODY_ZERO_ON_EMPTY = 2;
+    private static final int TEMPLATE_NODE_BUDGET = 10_000;
     private static final byte TERMINATE_AT_NESTED = 2;
     private static final byte TERMINATE_DESCEND = 3;
     private static final byte TERMINATE_HERE = 1;
     private static final byte TERMINATE_SKIP = 0;
+    private final LowerCaseCharSequenceIntHashMap carrierAliasSequenceMap;
+    private final LowerCaseCharSequenceHashSet carrierAliases;
+    private final ObjList<IQueryModel> carrierChain;
     private final CharacterStore characterStore;
     private final ObjList<ExpressionNode> correlatedPreds = new ObjList<>();
     private final ObjectPool<ExpressionNode> expressionNodePool;
@@ -95,18 +105,25 @@ class LateralJoinRewriter implements Mutable {
     private final ObjHashSet<QueryModel> sharedModels = new ObjHashSet<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack;
     private final ArrayDeque<ExpressionNode> sqlNodeStack2;
+    private final ObjList<QueryColumn> templateBuffer;
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private final ObjList<IQueryModel> wrapperKeyLayers = new ObjList<>();
+    private int carrierId;
+    private boolean hasAggregateLeaf;
+    private boolean hasCorrelation;
+    private boolean hasZeroOnEmptyLeaf;
+    private int outerRefId;
     // guard for the lateral body currently being decorrelated; see accumulateScalarCountGuard
     private ExpressionNode scalarCountGuard;
     // set when a run-time LIMIT reads an outer column: such a guard cannot be
     // evaluated in the outer projection, so a scalar-count body must be rejected
     private ExpressionNode scalarCountGuardBlocker;
-    private boolean hasCorrelation;
-    private int outerRefId;
+    private int templateNodeBudget;
 
     LateralJoinRewriter(
             CharacterStore characterStore,
+            LowerCaseCharSequenceHashSet tempCarrierAliases,
+            LowerCaseCharSequenceIntHashMap tempCarrierAliasSequenceMap,
             ObjectPool<ExpressionNode> expressionNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
@@ -120,8 +137,12 @@ class LateralJoinRewriter implements Mutable {
             ObjList<ExpressionNode> tempOrderBySave,
             IntList tempOrderByDirSave,
             LowerCaseCharSequenceObjHashMap<CharSequence> tempOuterToInnerAlias,
-            ObjList<CharSequence> tempOuterAliasSaveStack
+            ObjList<CharSequence> tempOuterAliasSaveStack,
+            ObjList<IQueryModel> tempCarrierChain,
+            ObjList<QueryColumn> tempTemplateBuffer
     ) {
+        this.carrierAliases = tempCarrierAliases;
+        this.carrierAliasSequenceMap = tempCarrierAliasSequenceMap;
         this.characterStore = characterStore;
         this.expressionNodePool = expressionNodePool;
         this.queryColumnPool = queryColumnPool;
@@ -137,19 +158,29 @@ class LateralJoinRewriter implements Mutable {
         this.orderByDirSave = tempOrderByDirSave;
         this.outerToInnerAlias = tempOuterToInnerAlias;
         this.outerAliasSaveStack = tempOuterAliasSaveStack;
+        this.carrierChain = tempCarrierChain;
+        this.templateBuffer = tempTemplateBuffer;
     }
 
     @Override
     public void clear() {
-        scalarCountGuard = null;
-        scalarCountGuardBlocker = null;
+        carrierAliases.clear();
+        carrierAliasSequenceMap.clear();
+        carrierChain.clear();
+        carrierId = 0;
         correlatedPreds.clear();
         innerJoinCorrelated.clear();
         innerJoinNonCorrelated.clear();
         nonCorrelatedPreds.clear();
+        hasAggregateLeaf = false;
         hasCorrelation = false;
+        hasZeroOnEmptyLeaf = false;
         outerRefId = 0;
+        scalarCountGuard = null;
+        scalarCountGuardBlocker = null;
         sharedModels.clear();
+        templateBuffer.clear();
+        templateNodeBudget = 0;
     }
 
     public void rewrite(IQueryModel model) throws SqlException {
@@ -210,6 +241,25 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    private static boolean containsZeroOnEmptyAggregate(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (isZeroOnEmptyAggregate(node)) {
+            return true;
+        }
+        int n = node.args.size();
+        if (n > 0) {
+            for (int i = 0; i < n; i++) {
+                if (containsZeroOnEmptyAggregate(node.args.getQuick(i))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return containsZeroOnEmptyAggregate(node.lhs) || containsZeroOnEmptyAggregate(node.rhs);
+    }
+
     private static LowerCaseCharSequenceIntHashMap ensureCorrelatedColumnSet(
             ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns,
             int index
@@ -235,60 +285,10 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
-    private static boolean hasOutputColumn(IQueryModel model, CharSequence columnName) {
-        if (model.getAliasToColumnMap().contains(columnName)
-                || model.getAliasToColumnNameMap().contains(columnName)) {
-            return true;
-        }
-        ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        if (columns.size() > 0 && !isWildcard(columns)) {
-            return false;
-        }
-        IQueryModel nested = model.getNestedModel();
-        return nested != null && nested != model && hasOutputColumn(nested, columnName);
-    }
-
-    private static boolean isCountAggregate(ExpressionNode node) {
-        return node != null
-                && node.type == ExpressionNode.FUNCTION
-                && Chars.equalsIgnoreCase(node.token, "count");
-    }
-
     private static boolean isOuterRefToken(ExpressionNode node, CharSequence outerRefAlias) {
         return node != null
                 && node.type == ExpressionNode.LITERAL
                 && matchesOuterRefAlias(node.token, outerRefAlias);
-    }
-
-    private static boolean isQualifiedColumnUnambiguous(IQueryModel layer, CharSequence qualifiedName) {
-        int dot = Chars.indexOfLastUnquoted(qualifiedName, '.');
-        if (dot < 1) {
-            return false;
-        }
-        IQueryModel sourceLayer = layer;
-        int sourceIndex = sourceLayer.getModelAliasIndex(qualifiedName, 0, dot);
-        while (sourceIndex < 0
-                && sourceLayer.getNestedModel() != null
-                && !sourceLayer.isNestedModelIsSubQuery()) {
-            sourceLayer = sourceLayer.getNestedModel();
-            sourceIndex = sourceLayer.getModelAliasIndex(qualifiedName, 0, dot);
-        }
-        if (sourceIndex < 0) {
-            return false;
-        }
-
-        CharSequence columnName = qualifiedName.subSequence(dot + 1, qualifiedName.length());
-        ObjList<IQueryModel> joinModels = sourceLayer.getJoinModels();
-        int resolvedIndex = -1;
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
-            if (hasOutputColumn(joinModels.getQuick(i), columnName)) {
-                if (resolvedIndex > -1) {
-                    return false;
-                }
-                resolvedIndex = i;
-            }
-        }
-        return resolvedIndex == sourceIndex;
     }
 
     private static boolean isSimpleColumnRef(ExpressionNode node) {
@@ -302,25 +302,6 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         return false;
-    }
-
-    private static boolean isWildcardSourceMatch(IQueryModel layer, CharSequence wildcard, CharSequence qualifiedName) {
-        int wildcardDot = Chars.indexOfLastUnquoted(wildcard, '.');
-        int qualifiedDot = Chars.indexOfLastUnquoted(qualifiedName, '.');
-        if (wildcardDot < 1 || qualifiedDot < 1) {
-            return false;
-        }
-        IQueryModel sourceLayer = layer;
-        while (true) {
-            int sourceIndex = sourceLayer.getModelAliasIndex(qualifiedName, 0, qualifiedDot);
-            if (sourceIndex > -1) {
-                return sourceIndex == sourceLayer.getModelAliasIndex(wildcard, 0, wildcardDot);
-            }
-            if (sourceLayer.getNestedModel() == null || sourceLayer.isNestedModelIsSubQuery()) {
-                return false;
-            }
-            sourceLayer = sourceLayer.getNestedModel();
-        }
     }
 
     private static boolean matchesOuterRefAlias(CharSequence token, CharSequence outerRefAlias) {
@@ -339,6 +320,13 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    private static void promoteToLeftOuterJoin(IQueryModel joinModel) {
+        final int joinType = joinModel.getJoinType();
+        if (joinType == IQueryModel.JOIN_CROSS || joinType == IQueryModel.JOIN_INNER) {
+            joinModel.setJoinType(IQueryModel.JOIN_LEFT_OUTER);
+        }
+    }
+
     private static int toDegradedJoinType(int lateralJoinType) {
         return switch (lateralJoinType) {
             case IQueryModel.JOIN_LATERAL_INNER -> IQueryModel.JOIN_INNER;
@@ -351,6 +339,12 @@ class LateralJoinRewriter implements Mutable {
     private static CharSequence unqualify(CharSequence token) {
         int dotPos = Chars.indexOfLastUnquoted(token, '.');
         return dotPos > 0 ? token.subSequence(dotPos + 1, token.length()) : token;
+    }
+
+    private void addCarrierColumn(IQueryModel model, CharSequence alias, ExpressionNode ast) throws SqlException {
+        QueryColumn column = queryColumnPool.next().of(alias, ast, false);
+        column.setGenerated(true);
+        model.addBottomUpColumn(column);
     }
 
     private void addColumnToOuterRefSelect(CharSequence outerRefAlias, IQueryModel outerRefSubquery, ExpressionNode outerCol) {
@@ -368,6 +362,29 @@ class LateralJoinRewriter implements Mutable {
         qc.setGenerated(true);
         outerToInnerAlias.put(outerCol.token, alias);
         outerRefSubquery.addBottomUpColumnIfNotExists(qc);
+    }
+
+    private CharSequence addCountMarker(int originLayer, CharSequence originAlias, int position) throws SqlException {
+        characterStore.newEntry();
+        characterStore.put(LATERAL_COUNT_MARKER_PREFIX).put(carrierId++);
+        CharSequence markerAlias = SqlUtil.createColumnAlias(
+                characterStore,
+                characterStore.toImmutable(),
+                -1,
+                carrierAliases,
+                carrierAliasSequenceMap,
+                false
+        );
+        carrierAliases.add(markerAlias);
+        addCarrierColumn(carrierChain.getQuick(originLayer - 1), markerAlias, expressionNodePool.next().of(
+                ExpressionNode.LITERAL, originAlias, 0, position
+        ));
+        for (int li = originLayer - 2; li >= 0; li--) {
+            addCarrierColumn(carrierChain.getQuick(li), markerAlias, expressionNodePool.next().of(
+                    ExpressionNode.LITERAL, markerAlias, 0, position
+            ));
+        }
+        return markerAlias;
     }
 
     private void addGroupingColsToEmbeddedWindows(ExpressionNode node, CharSequence outerRefAlias) {
@@ -406,6 +423,20 @@ class LateralJoinRewriter implements Mutable {
                 partitionBy.add(cloned);
             }
         }
+    }
+
+    private void addSelfCountTemplate(CharSequence alias, int position) {
+        ExpressionNode coalesce = expressionNodePool.next().of(
+                ExpressionNode.FUNCTION, "coalesce", 0, position
+        );
+        coalesce.paramCount = 2;
+        coalesce.lhs = expressionNodePool.next().of(
+                ExpressionNode.LITERAL, alias, 0, position
+        );
+        coalesce.rhs = expressionNodePool.next().of(
+                ExpressionNode.CONSTANT, "0", 0, position
+        );
+        templateBuffer.add(queryColumnPool.next().of(alias, coalesce));
     }
 
     private boolean allLiteralsAreCorrelated(ExpressionNode node, int depth) {
@@ -494,6 +525,65 @@ class LateralJoinRewriter implements Mutable {
         return hasLateral;
     }
 
+    private void buildCountTemplates(IQueryModel body, int depth) throws SqlException {
+        carrierAliases.clear();
+        carrierAliasSequenceMap.clear();
+        carrierChain.clear();
+        IQueryModel current = body;
+        boolean hasAggregateTail = false;
+        while (current != null) {
+            if (current.getBottomUpColumns().size() > 0) {
+                carrierChain.add(current);
+                if (hasAggregateFunctions(current)) {
+                    hasAggregateTail = true;
+                    break;
+                }
+            }
+            current = current.getNestedModel();
+        }
+        if (!hasAggregateTail) {
+            return;
+        }
+        for (int i = 0, n = carrierChain.size(); i < n; i++) {
+            ObjList<CharSequence> aliases = carrierChain.getQuick(i).getAliasToColumnMap().keys();
+            for (int j = 0, m = aliases.size(); j < m; j++) {
+                CharSequence alias = aliases.getQuick(j);
+                if (alias != null) {
+                    carrierAliases.add(alias);
+                }
+            }
+        }
+        ObjList<QueryColumn> columns = carrierChain.getQuick(0).getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn column = columns.getQuick(i);
+            ExpressionNode ast = column.getAst();
+            if (column instanceof WindowExpression
+                    || ast == null
+                    || checkForChildWindowFunctions(sqlNodeStack2, ast)) {
+                continue;
+            }
+            if (ast.isWildcard()) {
+                processWildcardSources(0, depth);
+                continue;
+            }
+            if (isBareZeroOnEmptyColumn(ast, 0)) {
+                addSelfCountTemplate(column.getAlias(), ast.position);
+                continue;
+            }
+            if (ast.type == ExpressionNode.FUNCTION
+                    && functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
+                continue;
+            }
+            if (!validateTemplateNode(ast, 0, depth)) {
+                continue;
+            }
+            templateNodeBudget = TEMPLATE_NODE_BUDGET;
+            ExpressionNode template = buildTemplateNode(ast, 0, depth, true);
+            assert template != null;
+            templateBuffer.add(queryColumnPool.next().of(column.getAlias(), template));
+        }
+    }
+
     private void buildOuterColsFromCorrelatedColumns(
             IQueryModel lateralJoinModel,
             IQueryModel outerModel,
@@ -523,6 +613,109 @@ class LateralJoinRewriter implements Mutable {
                 }
             }
         }
+    }
+
+    // In validation mode (isBuilding == false) the traversal is side-effect free apart from
+    // hasZeroOnEmptyLeaf and returns the input node as a non-null acceptance marker; the
+    // build mode reuses the exact same decision points, so it cannot fail after validation.
+    private ExpressionNode buildTemplateNode(ExpressionNode node, int layer, int depth, boolean isBuilding) throws SqlException {
+        if (--templateNodeBudget < 0) {
+            return null;
+        }
+        if (node.type == ExpressionNode.FUNCTION
+                && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+            hasAggregateLeaf = true;
+            if (isZeroOnEmptyAggregate(node)) {
+                hasZeroOnEmptyLeaf = true;
+            }
+            if (!isBuilding) {
+                return node;
+            }
+            CharSequence carrierAlias = ensureCountCarrier(node);
+            ExpressionNode ref = expressionNodePool.next().of(
+                    ExpressionNode.LITERAL, carrierAlias, 0, node.position
+            );
+            if (!isZeroOnEmptyAggregate(node)) {
+                return ref;
+            }
+            ExpressionNode coalesce = expressionNodePool.next().of(
+                    ExpressionNode.FUNCTION, "coalesce", 0, node.position
+            );
+            coalesce.paramCount = 2;
+            coalesce.lhs = ref;
+            coalesce.rhs = expressionNodePool.next().of(
+                    ExpressionNode.CONSTANT, "0", 0, node.position
+            );
+            return coalesce;
+        }
+        return switch (node.type) {
+            case ExpressionNode.CONSTANT, ExpressionNode.BIND_VARIABLE -> isBuilding
+                    ? expressionNodePool.next().of(node.type, node.token, node.precedence, node.position)
+                    : node;
+            case ExpressionNode.LITERAL -> {
+                if (node.lateralDepth == depth) {
+                    if (Chars.indexOf(node.token, '.') < 0) {
+                        yield null;
+                    }
+                    yield isBuilding
+                            ? expressionNodePool.next().of(ExpressionNode.LITERAL, node.token, node.precedence, node.position)
+                            : node;
+                }
+                if (node.lateralDepth != 0) {
+                    yield null;
+                }
+                for (int li = layer + 1, ln = carrierChain.size(); li < ln; li++) {
+                    QueryColumn definition = findOutputColumn(carrierChain.getQuick(li), node.token);
+                    if (definition != null && definition.getAst() != null) {
+                        if (definition instanceof WindowExpression
+                                || checkForChildWindowFunctions(sqlNodeStack2, definition.getAst())) {
+                            yield null;
+                        }
+                        yield buildTemplateNode(definition.getAst(), li, depth, isBuilding);
+                    }
+                }
+                yield null;
+            }
+            case ExpressionNode.FUNCTION, ExpressionNode.OPERATION -> {
+                ExpressionNode target = node;
+                if (isBuilding) {
+                    target = expressionNodePool.next().of(node.type, node.token, node.precedence, node.position);
+                    target.paramCount = node.paramCount;
+                }
+                if (node.paramCount < 3) {
+                    if (node.lhs != null) {
+                        ExpressionNode lhs = buildTemplateNode(node.lhs, layer, depth, isBuilding);
+                        if (lhs == null) {
+                            yield null;
+                        }
+                        if (isBuilding) {
+                            target.lhs = lhs;
+                        }
+                    }
+                    if (node.rhs != null) {
+                        ExpressionNode rhs = buildTemplateNode(node.rhs, layer, depth, isBuilding);
+                        if (rhs == null) {
+                            yield null;
+                        }
+                        if (isBuilding) {
+                            target.rhs = rhs;
+                        }
+                    }
+                } else {
+                    for (int i = 0, n = node.args.size(); i < n; i++) {
+                        ExpressionNode arg = buildTemplateNode(node.args.getQuick(i), layer, depth, isBuilding);
+                        if (arg == null) {
+                            yield null;
+                        }
+                        if (isBuilding) {
+                            target.args.add(arg);
+                        }
+                    }
+                }
+                yield target;
+            }
+            default -> null;
+        };
     }
 
     // Returns true if per-side push optimization is possible:
@@ -611,11 +804,7 @@ class LateralJoinRewriter implements Mutable {
     }
 
     private IQueryModel cloneOuterRef(IQueryModel outerRefJoinModel) {
-        return cloneOuterRef(outerRefJoinModel, OUTER_REF_PREFIX);
-    }
-
-    private IQueryModel cloneOuterRef(IQueryModel outerRefJoinModel, CharSequence aliasPrefix) {
-        return cloneOuterRef(outerRefJoinModel, aliasPrefix, null);
+        return cloneOuterRef(outerRefJoinModel, OUTER_REF_PREFIX, null);
     }
 
     private IQueryModel cloneOuterRef(
@@ -1061,7 +1250,20 @@ class LateralJoinRewriter implements Mutable {
         outerSelect.setNestedModelIsSubQuery(true);
         copyColumnsExcept(current, outerSelect, rnAlias);
 
-        return replaceAndTransferDependents(originalCurrent, outerSelect);
+        IQueryModel result = replaceAndTransferDependents(originalCurrent, outerSelect);
+        // count templates resolve by join alias, which is visible only in the wrapped model's scope
+        if (outerSelect.isLateralCountCoalesceRequired()) {
+            originalCurrent.setLateralCountCoalesceRequired(true);
+            originalCurrent.setLateralCountCoalesceGuard(outerSelect.getLateralCountCoalesceGuard());
+            ObjList<QueryColumn> lateralCountTemplates = outerSelect.getLateralCountTemplates();
+            for (int i = 0, n = lateralCountTemplates.size(); i < n; i++) {
+                originalCurrent.addLateralCountTemplate(lateralCountTemplates.getQuick(i));
+            }
+            lateralCountTemplates.clear();
+            outerSelect.setLateralCountCoalesceRequired(false);
+            outerSelect.setLateralCountCoalesceGuard(null);
+        }
+        return result;
     }
 
     // Adds groupingCols to SELECT so SAMPLE BY results are partitioned per outer row.
@@ -1237,7 +1439,6 @@ class LateralJoinRewriter implements Mutable {
                 column.getAlias(), ref, column.isIncludeIntoWildcard()
         );
         wrapperColumn.setGenerated(column.isGenerated());
-        wrapperColumn.setLateralScalarCount(column.isLateralScalarCount());
         target.addBottomUpColumn(wrapperColumn);
     }
 
@@ -1385,9 +1586,13 @@ class LateralJoinRewriter implements Mutable {
 
                 // Push down outer refs
                 boolean isPerSidePush = canPerSidePush(topInner, depth);
-                boolean isScalarCountBody = isLeft && hasScalarCountBody(topInner);
+                int scalarBodyKind = scalarAggregateBodyKind(topInner);
                 scalarCountGuard = null;
                 scalarCountGuardBlocker = null;
+                int templateBase = templateBuffer.size();
+                if (scalarBodyKind == SCALAR_BODY_ZERO_ON_EMPTY) {
+                    buildCountTemplates(topInner, depth);
+                }
                 CharSequence perSideCloneAlias = null;
                 if (isPerSidePush) {
                     perSideCloneAlias = pushDownPerSidePush(
@@ -1454,12 +1659,18 @@ class LateralJoinRewriter implements Mutable {
                 excludeGeneratedColumnsFromWildcard(topInner);
                 topInner.setOuterRefWildcardExcluded(true);
 
-                if (isScalarCountBody && markScalarCountColumns(topInner)) {
+                if (scalarBodyKind != SCALAR_BODY_NONE) {
+                    promoteToLeftOuterJoin(joinModel);
+                }
+                if (scalarBodyKind == SCALAR_BODY_ZERO_ON_EMPTY && templateBuffer.size() > templateBase) {
                     IQueryModel selectModel = (model.getBottomUpColumns().size() > 0 || parent == null)
                             ? model : parent;
                     rejectCorrelatedScalarCountLimit();
                     selectModel.setLateralCountCoalesceRequired(true);
                     selectModel.setLateralCountCoalesceGuard(scalarCountGuard);
+                    transferCountTemplates(selectModel, joinModel.getAlias(), templateBase);
+                } else {
+                    templateBuffer.setPos(templateBase);
                 }
             } else if (joinModel.getNestedModel() != null) {
                 decorrelate(joinModel.getNestedModel(), lateralDepth, null);
@@ -1523,6 +1734,38 @@ class LateralJoinRewriter implements Mutable {
         if (model.addField(qc)) {
             cols.insert(0, 1, null);
             cols.setQuick(0, qc);
+        }
+        return alias;
+    }
+
+    private CharSequence ensureCountCarrier(ExpressionNode aggNode) throws SqlException {
+        IQueryModel aggModel = carrierChain.getQuick(carrierChain.size() - 1);
+        ObjList<QueryColumn> aggColumns = aggModel.getBottomUpColumns();
+        for (int i = 0, n = aggColumns.size(); i < n; i++) {
+            QueryColumn existing = aggColumns.getQuick(i);
+            if (existing.isGenerated()
+                    && Chars.startsWith(existing.getAlias(), COUNT_CARRIER_PREFIX)
+                    && ExpressionNode.compareNodesExact(existing.getAst(), aggNode)) {
+                return existing.getAlias();
+            }
+        }
+        characterStore.newEntry();
+        characterStore.put(COUNT_CARRIER_PREFIX).put(carrierId++);
+        CharSequence baseAlias = characterStore.toImmutable();
+        CharSequence alias = SqlUtil.createColumnAlias(
+                characterStore,
+                baseAlias,
+                -1,
+                carrierAliases,
+                carrierAliasSequenceMap,
+                false
+        );
+        carrierAliases.add(alias);
+        addCarrierColumn(aggModel, alias, ExpressionNode.deepClone(expressionNodePool, aggNode));
+        for (int li = carrierChain.size() - 2; li >= 0; li--) {
+            addCarrierColumn(carrierChain.getQuick(li), alias, expressionNodePool.next().of(
+                    ExpressionNode.LITERAL, alias, 0, aggNode.position
+            ));
         }
         return alias;
     }
@@ -1614,6 +1857,22 @@ class LateralJoinRewriter implements Mutable {
                 nonCorrelated.remove(i);
             }
         }
+    }
+
+    private CharSequence findCountMarker(int originLayer, CharSequence originAlias) {
+        ObjList<QueryColumn> columns = carrierChain.getQuick(originLayer - 1).getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn column = columns.getQuick(i);
+            ExpressionNode ast = column.getAst();
+            if (column.isGenerated()
+                    && Chars.startsWith(column.getAlias(), LATERAL_COUNT_MARKER_PREFIX)
+                    && ast != null
+                    && ast.type == ExpressionNode.LITERAL
+                    && Chars.equalsIgnoreCase(ast.token, originAlias)) {
+                return column.getAlias();
+            }
+        }
+        return null;
     }
 
     private CharSequence findEqualityPartner(ExpressionNode node, CharSequence target) {
@@ -1725,6 +1984,28 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    private boolean hasGroupingKeyRef(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.FUNCTION
+                && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            return node.lateralDepth == 0;
+        }
+        if (node.paramCount < 3) {
+            return hasGroupingKeyRef(node.lhs) || hasGroupingKeyRef(node.rhs);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasGroupingKeyRef(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean hasNonEqualityCorrelation(ExpressionNode where, int depth) {
         ExpressionNode node = where;
         while (node != null) {
@@ -1756,62 +2037,6 @@ class LateralJoinRewriter implements Mutable {
                 }
             }
             node = node.lhs != null ? node.lhs : (sqlNodeStack.poll());
-        }
-        return false;
-    }
-
-    private boolean hasScalarCountBody(IQueryModel model) throws SqlException {
-        IQueryModel current = model;
-        while (current != null && current.getUnionModel() == null) {
-            ExpressionNode limitHi = current.getLimitHi();
-            ExpressionNode limitLo = current.getLimitLo();
-            // report a provable negative with the specific message, ahead of the
-            // generic unprovable one - compensateLimit would reject it regardless
-            rejectNegativeLateralLimit(limitLo);
-            rejectNegativeLateralLimit(limitHi);
-            switch (classifyLateralLimit(limitLo, limitHi)) {
-                case LIMIT_DROPS_ROW:
-                    // body provably yields no rows: NULL fill is correct, no coalesce
-                    return false;
-                default:
-                    // LIMIT_UNPROVABLE is decided at execution time by the guard
-                    break;
-            }
-            if (current.getGroupBy().size() > 0
-                    || current.getSampleBy() != null
-                    || current.getLatestBy().size() > 0) {
-                return false;
-            }
-            if (hasAggregateFunctions(current)) {
-                // a run-time valued LIMIT no longer disqualifies the body: the
-                // compensation is guarded by accumulateScalarCountGuard instead
-                IQueryModel input = current.getNestedModel();
-                while (input != null) {
-                    if (input.isNestedModelIsSubQuery()) {
-                        break;
-                    }
-                    if (input.getUnionModel() != null
-                            || input.getGroupBy().size() > 0
-                            || input.getSampleBy() != null
-                            || input.getLatestBy().size() > 0) {
-                        return false;
-                    }
-                    input = input.getNestedModel();
-                }
-                ObjList<QueryColumn> columns = current.getBottomUpColumns();
-                for (int i = 0, n = columns.size(); i < n; i++) {
-                    if (isCountAggregate(columns.getQuick(i).getAst())) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-            if (current.getWhereClause() != null
-                    || current.getPostJoinWhereClause() != null
-                    || current.getJoinModels().size() > 1) {
-                return false;
-            }
-            current = current.getNestedModel();
         }
         return false;
     }
@@ -1850,6 +2075,26 @@ class LateralJoinRewriter implements Mutable {
             }
             if (checkForChildWindowFunctions(sqlNodeStack, col.getAst())) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isBareZeroOnEmptyColumn(ExpressionNode node, int layer) {
+        if (isZeroOnEmptyAggregate(node)) {
+            return true;
+        }
+        if (node.type != ExpressionNode.LITERAL || node.lateralDepth != 0) {
+            return false;
+        }
+        for (int li = layer + 1, ln = carrierChain.size(); li < ln; li++) {
+            QueryColumn definition = findOutputColumn(carrierChain.getQuick(li), node.token);
+            if (definition != null && definition.getAst() != null) {
+                if (definition instanceof WindowExpression
+                        || checkForChildWindowFunctions(sqlNodeStack2, definition.getAst())) {
+                    return false;
+                }
+                return isBareZeroOnEmptyColumn(definition.getAst(), li);
             }
         }
         return false;
@@ -1979,7 +2224,7 @@ class LateralJoinRewriter implements Mutable {
             return;
         }
         if (classifyLateralLimit(limitLo, limitHi) != LIMIT_UNPROVABLE) {
-            // compile-time decidable: hasScalarCountBody already folded it, no guard needed
+            // compile-time decidable: scalarAggregateBodyKind already folded it, no guard needed
             return;
         }
         if (readsColumn) {
@@ -2218,24 +2463,44 @@ class LateralJoinRewriter implements Mutable {
         return null;
     }
 
-    private boolean markScalarCountColumns(IQueryModel model) {
-        IQueryModel current = model;
-        while (current != null) {
-            if (hasAggregateFunctions(current)) {
-                boolean hasMarkedColumn = false;
-                ObjList<QueryColumn> columns = current.getBottomUpColumns();
-                for (int i = 0, n = columns.size(); i < n; i++) {
-                    QueryColumn column = columns.getQuick(i);
-                    if (isCountAggregate(column.getAst())) {
-                        column.setLateralScalarCount(true);
-                        hasMarkedColumn = true;
-                    }
-                }
-                return hasMarkedColumn;
-            }
-            current = current.getNestedModel();
+    private void processWildcardSources(int layer, int depth) throws SqlException {
+        int sourceLayer = layer + 1;
+        if (sourceLayer >= carrierChain.size()) {
+            return;
         }
-        return false;
+        ObjList<QueryColumn> sources = carrierChain.getQuick(sourceLayer).getBottomUpColumns();
+        for (int j = 0, m = sources.size(); j < m; j++) {
+            QueryColumn source = sources.getQuick(j);
+            ExpressionNode ast = source.getAst();
+            if (ast == null || !source.isIncludeIntoWildcard()) {
+                continue;
+            }
+            if (ast.isWildcard()) {
+                processWildcardSources(sourceLayer, depth);
+                continue;
+            }
+            if (source instanceof WindowExpression || checkForChildWindowFunctions(sqlNodeStack2, ast)) {
+                continue;
+            }
+            if (findCountMarker(sourceLayer, source.getAlias()) != null) {
+                continue;
+            }
+            if (isBareZeroOnEmptyColumn(ast, sourceLayer)) {
+                addSelfCountTemplate(addCountMarker(sourceLayer, source.getAlias(), ast.position), ast.position);
+                continue;
+            }
+            if (ast.type == ExpressionNode.FUNCTION
+                    && functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
+                continue;
+            }
+            if (!validateTemplateNode(ast, sourceLayer, depth)) {
+                continue;
+            }
+            templateNodeBudget = TEMPLATE_NODE_BUDGET;
+            ExpressionNode template = buildTemplateNode(ast, sourceLayer, depth, true);
+            assert template != null;
+            templateBuffer.add(queryColumnPool.next().of(addCountMarker(sourceLayer, source.getAlias(), ast.position), template));
+        }
     }
 
     private CharSequence propagateColumnUp(
@@ -2469,20 +2734,27 @@ class LateralJoinRewriter implements Mutable {
         CharSequence cloneAlias = clonedOuterRef.getAlias().token;
         int aliasSaveBase = saveAndRemapOuterToInnerAlias(cloneAlias);
 
-        boolean isScalarCountBody = isLeftJoin && hasScalarCountBody(jmNested);
+        int scalarBodyKind = scalarAggregateBodyKind(jmNested);
         scalarCountGuard = null;
         scalarCountGuardBlocker = null;
+        int templateBase = templateBuffer.size();
+        if (scalarBodyKind == SCALAR_BODY_ZERO_ON_EMPTY) {
+            buildCountTemplates(jmNested, depth);
+        }
         pushDownOuterRefs(
                 null, jmNested, outerToInnerAlias, isLeftJoin,
                 clonedOuterRef, jm, depth
         );
-        if (isScalarCountBody && markScalarCountColumns(jmNested)) {
+        if (scalarBodyKind != SCALAR_BODY_NONE) {
+            promoteToLeftOuterJoin(jm);
+        }
+        if (scalarBodyKind == SCALAR_BODY_ZERO_ON_EMPTY && templateBuffer.size() > templateBase) {
             rejectCorrelatedScalarCountLimit();
             localCountModel.setLateralCountCoalesceRequired(true);
             localCountModel.setLateralCountCoalesceGuard(scalarCountGuard);
-            if (jm.getJoinType() == IQueryModel.JOIN_CROSS || jm.getJoinType() == IQueryModel.JOIN_INNER) {
-                jm.setJoinType(IQueryModel.JOIN_LEFT_OUTER);
-            }
+            transferCountTemplates(localCountModel, jm.getAlias(), templateBase);
+        } else {
+            templateBuffer.setPos(templateBase);
         }
 
         ExpressionNode alignCriteria = jm.getJoinCriteria();
@@ -2551,6 +2823,7 @@ class LateralJoinRewriter implements Mutable {
         assert terminateLevel != null;
 
         IQueryModel scalarCountDriver = null;
+        IQueryModel scalarCountBodyNested = null;
         ObjList<IQueryModel> terminateJoins = terminateLevel.getJoinModels();
         for (int bi = 1, bn = terminateJoins.size(); bi < bn; bi++) {
             IQueryModel branch = terminateJoins.getQuick(bi);
@@ -2558,7 +2831,8 @@ class LateralJoinRewriter implements Mutable {
             if (isLeftJoin
                     && branchNested != null
                     && branchNested.isCorrelatedAtDepth(depth)
-                    && hasScalarCountBody(branchNested)) {
+                    && scalarAggregateBodyKind(branchNested) == SCALAR_BODY_ZERO_ON_EMPTY) {
+                scalarCountBodyNested = branchNested;
                 scalarCountDriver = cloneOuterRef(outerRefJoinModel, COUNT_DRIVER_PREFIX, terminateLevel);
                 terminateJoins.insert(1, 1, null);
                 terminateJoins.setQuick(1, scalarCountDriver);
@@ -2598,9 +2872,16 @@ class LateralJoinRewriter implements Mutable {
                 branch.setJoinCriteria(rewriteOuterRefs(branch.getJoinCriteria(), outerToInnerAlias, depth));
             }
 
-            boolean isScalarCountBody = isLeftJoin && hasScalarCountBody(branchNested);
+            boolean isScalarCountBody = isLeftJoin
+                    && scalarCountDriver != null
+                    && (branchNested == scalarCountBodyNested
+                            || scalarAggregateBodyKind(branchNested) == SCALAR_BODY_ZERO_ON_EMPTY);
             scalarCountGuard = null;
             scalarCountGuardBlocker = null;
+            int templateBase = templateBuffer.size();
+            if (isScalarCountBody) {
+                buildCountTemplates(branchNested, depth);
+            }
             pushDownOuterRefs(
                     null, branchNested, outerToInnerAlias, isLeftJoin,
                     clonedOuterRef, branch, depth
@@ -2635,9 +2916,7 @@ class LateralJoinRewriter implements Mutable {
                     branch.setJoinType(IQueryModel.JOIN_INNER);
                 }
             }
-            if (isScalarCountBody
-                    && scalarCountDriver != null
-                    && markScalarCountColumns(branchNested)) {
+            if (isScalarCountBody && templateBuffer.size() > templateBase) {
                 if (branch.getJoinType() == IQueryModel.JOIN_CROSS
                         || branch.getJoinType() == IQueryModel.JOIN_INNER) {
                     branch.setJoinType(IQueryModel.JOIN_LEFT_OUTER);
@@ -2645,6 +2924,9 @@ class LateralJoinRewriter implements Mutable {
                 rejectCorrelatedScalarCountLimit();
                 topInner.setLateralCountCoalesceRequired(true);
                 topInner.setLateralCountCoalesceGuard(scalarCountGuard);
+                transferCountTemplates(topInner, branch.getAlias(), templateBase);
+            } else {
+                templateBuffer.setPos(templateBase);
             }
             IQueryModel branchTop = branch.getNestedModel();
             ObjList<CharSequence> oKeys = outerToInnerAlias.keys();
@@ -2745,6 +3027,26 @@ class LateralJoinRewriter implements Mutable {
         pushMatchingPredicates(outerRefSubquery.getNestedModel(), nonCorrelatedPreds);
         for (int i = 1, n = outerRefSubquery.getJoinModels().size(); i < n; i++) {
             pushMatchingPredicates(outerRefSubquery.getJoinModels().getQuick(i), nonCorrelatedPreds);
+        }
+    }
+
+    private void qualifyTemplateSelfRefs(ExpressionNode node, CharSequence alias, CharSequence qualifiedName) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            if (Chars.equalsIgnoreCase(node.token, alias)) {
+                node.token = qualifiedName;
+            }
+            return;
+        }
+        if (node.paramCount < 3) {
+            qualifyTemplateSelfRefs(node.lhs, alias, qualifiedName);
+            qualifyTemplateSelfRefs(node.rhs, alias, qualifiedName);
+        } else {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                qualifyTemplateSelfRefs(node.args.getQuick(i), alias, qualifiedName);
+            }
         }
     }
 
@@ -3184,6 +3486,88 @@ class LateralJoinRewriter implements Mutable {
         return aliasSaveBase;
     }
 
+    private int scalarAggregateBodyKind(IQueryModel model) throws SqlException {
+        IQueryModel current = model;
+        boolean hasUnprovableLimit = false;
+        while (current != null && current.getUnionModel() == null) {
+            ExpressionNode limitHi = current.getLimitHi();
+            ExpressionNode limitLo = current.getLimitLo();
+            // report a provable negative with the specific message, ahead of the
+            // generic unprovable one - compensateLimit would reject it regardless
+            rejectNegativeLateralLimit(limitLo);
+            rejectNegativeLateralLimit(limitHi);
+            switch (classifyLateralLimit(limitLo, limitHi)) {
+                case LIMIT_DROPS_ROW:
+                    // body provably yields no rows: NULL fill is correct, no compensation
+                    return SCALAR_BODY_NONE;
+                case LIMIT_UNPROVABLE:
+                    // decided at execution time by the guard accumulateScalarCountGuard
+                    // builds; only the guarded zero-on-empty compensation may proceed
+                    hasUnprovableLimit = true;
+                    break;
+                default:
+                    break;
+            }
+            if (current.getGroupBy().size() > 0
+                    || current.getSampleBy() != null
+                    || current.getFillStride() != null
+                    || current.getLatestBy().size() > 0) {
+                return SCALAR_BODY_NONE;
+            }
+            if (hasAggregateFunctions(current)) {
+                // a window/horizon join aggregates per driving row, so the body is not scalar
+                if (isWindowJoin(current) || isHorizonJoin(current)) {
+                    return SCALAR_BODY_NONE;
+                }
+                IQueryModel input = current.getNestedModel();
+                while (input != null) {
+                    if (isWindowJoin(input) || isHorizonJoin(input)) {
+                        return SCALAR_BODY_NONE;
+                    }
+                    if (input.isNestedModelIsSubQuery()) {
+                        break;
+                    }
+                    if (input.getUnionModel() != null
+                            || input.getGroupBy().size() > 0
+                            || input.getSampleBy() != null
+                            || input.getFillStride() != null
+                            || input.getLatestBy().size() > 0) {
+                        return SCALAR_BODY_NONE;
+                    }
+                    input = input.getNestedModel();
+                }
+                ObjList<QueryColumn> columns = current.getBottomUpColumns();
+                boolean hasZeroOnEmpty = false;
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    QueryColumn column = columns.getQuick(i);
+                    ExpressionNode ast = column.getAst();
+                    if (ast == null
+                            || column instanceof WindowExpression
+                            || checkForChildWindowFunctions(sqlNodeStack2, ast)) {
+                        continue;
+                    }
+                    if (hasGroupingKeyRef(ast)) {
+                        return SCALAR_BODY_NONE;
+                    }
+                    hasZeroOnEmpty |= containsZeroOnEmptyAggregate(ast);
+                }
+                if (hasZeroOnEmpty) {
+                    return SCALAR_BODY_ZERO_ON_EMPTY;
+                }
+                // a plain scalar body has no run-time guard mechanism, so promoting
+                // the join is only sound when the LIMIT provably keeps the row
+                return hasUnprovableLimit ? SCALAR_BODY_NONE : SCALAR_BODY_PLAIN;
+            }
+            if (current.getWhereClause() != null
+                    || current.getPostJoinWhereClause() != null
+                    || current.getJoinModels().size() > 1) {
+                return SCALAR_BODY_NONE;
+            }
+            current = current.getNestedModel();
+        }
+        return SCALAR_BODY_NONE;
+    }
+
     private int scanModelForCorrelatedRefs(
             IQueryModel current,
             IQueryModel outerModel,
@@ -3430,6 +3814,23 @@ class LateralJoinRewriter implements Mutable {
         sharedModels.add((QueryModel) outerRefJoinModel.getNestedModel());
     }
 
+    private void transferCountTemplates(IQueryModel target, ExpressionNode joinAlias, int base) {
+        if (target != null) {
+            for (int i = base, n = templateBuffer.size(); i < n; i++) {
+                QueryColumn template = templateBuffer.getQuick(i);
+                if (joinAlias != null && !Chars.startsWith(template.getAlias(), LATERAL_COUNT_MARKER_PREFIX)) {
+                    characterStore.newEntry();
+                    characterStore.put(joinAlias.token).put('.').put(template.getAlias());
+                    CharSequence qualifiedName = characterStore.toImmutable();
+                    qualifyTemplateSelfRefs(template.getAst(), template.getAlias(), qualifiedName);
+                    template.of(qualifiedName, template.getAst());
+                }
+                target.addLateralCountTemplate(template);
+            }
+        }
+        templateBuffer.setPos(base);
+    }
+
     private void tryEliminateOuterRef(
             IQueryModel selectModel,
             IQueryModel joinLayer,
@@ -3644,6 +4045,16 @@ class LateralJoinRewriter implements Mutable {
                 }
             }
         }
+    }
+
+    private boolean validateTemplateNode(ExpressionNode ast, int layer, int depth) throws SqlException {
+        hasAggregateLeaf = false;
+        hasZeroOnEmptyLeaf = false;
+        templateNodeBudget = TEMPLATE_NODE_BUDGET;
+        if (buildTemplateNode(ast, layer, depth, false) == null) {
+            return false;
+        }
+        return hasZeroOnEmptyLeaf || !hasAggregateLeaf;
     }
 
 }
