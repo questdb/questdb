@@ -27,6 +27,7 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.AbstractCairoTest;
@@ -54,9 +55,15 @@ import java.util.List;
  * </ul>
  *
  * <p>Both are asserted as an ORDER over file operations, because ordering is the entire content of the
- * invariant: a test that checked only the end state would pass against either sequence. The live
- * {@code _meta} is written through {@code _meta.swp}, so the assertion is that every operation on the
- * {@code _snapshot} marker precedes the first operation on the swap file.
+ * invariant: a test that checked only the end state would pass against either sequence.
+ *
+ * <p><b>Strength of each arm.</b> Inverting the order in the product makes the LEAVING arm fail (verified),
+ * so that arm is a proven control. The ENTERING arm still passed under the same inversion — its assertion
+ * is therefore reinforcement, not proof, and should not be cited as one until someone works out which later
+ * operation masks the inversion there. The live
+ * {@code _meta} is written through {@code _meta.swp}, so the assertion is that the write of the
+ * record itself — a write at the enrolled-mode offset of the live {@code _meta} — follows the last
+ * operation on the {@code _snapshot} marker.
  */
 public class AdaptiveEnrollmentOrderTest extends AbstractCairoTest {
 
@@ -112,24 +119,32 @@ public class AdaptiveEnrollmentOrderTest extends AbstractCairoTest {
      * answers "how many", this answers "in what order".
      */
     private static class OrderRecordingFilesFacade extends TestFilesFacadeImpl {
+        private final java.util.Map<Long, String> fdToPath = new java.util.HashMap<>();
         private final List<String> log = new ArrayList<>();
 
         public synchronized void assertAnchorPrecedesMetadataWrite(String tableDir, String direction) {
             final int anchor = lastIndexContaining(tableDir + "/_snapshot");
-            final int meta = firstIndexContaining(tableDir + "/_meta.swp");
+            // Pin the RECORD WRITE itself -- a write at the enrolled-mode offset of the live _meta -- not
+            // merely "some _meta operation". The writer touches _meta for many reasons and the epoch
+            // publication copies it to _meta.epoch.N, so anything coarser stops discriminating: an inverted
+            // order would still find an unrelated _meta op after the marker and pass.
+            // Matches the tail of a logged write line; the absolute path sits between the "WRITE " prefix
+            // and the table dir, so the prefix must not be part of the needle.
+            final int meta = lastIndexContaining(tableDir + "/_meta@"
+                    + TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE);
             Assert.assertTrue(
                     "no _snapshot operation recorded while " + direction + ", so this proves nothing about"
                             + " ordering" + dump(),
                     anchor >= 0
             );
             Assert.assertTrue(
-                    "no _meta.swp operation recorded while " + direction + ", so the record was never"
+                    "no enrolment-record write recorded while " + direction + ", so the record was never"
                             + " written" + dump(),
                     meta >= 0
             );
             Assert.assertTrue(
                     "the enrolment record was written BEFORE the anchor it speaks for was durable ("
-                            + direction + "): last _snapshot op at " + anchor + ", first _meta.swp op at "
+                            + direction + "): last _snapshot op at " + anchor + ", record write at "
                             + meta + dump(),
                     anchor < meta
             );
@@ -142,13 +157,32 @@ public class AdaptiveEnrollmentOrderTest extends AbstractCairoTest {
         @Override
         public synchronized long openCleanRW(LPSZ name, long size) {
             log.add(pathToString(name));
-            return super.openCleanRW(name, size);
+            final long fd = super.openCleanRW(name, size);
+            remember(fd, name);
+            return fd;
         }
 
         @Override
         public synchronized long openRW(LPSZ name, int opts) {
             log.add(pathToString(name));
-            return super.openRW(name, opts);
+            final long fd = super.openRW(name, opts);
+            remember(fd, name);
+            return fd;
+        }
+
+        @Override
+        public synchronized long write(long fd, long address, long len, long offset) {
+            final String path = fdToPath.get(fd);
+            if (path != null) {
+                log.add("WRITE " + path + '@' + offset);
+            }
+            return super.write(fd, address, len, offset);
+        }
+
+        private void remember(long fd, LPSZ name) {
+            if (fd > -1) {
+                fdToPath.put(fd, pathToString(name));
+            }
         }
 
         @Override

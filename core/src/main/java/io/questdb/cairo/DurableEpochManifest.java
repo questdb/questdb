@@ -171,6 +171,22 @@ public final class DurableEpochManifest {
     }
 
     /**
+     * Writes the enrolment record of an EXISTING table in place, for a {@code _meta} that already carries
+     * the field. Callers must have made the state the record describes durable first -- see
+     * {@link #recordEnrollment}, whose ordering argument this shares.
+     *
+     * <p>In place, rather than through a metadata rewrite: a rewrite bumps the table's metadataVersion,
+     * which is a structural event other subsystems legitimately react to (Enterprise's incremental backup
+     * among them). Enrolment is a durability bookkeeping detail and must not masquerade as a schema change.
+     */
+    public static void recordEnrolledCommitMode(CairoConfiguration configuration, TableToken tableToken, int enrolledCommitMode) {
+        try (Path tablePath = new Path()) {
+            tablePath.of(configuration.getDbRoot()).concat(tableToken);
+            writeEnrollmentRecord(configuration, tableToken, tablePath, tablePath.size(), enrolledCommitMode);
+        }
+    }
+
+    /**
      * Clears the enrolment record of a table that is being built by COPYING another table's {@code _meta}
      * and is not receiving an anchor — an {@code ALTER TABLE ... REBASE WAL} staging clone whose effective
      * mode is not adaptive.

@@ -39,6 +39,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private int commitMode = CommitMode.UNSET;
     private boolean commitModeFieldPresent;
     private int enrolledCommitMode;
+    private boolean enrolledCommitModeFieldPresent;
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -91,6 +92,15 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
      */
     public int getEnrolledCommitMode() {
         return enrolledCommitMode;
+    }
+
+    /**
+     * Whether this {@code _meta} already carries the enrolment field. When it does, the record can be
+     * written in place; when it does not (a table written before the field existed), only a full metadata
+     * rewrite can add it.
+     */
+    public boolean isEnrolledCommitModeFieldPresent() {
+        return enrolledCommitModeFieldPresent;
     }
 
     public void setEnrolledCommitMode(int commitMode) {
@@ -192,6 +202,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.commitModeFieldPresent = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_COMMIT_MODE);
         this.commitMode = TableUtils.getCommitMode(metaMem);
         this.enrolledCommitMode = TableUtils.getEnrolledCommitMode(metaMem);
+        this.enrolledCommitModeFieldPresent = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;

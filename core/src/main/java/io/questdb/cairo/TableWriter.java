@@ -3716,8 +3716,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // re-enrolls on the next open (publishing a fresh baseline); a crash after it always has a validated
         // anchor to rewind to. The declared per-table override is left exactly as it was -- a table that
         // inherits the server default keeps inheriting it.
-        metadata.setEnrolledCommitMode(CommitMode.ADAPTIVE);
-        writeMetadataToDisk();
+        recordEnrolledCommitMode(CommitMode.ADAPTIVE);
         effectiveCommitMode = CommitMode.ADAPTIVE;
         adaptiveEnrollmentPending = false;
         publishEffectiveCommitMode();
@@ -3740,13 +3739,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void reconcileAdaptiveExit(int targetCommitMode) {
         publishAdaptiveBaselineOrFail();
-        metadata.setEnrolledCommitMode(targetCommitMode);
-        writeMetadataToDisk();
+        recordEnrolledCommitMode(targetCommitMode);
         adaptiveExitPending = false;
         // Release the epoch pin only after the record is durable. A crash in between leaves the record
         // saying ADAPTIVE, so the next startup rolls forward to this epoch -- which must therefore still
         // hold its partitions against purge.
         releaseEpochPin();
+    }
+
+    /**
+     * Persists the enrolment record, in place where the {@code _meta} already carries the field.
+     *
+     * <p>NOT through {@code writeMetadataToDisk()}: that rewrites the whole file and bumps the table's
+     * metadataVersion, which is a STRUCTURAL event other subsystems act on -- Enterprise's incremental
+     * backup reads it as a schema change and its txnlog accounting then disagrees with what it uploaded.
+     * Enrolment is durability bookkeeping, not a schema change, and must not present itself as one.
+     *
+     * <p>A {@code _meta} written before the field existed has nowhere to put the record, so that case still
+     * takes the full rewrite -- which is also what upgrades the file's format, and is a one-off per table.
+     */
+    private void recordEnrolledCommitMode(int enrolledCommitMode) {
+        metadata.setEnrolledCommitMode(enrolledCommitMode);
+        if (metadata.isEnrolledCommitModeFieldPresent()) {
+            DurableEpochManifest.recordEnrolledCommitMode(configuration, tableToken, enrolledCommitMode);
+        } else {
+            writeMetadataToDisk();
+        }
     }
 
     private void releaseEpochPin() {
