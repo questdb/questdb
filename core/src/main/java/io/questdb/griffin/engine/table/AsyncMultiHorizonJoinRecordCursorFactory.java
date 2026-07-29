@@ -66,6 +66,7 @@ import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
@@ -173,6 +174,12 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             Misc.free(this, th);
             throw th;
         }
+    }
+
+    @Override
+    @TestOnly
+    public AsyncMultiHorizonJoinAtom getAtom() {
+        return frameSequence.getAtom();
     }
 
     @Override
@@ -373,10 +380,14 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                     slotId
             );
         } finally {
-            if (frameMemoryPool != null) {
-                frameMemoryPool.releaseParquetBuffers();
+            // Release the slot even if buffer cleanup throws; a stranded slot never returns (PerWorkerLocks has no reset).
+            try {
+                if (frameMemoryPool != null) {
+                    frameMemoryPool.releaseParquetBuffers();
+                }
+            } finally {
+                atom.release(slotId);
             }
-            atom.release(slotId);
         }
     }
 
@@ -542,10 +553,14 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                     slotId
             );
         } finally {
-            if (frameMemoryPool != null) {
-                frameMemoryPool.releaseParquetBuffers();
+            // Release the slot even if buffer cleanup throws; a stranded slot never returns (PerWorkerLocks has no reset).
+            try {
+                if (frameMemoryPool != null) {
+                    frameMemoryPool.releaseParquetBuffers();
+                }
+            } finally {
+                atom.release(slotId);
             }
-            atom.release(slotId);
         }
     }
 

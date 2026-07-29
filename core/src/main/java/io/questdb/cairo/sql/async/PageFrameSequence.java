@@ -120,7 +120,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
             this.localTaskFactory = localTaskFactory;
-            this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
+            this.workStealingStrategy = configuration.getFactoryProvider()
+                    .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
             this.taskType = taskType;
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
         } catch (Throwable th) {

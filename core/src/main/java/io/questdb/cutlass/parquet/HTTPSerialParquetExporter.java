@@ -73,6 +73,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         streamingPfc = Misc.free(streamingPfc);
         materializer = null;
         materializerColumnData = null;
+        clearMemoryTracker();
     }
 
     public CopyExportRequestTask.Phase process() throws Exception {
