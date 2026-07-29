@@ -53,8 +53,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
-import io.questdb.mp.continuation.QueryFiberPool;
-import io.questdb.mp.continuation.QueryTask;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
@@ -90,8 +93,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final StringSink errorMsgSink = new StringSink();
-    // non-null: refresh executions run as QueryTasks on pooled fibers; null: inline
-    private final @Nullable QueryFiberPool fiberPool;
+    private final @Nullable FiberRuntime fiberRuntime;
+    private final @Nullable FiberRefreshTask fiberTask;
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
     private final MatViewGraph graph;
     private final LongList intervals = new LongList();
@@ -106,21 +109,31 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final WalTxnRangeLoader txnRangeLoader;
 
     public MatViewRefreshJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
-        // workerId is accepted for source-compatibility; the rotation framework
-        // makes the per-worker invariant a per-cont-snapshot invariant instead.
         this(engine, sharedQueryWorkerCount);
     }
 
     public MatViewRefreshJob(CairoEngine engine, int sharedQueryWorkerCount) {
-        this(engine, sharedQueryWorkerCount, null);
+        this(engine, sharedQueryWorkerCount, null, false);
     }
 
-    public MatViewRefreshJob(CairoEngine engine, int sharedQueryWorkerCount, @Nullable QueryFiberPool fiberPool) {
+    public MatViewRefreshJob(CairoEngine engine, int sharedQueryWorkerCount, @NotNull FiberRuntime fiberRuntime) {
+        this(engine, sharedQueryWorkerCount, fiberRuntime, false);
+    }
+
+    private MatViewRefreshJob(
+            CairoEngine engine,
+            int sharedQueryWorkerCount,
+            @Nullable FiberRuntime fiberRuntime,
+            boolean isFiberExecutor
+    ) {
         try {
             this.engine = engine;
-            this.fiberPool = fiberPool;
+            this.fiberRuntime = fiberRuntime;
             this.sharedQueryWorkerCount = sharedQueryWorkerCount;
             this.refreshSqlExecutionContext = new MatViewRefreshSqlExecutionContext(engine, sharedQueryWorkerCount);
+            this.fiberTask = fiberRuntime != null && !isFiberExecutor
+                    ? new FiberRefreshTask(engine, sharedQueryWorkerCount, fiberRuntime)
+                    : null;
             this.graph = engine.getMatViewGraph();
             this.stateStore = engine.getMatViewStateStore();
             this.configuration = engine.getConfiguration();
@@ -155,38 +168,38 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     @Override
     public Job cloneInstance() {
-        return new MatViewRefreshJob(engine, sharedQueryWorkerCount, fiberPool);
+        final FiberRuntime runtime = fiberRuntime;
+        return runtime != null
+                ? new MatViewRefreshJob(engine, sharedQueryWorkerCount, runtime)
+                : new MatViewRefreshJob(engine, sharedQueryWorkerCount);
     }
 
     @Override
     public void close() {
         LOG.debug().$("materialized view refresh job closing").$();
+        Misc.free(fiberTask);
         Misc.free(refreshSqlExecutionContext);
         Misc.free(txnRangeLoader);
     }
 
     @Override
     public void closeInstance() {
-        // cloneInstance() mints a fresh job per generation, so the pool frees
-        // each instance's native resources through this hook at halt. Misc.free
-        // nulls the fields, keeping the call idempotent.
         close();
     }
 
     @Override
-    public void recycleInstance() {
-        // Per-iteration scratch is overwritten on entry to each refresh task.
-        // Clearing here is defensive against stale state surviving into the
-        // snapshot's next reuse.
-        childViewSink.clear();
-        childViewSink2.clear();
-        errorMsgSink.clear();
-        intervals.clear();
-    }
-
-    @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        return processNotifications();
+        if (fiberRuntime != null) {
+            return processNotifications();
+        }
+        final SuspensionScope.Mode previousMode = SuspensionScope.enter(
+                SuspensionScope.Mode.BLOCKING
+        );
+        try {
+            return processNotifications();
+        } finally {
+            SuspensionScope.restore(previousMode);
+        }
     }
 
     private static long approxStepDuration(long step, long approxBucketSize) {
@@ -1577,24 +1590,38 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return configuration.isWalApplySuspendedWriteDenied() && engine.isWalApplySuspended(viewToken);
     }
 
-    /**
-     * Launches the refresh on a pooled fiber, on a dedicated executor job: this
-     * launching instance keeps ticking (and may be rotated or recycled) without
-     * aliasing the refresh's single-thread-confined scratch.
-     */
-    private boolean launchRefreshOnFiber(MatViewRefreshTask notification) {
-        assert fiberPool != null;
-        final FiberRefreshTask task = new FiberRefreshTask(engine, sharedQueryWorkerCount);
-        notification.copyTo(task.notification);
-        if (fiberPool.launch(task)) {
-            return true;
+    private boolean launchRefreshOnFiber(
+            FiberRefreshTask task,
+            MatViewRefreshTask notification,
+            Fiber fiber
+    ) {
+        final FiberRuntime runtime = fiberRuntime;
+        if (runtime == null) {
+            throw new IllegalStateException("materialized view refresh fiber runtime is not configured");
         }
-        task.executor.close();
-        return false;
+        boolean isReservationConsumed = false;
+        try {
+            if (!task.prepare(notification)) {
+                return false;
+            }
+            isReservationConsumed = true;
+            final LaunchResult result = runtime.launchReserved(fiber, task, task.getIncarnation());
+            if (result == LaunchResult.LAUNCHED) {
+                return true;
+            }
+            task.releaseAfterLaunchFailure();
+            return false;
+        } finally {
+            if (!isReservationConsumed) {
+                runtime.releaseReservedFiber(fiber);
+            }
+        }
     }
 
     private boolean processNotifications() {
         boolean refreshed = false;
+        final FiberRuntime runtime = fiberRuntime;
+        final FiberRefreshTask fiberTask = this.fiberTask;
         if (engine.isMatViewRefreshSuspended()) {
             // A role promote has hydrated the real store but not yet opened writes. Do not dequeue or
             // execute any task while the engine is still read-only -- executing here would refuse the
@@ -1602,45 +1629,72 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // queued and run after the gate clears (writes open).
             return false;
         }
-        while (fiberPool == null || fiberPool.getBusyCount() < fiberPool.getMaxPooled()) {
-            if (!stateStore.tryDequeueRefreshTask(refreshTask)) {
-                break;
+        while (fiberTask == null || fiberTask.isAvailable()) {
+            Fiber reservedFiber = null;
+            if (fiberTask != null) {
+                if (runtime == null || (reservedFiber = runtime.tryReserveFiber()) == null) {
+                    return refreshed;
+                }
             }
-            // Re-read the suspend gate AFTER the dequeue. A promote can set the gate, swap in the real
-            // store, and enqueue the hydrate kickstart between this pass's top-of-method gate read and
-            // this dequeue. The dequeue synchronizes-with that enqueue, which the promoter ordered
-            // after the gate-set, so this read is guaranteed to observe the set gate -- a re-check in
-            // the while condition would NOT (it is ordered before the dequeue). Put the task back and
-            // stop: executing it now would refuse the view WalWriter on the still-read-only engine and
-            // drop it. It runs after the gate clears (writes open).
-            if (engine.isMatViewRefreshSuspended()) {
-                stateStore.reenqueueRefreshTask(refreshTask);
-                break;
-            }
-            if (checkIfBaseTableDropped(refreshTask)) {
-                continue;
-            }
+            try {
+                if (!stateStore.tryDequeueRefreshTask(refreshTask)) {
+                    break;
+                }
+                // Re-read the suspend gate AFTER the dequeue. A promote can set the gate, swap in the real
+                // store, and enqueue the hydrate kickstart between this pass's top-of-method gate read and
+                // this dequeue. The dequeue synchronizes-with that enqueue, which the promoter ordered
+                // after the gate-set, so this read is guaranteed to observe the set gate -- a re-check in
+                // the while condition would NOT (it is ordered before the dequeue). Put the task back and
+                // stop: executing it now would refuse the view WalWriter on the still-read-only engine and
+                // drop it. It runs after the gate clears (writes open).
+                if (engine.isMatViewRefreshSuspended()) {
+                    stateStore.reenqueueRefreshTask(refreshTask);
+                    break;
+                }
+                if (checkIfBaseTableDropped(refreshTask)) {
+                    continue;
+                }
 
-            final int operation = refreshTask.operation;
-            switch (operation) {
-                case MatViewRefreshTask.INCREMENTAL_REFRESH:
-                    refreshed |= fiberPool != null ? launchRefreshOnFiber(refreshTask) : incrementalRefresh(refreshTask);
-                    break;
-                case MatViewRefreshTask.RANGE_REFRESH:
-                    refreshed |= fiberPool != null ? launchRefreshOnFiber(refreshTask) : rangeRefresh(refreshTask);
-                    break;
-                case MatViewRefreshTask.FULL_REFRESH:
-                    refreshed |= fiberPool != null ? launchRefreshOnFiber(refreshTask) : fullRefresh(refreshTask);
-                    break;
-                case MatViewRefreshTask.INVALIDATE:
-                    // metadata-only operations run no view SQL and stay inline
-                    invalidate(refreshTask);
-                    break;
-                case MatViewRefreshTask.UPDATE_REFRESH_INTERVALS:
-                    updateRefreshIntervals(refreshTask);
-                    break;
-                default:
-                    throw new RuntimeException("unexpected operation: " + operation);
+                final int operation = refreshTask.operation;
+                switch (operation) {
+                    case MatViewRefreshTask.FULL_REFRESH:
+                    case MatViewRefreshTask.INCREMENTAL_REFRESH:
+                    case MatViewRefreshTask.RANGE_REFRESH:
+                        if (fiberTask != null) {
+                            final Fiber launchFiber = reservedFiber;
+                            if (launchFiber == null) {
+                                throw new IllegalStateException("materialized view refresh has no reserved fiber");
+                            }
+                            reservedFiber = null;
+                            if (!launchRefreshOnFiber(fiberTask, refreshTask, launchFiber)) {
+                                stateStore.reenqueueRefreshTask(refreshTask);
+                                return refreshed;
+                            }
+                            refreshed = true;
+                        } else {
+                            refreshed |= switch (operation) {
+                                case MatViewRefreshTask.FULL_REFRESH -> fullRefresh(refreshTask);
+                                case MatViewRefreshTask.INCREMENTAL_REFRESH -> incrementalRefresh(refreshTask);
+                                default -> rangeRefresh(refreshTask);
+                            };
+                        }
+                        break;
+                    case MatViewRefreshTask.INVALIDATE:
+                        invalidate(refreshTask);
+                        break;
+                    case MatViewRefreshTask.UPDATE_REFRESH_INTERVALS:
+                        updateRefreshIntervals(refreshTask);
+                        break;
+                    default:
+                        throw new RuntimeException("unexpected operation: " + operation);
+                }
+            } finally {
+                if (reservedFiber != null) {
+                    if (runtime == null) {
+                        throw new IllegalStateException("materialized view refresh fiber runtime is not configured");
+                    }
+                    runtime.releaseReservedFiber(reservedFiber);
+                }
             }
         }
         return refreshed;
@@ -2431,23 +2485,29 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return baseTableToken;
     }
 
-    /**
-     * One refresh execution reified for a pooled fiber: a dedicated executor
-     * confines the refresh scratch to the fiber, and a private notification copy
-     * decouples it from the launching job's reused scratch. The whole refresh is
-     * one step; the executor is closed in {@link #onDone()} on both paths.
-     */
-    private static class FiberRefreshTask extends QueryTask {
+    private static class FiberRefreshTask extends FiberTask implements QuietCloseable {
         private final MatViewRefreshJob executor;
+        private volatile boolean isAvailable = true;
         private final MatViewRefreshTask notification = new MatViewRefreshTask();
 
-        private FiberRefreshTask(CairoEngine engine, int sharedQueryWorkerCount) {
-            this.executor = new MatViewRefreshJob(engine, sharedQueryWorkerCount);
+        private FiberRefreshTask(CairoEngine engine, int sharedQueryWorkerCount, FiberRuntime fiberRuntime) {
+            this.executor = new MatViewRefreshJob(engine, sharedQueryWorkerCount, fiberRuntime, true);
+        }
+
+        @Override
+        public void close() {
+            executor.close();
+        }
+
+        @Override
+        protected void onAbandoned() {
+            executor.stateStore.reenqueueRefreshTask(notification);
         }
 
         @Override
         protected void onDone() {
-            executor.close();
+            notification.clear();
+            isAvailable = true;
         }
 
         @Override
@@ -2463,11 +2523,34 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 case MatViewRefreshTask.INCREMENTAL_REFRESH -> executor.incrementalRefresh(notification);
                 case MatViewRefreshTask.RANGE_REFRESH -> executor.rangeRefresh(notification);
                 case MatViewRefreshTask.FULL_REFRESH -> executor.fullRefresh(notification);
-                default -> {
-                    assert false : "unexpected fiber refresh operation";
-                }
+                default -> throw new IllegalStateException(
+                        "unexpected materialized view refresh operation [operation=" + notification.operation + ']'
+                );
             }
             return true;
+        }
+
+        private boolean isAvailable() {
+            return isAvailable;
+        }
+
+        private boolean prepare(MatViewRefreshTask source) {
+            if (!isAvailable) {
+                return false;
+            }
+            if (isDone() && !tryReopen()) {
+                return false;
+            }
+            isAvailable = false;
+            source.copyTo(notification);
+            return true;
+        }
+
+        private void releaseAfterLaunchFailure() {
+            if (isIdle(getIncarnation())) {
+                notification.clear();
+                isAvailable = true;
+            }
         }
     }
 

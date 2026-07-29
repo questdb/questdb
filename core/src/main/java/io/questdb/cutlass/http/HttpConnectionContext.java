@@ -70,6 +70,7 @@ import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
@@ -422,6 +423,24 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public boolean invalid() {
         return pendingRetry || receivedBytes > 0 || this.socket == null;
+    }
+
+    @Override
+    public boolean isRetryCloseOwner(long taskIncarnation) {
+        if (taskIncarnation == 0) {
+            return true;
+        }
+        final HttpConnectionFiberTask task = fiberTask;
+        return task != null && task.isIdle(taskIncarnation);
+    }
+
+    @Override
+    public boolean isRetryCurrent(long taskIncarnation) {
+        if (taskIncarnation == 0) {
+            return true;
+        }
+        final HttpConnectionFiberTask task = fiberTask;
+        return task != null && task.isActive(taskIncarnation);
     }
 
     // called between requests on the same connections

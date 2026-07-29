@@ -52,6 +52,8 @@ public class HttpServerConfigurationBuilder {
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private boolean dumpTraffic;
     private FactoryProvider factoryProvider;
+    private boolean fiberEnabled = true;
+    private int fiberMaxLiveCount;
     private int forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
     private int forceSendFragmentationChunkSize = Integer.MAX_VALUE;
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
@@ -61,7 +63,6 @@ public class HttpServerConfigurationBuilder {
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private boolean pessimisticHealthCheck = false;
     private int port = -1;
-    private boolean queryFiberEnabled = true;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private int receiveBufferSize = 1024 * 1024;
     private int sendBufferSize = 1024 * 1024;
@@ -150,8 +151,13 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
-            public boolean isQueryFiberEnabled() {
-                return queryFiberEnabled;
+            public int getFiberMaxLiveCount() {
+                return fiberMaxLiveCount > 0 ? fiberMaxLiveCount : super.getFiberMaxLiveCount();
+            }
+
+            @Override
+            public int getFiberRetainedCount() {
+                return fiberMaxLiveCount > 0 ? fiberMaxLiveCount : super.getFiberRetainedCount();
             }
 
             @Override
@@ -285,6 +291,11 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
+            public boolean isFiberEnabled() {
+                return fiberEnabled;
+            }
+
+            @Override
             public boolean isPessimisticHealthCheckEnabled() {
                 return pessimisticHealthCheck;
             }
@@ -306,11 +317,6 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
-    public HttpServerConfigurationBuilder withQueryFiberEnabled(boolean queryFiberEnabled) {
-        this.queryFiberEnabled = queryFiberEnabled;
-        return this;
-    }
-
     public HttpServerConfigurationBuilder withDumpingTraffic(boolean dumpTraffic) {
         this.dumpTraffic = dumpTraffic;
         return this;
@@ -318,6 +324,16 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withFactoryProvider(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withFiberEnabled(boolean fiberEnabled) {
+        this.fiberEnabled = fiberEnabled;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withFiberMaxLiveCount(int fiberMaxLiveCount) {
+        this.fiberMaxLiveCount = fiberMaxLiveCount;
         return this;
     }
 

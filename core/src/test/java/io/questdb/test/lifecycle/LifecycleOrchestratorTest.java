@@ -18,12 +18,68 @@ import org.junit.Test;
 import org.junit.rules.Timeout;
 
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class LifecycleOrchestratorTest {
 
     @Rule
     public Timeout timeout = Timeout.builder().withTimeout(30, TimeUnit.SECONDS).withLookingForStuckThread(true).build();
+
+    @Test
+    public void testCloseRetainsComponentsWhileExecutorIsLive() {
+        final AtomicBoolean isExecutorTerminated = new AtomicBoolean();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null) {
+            @Override
+            protected boolean awaitInFlightWork() {
+                return isExecutorTerminated.get();
+            }
+        };
+        final ProbeComponent component = new ProbeComponent("a");
+        orch.register(component);
+        orch.run();
+        orch.close();
+        Assert.assertFalse(orch.isStopComplete());
+        Assert.assertEquals(-1, component.getStopSeq());
+        isExecutorTerminated.set(true);
+        orch.close();
+        Assert.assertTrue(orch.isStopComplete());
+        Assert.assertTrue(component.getStopSeq() > -1);
+    }
+
+    @Test
+    public void testCloseRetriesFailedComponentStop() {
+        final AtomicInteger stopAttempts = new AtomicInteger();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        final ProbeComponent dependency = new ProbeComponent("a");
+        final ObjList<String> hardDeps = new ObjList<>();
+        hardDeps.add("a");
+        final ProbeComponent component = new ProbeComponent("b", hardDeps, new ObjList<>()) {
+            @Override
+            public void stop() {
+                if (stopAttempts.getAndIncrement() == 0) {
+                    throw new IllegalStateException("stop");
+                }
+                super.stop();
+            }
+        };
+        orch.register(dependency);
+        orch.register(component);
+        orch.run();
+        orch.close();
+        Assert.assertFalse(orch.isStopComplete());
+        Assert.assertEquals(State.READY, orch.stateOf("a"));
+        Assert.assertEquals(State.STOPPING, orch.stateOf("b"));
+        Assert.assertEquals(-1, dependency.getStopSeq());
+        Assert.assertEquals(1, stopAttempts.get());
+        orch.close();
+        Assert.assertTrue(orch.isStopComplete());
+        Assert.assertEquals(State.STOPPED, orch.stateOf("a"));
+        Assert.assertEquals(State.STOPPED, orch.stateOf("b"));
+        Assert.assertTrue(dependency.getStopSeq() > -1);
+        Assert.assertEquals(2, stopAttempts.get());
+    }
 
     @Test
     public void testEnvelopeExtraDepsInjection() {

@@ -25,18 +25,19 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
-import io.questdb.cairo.O3PartitionJob;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -93,7 +94,7 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
         // would trip on a later query. A clean run confirms covered buffers stay off the per-query
         // tracker and the limit path is leak-free.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -134,7 +135,7 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
     @Test
     public void testKeyedParallelGroupByOverCoveringIndexDispatchesCoveredFrames() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -208,7 +209,7 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
         // freeze remains correct hardening: it matches the base PageFrameSequence path and
         // keeps F3's frozen-only openRequiredSidecars no-op effective.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {

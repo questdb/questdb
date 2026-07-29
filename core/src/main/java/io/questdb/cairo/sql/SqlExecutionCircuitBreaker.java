@@ -47,6 +47,10 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
+        public void clearCancelledFlag(AtomicBoolean expected) {
+        }
+
+        @Override
         public AtomicBoolean getCancelledFlag() {
             return null;
         }
@@ -121,6 +125,14 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      * Trigger this circuit breaker to fail on next check.
      */
     void cancel();
+
+    default void clearCancelledFlag(AtomicBoolean expected) {
+        synchronized (this) {
+            if (getCancelledFlag() == expected) {
+                setCancelledFlag(null);
+            }
+        }
+    }
 
     boolean checkIfTripped(long millis, long fd);
 

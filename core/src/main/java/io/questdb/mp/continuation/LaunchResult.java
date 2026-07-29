@@ -1,0 +1,59 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.mp.continuation;
+
+public enum LaunchResult {
+    ALREADY_OWNED("already_owned"),
+    LAUNCHED("launched"),
+    QUIESCING("quiescing"),
+    RESOURCE_FAILURE("resource_failure"),
+    SATURATED("saturated"),
+    STALE_INCARNATION("stale_incarnation"),
+    TERMINAL("terminal");
+
+    public static final int COUNT = values().length;
+    private final String metricLabel;
+
+    LaunchResult(String metricLabel) {
+        this.metricLabel = metricLabel;
+    }
+
+    public static LaunchResult get(int index) {
+        return switch (index) {
+            case 0 -> ALREADY_OWNED;
+            case 1 -> LAUNCHED;
+            case 2 -> QUIESCING;
+            case 3 -> RESOURCE_FAILURE;
+            case 4 -> SATURATED;
+            case 5 -> STALE_INCARNATION;
+            case 6 -> TERMINAL;
+            default -> throw new IndexOutOfBoundsException("invalid launch result index [index=" + index + ']');
+        };
+    }
+
+    public String getMetricLabel() {
+        return metricLabel;
+    }
+}

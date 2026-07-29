@@ -46,6 +46,14 @@ public interface Retry extends Closeable {
      */
     RetryAttemptAttributes getAttemptDetails();
 
+    default boolean isRetryCloseOwner(long taskIncarnation) {
+        return isRetryCurrent(taskIncarnation);
+    }
+
+    default boolean isRetryCurrent(long taskIncarnation) {
+        return true;
+    }
+
     /**
      * Retries context that could not acquire resource during regular execution.
      *

@@ -35,6 +35,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -52,11 +53,6 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
     private SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private PageFrameMemoryRecord record;
 
-    // Each WorkerContinuation snapshot holds at most one PageFrameReduceJob
-    // instance per slot, so the instance is effectively single-threaded for the
-    // lifetime of the snapshot. The continuation rotation framework mints fresh
-    // instances on suspend via cloneInstance() and recycles them via
-    // recycleInstance() when the parent cont completes.
     public PageFrameReduceJob(
             CairoEngine engine,
             MessageBus bus,
@@ -155,9 +151,6 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
 
     @Override
     public void closeInstance() {
-        // cloneInstance() mints a fresh job per generation, so the pool frees
-        // each instance's native resources through this hook at halt. Misc.free
-        // nulls the fields, keeping the call idempotent.
         close();
     }
 
@@ -167,28 +160,27 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
     }
 
     @Override
-    public void recycleInstance() {
-        // record.of(...) is called per task inside consumeQueue and circuitBreaker
-        // is init'd per task, so per-iteration scratch is reset on entry to the
-        // next consume. Clearing record here is defensive against a stale frame
-        // reference surviving into the snapshot's next reuse.
-        record.clear();
-    }
-
-    @Override
     public boolean run(@NotNull WorkerContext workerContext) {
         final int carrierId = workerContext.carrierId();
         boolean useful = false;
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         for (int i = 0; i < shardCount; i++) {
             final int shard = shards[i];
-            useful = !consumeQueue(
+            useful = !(dispatcher != null
+                    ? dispatcher.consumeOrdered(
+                    carrierId,
+                    messageBus.getPageFrameReduceQueue(shard),
+                    messageBus.getPageFrameReduceSubSeq(shard),
+                    null
+            )
+                    : consumeQueue(
                     carrierId,
                     messageBus.getPageFrameReduceQueue(shard),
                     messageBus.getPageFrameReduceSubSeq(shard),
                     record,
                     circuitBreaker,
-                    null // this is correct worker processing tasks rather than PageFrameSequence helping to steal work
-            ) || useful;
+                    null
+            )) || useful;
         }
         return useful;
     }
@@ -207,6 +199,9 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
             if (cursor > -1) {
                 final PageFrameReduceTask task = queue.get(cursor);
                 final PageFrameSequence<?> frameSequence = task.getFrameSequence();
+                final SuspensionScope.Mode previousMode = SuspensionScope.enter(
+                        SuspensionScope.Mode.BLOCKING
+                );
                 try {
                     LOG.debug()
                             .$("reducing [shard=").$(frameSequence.getShard())
@@ -237,6 +232,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                     task.setErrorMsg(th);
                     frameSequence.cancel(interruptReason);
                 } finally {
+                    SuspensionScope.restore(previousMode);
                     subSeq.done(cursor);
                     // Reduced counter has to be incremented only when we make
                     // sure that the task is available for consumers.
@@ -252,7 +248,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
         return true;
     }
 
-    private static void reduce(
+    static void reduce(
             int workerId,
             PageFrameMemoryRecord record,
             SqlExecutionCircuitBreaker circuitBreaker,

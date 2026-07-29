@@ -64,6 +64,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void changePageFrameSizes(int minRows, int maxRows);
 
+    default void clearCancelledFlag(AtomicBoolean expected) {
+        getCircuitBreaker().clearCancelledFlag(expected);
+        getSimpleCircuitBreaker().clearCancelledFlag(expected);
+    }
+
     void clearWindowContext();
 
     @Override

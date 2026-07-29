@@ -28,6 +28,18 @@ import io.questdb.Metrics;
 
 public interface WorkerPoolConfiguration {
 
+    default int getFiberMaxLiveCount() {
+        return Math.max(64, 8 * getWorkerCount());
+    }
+
+    default int getFiberMountBudget() {
+        return 64;
+    }
+
+    default int getFiberRetainedCount() {
+        return Math.min(getFiberMaxLiveCount(), Math.max(16, 2 * getWorkerCount()));
+    }
+
     default Metrics getMetrics() {
         return Metrics.ENABLED;
     }
@@ -54,6 +66,10 @@ public interface WorkerPoolConfiguration {
 
     int getWorkerCount();
 
+    default WorkerPoolMode getWorkerPoolMode() {
+        return WorkerPoolMode.LEGACY;
+    }
+
     default long getYieldThreshold() {
         return 10;
     }
@@ -68,44 +84,6 @@ public interface WorkerPoolConfiguration {
 
     default boolean isEnabled() {
         return true;
-    }
-
-    /**
-     * If true, the pool runs in legacy mode: workers do NOT wrap their loop
-     * body in a {@link io.questdb.mp.continuation.WorkerContinuation} and
-     * {@code Job.cloneInstance()} is never invoked by the framework. Per-worker
-     * assignment via {@code WorkerPool.assign(int worker, Job job)} is only
-     * allowed on legacy pools, since the workerId carries identity meaning
-     * (used by the assigned Job's instance state).
-     * <p>
-     * Non-legacy (default) pools install continuations and require
-     * {@code Job.cloneInstance()} to provide per-cont-snapshot isolation;
-     * callers register Jobs via {@code WorkerPool.assign(Job job)} which
-     * clones once per worker.
-     */
-    /**
-     * If true, the pool runs in fiber-host mode, the end-state worker loop of the
-     * query-fiber tier: workers run a PLAIN loop -- never wrapped in a
-     * {@link io.questdb.mp.continuation.WorkerContinuation}, no handoff mechanism,
-     * no job generation minting -- and mount parked {@code QueryFiber}s from the
-     * pool's continuation queue directly, which is legal because a plain frame
-     * carries no continuation. A fiber mount costs no allocation at all.
-     * <p>
-     * Jobs on a fiber-host pool must not suspend on the worker loop; all query
-     * suspension happens inside the hosted fibers. A wait function reached inline
-     * anyway finds no mounted continuation and takes its legacy polling fallback,
-     * so a misconfigured pool degrades to pre-continuation behavior instead of
-     * failing.
-     * <p>
-     * Mutually exclusive with {@link #isLegacy()}: a legacy pool has no
-     * continuation queue and cannot host fibers.
-     */
-    default boolean isFiberHost() {
-        return false;
-    }
-
-    default boolean isLegacy() {
-        return false;
     }
 
     default int workerPoolPriority() {

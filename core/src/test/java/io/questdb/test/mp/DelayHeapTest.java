@@ -47,8 +47,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Tests for {@link DelayHeap}. The {@link TestEntry} helper uses an <em>absolute
  * deadline</em> (in {@code System.nanoTime()} space) so {@code getDelay} naturally
- * decreases over wall-clock time - mirroring how real {@link Delayed} entries
- * (e.g., {@code TxnWaiter}) behave. {@link Delayed#compareTo} is overridden to
+ * decreases over wall-clock time. {@link Delayed#compareTo} is overridden to
  * compare deadlines directly, avoiding the {@code getDelay(now1) vs getDelay(now2)}
  * drift that two separate {@code now} reads would introduce.
  */
@@ -388,9 +387,8 @@ public class DelayHeapTest {
      * {@link Delayed} entry parameterized by an absolute {@code System.nanoTime()}
      * deadline. {@link #getDelay} returns {@code deadline - now}, so the value
      * decreases monotonically with wall-clock time and crosses zero at the deadline.
-     * This mirrors real {@code TxnWaiter} semantics; helpers using a fixed delay
-     * value would never expire and {@link DelayHeap#take} would loop on a stale
-     * {@code wait(delay)}.
+     * Helpers using a fixed delay value would never expire and
+     * {@link DelayHeap#take} would loop on a stale {@code wait(delay)}.
      */
     private static final class TestEntry implements Delayed {
         final long deadlineNanos;

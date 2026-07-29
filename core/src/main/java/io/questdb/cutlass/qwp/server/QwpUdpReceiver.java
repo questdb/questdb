@@ -319,37 +319,38 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
     public void start() {
         if (configuration.isOwnThread() && running.compareAndSet(false, true)) {
-            Thread thread = new Thread(() -> {
-                started.countDown();
-                try {
-                    if (configuration.ownThreadAffinity() != -1) {
-                        Os.setCurrentThreadAffinity(configuration.ownThreadAffinity());
+            final Thread thread;
+            try {
+                thread = createThread(() -> {
+                    started.countDown();
+                    try {
+                        if (configuration.ownThreadAffinity() != -1) {
+                            Os.setCurrentThreadAffinity(configuration.ownThreadAffinity());
+                        }
+                        logStarted();
+                        while (running.get()) {
+                            runSerially();
+                        }
+                        LOG.info().$("shutdown").$();
+                    } finally {
+                        Path.clearThreadLocals();
+                        halted.countDown();
                     }
-                    logStarted();
-                    while (running.get()) {
-                        runSerially();
-                    }
-                    LOG.info().$("shutdown").$();
-                } finally {
-                    Path.clearThreadLocals();
-                    halted.countDown();
+                });
+                thread.setName("qwp-udp-receiver");
+            } catch (Throwable th) {
+                resetFailedStart();
+                throw th;
+            }
+            try {
+                thread.start();
+            } catch (Throwable th) {
+                if (thread.getState() == Thread.State.NEW) {
+                    resetFailedStart();
                 }
-            });
-            thread.setName("qwp-udp-receiver");
-            thread.start();
+                throw th;
+            }
         }
-    }
-
-    private void logStarted() {
-        LOG.info()
-                .$("receiving on ")
-                .$ip(configuration.getBindIPv4Address())
-                .$(':')
-                .$(configuration.getPort())
-                .$(" [fd=").$(fd)
-                .$(", commitInterval=").$(commitInterval)
-                .$(", maxUncommittedDatagrams=").$(maxUncommittedDatagrams)
-                .I$();
     }
 
     protected boolean checkClosed() {
@@ -358,6 +359,22 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             return true;
         }
         return false;
+    }
+
+    protected Thread createThread(Runnable runnable) {
+        return new Thread(runnable);
+    }
+
+    protected void forceCommitAll() {
+        tudCache.commitAllBestEffort();
+        nextCommitTime = millisecondClock.getTicks() + commitInterval;
+    }
+
+    protected void noteCommitDeadline(WalTableUpdateDetails tud) {
+        long tableNextCommitTime = tud.getNextCommitTime();
+        if (tableNextCommitTime < nextCommitTime) {
+            nextCommitTime = tableNextCommitTime;
+        }
     }
 
     protected int processDatagram(long address, int length) {
@@ -418,16 +435,22 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         return datagramState;
     }
 
-    protected void forceCommitAll() {
-        tudCache.commitAllBestEffort();
-        nextCommitTime = millisecondClock.getTicks() + commitInterval;
+    private void logStarted() {
+        LOG.info()
+                .$("receiving on ")
+                .$ip(configuration.getBindIPv4Address())
+                .$(':')
+                .$(configuration.getPort())
+                .$(" [fd=").$(fd)
+                .$(", commitInterval=").$(commitInterval)
+                .$(", maxUncommittedDatagrams=").$(maxUncommittedDatagrams)
+                .I$();
     }
 
-    protected void noteCommitDeadline(WalTableUpdateDetails tud) {
-        long tableNextCommitTime = tud.getNextCommitTime();
-        if (tableNextCommitTime < nextCommitTime) {
-            nextCommitTime = tableNextCommitTime;
-        }
+    private void resetFailedStart() {
+        running.set(false);
+        started.countDown();
+        halted.countDown();
     }
 
     private record CustomHttpProcessorConfiguration(

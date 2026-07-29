@@ -24,17 +24,17 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.LineSenderServerException;
+import io.questdb.client.Sender;
+import io.questdb.client.SenderError;
+import io.questdb.client.SenderErrorHandler;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
-import io.questdb.client.LineSenderServerException;
-import io.questdb.client.Sender;
-import io.questdb.client.SenderError;
-import io.questdb.client.SenderErrorHandler;
-import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;

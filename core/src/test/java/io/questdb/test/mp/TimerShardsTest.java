@@ -27,6 +27,7 @@ package io.questdb.test.mp;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.continuation.DelayedFireable;
+import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.TimerShards;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -35,6 +36,8 @@ import org.junit.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 
 public class TimerShardsTest {
     private static final Log LOG = LogFactory.getLog(TimerShardsTest.class);
@@ -68,8 +71,11 @@ public class TimerShardsTest {
         shards.start();
         shards.shutdown();
         AtomicInteger shutdownCount = new AtomicInteger();
-        shards.register(new TestEntry(System.currentTimeMillis() + 100_000, null, shutdownCount::incrementAndGet));
-        Assert.assertEquals(1, shutdownCount.get());
+        SourceRegistrationResult result = shards.register(
+                new TestEntry(System.currentTimeMillis() + 100_000, null, shutdownCount::incrementAndGet)
+        );
+        Assert.assertSame(SourceRegistrationResult.NOT_ACCEPTED, result);
+        Assert.assertEquals(0, shutdownCount.get());
     }
 
     @Test
@@ -93,7 +99,38 @@ public class TimerShardsTest {
     }
 
     @Test
-    public void testSentinelWakesBlockedTake() throws InterruptedException {
+    public void testRegistrationResultOwnsShutdownRace() throws InterruptedException {
+        final int count = 1_000;
+        TimerShards shards = new TimerShards(1, "test-timer", LOG);
+        shards.start();
+        AtomicIntegerArray terminalCounts = new AtomicIntegerArray(count);
+        AtomicReferenceArray<SourceRegistrationResult> results = new AtomicReferenceArray<>(count);
+        Thread registerThread = new Thread(() -> {
+            for (int i = 0; i < count; i++) {
+                final int index = i;
+                results.set(i, shards.register(new TestEntry(
+                        System.currentTimeMillis() + 60_000,
+                        () -> terminalCounts.incrementAndGet(index),
+                        () -> terminalCounts.incrementAndGet(index)
+                )));
+            }
+        });
+        registerThread.start();
+        shards.shutdown();
+        registerThread.join();
+
+        for (int i = 0; i < count; i++) {
+            SourceRegistrationResult result = results.get(i);
+            Assert.assertNotNull(result);
+            Assert.assertEquals(
+                    result == SourceRegistrationResult.ACCEPTED ? 1 : 0,
+                    terminalCounts.get(i)
+            );
+        }
+    }
+
+    @Test
+    public void testSentinelWakesBlockedTake() {
         TimerShards shards = new TimerShards(2, "test-timer", LOG);
         shards.start();
         // Register a far-future entry so the take() is parked.
@@ -127,6 +164,21 @@ public class TimerShardsTest {
         } finally {
             shards.shutdown();
         }
+    }
+
+    @Test
+    public void testShutdownCallbackCanReenterShutdown() {
+        TimerShards shards = new TimerShards(1, "test-timer", LOG);
+        AtomicInteger shutdownCount = new AtomicInteger();
+        long deadline = System.currentTimeMillis() + 60_000;
+        shards.start();
+        shards.register(new TestEntry(deadline, null, () -> {
+            shutdownCount.incrementAndGet();
+            shards.shutdown();
+        }));
+        shards.register(new TestEntry(deadline + 60_000, null, shutdownCount::incrementAndGet));
+        shards.shutdown();
+        Assert.assertEquals(2, shutdownCount.get());
     }
 
     @Test
@@ -179,6 +231,68 @@ public class TimerShardsTest {
         shards.shutdown();
         shards.shutdown();
         shards.halt();
+    }
+
+    @Test
+    public void testShutdownRestoresInterruptAfterJoining() {
+        TimerShards shards = new TimerShards(1, "test-timer", LOG);
+        shards.start();
+        Thread.currentThread().interrupt();
+        try {
+            shards.shutdown();
+            Assert.assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+            shards.shutdown();
+        }
+    }
+
+    @Test
+    public void testShutdownTimeoutRetainsThreadsForRetry() throws InterruptedException {
+        TimerShards shards = new TimerShards(1, "test-timer", LOG);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger expired = new AtomicInteger();
+        shards.start();
+        try {
+            Assert.assertSame(
+                    SourceRegistrationResult.ACCEPTED,
+                    shards.register(new TestEntry(System.currentTimeMillis(), () -> {
+                        entered.countDown();
+                        try {
+                            release.await();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        expired.incrementAndGet();
+                    }, null))
+            );
+            Assert.assertTrue(entered.await(5, TimeUnit.SECONDS));
+            Assert.assertFalse(shards.shutdown(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
+            Assert.assertEquals(0, expired.get());
+            release.countDown();
+            Assert.assertTrue(shards.shutdown(System.nanoTime() + TimeUnit.SECONDS.toNanos(5)));
+            Assert.assertEquals(1, expired.get());
+        } finally {
+            release.countDown();
+            shards.shutdown();
+        }
+    }
+
+    @Test
+    public void testUnregisterReleasesAcceptedEntry() {
+        TimerShards shards = new TimerShards(1, "test-timer", LOG);
+        shards.start();
+        AtomicInteger terminalCount = new AtomicInteger();
+        TestEntry entry = new TestEntry(
+                System.currentTimeMillis() + 60_000,
+                terminalCount::incrementAndGet,
+                terminalCount::incrementAndGet
+        );
+        Assert.assertSame(SourceRegistrationResult.ACCEPTED, shards.register(entry));
+        Assert.assertTrue(shards.unregister(entry));
+        shards.shutdown();
+        Assert.assertEquals(0, terminalCount.get());
     }
 
     private static final class TestEntry implements DelayedFireable {

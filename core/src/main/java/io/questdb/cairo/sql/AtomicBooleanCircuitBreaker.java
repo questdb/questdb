@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.mp.continuation.FiberCancellationSignal;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -50,11 +51,20 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         this.throttle = throttle;
     }
 
-    public void cancel() {
+    public synchronized void cancel() {
         // This call can be concurrent with the call to setCancelledFlag
         AtomicBoolean cf = cancelledFlag;
-        if (cf != null) {
+        if (cf instanceof FiberCancellationSignal cancellationSignal) {
+            cancellationSignal.cancel();
+        } else if (cf != null) {
             cf.set(true);
+        }
+    }
+
+    @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected) {
+        if (cancelledFlag == expected) {
+            cancelledFlag = null;
         }
     }
 
@@ -113,8 +123,10 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         return true;
     }
 
-    public void reset() {
-        if (cancelledFlag != null) {
+    public synchronized void reset() {
+        if (cancelledFlag instanceof FiberCancellationSignal cancellationSignal) {
+            cancellationSignal.reset();
+        } else if (cancelledFlag != null) {
             cancelledFlag.set(false);
         }
     }
@@ -127,7 +139,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+    public synchronized void setCancelledFlag(AtomicBoolean cancelledFlag) {
         this.cancelledFlag = cancelledFlag;
     }
 

@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.async.PageFrameReduceDispatcher;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceTask;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
@@ -55,6 +56,7 @@ import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class MessageBusImpl implements MessageBus {
@@ -100,6 +102,7 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<O3PartitionPurgeTask> o3PurgeDiscoveryQueue;
     private final MCSequence o3PurgeDiscoverySubSeq;
     private final FanOut[] pageFrameCollectFanOut;
+    private volatile PageFrameReduceDispatcher pageFrameReduceDispatcher;
     private final MPSequence[] pageFrameReducePubSeq;
     private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
     private final int pageFrameReduceShardCount;
@@ -517,6 +520,11 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
+    public @Nullable PageFrameReduceDispatcher getPageFrameReduceDispatcher() {
+        return pageFrameReduceDispatcher;
+    }
+
+    @Override
     public MPSequence getPageFrameReducePubSeq(int shard) {
         return pageFrameReducePubSeq[shard];
     }
@@ -624,5 +632,13 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getWalTxnNotificationSubSequence() {
         return walTxnNotificationSubSequence;
+    }
+
+    @Override
+    public synchronized void setPageFrameReduceDispatcher(@Nullable PageFrameReduceDispatcher dispatcher) {
+        if (dispatcher != null && pageFrameReduceDispatcher != null && pageFrameReduceDispatcher != dispatcher) {
+            throw new IllegalStateException("page frame reduce dispatcher is already configured");
+        }
+        pageFrameReduceDispatcher = dispatcher;
     }
 }

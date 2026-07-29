@@ -41,6 +41,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -191,7 +192,7 @@ public class ParallelLatestByTest extends AbstractTest {
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 };
 
-                WorkerPool pool = new WorkerPool(() -> workerCount);
+                WorkerPool pool = new TestWorkerPool(workerCount);
                 execute(pool, runnable, configuration);
             } else {
                 // we need to create entire engine

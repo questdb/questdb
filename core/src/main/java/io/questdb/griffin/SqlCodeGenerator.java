@@ -4335,7 +4335,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
             final boolean enablePreTouch = SqlHints.hasEnablePreTouchHint(model, model.getName());
-            if (enableParallelFilter && factory.supportsPageFrameCursor()) {
+            if (enableParallelFilter
+                    && factory.supportsPageFrameCursor()
+                    && filter.supportsParallelism()) {
                 IntHashSet filterUsedColumnIndexes = new IntHashSet();
                 collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
@@ -4512,7 +4514,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // adopts them, this catch owns their rollback as well as the derived resources below.
             offsets = computeHorizonOffsets(horizonContext, masterMetadata);
             final boolean parallelHorizonJoinEnabled = executionContext.isParallelHorizonJoinEnabled();
-            supportsParallelism = parallelHorizonJoinEnabled && masterFactory.supportsPageFrameCursor();
+            supportsParallelism = parallelHorizonJoinEnabled
+                    && masterFactory.supportsPageFrameCursor();
 
             // Check if filter stealing is possible, but delay the actual stealing until
             // after the parallelism check. If parallelism gets downgraded (e.g., due to
@@ -6011,7 +6014,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 final boolean parallelWindowJoinEnabled = executionContext.isParallelWindowJoinEnabled();
                                 final boolean masterSupportsPageFrames = master.supportsPageFrameCursor()
                                         || (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor());
-                                if (parallelWindowJoinEnabled && masterSupportsPageFrames && slaveToFree.supportsTimeFrameCursor()) {
+                                final boolean functionsSupportParallelism =
+                                        (joinFilter == null || joinFilter.supportsParallelism())
+                                                && GroupByUtils.isParallelismSupported(groupByFunctions)
+                                                && (windowLoFunc == null || windowLoFunc.supportsParallelism())
+                                                && (windowHiFunc == null || windowHiFunc.supportsParallelism());
+                                if (parallelWindowJoinEnabled
+                                        && masterSupportsPageFrames
+                                        && functionsSupportParallelism
+                                        && slaveToFree.supportsTimeFrameCursor()) {
                                     // try to steal master filter
                                     CompiledFilter compiledFilter = null;
                                     MemoryCARW bindVarMemory = null;
@@ -6370,41 +6381,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // check if there are post-filters
                 ExpressionNode filterExpr = slaveModel.getPostJoinWhereClause();
                 if (filterExpr != null) {
-                    if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
-                        final Function filter = compileJoinFilter(
-                                filterExpr,
-                                master.getMetadata(),
-                                executionContext
-                        );
-                        IntHashSet filterUsedColumnIndexes = new IntHashSet();
-                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
+                    Function filter = compileJoinFilter(
+                            filterExpr,
+                            master.getMetadata(),
+                            executionContext
+                    );
+                    try {
+                        if (executionContext.isParallelFilterEnabled()
+                                && master.supportsPageFrameCursor()
+                                && filter.supportsParallelism()) {
+                            IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                            collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
-                        master = new AsyncFilteredRecordCursorFactory(
-                                executionContext.getCairoEngine(),
-                                configuration,
-                                executionContext.getMessageBus(),
-                                master,
-                                filter,
-                                filterUsedColumnIndexes,
-                                reduceTaskFactory,
-                                compileWorkerFiltersConditionally(
-                                        executionContext,
-                                        filter,
-                                        executionContext.getSharedQueryWorkerCount(),
-                                        filterExpr,
-                                        master.getMetadata()
-                                ),
-                                deepClone(expressionNodePool, filterExpr),
-                                null,
-                                0,
-                                executionContext.getSharedQueryWorkerCount(),
-                                SqlHints.hasEnablePreTouchHint(model, masterAlias)
-                        );
-                    } else {
-                        master = new FilteredRecordCursorFactory(
-                                master,
-                                compileJoinFilter(filterExpr, master.getMetadata(), executionContext)
-                        );
+                            master = new AsyncFilteredRecordCursorFactory(
+                                    executionContext.getCairoEngine(),
+                                    configuration,
+                                    executionContext.getMessageBus(),
+                                    master,
+                                    filter,
+                                    filterUsedColumnIndexes,
+                                    reduceTaskFactory,
+                                    compileWorkerFiltersConditionally(
+                                            executionContext,
+                                            filter,
+                                            executionContext.getSharedQueryWorkerCount(),
+                                            filterExpr,
+                                            master.getMetadata()
+                                    ),
+                                    deepClone(expressionNodePool, filterExpr),
+                                    null,
+                                    0,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    SqlHints.hasEnablePreTouchHint(model, masterAlias)
+                            );
+                        } else {
+                            master = new FilteredRecordCursorFactory(master, filter);
+                        }
+                        filter = null;
+                    } finally {
+                        Misc.free(filter);
                     }
                 }
             }
@@ -6451,7 +6466,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 } else {
                     // make it a post-join filter (same as for post join where clause above)
-                    if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
+                    if (executionContext.isParallelFilterEnabled()
+                            && master.supportsPageFrameCursor()
+                            && filter.supportsParallelism()) {
                         IntHashSet filterUsedColumnIndexes = new IntHashSet();
                         collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
 
@@ -6973,7 +6990,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (executionContext.isParallelHorizonJoinEnabled()) {
                 canStealFilter = masterFactory.supportsFilterStealing()
                         && masterFactory.getBaseFactory().supportsPageFrameCursor();
-                supportsParallelism = masterFactory.supportsPageFrameCursor() || canStealFilter;
+                supportsParallelism = masterFactory.supportsPageFrameCursor()
+                        || canStealFilter;
             }
 
             // validateBothTimestamps() already checks this before we get here
@@ -6982,7 +7000,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Validate all slave factories
             for (int s = 0; s < slaveCount; s++) {
-                if (!slaveFactories.getQuick(s).supportsTimeFrameCursor()) {
+                final RecordCursorFactory slaveFactory = slaveFactories.getQuick(s);
+                if (!slaveFactory.supportsTimeFrameCursor()) {
                     throw SqlException.position(slaveModels.getQuick(s).getJoinKeywordPosition())
                             .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
                 }
@@ -7629,7 +7648,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // preserved. See io.questdb.cairo.sql.RecordCursorFactory
                                 // for the default methods and the per-wrapper overrides.
                                 final boolean parallelTopKEnabled = executionContext.isParallelTopKEnabled();
-                                if (parallelTopKEnabled && canReachPageFrameLeafForTopK(recordCursorFactory)) {
+                                if (parallelTopKEnabled
+                                        && canReachPageFrameLeafForTopK(recordCursorFactory)) {
                                     final RecordCursorFactory projectionWrapper = recordCursorFactory.canPeelForTopK()
                                             ? recordCursorFactory : null;
                                     final RecordCursorFactory filterFactory = projectionWrapper != null
@@ -9051,9 +9071,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata baseMetadata = factory.getMetadata();
 
             boolean enableParallelGroupBy = executionContext.isParallelGroupByEnabled();
-            // The vectorized (Rosti) group-by runs SIMD over raw page addresses with no
-            // type-cast guard and no row-wise fallback, so it cannot read a column decoded
-            // in its pre-conversion source type. Let the guarded Async group-by handle those.
+            // The vectorized (Rosti) group-by cannot use lazy type conversion.
             boolean canVectorize = !factory.hasParquetConvertedColumns(executionContext);
             // Inspect model for possibility of vector aggregate intrinsics.
             if (canVectorize && enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, baseMetadata, hourIndex)) {
@@ -9244,7 +9262,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 IntHashSet filterUsedColumnIndexes = null;
                 // Try to steal the filter from the nested factory, if possible.
                 // We aim for simple cases such as select key, avg(value) from t where value > 0
-                if (!supportsParallelism && factory.supportsFilterStealing()) {
+                if (!supportsParallelism
+                        && factory.supportsFilterStealing()) {
                     RecordCursorFactory filterFactory = factory;
                     factory = factory.getBaseFactory();
                     assert factory.supportsPageFrameCursor();
@@ -11960,7 +11979,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // functions), the filter, and the limit function we may create here.
         Function limitLoFunction = null;
         try {
-            if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
+            if (executionContext.isParallelFilterEnabled()
+                    && coveringFactory.supportsPageFrameCursor()
+                    && filter.supportsParallelism()) {
                 limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 // A pushed-down LIMIT lets the async filter stop early (positive limit)
                 // or scan the tail backward (negative limit). Both are correct only

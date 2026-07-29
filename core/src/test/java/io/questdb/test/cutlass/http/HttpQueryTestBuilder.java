@@ -121,7 +121,8 @@ public class HttpQueryTestBuilder {
                 .withNanosClock(nanosecondClock)
                 .withForceSendFragmentationChunkSize(forceSendFragmentationChunkSize)
                 .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize)
-                .withQueryFutureUpdateListener(queryFutureUpdateListener);
+                .withQueryFutureUpdateListener(queryFutureUpdateListener)
+                .withWorkerCount(workerCount);
         if (sendBufferSize != -1) {
             serverConfigBuilder.withSendBufferSize(sendBufferSize);
         }
@@ -137,7 +138,7 @@ public class HttpQueryTestBuilder {
             });
         }
         final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder.build(configuration);
-        final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
+        final WorkerPool workerPool = new TestWorkerPool(httpConfiguration);
 
         CairoConfiguration cairoConfiguration = configuration;
         if (cairoConfiguration == null) {

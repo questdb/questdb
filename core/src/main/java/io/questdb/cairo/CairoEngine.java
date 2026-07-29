@@ -124,8 +124,9 @@ import io.questdb.mp.Queue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.mp.continuation.FiberEventWaitRegistration;
+import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.TimerShards;
-import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
@@ -324,12 +325,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.copyImportContext = new CopyImportContext(this, configuration);
             this.copyExportContext = new CopyExportContext(this);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
-            // Per-deadline blocking timer threads. Each parked TxnWaiter (or other
-            // DelayedFireable) sits in a shard and is woken at its precise deadline,
-            // bounding resource retention when a wait_wal_table call parks and the
-            // client disconnects or the table goes idle. Started eagerly here because
-            // the threads are independent of any worker pool. signalClose() drains,
-            // close() halts defensively.
+            // Timer waits run independently of worker pools.
             this.timerShards = new TimerShards(
                     configuration.getTimerShardCount(),
                     "questdb-timer",
@@ -1363,13 +1359,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return telemetryWal;
     }
 
-    /**
-     * Returns the periodic sweep that cancels {@link TxnWaiter}
-     * instances whose deadline has elapsed. Without this job assigned, parked
-     * suspending-function calls (e.g. {@code wait_wal_table}) cannot be cleaned up
-     * after a client disconnect or on idle tables, so it MUST be assigned to a worker
-     * pool for the SQL-suspend feature to be safe in production.
-     */
     public TimerShards getTimerShards() {
         return timerShards;
     }
@@ -1864,6 +1853,13 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.registerName(tableToken);
     }
 
+    public SourceRegistrationResult registerWriterWaiter(
+            TableToken tableToken,
+            FiberEventWaitRegistration registration
+    ) {
+        return writerPool.registerWriterWaiter(tableToken, registration);
+    }
+
     @TestOnly
     public boolean releaseAllReaders() {
         boolean b1 = sequencerMetadataPool.releaseAll();
@@ -2149,6 +2145,11 @@ public class CairoEngine implements Closeable, WriterSource {
         // for at least getQueryContinuationWakeIntervalMillis() and potentially forever.
         // Order matters: timerShards.shutdown() MUST run before any worker pool halts.
         timerShards.shutdown();
+    }
+
+    public boolean signalClose(long deadlineNanos) {
+        closing = true;
+        return timerShards.shutdown(deadlineNanos);
     }
 
     public void snapshotCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
@@ -3117,4 +3118,3 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
 }
-

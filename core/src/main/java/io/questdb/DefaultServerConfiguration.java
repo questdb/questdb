@@ -40,6 +40,7 @@ import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.metrics.DefaultMetricsConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 
 public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultCairoConfiguration cairoConfiguration;
@@ -63,13 +64,13 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot, installRoot);
         this.lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration(cairoConfiguration);
         this.httpServerConfiguration = new DefaultHttpServerConfiguration(cairoConfiguration);
-        this.sharedPoolNetworkConfiguration = new DefaultWorkerPoolConfiguration("shared_network");
-        this.sharedPoolQueryConfiguration = new DefaultWorkerPoolConfiguration("shared_query");
-        this.sharedPoolWriteConfiguration = new DefaultWorkerPoolConfiguration("shared_write");
-        this.matViewRefreshPoolConfiguration = new DefaultWorkerPoolConfiguration("mat_view_refresh");
-        this.exportPoolConfiguration = new DefaultWorkerPoolConfiguration("export");
-        this.viewCompilerPoolConfiguration = new DefaultWorkerPoolConfiguration("view_compiler");
-        this.walApplyPoolConfiguration = new DefaultWorkerPoolConfiguration("wal_apply");
+        this.sharedPoolNetworkConfiguration = new DefaultWorkerPoolConfiguration("shared_network", WorkerPoolMode.FIBER_HOST);
+        this.sharedPoolQueryConfiguration = new DefaultWorkerPoolConfiguration("shared_query", WorkerPoolMode.FIBER_HOST);
+        this.sharedPoolWriteConfiguration = new DefaultWorkerPoolConfiguration("shared_write", WorkerPoolMode.FIBER_HOST);
+        this.matViewRefreshPoolConfiguration = new DefaultWorkerPoolConfiguration("mat_view_refresh", WorkerPoolMode.FIBER_HOST);
+        this.exportPoolConfiguration = new DefaultWorkerPoolConfiguration("export", WorkerPoolMode.FIBER_HOST);
+        this.viewCompilerPoolConfiguration = new DefaultWorkerPoolConfiguration("view_compiler", WorkerPoolMode.FIBER_HOST);
+        this.walApplyPoolConfiguration = new DefaultWorkerPoolConfiguration("wal_apply", WorkerPoolMode.FIBER_HOST);
     }
 
     public DefaultServerConfiguration(CharSequence dbRoot) {
@@ -171,7 +172,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         return walApplyPoolConfiguration;
     }
 
-    private record DefaultWorkerPoolConfiguration(String name) implements WorkerPoolConfiguration {
+    private record DefaultWorkerPoolConfiguration(String name, WorkerPoolMode workerPoolMode) implements WorkerPoolConfiguration {
 
         @Override
         public String getPoolName() {
@@ -181,6 +182,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return 2;
+        }
+
+        @Override
+        public WorkerPoolMode getWorkerPoolMode() {
+            return workerPoolMode;
         }
     }
 }

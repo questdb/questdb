@@ -38,10 +38,12 @@ import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
-import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.continuation.QueryFiberPool;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
@@ -65,6 +67,8 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -76,18 +80,8 @@ public class HttpServer implements Closeable {
     private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
-    // Non-null when the full-fat configuration enables fiber-mode dispatch:
-    // connection operations run as QueryTasks on pooled fibers resumed by this
-    // same worker pool. Null = direct inline dispatch (min server, flag off).
-    private final QueryFiberPool queryFiberPool;
     private final WaitProcessor rescheduleContext;
     private final AssociativeCache<RecordCursorFactory> selectCache;
-    // Per-worker selector storage with a master factory registration list.
-    // Each worker's Job binds to its own selector (avoiding the per-handler
-    // state aliasing that a shared selector would cause), and on continuation
-    // rotation HttpRequestJob.cloneInstance() mints a fresh selector via
-    // selectorFactory.create() so the captured cont's per-handler scratch is
-    // not aliased by the worker's next iteration.
     private final HttpRequestProcessorSelectorFactory selectorFactory;
     private final int workerCount;
 
@@ -107,59 +101,65 @@ public class HttpServer implements Closeable {
     ) {
         this.acceptOpen = acceptOpen;
         this.workerCount = networkSharedPool.getWorkerCount();
-        this.selectorFactory = new HttpRequestProcessorSelectorFactory(workerCount);
-
-        if (configuration instanceof HttpFullFatServerConfiguration serverConfiguration) {
-            if (serverConfiguration.isQueryCacheEnabled()) {
-                this.selectCache = new ConcurrentAssociativeCache<>(serverConfiguration.getConcurrentCacheConfiguration());
-            } else {
-                this.selectCache = NO_OP_CACHE;
+        IODispatcher<HttpConnectionContext> dispatcher = null;
+        HttpContextFactory httpContextFactory = null;
+        WaitProcessor rescheduleContext = null;
+        AssociativeCache<RecordCursorFactory> selectCache = null;
+        HttpRequestProcessorSelectorFactory selectorFactory = null;
+        try {
+            FiberRuntime fiberRuntime = null;
+            if (configuration instanceof HttpFullFatServerConfiguration serverConfiguration
+                    && serverConfiguration.isFiberEnabled()
+                    && networkSharedPool.isFiberHost()) {
+                fiberRuntime = networkSharedPool.getFiberRuntime();
             }
-            if (serverConfiguration.isQueryFiberEnabled() && !networkSharedPool.isLegacy()) {
-                // Fibers resume on the same pool that runs the dispatch jobs, so
-                // registerChannel/disconnect keep their existing threading.
-                this.queryFiberPool = new QueryFiberPool(
-                        Math.max(4, 2 * workerCount),
-                        networkSharedPool.getContinuationSink()
-                );
+            selectorFactory = new HttpRequestProcessorSelectorFactory(workerCount);
+            if (configuration instanceof HttpFullFatServerConfiguration serverConfiguration
+                    && serverConfiguration.isQueryCacheEnabled()) {
+                selectCache = new ConcurrentAssociativeCache<>(serverConfiguration.getConcurrentCacheConfiguration());
             } else {
-                this.queryFiberPool = null;
+                selectCache = NO_OP_CACHE;
             }
-        } else {
-            // Min server doesn't need select cache, so we use no-op impl.
-            this.selectCache = NO_OP_CACHE;
-            this.queryFiberPool = null;
-        }
+            ActiveConnectionTracker activeConnectionTracker = new ActiveConnectionTracker(configuration.getHttpContextConfiguration());
+            httpContextFactory = new HttpContextFactory(
+                    configuration,
+                    socketFactory,
+                    selectCache,
+                    activeConnectionTracker
+            );
+            dispatcher = IODispatchers.create(configuration, httpContextFactory);
+            rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
 
-        this.activeConnectionTracker = new ActiveConnectionTracker(configuration.getHttpContextConfiguration());
-        this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, selectCache, activeConnectionTracker);
-        this.dispatcher = IODispatchers.create(configuration, httpContextFactory);
-        networkSharedPool.assign(new AcceptGatedJob(dispatcher, acceptOpen));
-        this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
-        networkSharedPool.assign(new AcceptGatedJob(rescheduleContext, acceptOpen));
+            this.activeConnectionTracker = activeConnectionTracker;
+            this.dispatcher = dispatcher;
+            this.httpContextFactory = httpContextFactory;
+            this.rescheduleContext = rescheduleContext;
+            this.selectCache = selectCache;
+            this.selectorFactory = selectorFactory;
 
-        for (int i = 0; i < workerCount; i++) {
-            // Eagerly materialise the per-worker selector so that the Job has
-            // a usable selector reference before bind() runs. The selector is
-            // empty at this point; bind() will populate every already-created
-            // selector when called from HttpServer.addDefaultEndpoints later.
-            // recyclableSelector=false: this gen-0 selector lives in the
-            // factory's per-worker slots and must not enter the recycle pool.
-            HttpRequestProcessorSelectorImpl selector = selectorFactory.getSelectorByWorker(i);
-            networkSharedPool.assign(i, new HttpRequestJob(
-                    this,
-                    dispatcher,
-                    rescheduleContext,
-                    selectorFactory,
-                    selector,
-                    false,
-                    acceptOpen,
-                    queryFiberPool
-            ));
-
-            // http context factory has thread local pools
-            // therefore we need each thread to clean their thread locals individually
-            networkSharedPool.assignThreadLocalCleaner(i, httpContextFactory::freeThreadLocal);
+            networkSharedPool.assign(new AcceptGatedJob(dispatcher, acceptOpen));
+            networkSharedPool.assign(new AcceptGatedJob(rescheduleContext, acceptOpen));
+            for (int i = 0; i < workerCount; i++) {
+                HttpRequestProcessorSelectorImpl selector = selectorFactory.getSelectorByWorker(i);
+                networkSharedPool.assign(i, new HttpRequestJob(
+                        this,
+                        dispatcher,
+                        rescheduleContext,
+                        selectorFactory,
+                        selector,
+                        acceptOpen,
+                        fiberRuntime
+                ));
+                networkSharedPool.assignThreadLocalCleaner(i, this.httpContextFactory::freeThreadLocal);
+            }
+        } catch (Throwable t) {
+            acceptOpen.set(false);
+            Misc.free(dispatcher, t);
+            Misc.free(rescheduleContext, t);
+            Misc.free(selectorFactory, t);
+            Misc.free(httpContextFactory, t);
+            Misc.free(selectCache, t);
+            throw t;
         }
     }
 
@@ -361,13 +361,18 @@ public class HttpServer implements Closeable {
 
     @Override
     public void close() {
+        acceptOpen.set(false);
         Misc.free(dispatcher);
-        Misc.free(queryFiberPool);
         Misc.free(rescheduleContext);
         Misc.free(selectorFactory);
         Misc.freeObjListAndClear(closeables);
         Misc.free(httpContextFactory);
         Misc.free(selectCache);
+    }
+
+    @TestOnly
+    public void createSelectorForTesting() {
+        Misc.free(selectorFactory.create());
     }
 
     public ActiveConnectionTracker getActiveConnectionTracker() {
@@ -417,39 +422,28 @@ public class HttpServer implements Closeable {
                 ActiveConnectionTracker activeConnectionTracker
         ) {
             super(
-                    () -> new HttpConnectionContext(configuration, socketFactory, selectCache, activeConnectionTracker),
+                    () -> new HttpConnectionContext(
+                            configuration,
+                            socketFactory,
+                            selectCache,
+                            activeConnectionTracker
+                    ),
                     configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity()
             );
         }
     }
 
-    /**
-     * Per-worker dispatcher Job. On continuation rotation, cloneInstance()
-     * mints a fresh job with a fresh selector (built via the master factory
-     * list). The captured cont keeps its own selector and per-handler
-     * scratch; the new generation does not alias it.
-     */
     private static final class HttpRequestJob implements Job {
-        // Gate shared with the server: until accept opens, run() must not poll the IO queue.
-        // Propagated to every rotation clone so the gate holds across continuation generations.
         private final AtomicBoolean acceptOpen;
         private final IODispatcher<HttpConnectionContext> dispatcher;
-        // Non-null in fiber mode: the processor launches connection tasks on pooled
-        // fibers instead of dispatching inline. Propagated to rotation clones.
-        private final QueryFiberPool fiberPool;
+        private final @Nullable FiberRuntime fiberRuntime;
         private final HttpServer owner;
         private final IORequestProcessor<HttpConnectionContext> processor;
-        private final boolean recyclableSelector;
         private final WaitProcessor rescheduleContext;
-        // Non-null in fiber mode: stages a due busy-writer retry on the connection's
-        // fiber task instead of rerunning it inline on the worker loop.
-        private final WaitProcessor.RetryLauncher retryLauncher;
+        private @Nullable Fiber reservedFiber;
+        private final @Nullable WaitProcessor.RetryLauncher retryLauncher;
+        private final HttpRequestProcessorSelectorImpl selector;
         private final HttpRequestProcessorSelectorFactory selectorFactory;
-        // Mutable so recycleInstance() can release the selector back to the
-        // factory's recycle pool, and a subsequent run() can lazily
-        // re-acquire one. The processor lambda below reads this.selector at
-        // each invocation, so the re-acquire transparently updates dispatch.
-        private HttpRequestProcessorSelectorImpl selector;
 
         HttpRequestJob(
                 HttpServer owner,
@@ -457,49 +451,45 @@ public class HttpServer implements Closeable {
                 WaitProcessor rescheduleContext,
                 HttpRequestProcessorSelectorFactory selectorFactory,
                 HttpRequestProcessorSelectorImpl selector,
-                boolean recyclableSelector,
                 AtomicBoolean acceptOpen,
-                QueryFiberPool fiberPool
+                @Nullable FiberRuntime fiberRuntime
         ) {
             this.owner = owner;
             this.dispatcher = dispatcher;
             this.rescheduleContext = rescheduleContext;
             this.selectorFactory = selectorFactory;
             this.selector = selector;
-            this.recyclableSelector = recyclableSelector;
             this.acceptOpen = acceptOpen;
-            this.fiberPool = fiberPool;
-            if (fiberPool != null) {
+            this.fiberRuntime = fiberRuntime;
+            if (fiberRuntime != null) {
+                final FiberRuntime runtime = fiberRuntime;
                 this.processor = (operation, context, disp) -> {
                     if (operation == IOOperation.HEARTBEAT) {
                         disp.registerChannel(context, IOOperation.HEARTBEAT);
                         return false;
                     }
-                    // the fd is armed for nothing while a step runs, so at every event
-                    // the gate is IDLE, or terminal after a disconnect; the task
-                    // acquires its own selector per step, never this job's
-                    final HttpConnectionFiberTask task = context.getFiberTask(disp, selectorFactory, rescheduleContext);
-                    if (task.isDone() || task.isCancelled()) {
-                        task.reopen();
+                    final Fiber fiber = reservedFiber;
+                    if (fiber == null) {
+                        throw new IllegalStateException("HTTP I/O event has no reserved fiber");
                     }
-                    task.prepare(operation);
-                    final boolean launched = fiberPool.launch(task);
-                    assert launched : "fiber launch refused: task gate not idle";
-                    return true;
+                    final HttpConnectionFiberTask task = context.getFiberTask(disp, selectorFactory, rescheduleContext);
+                    reservedFiber = null;
+                    return handleLaunchResult(context, task.launchReserved(runtime, fiber, operation));
                 };
-                this.retryLauncher = retry -> {
-                    // a parked retry's fd is armed for nothing and its reschedule was
-                    // enqueued after the gate reopened (onParked), so the gate is IDLE
-                    final HttpConnectionContext context = (HttpConnectionContext) retry;
-                    final HttpConnectionFiberTask task = context.getFiberTask(dispatcher, selectorFactory, rescheduleContext);
-                    task.prepareRerun();
-                    final boolean launched = fiberPool.launch(task);
-                    assert launched : "fiber rerun launch refused: task gate not idle";
+                this.retryLauncher = (fiber, retry, taskIncarnation) -> {
+                    boolean isReservationConsumed = false;
+                    try {
+                        final HttpConnectionContext context = (HttpConnectionContext) retry;
+                        final HttpConnectionFiberTask task = context.getFiberTask(dispatcher, selectorFactory, rescheduleContext);
+                        isReservationConsumed = true;
+                        handleLaunchResult(context, task.launchRerunReserved(runtime, fiber, taskIncarnation));
+                    } finally {
+                        if (!isReservationConsumed) {
+                            runtime.releaseReservedFiber(fiber);
+                        }
+                    }
                 };
             } else {
-                // Lambda reads this.selector at invocation time (field access via
-                // captured `this`), so a recycle/re-acquire cycle flows through
-                // transparently.
                 this.processor = (operation, context, disp) ->
                         owner.handleClientOperation(context, operation, this.selector, rescheduleContext, disp);
                 this.retryLauncher = null;
@@ -507,75 +497,68 @@ public class HttpServer implements Closeable {
         }
 
         @Override
-        public Job cloneInstance() {
-            // Fresh selector + fresh handler instances for the new
-            // generation. The parked cont's frame keeps the previous
-            // selector reference, so no aliasing. The accept gate carries over
-            // so a rotation clone stays gated until accept opens.
-            return new HttpRequestJob(
-                    owner,
-                    dispatcher,
-                    rescheduleContext,
-                    selectorFactory,
-                    selectorFactory.acquire(),
-                    true,
-                    acceptOpen,
-                    fiberPool
-            );
-        }
-
-        @Override
-        public void closeInstance() {
-            // Cloned selectors are cont-owned; free here when the pool closes
-            // owned clones at halt. gen-0 selectors (recyclableSelector=false)
-            // live in selectors[] and are freed by the factory's close().
-            if (recyclableSelector && selector != null) {
-                selector = Misc.free(selector);
-            }
-        }
-
-        @Override
-        public void recycleInstance() {
-            // gen-0 (per-worker) Jobs have recyclableSelector=false; their
-            // selectors live in HttpRequestProcessorSelectorFactory.selectors
-            // and must not be pooled.
-            if (recyclableSelector && selector != null) {
-                selectorFactory.release(selector);
-                selector = null;
-            }
-        }
-
-        @Override
         public boolean run(@NotNull WorkerContext workerContext) {
-            // Short-circuit the IO loop until accept is opened. Mirrors the gate on the
-            // dispatcher/reschedule Jobs so no path polls the IO queue before accept opens.
             if (!acceptOpen.get()) {
                 return false;
             }
-            if (retryLauncher != null) {
-                // Fiber mode: reruns launch on fibers, and this job's selector is
-                // never dispatched into -- the tasks acquire their own per step.
-                boolean useful = dispatcher.processIOQueue(processor);
-                useful |= rescheduleContext.launchReruns(retryLauncher);
+            final FiberRuntime runtime = fiberRuntime;
+            if (runtime != null) {
+                boolean useful = false;
+                final Fiber fiber = runtime.tryReserveFiber();
+                if (fiber != null) {
+                    reservedFiber = fiber;
+                    try {
+                        useful = dispatcher.processIOQueue(processor);
+                    } finally {
+                        final Fiber unusedFiber = reservedFiber;
+                        reservedFiber = null;
+                        if (unusedFiber != null) {
+                            runtime.releaseReservedFiber(unusedFiber);
+                        }
+                    }
+                }
+                final WaitProcessor.RetryLauncher launcher = retryLauncher;
+                if (launcher == null) {
+                    throw new IllegalStateException("HTTP retry launcher is not configured");
+                }
+                useful |= rescheduleContext.launchReruns(runtime, launcher);
                 return useful;
             }
-            if (selector == null) {
-                // Snapshot reused from Worker.snapshotPool after a prior
-                // recycle: re-acquire a selector for this generation.
-                selector = selectorFactory.acquire();
+            final SuspensionScope.Mode previousMode = SuspensionScope.enter(
+                    SuspensionScope.Mode.BLOCKING
+            );
+            try {
+                boolean useful = dispatcher.processIOQueue(processor);
+                useful |= rescheduleContext.runReruns(selector);
+                return useful;
+            } finally {
+                SuspensionScope.restore(previousMode);
             }
-            boolean useful = dispatcher.processIOQueue(processor);
-            useful |= rescheduleContext.runReruns(selector);
-            return useful;
+        }
+
+        private boolean handleLaunchResult(HttpConnectionContext context, LaunchResult result) {
+            if (result == LaunchResult.LAUNCHED
+                    || result == LaunchResult.ALREADY_OWNED
+                    || result == LaunchResult.STALE_INCARNATION
+                    || result == LaunchResult.TERMINAL) {
+                return true;
+            }
+            dispatcher.disconnect(
+                    context,
+                    result == LaunchResult.QUIESCING
+                            ? IODispatcher.DISCONNECT_REASON_SERVER_SHUTDOWN
+                            : IODispatcher.DISCONNECT_REASON_SERVER_ERROR
+            );
+            return false;
         }
     }
 
     /**
      * Maintains a master list of {@link HttpRequestHandlerFactory}
-     * registrations and creates per-worker (or per-clone) selectors on
-     * demand. Each {@link #create()} call walks the master list and calls
-     * {@code factory.newInstance()} per registered URL, so every selector
-     * gets its own handler instances.
+     * registrations and creates isolated selectors for workers, continuation
+     * clones, and fiber task steps. Each {@link #create()} call walks the
+     * master list and calls {@code factory.newInstance()} per registered URL,
+     * so every selector gets its own handler instances.
      * <p>
      * Handler ids are pre-assigned in {@link #bind(HttpRequestHandlerFactory,
      * boolean)} so that the same URL maps to the same handler id across
@@ -583,18 +566,13 @@ public class HttpServer implements Closeable {
      */
     static class HttpRequestProcessorSelectorFactory implements Closeable {
         private final ObjList<FactoryHolder> factoryHolders = new ObjList<>();
-        // Pool of selectors released by HttpRequestJob.recycleInstance() when a
-        // continuation snapshot completes. cloneInstance() pops from here
-        // before falling back to create(), so steady-state rotation amortises
-        // to "pop a selector from the queue" instead of allocating a fresh
-        // selector + handler set per suspend.
-        private final ConcurrentPool<HttpRequestProcessorSelectorImpl> recyclePool = new ConcurrentPool<>();
+        private int nextHandlerId = 0;
+        private final ObjList<HttpRequestProcessorSelectorImpl> recycledSelectors = new ObjList<>();
         // Per-worker selectors used by gen-0 (the initial Jobs registered to
         // the pool). These selectors are NOT pooled -- they live for the
         // server's lifetime so the per-worker fast path doesn't have to
         // re-acquire across iterations.
         private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
-        private int nextHandlerId = 0;
 
         HttpRequestProcessorSelectorFactory(int workerCount) {
             this.selectors = new ObjList<>(workerCount);
@@ -603,27 +581,11 @@ public class HttpServer implements Closeable {
             }
         }
 
-        /**
-         * Acquire a selector for a cont snapshot. Pops from the recycle pool
-         * if non-empty, otherwise mints a fresh one populated from the master
-         * factory list. The caller MUST eventually return the selector via
-         * {@link #release(HttpRequestProcessorSelectorImpl)} to keep the pool
-         * from being drained one-way.
-         */
-        HttpRequestProcessorSelectorImpl acquire() {
-            HttpRequestProcessorSelectorImpl s = recyclePool.pop();
-            if (s != null) {
-                return s;
-            }
-            return create();
-        }
-
         @Override
         public void close() {
             Misc.freeObjListAndClear(selectors);
-            HttpRequestProcessorSelectorImpl s;
-            while ((s = recyclePool.pop()) != null) {
-                Misc.free(s);
+            synchronized (recycledSelectors) {
+                Misc.freeObjListAndClear(recycledSelectors);
             }
         }
 
@@ -636,41 +598,14 @@ public class HttpServer implements Closeable {
             return s;
         }
 
-        /**
-         * Return a selector to the recycle pool. Called by
-         * {@link HttpRequestJob#recycleInstance()} after the cont containing
-         * the selector completes. Per-worker selectors stored in
-         * {@link #selectors} are NEVER passed here -- their Jobs have
-         * {@code recyclableSelector=false}.
-         */
-        void release(HttpRequestProcessorSelectorImpl selector) {
-            recyclePool.push(selector);
-        }
-
-        private static void populate(HttpRequestProcessorSelectorImpl selector, FactoryHolder holder) {
-            final ObjHashSet<String> urls = holder.factory.getUrls();
-            for (int j = 0, n = urls.size(); j < n; j++) {
-                final String url = urls.get(j);
-                final int handlerId = holder.handlerIds.getQuick(j);
-                if (HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
-                    final HttpRequestHandler handler = holder.factory.newInstance();
-                    selector.defaultRequestProcessor = handler.getDefaultProcessor();
-                    selector.defaultProcessorId = handlerId;
-                    selector.handlersByIdList.extendAndSet(handlerId, handler);
-                } else {
-                    final Utf8String key = new Utf8String(url);
-                    int keyIndex = selector.requestHandlerMap.keyIndex(key);
-                    if (keyIndex > -1) {
-                        final HttpRequestHandler requestHandler = holder.factory.newInstance();
-                        selector.requestHandlerMap.putAt(keyIndex, key, new IndexedHandler(requestHandler, handlerId));
-                        if (holder.useAsDefault) {
-                            selector.defaultRequestProcessor = requestHandler.getDefaultProcessor();
-                            selector.defaultProcessorId = handlerId;
-                        }
-                        selector.handlersByIdList.extendAndSet(handlerId, requestHandler);
-                    }
+        HttpRequestProcessorSelectorImpl acquire() {
+            synchronized (recycledSelectors) {
+                final int size = recycledSelectors.size();
+                if (size > 0) {
+                    return recycledSelectors.popLast();
                 }
             }
+            return create();
         }
 
         void bind(HttpRequestHandlerFactory factory, boolean useAsDefault) {
@@ -694,15 +629,64 @@ public class HttpServer implements Closeable {
             // out-of-date, but pooled selectors are only valid for already-
             // bound URLs. bind() runs at server setup before any client
             // traffic reaches the recycle path, so the pool is empty here.
-            assert recyclePool.pop() == null : "bind() called after rotation populated the recycle pool";
+            synchronized (recycledSelectors) {
+                assert recycledSelectors.size() == 0 : "bind() called after selector reuse began";
+            }
         }
 
         HttpRequestProcessorSelectorImpl create() {
-            HttpRequestProcessorSelectorImpl sel = new HttpRequestProcessorSelectorImpl();
-            for (int i = 0, n = factoryHolders.size(); i < n; i++) {
-                populate(sel, factoryHolders.getQuick(i));
+            final HttpRequestProcessorSelectorImpl selector = new HttpRequestProcessorSelectorImpl();
+            try {
+                for (int i = 0, n = factoryHolders.size(); i < n; i++) {
+                    populate(selector, factoryHolders.getQuick(i));
+                }
+                return selector;
+            } catch (Throwable th) {
+                Misc.free(selector, th);
+                throw th;
             }
-            return sel;
+        }
+
+        void release(HttpRequestProcessorSelectorImpl selector) {
+            synchronized (recycledSelectors) {
+                recycledSelectors.add(selector);
+            }
+        }
+
+        private static void populate(HttpRequestProcessorSelectorImpl selector, FactoryHolder holder) {
+            final ObjHashSet<String> urls = holder.factory.getUrls();
+            for (int j = 0, n = urls.size(); j < n; j++) {
+                final String url = urls.get(j);
+                final int handlerId = holder.handlerIds.getQuick(j);
+                if (HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
+                    final HttpRequestHandler handler = holder.factory.newInstance();
+                    try {
+                        selector.handlersByIdList.extendAndSet(handlerId, handler);
+                    } catch (Throwable th) {
+                        Misc.freeIfCloseableBestEffort(th, handler);
+                        throw th;
+                    }
+                    selector.defaultRequestProcessor = handler.getDefaultProcessor();
+                    selector.defaultProcessorId = handlerId;
+                } else {
+                    final Utf8String key = new Utf8String(url);
+                    int keyIndex = selector.requestHandlerMap.keyIndex(key);
+                    if (keyIndex > -1) {
+                        final HttpRequestHandler requestHandler = holder.factory.newInstance();
+                        try {
+                            selector.handlersByIdList.extendAndSet(handlerId, requestHandler);
+                        } catch (Throwable th) {
+                            Misc.freeIfCloseableBestEffort(th, requestHandler);
+                            throw th;
+                        }
+                        selector.requestHandlerMap.putAt(keyIndex, key, new IndexedHandler(requestHandler, handlerId));
+                        if (holder.useAsDefault) {
+                            selector.defaultRequestProcessor = requestHandler.getDefaultProcessor();
+                            selector.defaultProcessorId = handlerId;
+                        }
+                    }
+                }
+            }
         }
 
         private static final class FactoryHolder {

@@ -48,6 +48,7 @@ public class UpdateOperation extends AbstractOperation {
     public static final int WRITER_CLOSED_INCREMENT = 10;
     public static final int FULLY_CLOSED_STATE = WRITER_CLOSED_INCREMENT + SENDER_CLOSED_INCREMENT;
     private final AtomicInteger closeState = new AtomicInteger();
+    private final int liveWalProgressPosition;
     private final ObjList<CharSequence> updateColumnNames = new ObjList<>();
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private boolean executingAsync;
@@ -72,8 +73,21 @@ public class UpdateOperation extends AbstractOperation {
             RecordCursorFactory factory,
             @NotNull ObjList<CharSequence> updateColumnNames
     ) {
+        this(tableToken, tableId, tableVersion, tableNamePosition, factory, updateColumnNames, -1);
+    }
+
+    public UpdateOperation(
+            @NotNull TableToken tableToken,
+            int tableId,
+            long tableVersion,
+            int tableNamePosition,
+            RecordCursorFactory factory,
+            @NotNull ObjList<CharSequence> updateColumnNames,
+            int liveWalProgressPosition
+    ) {
         init(CMD_UPDATE_TABLE, TableWriterTask.getCommandName(CMD_UPDATE_TABLE), tableToken, tableId, tableVersion, tableNamePosition);
         this.factory = factory;
+        this.liveWalProgressPosition = liveWalProgressPosition;
         copyUpdateColumnNames(updateColumnNames);
     }
 
@@ -163,6 +177,11 @@ public class UpdateOperation extends AbstractOperation {
     @Override
     public void startAsync() {
         assert closeState.get() == 0;
+        if (liveWalProgressPosition >= 0) {
+            throw CairoException.nonCritical()
+                    .position(liveWalProgressPosition)
+                    .put("asynchronous UPDATE cannot require live WAL progress");
+        }
         executingAsync = true;
     }
 

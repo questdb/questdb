@@ -24,12 +24,26 @@
 
 package io.questdb.test;
 
+import io.questdb.DefaultServerConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
 
 public class TestServerConfigurationTest extends AbstractTest {
+    @Test
+    public void testDefaultWorkerPoolModes() {
+        final DefaultServerConfiguration configuration = new DefaultServerConfiguration(root);
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getExportPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getMatViewRefreshPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getSharedWorkerPoolQueryConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getViewCompilerPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getWalApplyPoolConfiguration().getWorkerPoolMode());
+    }
+
     @Test
     public void testNew() {
         final File dbRoot = new File(root, "db");

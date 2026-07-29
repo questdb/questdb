@@ -35,6 +35,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -88,27 +89,27 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
 
     @Override
     public void closeInstance() {
-        // cloneInstance() mints a fresh job per generation, so the pool frees
-        // each instance's native resources through this hook at halt. Misc.free
-        // nulls the fields, keeping the call idempotent.
         close();
     }
 
     @Override
-    public void recycleInstance() {
-        record.clear();
-    }
-
-    @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        return !consumeQueue(
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        return !(dispatcher != null
+                ? dispatcher.consumeUnordered(
+                workerContext.carrierId(),
+                messageBus.getUnorderedPageFrameReduceQueue(),
+                messageBus.getUnorderedPageFrameReduceSubSeq(),
+                null
+        )
+                : consumeQueue(
                 workerContext.carrierId(),
                 messageBus.getUnorderedPageFrameReduceQueue(),
                 messageBus.getUnorderedPageFrameReduceSubSeq(),
                 record,
                 circuitBreaker,
                 null
-        );
+        ));
     }
 
     private static boolean consumeQueue(
@@ -139,28 +140,20 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                             .$(", got=").$(taskSequenceId)
                             .I$();
                 } else {
+                    final SuspensionScope.Mode previousMode = SuspensionScope.enter(
+                            SuspensionScope.Mode.BLOCKING
+                    );
                     try {
                         if (frameSequence.isActive()) {
-                            // Always initialize the circuit breaker before checking state.
                             circuitBreaker.init(frameSequence.getCircuitBreaker());
-                            final int cbState = frameSequence.isUninterruptible()
-                                    ? SqlExecutionCircuitBreaker.STATE_OK
-                                    : circuitBreaker.getState(frameSequence.getStartTime(), frameSequence.getCircuitBreaker().getFd());
-
-                            if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {
-                                record.of(frameSequence.getSymbolTableSource());
-                                frameSequence.getReduceStartedCounter().incrementAndGet();
-                                frameSequence.getReducer().reduce(
-                                        workerId,
-                                        record,
-                                        frameIndex,
-                                        circuitBreaker,
-                                        frameSequence,
-                                        stealingFrameSequence
-                                );
-                            } else {
-                                frameSequence.cancel(cbState);
-                            }
+                            reduce(
+                                    workerId,
+                                    record,
+                                    circuitBreaker,
+                                    frameIndex,
+                                    frameSequence,
+                                    stealingFrameSequence
+                            );
                         }
                     } catch (Throwable th) {
                         LOG.error()
@@ -176,6 +169,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                         frameSequence.setError(th);
                         frameSequence.cancel(interruptReason);
                     } finally {
+                        SuspensionScope.restore(previousMode);
                         frameSequence.getDoneLatch().countDown();
                     }
                 }
@@ -186,5 +180,35 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
             Os.pause();
         } while (true);
         return true;
+    }
+
+    static void reduce(
+            int workerId,
+            PageFrameMemoryRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            int frameIndex,
+            UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+    ) {
+        final int cbState = frameSequence.isUninterruptible()
+                ? SqlExecutionCircuitBreaker.STATE_OK
+                : circuitBreaker.getState(
+                        frameSequence.getStartTime(),
+                        frameSequence.getCircuitBreaker().getFd()
+                );
+        if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {
+            record.of(frameSequence.getSymbolTableSource());
+            frameSequence.getReduceStartedCounter().incrementAndGet();
+            frameSequence.getReducer().reduce(
+                    workerId,
+                    record,
+                    frameIndex,
+                    circuitBreaker,
+                    frameSequence,
+                    stealingFrameSequence
+            );
+        } else {
+            frameSequence.cancel(cbState);
+        }
     }
 }

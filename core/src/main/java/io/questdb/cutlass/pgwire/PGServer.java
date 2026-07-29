@@ -35,7 +35,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.continuation.QueryFiberPool;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
@@ -50,6 +53,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -64,7 +68,6 @@ public class PGServer implements Closeable {
     private final PGConnectionContextFactory contextFactory;
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
-    private final QueryFiberPool queryFiberPool;
     private final PGCircuitBreakerRegistry registry;
     private final WorkerPool sharedPoolNetwork;
     private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
@@ -93,10 +96,13 @@ public class PGServer implements Closeable {
         AssociativeCache<TypesAndSelect> typesAndSelectCacheLocal = null;
         PGConnectionContextFactory contextFactoryLocal = null;
         IODispatcher<PGConnectionContext> dispatcherLocal = null;
-        QueryFiberPool queryFiberPoolLocal = null;
+        FiberRuntime fiberRuntimeLocal = null;
         try {
             this.acceptOpen = acceptOpen;
             this.metrics = engine.getMetrics();
+            if (configuration.isFiberEnabled() && sharedPoolNetwork.isFiberHost()) {
+                fiberRuntimeLocal = sharedPoolNetwork.getFiberRuntime();
+            }
             if (configuration.isSelectCacheEnabled()) {
                 typesAndSelectCacheLocal = new ConcurrentAssociativeCache<>(configuration.getConcurrentCacheConfiguration());
             } else {
@@ -115,44 +121,25 @@ public class PGServer implements Closeable {
             this.dispatcher = dispatcherLocal;
             this.sharedPoolNetwork = sharedPoolNetwork;
             this.registry = registry;
-            if (configuration.isQueryFiberEnabled() && !sharedPoolNetwork.isLegacy()) {
-                // Fibers resume on the same network pool that runs the dispatch job,
-                // so registerChannel/disconnect keep their existing threading.
-                queryFiberPoolLocal = new QueryFiberPool(
-                        Math.max(4, 2 * sharedPoolNetwork.getWorkerCount()),
-                        sharedPoolNetwork.getContinuationSink()
-                );
-            }
-            this.queryFiberPool = queryFiberPoolLocal;
 
             // Gate the IO dispatcher so the pool polls it only once accept opens.
             sharedPoolNetwork.assign(new AcceptGatedJob(dispatcher, acceptOpen));
 
-            // The processor lambda is stateless and the connection-context Job is
-            // pure dispatch over a shared IODispatcher, so a single shared instance
-            // is safe across all workers. assign(Job) routes the same singleton
-            // to every worker via the default Job.cloneInstance() (returns this).
-            final IORequestProcessor<PGConnectionContext> processor;
-            if (queryFiberPoolLocal != null) {
-                final QueryFiberPool fiberPool = queryFiberPoolLocal;
-                processor = (operation, context, dispatcher) -> {
-                    if (operation == IOOperation.HEARTBEAT) {
-                        dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
-                        return false;
-                    }
-                    // the fd is armed for nothing while a step runs, so at every event
-                    // the gate is IDLE, or terminal after a disconnect
-                    final PGConnectionFiberTask task = context.getFiberTask(dispatcher, metrics);
-                    if (task.isDone() || task.isCancelled()) {
-                        task.reopen();
-                    }
-                    task.prepare(operation);
-                    final boolean launched = fiberPool.launch(task);
-                    assert launched : "fiber launch refused: task gate not idle";
-                    return true;
-                };
+            if (fiberRuntimeLocal != null) {
+                final FiberRuntime runtime = fiberRuntimeLocal;
+                for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
+                    sharedPoolNetwork.assign(i, new PGRequestJob(
+                            acceptOpen,
+                            dispatcher,
+                            metrics,
+                            runtime
+                    ));
+                }
             } else {
-                processor = (operation, context, dispatcher) -> {
+                final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
+                    final SuspensionScope.Mode previousMode = SuspensionScope.enter(
+                            SuspensionScope.Mode.BLOCKING
+                    );
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
                             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
@@ -180,14 +167,13 @@ public class PGServer implements Closeable {
                         // This is a critical error, so we treat it as an unhandled one.
                         metrics.healthMetrics().incrementUnhandledErrors();
                         dispatcher.disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
+                    } finally {
+                        SuspensionScope.restore(previousMode);
                     }
                     return false;
                 };
+                sharedPoolNetwork.assign(new AcceptGatedJob(ignore -> dispatcher.processIOQueue(processor), acceptOpen));
             }
-            // Gate the shared connection-context Job too: until accept opens it must not poll
-            // the IO queue. AcceptGatedJob wraps the singleton dispatch Job; cloneInstance()
-            // defaults to returning this, so every worker shares the same gated singleton.
-            sharedPoolNetwork.assign(new AcceptGatedJob(ignore -> dispatcher.processIOQueue(processor), acceptOpen));
 
             // pgwire context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
@@ -200,11 +186,6 @@ public class PGServer implements Closeable {
             // close() never runs. Match the LineTcpReceiver close-and-rethrow shape.
             try {
                 Misc.free(dispatcherLocal);
-            } catch (Throwable s) {
-                t.addSuppressed(s);
-            }
-            try {
-                Misc.free(queryFiberPoolLocal);
             } catch (Throwable s) {
                 t.addSuppressed(s);
             }
@@ -232,8 +213,8 @@ public class PGServer implements Closeable {
 
     @Override
     public void close() {
+        acceptOpen.set(false);
         Misc.free(dispatcher);
-        Misc.free(queryFiberPool);
         Misc.free(registry);
         Misc.free(contextFactory);
         Misc.free(typesAndSelectCache);
@@ -273,10 +254,11 @@ public class PGServer implements Closeable {
                                 engine,
                                 configuration.getCircuitBreakerConfiguration()
                         );
+                        SqlExecutionContextImpl sqlExecutionContext = executionContextObjectFactory.newInstance();
                         PGConnectionContext pgConnectionContext = new PGConnectionContext(
                                 engine,
                                 configuration,
-                                executionContextObjectFactory.newInstance(),
+                                sqlExecutionContext,
                                 circuitBreaker,
                                 typesAndSelectCache
                         );
@@ -292,6 +274,72 @@ public class PGServer implements Closeable {
                     },
                     configuration.getConnectionPoolInitialCapacity()
             );
+        }
+    }
+
+    private static class PGRequestJob implements Job {
+        private final AtomicBoolean acceptOpen;
+        private final IODispatcher<PGConnectionContext> dispatcher;
+        private final FiberRuntime fiberRuntime;
+        private final IORequestProcessor<PGConnectionContext> processor;
+        private @Nullable Fiber reservedFiber;
+
+        private PGRequestJob(
+                AtomicBoolean acceptOpen,
+                IODispatcher<PGConnectionContext> dispatcher,
+                Metrics metrics,
+                FiberRuntime fiberRuntime
+        ) {
+            this.acceptOpen = acceptOpen;
+            this.dispatcher = dispatcher;
+            this.fiberRuntime = fiberRuntime;
+            this.processor = (operation, context, disp) -> {
+                if (operation == IOOperation.HEARTBEAT) {
+                    disp.registerChannel(context, IOOperation.HEARTBEAT);
+                    return false;
+                }
+                final Fiber fiber = reservedFiber;
+                if (fiber == null) {
+                    throw new IllegalStateException("PG I/O event has no reserved fiber");
+                }
+                final PGConnectionFiberTask task = context.getFiberTask(disp, metrics);
+                reservedFiber = null;
+                final LaunchResult result = task.launchReserved(fiberRuntime, fiber, operation);
+                if (result == LaunchResult.LAUNCHED
+                        || result == LaunchResult.ALREADY_OWNED
+                        || result == LaunchResult.STALE_INCARNATION
+                        || result == LaunchResult.TERMINAL) {
+                    return true;
+                }
+                disp.disconnect(
+                        context,
+                        result == LaunchResult.QUIESCING
+                                ? DISCONNECT_REASON_SERVER_SHUTDOWN
+                                : DISCONNECT_REASON_SERVER_ERROR
+                );
+                return false;
+            };
+        }
+
+        @Override
+        public boolean run(@NotNull WorkerContext workerContext) {
+            if (!acceptOpen.get()) {
+                return false;
+            }
+            final Fiber fiber = fiberRuntime.tryReserveFiber();
+            if (fiber == null) {
+                return false;
+            }
+            reservedFiber = fiber;
+            try {
+                return dispatcher.processIOQueue(processor);
+            } finally {
+                final Fiber unusedFiber = reservedFiber;
+                reservedFiber = null;
+                if (unusedFiber != null) {
+                    fiberRuntime.releaseReservedFiber(unusedFiber);
+                }
+            }
         }
     }
 }

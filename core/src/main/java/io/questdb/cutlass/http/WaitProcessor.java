@@ -32,15 +32,17 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.PriorityQueue;
@@ -54,16 +56,19 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
     private final RingQueue<RetryHolder> inQueue;
     private final Sequence inSubSequence;
     private final long maxWaitCapMs;
-    private final PriorityQueue<Retry> nextRerun;
+    private final PriorityQueue<RetryHolder> nextRerun;
     private final Sequence outPubSequence;
     private final RingQueue<RetryHolder> outQueue;
     private final Sequence outSubSequence;
+    private final ObjectPool<RetryHolder> scheduledRetryPool;
 
     public WaitProcessor(WaitProcessorConfiguration configuration, IODispatcher<HttpConnectionContext> dispatcher) {
         clock = configuration.getClock();
         maxWaitCapMs = configuration.getMaxWaitCapMs();
         exponentialWaitMultiplier = configuration.getExponentialWaitMultiplier();
-        nextRerun = new PriorityQueue<>(configuration.getInitialWaitQueueSize(), WaitProcessor::compareRetriesInQueue);
+        final int initialWaitQueueSize = configuration.getInitialWaitQueueSize();
+        nextRerun = new PriorityQueue<>(initialWaitQueueSize, WaitProcessor::compareRetriesInQueue);
+        scheduledRetryPool = new ObjectPool<>(RetryHolder::new, initialWaitQueueSize);
         this.dispatcher = dispatcher;
 
         int retryQueueLength = configuration.getMaxProcessingQueueSize();
@@ -86,9 +91,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         // worker pool has halted -- an out-queue retry would otherwise strand its checked-out
         // HttpConnectionContext.
         processInQueue();
-        // Drain the out queue directly, not via getNextRerun(): that helper returns null on a
-        // -2 (lost the slot to a worker still draining past the halt timeout), which would end
-        // this drain early and strand the rest. Mirror processInQueue()'s -2 retry instead.
+        // Retry -2 while draining the out queue so a worker race cannot strand later entries.
         while (true) {
             long cursor = outSubSequence.next();
             if (cursor < -1) {
@@ -99,41 +102,53 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
                 break;
             }
             RetryHolder retryHolder = outQueue.get(cursor);
-            Misc.free(retryHolder.retry);
-            retryHolder.retry = null;
+            freeRetry(retryHolder);
             outSubSequence.done(cursor);
         }
         for (int i = 0, n = nextRerun.size(); i < n; i++) {
-            Misc.free(nextRerun.poll());
+            final RetryHolder retryHolder = nextRerun.poll();
+            freeRetry(retryHolder);
+            scheduledRetryPool.release(retryHolder);
         }
     }
 
-    /**
-     * Fiber-mode counterpart of {@link #runReruns(HttpRequestProcessorSelector)}:
-     * pops every due retry and hands it to the launcher, which schedules it as a
-     * fiber task instead of running it inline on the worker loop. The launcher's
-     * gate CAS cannot be refused: a parked retry's task is IDLE, because the fiber
-     * path defers the reschedule enqueue to the task's onParked() hook -- strictly
-     * after the gate reopened (see {@link HttpConnectionFiberTask}).
-     */
-    public boolean launchReruns(RetryLauncher launcher) {
+    public boolean launchReruns(FiberRuntime runtime, RetryLauncher launcher) {
         boolean useful = false;
 
         while (true) {
-            Retry retry = getNextRerun();
-            if (retry != null) {
-                useful = true;
-                launcher.launch(retry);
-            } else {
+            final Fiber fiber = runtime.tryReserveFiber();
+            if (fiber == null) {
                 return useful;
             }
+            final long cursor = outSubSequence.next();
+            if (cursor < 0) {
+                runtime.releaseReservedFiber(fiber);
+                return useful;
+            }
+            final RetryHolder retryHolder = outQueue.get(cursor);
+            final Retry retry = retryHolder.retry;
+            final long taskIncarnation = retryHolder.taskIncarnation;
+            retryHolder.clear();
+            outSubSequence.done(cursor);
+            if (retry != null) {
+                useful = true;
+                if (retry.isRetryCurrent(taskIncarnation)) {
+                    launcher.launch(fiber, retry, taskIncarnation);
+                    return true;
+                }
+            }
+            runtime.releaseReservedFiber(fiber);
         }
     }
 
     @Override
     // This supposed to run in http execution thread / job
     public void reschedule(Retry retry) {
-        reschedule(retry, 0, 0);
+        publishReschedule(prepareReschedule(retry, 0, 0, 0));
+    }
+
+    public void reschedule(Retry retry, long taskIncarnation) {
+        publishReschedule(prepareReschedule(retry, taskIncarnation, 0, 0));
     }
 
     // This hijacks http execution thread / job and runs retries in it.
@@ -141,12 +156,20 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         boolean useful = false;
 
         while (true) {
-            Retry retry = getNextRerun();
+            final long cursor = outSubSequence.next();
+            if (cursor < 0) {
+                return useful;
+            }
+            final RetryHolder retryHolder = outQueue.get(cursor);
+            final Retry retry = retryHolder.retry;
+            final long taskIncarnation = retryHolder.taskIncarnation;
+            retryHolder.clear();
+            outSubSequence.done(cursor);
             if (retry != null) {
                 useful = true;
-                run(selector, retry);
-            } else {
-                return useful;
+                if (retry.isRetryCurrent(taskIncarnation)) {
+                    run(selector, retry);
+                }
             }
         }
     }
@@ -156,46 +179,61 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         return processInQueue() || sendToOutQueue();
     }
 
-    /**
-     * Re-queues a rerun that came back still-busy, advancing the attempt counter so
-     * the backoff keeps growing. Mirrors what the inline
-     * {@link #run(HttpRequestProcessorSelector, Retry)} does after a false
-     * {@code tryRerun}; the fiber path calls this from the task's onParked() hook.
-     */
-    void rescheduleNextAttempt(Retry retry) throws RetryFailedOperationException {
-        reschedule(retry, retry.getAttemptDetails().attempt + 1, retry.getAttemptDetails().waitStartTimestamp);
+    void abortPreparedReschedule(long cursor) {
+        inQueue.get(cursor).clear();
+        inPubSequence.done(cursor);
     }
 
-    private static int compareRetriesInQueue(Retry r1, Retry r2) {
-        // r1, r2 are always not null, null retries are not queued
-        RetryAttemptAttributes a1 = r1.getAttemptDetails();
-        RetryAttemptAttributes a2 = r2.getAttemptDetails();
-        return Long.compare(a1.nextRunTimestamp, a2.nextRunTimestamp);
+    long prepareReschedule(Retry retry) throws RetryFailedOperationException {
+        return prepareReschedule(retry, 0, 0, 0);
     }
 
-    private long calculateNextTimestamp(RetryAttemptAttributes attemptAttributes) {
-        if (attemptAttributes.attempt == 0) {
+    long prepareReschedule(Retry retry, long taskIncarnation) throws RetryFailedOperationException {
+        return prepareReschedule(retry, taskIncarnation, 0, 0);
+    }
+
+    long prepareRescheduleNextAttempt(Retry retry) throws RetryFailedOperationException {
+        return prepareReschedule(
+                retry,
+                0,
+                retry.getAttemptDetails().attempt + 1,
+                retry.getAttemptDetails().waitStartTimestamp
+        );
+    }
+
+    long prepareRescheduleNextAttempt(Retry retry, long taskIncarnation) throws RetryFailedOperationException {
+        return prepareReschedule(
+                retry,
+                taskIncarnation,
+                retry.getAttemptDetails().attempt + 1,
+                retry.getAttemptDetails().waitStartTimestamp
+        );
+    }
+
+    void publishReschedule(long cursor) {
+        inPubSequence.done(cursor);
+    }
+
+    private static int compareRetriesInQueue(RetryHolder r1, RetryHolder r2) {
+        return Long.compare(r1.nextRunTimestamp, r2.nextRunTimestamp);
+    }
+
+    private static void freeRetry(RetryHolder retryHolder) {
+        if (retryHolder.retry != null && retryHolder.retry.isRetryCloseOwner(retryHolder.taskIncarnation)) {
+            Misc.free(retryHolder.retry);
+        }
+        retryHolder.clear();
+    }
+
+    private long calculateNextTimestamp(int attempt, long lastRunTimestamp, long waitStartTimestamp) {
+        if (attempt == 0) {
             // First retry after fixed time of 2ms
-            return attemptAttributes.lastRunTimestamp + 2;
+            return lastRunTimestamp + 2;
         }
 
         // 'exponentialWaitMultiplier' times wait time starting until it is 'maxWaitCapMs' sec
-        long totalWait = attemptAttributes.lastRunTimestamp - attemptAttributes.waitStartTimestamp;
-        return Math.min(maxWaitCapMs, Math.max(4L, (long) (totalWait * exponentialWaitMultiplier))) + attemptAttributes.lastRunTimestamp;
-    }
-
-    private @Nullable Retry getNextRerun() {
-        long cursor = outSubSequence.next();
-        // -2 = there was a contest for queue index and this thread has lost
-        if (cursor < 0) {
-            return null;
-        }
-
-        RetryHolder retryHolder = outQueue.get(cursor);
-        Retry r = retryHolder.retry;
-        retryHolder.retry = null;
-        outSubSequence.done(cursor);
-        return r;
+        final long totalWait = lastRunTimestamp - waitStartTimestamp;
+        return Math.min(maxWaitCapMs, Math.max(4L, (long) (totalWait * exponentialWaitMultiplier))) + lastRunTimestamp;
     }
 
     // Process incoming queue and put it on priority queue with next timestamp to rerun
@@ -214,26 +252,38 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
                 return any;
             }
 
-            Retry retry;
+            RetryHolder scheduledRetry = null;
             try {
-                RetryHolder toRun = inQueue.get(cursor);
-                retry = toRun.retry;
-                toRun.retry = null;
+                final RetryHolder incomingRetry = inQueue.get(cursor);
+                if (incomingRetry.retry != null) {
+                    any = true;
+                    if (incomingRetry.retry.isRetryCurrent(incomingRetry.taskIncarnation)) {
+                        scheduledRetry = scheduledRetryPool.next();
+                        scheduledRetry.of(
+                                incomingRetry.retry,
+                                incomingRetry.taskIncarnation,
+                                incomingRetry.nextRunTimestamp
+                        );
+                    }
+                }
+                incomingRetry.clear();
             } finally {
                 inSubSequence.done(cursor);
             }
-            retry.getAttemptDetails().nextRunTimestamp = calculateNextTimestamp(retry.getAttemptDetails());
-
-            nextRerun.add(retry);
-            any = true;
+            if (scheduledRetry != null) {
+                nextRerun.add(scheduledRetry);
+            }
         }
     }
 
-    private void reschedule(Retry retry, int attempt, long waitStartMs) {
-        long now = clock.getTicks();
-        retry.getAttemptDetails().attempt = attempt;
-        retry.getAttemptDetails().lastRunTimestamp = now;
-        retry.getAttemptDetails().waitStartTimestamp = attempt == 0 ? now : waitStartMs;
+    private long prepareReschedule(Retry retry, long taskIncarnation, int attempt, long waitStartMs) {
+        final long now = clock.getTicks();
+        final long waitStartTimestamp = attempt == 0 ? now : waitStartMs;
+        final RetryAttemptAttributes attemptAttributes = retry.getAttemptDetails();
+        attemptAttributes.attempt = attempt;
+        attemptAttributes.lastRunTimestamp = now;
+        attemptAttributes.nextRunTimestamp = calculateNextTimestamp(attempt, now, waitStartTimestamp);
+        attemptAttributes.waitStartTimestamp = waitStartTimestamp;
 
         while (true) {
             long cursor = inPubSequence.next();
@@ -250,9 +300,8 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             }
 
             RetryHolder retryHolder = inQueue.get(cursor);
-            retryHolder.retry = retry;
-            inPubSequence.done(cursor);
-            return;
+            retryHolder.of(retry, taskIncarnation, attemptAttributes.nextRunTimestamp);
+            return cursor;
         }
     }
 
@@ -260,7 +309,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         try {
             if (!retry.tryRerun(selector, this)) {
                 try {
-                    reschedule(retry, retry.getAttemptDetails().attempt + 1, retry.getAttemptDetails().waitStartTimestamp);
+                    publishReschedule(prepareRescheduleNextAttempt(retry));
                 } catch (RetryFailedOperationException e) {
                     retry.fail(selector, e);
                 }
@@ -281,14 +330,23 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         boolean useful = false;
         final long now = clock.getTicks();
         while (!nextRerun.isEmpty()) {
-            Retry next = nextRerun.peek();
-            if (next.getAttemptDetails().nextRunTimestamp <= now) {
+            final RetryHolder next = nextRerun.peek();
+            if (!next.retry.isRetryCurrent(next.taskIncarnation)) {
+                nextRerun.poll();
+                next.clear();
+                scheduledRetryPool.release(next);
                 useful = true;
-                Retry retry = nextRerun.poll();
-                if (!sendToOutQueue(retry)) {
-                    nextRerun.add(retry);
+                continue;
+            }
+            if (next.nextRunTimestamp <= now) {
+                useful = true;
+                final RetryHolder retryHolder = nextRerun.poll();
+                if (!sendToOutQueue(retryHolder)) {
+                    nextRerun.add(retryHolder);
                     return true;
                 }
+                retryHolder.clear();
+                scheduledRetryPool.release(retryHolder);
             } else {
                 // All reruns are in the future.
                 return useful;
@@ -297,7 +355,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         return useful;
     }
 
-    private boolean sendToOutQueue(Retry retry) {
+    private boolean sendToOutQueue(RetryHolder retry) {
         while (true) {
             long cursor = outPubSequence.next();
             // -2 = there was a contest for queue index and this thread has lost
@@ -312,7 +370,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             }
 
             RetryHolder retryHolderOut = outQueue.get(cursor);
-            retryHolderOut.retry = retry;
+            retryHolderOut.of(retry.retry, retry.taskIncarnation, retry.nextRunTimestamp);
             outPubSequence.done(cursor);
             return true;
         }
@@ -324,6 +382,6 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
      */
     @FunctionalInterface
     public interface RetryLauncher {
-        void launch(Retry retry);
+        void launch(Fiber fiber, Retry retry, long taskIncarnation);
     }
 }

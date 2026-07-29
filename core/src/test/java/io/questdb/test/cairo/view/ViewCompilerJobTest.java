@@ -25,7 +25,12 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.cairo.view.ViewCompilerJob;
+import io.questdb.cairo.view.ViewState;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -34,6 +39,9 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 public class ViewCompilerJobTest extends AbstractViewTest {
     private final String[] breakingSqls = new String[]{
@@ -138,6 +146,52 @@ public class ViewCompilerJobTest extends AbstractViewTest {
 
             for (int i = 0; i < viewQueries.length; i++) {
                 compileView("view" + i);
+            }
+        });
+    }
+
+    @Test
+    public void testFiberHostLeavesNotificationQueuedWhileSaturated() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createView(VIEW1, "select v from " + TABLE1, TABLE1);
+            execute("ALTER TABLE " + TABLE1 + " DROP COLUMN v");
+            drainWalQueue();
+
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final ViewCompilerJob compilerJob = new ViewCompilerJob(engine, 1, runtime);
+            Fiber reservation = runtime.tryReserveFiber();
+            try {
+                assertNotNull(reservation);
+                assertFalse(compilerJob.run());
+                runtime.releaseReservedFiber(reservation);
+                reservation = null;
+
+                assertTrue(compilerJob.run());
+                assertEquals(1, runtime.drain(1));
+
+                final ViewState viewState = engine.getViewStateStore().getViewState(
+                        engine.getTableTokenIfExists(VIEW1)
+                );
+                assertNotNull(viewState);
+                viewState.lockForRead();
+                try {
+                    assertTrue(viewState.isInvalid());
+                } finally {
+                    viewState.unlockAfterRead();
+                }
+            } finally {
+                if (reservation != null) {
+                    runtime.releaseReservedFiber(reservation);
+                }
+                runtime.beginQuiesce();
+                final long deadline = System.nanoTime() + 5_000_000_000L;
+                while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+                    runtime.drain(8);
+                }
+                assertTrue(runtime.awaitClosed(deadline));
+                runtime.closeAfterDrained();
+                Misc.free(compilerJob);
             }
         });
     }

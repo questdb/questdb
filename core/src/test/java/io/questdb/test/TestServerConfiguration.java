@@ -42,6 +42,7 @@ import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.datetime.NanosecondClock;
@@ -202,11 +203,21 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             }
         };
 
-        this.confMatViewRefreshPool = () -> 0; // shared pool
-        this.confViewCompilerPool = () -> 0; // shared pool
-        this.confExportPool = () -> 2; // default export pool worker count
+        this.confMatViewRefreshPool = () -> 0;
+        this.confViewCompilerPool = () -> 0;
+        this.confExportPool = () -> 2;
         this.confWalApplyPool = () -> 0;
-        this.confSharedPool = () -> workerCountShared;
+        this.confSharedPool = new WorkerPoolConfiguration() {
+            @Override
+            public int getWorkerCount() {
+                return workerCountShared;
+            }
+
+            @Override
+            public WorkerPoolMode getWorkerPoolMode() {
+                return enableHttp || enablePgWire ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
+            }
+        };
         this.confLineTcpIOPool = () -> workerCountLineTcpIO;
         this.confLineTcpWriterPool = () -> workerCountLineTcpWriter;
     }

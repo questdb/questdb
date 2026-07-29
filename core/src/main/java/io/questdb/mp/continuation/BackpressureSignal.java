@@ -25,12 +25,12 @@
 package io.questdb.mp.continuation;
 
 /**
- * Park signal of the query-fiber tier: {@link QueryTask#runStep()} raises it when
+ * Park signal of the fiber tier: {@link FiberTask#runStep()} raises it when
  * the task's sink cannot accept more output right now (socket send buffer full,
  * egress credit exhausted). The task-runner fiber catches it, returns the task's
- * schedule gate to IDLE and invokes {@link QueryTask#onParked()}; a later external
+ * schedule gate to IDLE and invokes {@link FiberTask#onParked()}; a later external
  * event (fd WRITE-ready, CREDIT frame) re-launches the task via
- * {@link QueryFiberPool#launch(QueryTask)}.
+ * {@link FiberRuntime#launch(FiberTask)}.
  *
  * <p>Singleton without a stack trace: this is control flow, not an error, mirroring
  * {@code PeerIsSlowToReadException}.

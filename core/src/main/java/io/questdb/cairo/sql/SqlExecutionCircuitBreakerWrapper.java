@@ -66,6 +66,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
+    public void clearCancelledFlag(AtomicBoolean expected) {
+        delegate.clearCancelledFlag(expected);
+    }
+
+    @Override
     public void close() {
         networkSqlExecutionCircuitBreaker = Misc.free(networkSqlExecutionCircuitBreaker);
         delegate = null;

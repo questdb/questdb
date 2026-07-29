@@ -34,6 +34,7 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.WalApplyFiberJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.HttpServer;
@@ -201,8 +202,30 @@ public class ServerMain implements Closeable {
                 // Still useful in case of custom logger
                 bootstrap.getLog().info().$("QuestDB is shutting down...").$();
             }
+            final long haltDeadline = System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS;
             // Signal long-running task to exit ASAP
-            engine.signalClose();
+            final boolean isTimerShardsHaltComplete = engine.signalClose(haltDeadline);
+            boolean isLifecycleStopComplete = true;
+            if (orchestrator != null && isTimerShardsHaltComplete) {
+                orchestrator.close();
+                isLifecycleStopComplete = orchestrator.isStopComplete();
+            }
+            if (!isTimerShardsHaltComplete || !isLifecycleStopComplete) {
+                closed.set(false);
+                return;
+            }
+            boolean isMinHttpHaltComplete = true;
+            if (orchestrator != null) {
+                Component component = orchestrator.getComponent("min-http");
+                if (component instanceof MinHttpEnvelope minHttp) {
+                    try {
+                        isMinHttpHaltComplete = minHttp.haltAndFree(Math.max(1, haltDeadline - System.nanoTime()));
+                    } catch (Throwable th) {
+                        bootstrap.getLog().error().$("could not stop min-http worker pool [error=").$(th).I$();
+                        isMinHttpHaltComplete = false;
+                    }
+                }
+            }
             // Halt the worker pool before freeing the engine so no worker thread can fire
             // a telemetry or WAL-listener callback while the engine's resources are being
             // released by freeOnExit.close() below. Without this halt, TelemetryJob.close()
@@ -218,11 +241,21 @@ public class ServerMain implements Closeable {
             // Bound the halt so a wedged worker (GC-starvation, a stuck native job) cannot make
             // close() block forever. WorkerPool.halt()'s waits on started/halted were unbounded, so
             // a hung worker turned this close path into an unkillable shutdown under SIGTERM. The
-            // bounded variant waits up to a shared deadline across all pools, then logs and proceeds.
+            // bounded variant retains the live object graph when the deadline expires.
+            boolean isWorkerPoolHaltComplete = true;
             if (workerPoolManager != null) {
-                workerPoolManager.halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+                isWorkerPoolHaltComplete = workerPoolManager.halt(haltDeadline);
             }
-            freeOnExit.close();
+            if (!isMinHttpHaltComplete || !isWorkerPoolHaltComplete) {
+                closed.set(false);
+                return;
+            }
+            Throwable cleanupFailure = null;
+            try {
+                freeOnExit.close();
+            } catch (Throwable th) {
+                cleanupFailure = th;
+            }
             // Deregister the shutdown hook: the JVM-static ApplicationShutdownHooks map holds
             // the hook Thread until JVM exit, and the hook's closure references this ServerMain
             // and therefore the whole engine graph. A long-lived JVM that boots many servers
@@ -238,6 +271,7 @@ public class ServerMain implements Closeable {
                     // JVM shutdown already in progress; the hook is running or about to run.
                 }
             }
+            CairoException.rethrowCleanupFailure(cleanupFailure);
         }
     }
 
@@ -451,7 +485,9 @@ public class ServerMain implements Closeable {
                 // the normal-shutdown second call is a no-op.
                 orchestrator.setPreStopHook(() -> {
                     if (workerPoolManager != null) {
-                        workerPoolManager.halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+                        if (!workerPoolManager.halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+                            throw new IllegalStateException("worker pools did not halt before lifecycle teardown");
+                        }
                     }
                 });
                 if (addShutdownHook) {
@@ -586,7 +622,11 @@ public class ServerMain implements Closeable {
                                     sharedPoolQuery
                             );
 
-                            exportWorkerPool.assign(new CopyExportRequestJob(engine));
+                            exportWorkerPool.assign(
+                                    exportWorkerPool.isFiberHost()
+                                            ? new CopyExportRequestJob(engine, exportWorkerPool.getFiberRuntime())
+                                            : new CopyExportRequestJob(engine)
+                            );
                         } else {
                             log.advisory().$("export is disabled; set ")
                                     .$(EXPORT_WORKER_COUNT.getPropertyPath())
@@ -625,12 +665,16 @@ public class ServerMain implements Closeable {
 
     private void joinThread(Thread thread, boolean ignoreInterrupt) {
         if (thread != null) {
-            try {
-                thread.join();
-            } catch (InterruptedException e) {
-                if (!ignoreInterrupt) {
-                    Thread.currentThread().interrupt();
+            boolean isInterrupted = false;
+            while (thread.isAlive()) {
+                try {
+                    thread.join();
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
                 }
+            }
+            if (isInterrupted && !ignoreInterrupt) {
+                Thread.currentThread().interrupt();
             }
         }
     }
@@ -753,14 +797,21 @@ public class ServerMain implements Closeable {
     }
 
     protected void setupMatViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
-        // assign(Job) clones once per worker via MatViewRefreshJob.cloneInstance().
-        mvWorkerPool.assign(new MatViewRefreshJob(engine, sharedQueryWorkerCount));
+        mvWorkerPool.assign(
+                mvWorkerPool.isFiberHost()
+                        ? new MatViewRefreshJob(engine, sharedQueryWorkerCount, mvWorkerPool.getFiberRuntime())
+                        : new MatViewRefreshJob(engine, sharedQueryWorkerCount)
+        );
         final MatViewTimerJob matViewTimerJob = new MatViewTimerJob(engine);
         mvWorkerPool.assign(matViewTimerJob);
     }
 
     protected void setupViewJobs(WorkerPool vWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
-        vWorkerPool.assign(new ViewCompilerJob(engine, sharedQueryWorkerCount));
+        vWorkerPool.assign(
+                vWorkerPool.isFiberHost()
+                        ? new ViewCompilerJob(engine, sharedQueryWorkerCount, vWorkerPool.getFiberRuntime())
+                        : new ViewCompilerJob(engine, sharedQueryWorkerCount)
+        );
     }
 
     protected void setupWalApplyJob(
@@ -768,7 +819,17 @@ public class ServerMain implements Closeable {
             CairoEngine engine,
             int sharedQueryWorkerCount
     ) {
-        sharedPoolWrite.assign(new ApplyWal2TableJob(engine, sharedQueryWorkerCount));
+        if (sharedPoolWrite.isFiberHost()) {
+            final WalApplyFiberJob job = new WalApplyFiberJob(
+                    engine,
+                    sharedQueryWorkerCount,
+                    sharedPoolWrite.getFiberRuntime()
+            );
+            sharedPoolWrite.freeResourceOnExit(job);
+            sharedPoolWrite.assign(job);
+        } else {
+            sharedPoolWrite.assign(new ApplyWal2TableJob(engine, sharedQueryWorkerCount));
+        }
     }
 
     protected String webConsoleSchema() {
@@ -1193,7 +1254,7 @@ public class ServerMain implements Closeable {
                     log.advisoryW().$("min-http envelope: http.min.worker.count=").$(workerCount).$(" is <= 0, remapping to 1").$();
                     workerCount = 1;
                 }
-                pool = new WorkerPool(new MinHttpPoolConfiguration(workerCount));
+                pool = new WorkerPool(new MinHttpPoolConfiguration(httpMinConfig, workerCount));
                 // createMinHttpServer() calls pool.assign() on the dispatcher and reschedule jobs.
                 // The pool must NOT be started yet -- assign() asserts !running. Start after bind.
                 server = ServerMain.this.services().createMinHttpServer(httpMinConfig, pool);
@@ -1225,21 +1286,12 @@ public class ServerMain implements Closeable {
                 // joins the workers, so once it returns no thread can run against the server, making
                 // it safe to free. This matches the halt-then-free discipline stop() already uses.
                 // Each branch aggregates its own teardown failure into the original throwable.
-                if (pool != null) {
-                    try {
-                        pool.halt();
-                        pool = null;
-                    } catch (Throwable suppressed) {
-                        t.addSuppressed(suppressed);
+                try {
+                    if (!haltAndFree(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+                        t.addSuppressed(new IllegalStateException("http-min worker pool did not halt"));
                     }
-                }
-                if (server != null) {
-                    try {
-                        Misc.free(server);
-                        server = null;
-                    } catch (Throwable suppressed) {
-                        t.addSuppressed(suppressed);
-                    }
+                } catch (Throwable suppressed) {
+                    t.addSuppressed(suppressed);
                 }
                 throw t;
             }
@@ -1253,12 +1305,20 @@ public class ServerMain implements Closeable {
             // then dereferences a freed FDSet, crashing the JVM (EXCEPTION_ACCESS_VIOLATION on
             // Windows). pool.halt() joins the worker threads, so after it returns no thread can be
             // running select(), making it safe to free the server.
+            if (!haltAndFree(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
+                throw new IllegalStateException("http-min worker pool did not halt");
+            }
+        }
+
+        private boolean haltAndFree(long timeoutNanos) {
             if (pool != null) {
-                pool.halt();
+                if (!pool.halt(timeoutNanos)) {
+                    return false;
+                }
                 pool = null;
             }
-            Misc.free(server);
-            server = null;
+            server = Misc.free(server);
+            return true;
         }
     }
 
@@ -1267,10 +1327,37 @@ public class ServerMain implements Closeable {
      * Pool name is "http-min"; worker count is provided at construction time.
      */
     private static final class MinHttpPoolConfiguration implements io.questdb.mp.WorkerPoolConfiguration {
+        private final io.questdb.cutlass.http.HttpServerConfiguration delegate;
         private final int workerCount;
 
-        MinHttpPoolConfiguration(int workerCount) {
+        MinHttpPoolConfiguration(io.questdb.cutlass.http.HttpServerConfiguration delegate, int workerCount) {
+            this.delegate = delegate;
             this.workerCount = workerCount;
+        }
+
+        @Override
+        public int getFiberMaxLiveCount() {
+            return delegate.getFiberMaxLiveCount();
+        }
+
+        @Override
+        public int getFiberMountBudget() {
+            return delegate.getFiberMountBudget();
+        }
+
+        @Override
+        public int getFiberRetainedCount() {
+            return delegate.getFiberRetainedCount();
+        }
+
+        @Override
+        public Metrics getMetrics() {
+            return delegate.getMetrics();
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return delegate.getNapThreshold();
         }
 
         @Override
@@ -1279,8 +1366,53 @@ public class ServerMain implements Closeable {
         }
 
         @Override
+        public long getSleepThreshold() {
+            return delegate.getSleepThreshold();
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return delegate.getSleepTimeout();
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return delegate.getWorkerAffinity();
+        }
+
+        @Override
         public int getWorkerCount() {
             return workerCount;
+        }
+
+        @Override
+        public io.questdb.mp.WorkerPoolMode getWorkerPoolMode() {
+            return delegate.getWorkerPoolMode();
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return delegate.getYieldThreshold();
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return delegate.haltOnError();
+        }
+
+        @Override
+        public boolean isDaemonPool() {
+            return delegate.isDaemonPool();
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return delegate.isEnabled();
+        }
+
+        @Override
+        public int workerPoolPriority() {
+            return delegate.workerPoolPriority();
         }
     }
 
@@ -1683,7 +1815,9 @@ public class ServerMain implements Closeable {
             // to ensure the pool is quiesced before engine resources are freed. WorkerPool.halt()
             // is CAS-guarded, so whichever call arrives second is a no-op.
             if (ServerMain.this.workerPoolManager != null) {
-                ServerMain.this.workerPoolManager.halt();
+                if (!ServerMain.this.workerPoolManager.halt()) {
+                    throw new IllegalStateException("worker pools did not halt");
+                }
             }
         }
     }

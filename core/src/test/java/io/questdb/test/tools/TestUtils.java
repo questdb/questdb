@@ -80,6 +80,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
@@ -1829,6 +1830,14 @@ public final class TestUtils {
 
     public static TestTimestampType getTimestampType(Rnd rnd) {
         return rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+    }
+
+    public static WorkerPoolMode getWorkerPoolMode() {
+        return getWorkerPoolMode(generateRandom(LOG));
+    }
+
+    public static WorkerPoolMode getWorkerPoolMode(Rnd rnd) {
+        return rnd.nextBoolean() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
     }
 
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {

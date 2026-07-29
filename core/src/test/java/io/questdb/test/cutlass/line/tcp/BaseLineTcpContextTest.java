@@ -48,6 +48,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -143,10 +144,10 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isLegacy() {
+            public WorkerPoolMode getWorkerPoolMode() {
                 // ILP TCP IO and writer Jobs use assign(int worker, Job) for
                 // workerId-keyed per-worker state; both pools must be legacy.
-                return true;
+                return WorkerPoolMode.LEGACY;
             }
         });
     }

@@ -43,6 +43,7 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.metrics.QueryTracingJob;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
@@ -392,6 +393,21 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                         }
                     }
                 });
+            }
+        });
+    }
+
+    @Test
+    public void testHttpMinWorkerPoolMode() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter writer = new FileWriter(serverConf)) {
+                writer.write("http.min.worker.fiber.enabled=true\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                Assert.assertSame(
+                        WorkerPoolMode.FIBER_HOST,
+                        serverMain.getConfiguration().getHttpMinServerConfiguration().getWorkerPoolMode()
+                );
             }
         });
     }

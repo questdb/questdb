@@ -27,13 +27,19 @@ package io.questdb.cutlass.http;
 import io.questdb.cutlass.http.ex.RetryFailedOperationException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.continuation.QueryTask;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * One HTTP connection's resumable work, reified for a pooled fiber. Each fd event
@@ -47,47 +53,42 @@ import io.questdb.network.ServerDisconnectException;
  * <p>Selector confinement: the handler instances hang off a per-execution selector
  * (single-thread-confined scratch), and a fiber may mount on any worker, so a step
  * must not borrow the launching worker's selector. {@code runStep()} brackets each
- * step with {@code selectorFactory} acquire/release: a wait-freeze keeps the
- * selector referenced from the frozen stack until the thaw completes the step --
- * the same exclusivity the job-rotation machinery gives a parked generation, with
- * the same pool-converges-to-concurrency economics. Per-connection request state is
- * unaffected: it lives on the context (LocalValue), never on the selector, which is
- * what already lets different workers' selectors serve one connection today.
- *
- * <p>The fd re-arm runs in {@link #onParked()} after the gate returned to IDLE (no
- * lost wakeup); a disconnect runs in {@link #onDone()} after the gate is terminal,
- * so the recycled context cannot be relaunched while the gate is still RUNNING. An
- * escaped throwable is logged and the connection left unregistered, faithfully
- * mirroring how the direct path unwinds the job tick.
+ * step with {@code selectorFactory} acquire/release, so a suspended step retains
+ * exclusive ownership until it resumes and releases the selector. Per-connection
+ * request state lives on the context (LocalValue), never on the selector.
  *
  * <p>The busy-writer retry path is a third trigger, next to fd events and heartbeats:
- * a due retry launches this task with {@link #prepareRerun()} and the step calls the
- * existing {@link HttpConnectionContext#tryRerun} unchanged. The task itself is the
- * {@link RescheduleContext} the step passes down, and it only STAGES a reschedule;
- * the actual {@link WaitProcessor} enqueue runs in {@code onParked()}, after the gate
- * reopened. Enqueuing mid-step -- what the inline path does -- would start the
- * backoff clock while the gate is still RUNNING, and a due rerun popping before the
- * step parks would be refused by the gate and lost. A staged reschedule also
- * suppresses any same-step fd arm, keeping the retry the connection's single wakeup
- * trigger; the rerun re-derives the fd need when it resumes processing.
+ * a due retry launches this task with {@link #launchRerun(FiberRuntime, long)} and
+ * the step calls the existing {@link HttpConnectionContext#tryRerun} unchanged.
+ * The task itself is the {@link RescheduleContext} the step passes down.
  */
-public final class HttpConnectionFiberTask extends QueryTask implements RescheduleContext {
+public final class HttpConnectionFiberTask extends FiberTask implements RescheduleContext {
     private static final int ACTION_HEARTBEAT = 3;
     private static final int ACTION_NONE = 0;
     private static final int ACTION_READ = 1;
     private static final int ACTION_WRITE = 2;
+    private static final long EVENT_ACTION_MASK = 3;
+    private static final int EVENT_READ = 1;
+    private static final long EVENT_READY = 4;
+    private static final int EVENT_RERUN = 2;
+    private static final int EVENT_SHIFT = 3;
+    private static final int EVENT_WRITE = 3;
     private static final Log LOG = LogFactory.getLog(HttpConnectionFiberTask.class);
+    private static final long MAX_EVENT_INCARNATION = Long.MAX_VALUE >>> EVENT_SHIFT;
+    private static final long STAGED_EVENT_OFFSET = Unsafe.getFieldOffset(HttpConnectionFiberTask.class, "stagedEvent");
+    private final @Nullable Runnable beforeLaunchFailureSignalForTesting;
     private final HttpConnectionContext context;
+    private int disconnectReason = IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
     private final IODispatcher<HttpConnectionContext> dispatcher;
-    private final WaitProcessor rescheduleContext;
-    private final HttpServer.HttpRequestProcessorSelectorFactory selectorFactory;
-    private boolean isAbandoned;
     private boolean isDisconnectPending;
-    private boolean isRerun;
     private boolean isRescheduleNextAttempt;
     private boolean isReschedulePending;
     private int nextAction = ACTION_NONE;
-    private int operation = IOOperation.READ;
+    private long preparedRescheduleCursor = -1;
+    private final WaitProcessor rescheduleContext;
+    private final HttpServer.HttpRequestProcessorSelectorFactory selectorFactory;
+    @SuppressWarnings("FieldMayBeFinal")
+    private volatile long stagedEvent;
 
     HttpConnectionFiberTask(
             HttpConnectionContext context,
@@ -95,79 +96,130 @@ public final class HttpConnectionFiberTask extends QueryTask implements Reschedu
             HttpServer.HttpRequestProcessorSelectorFactory selectorFactory,
             WaitProcessor rescheduleContext
     ) {
+        this(context, dispatcher, selectorFactory, rescheduleContext, null);
+    }
+
+    private HttpConnectionFiberTask(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher,
+            HttpServer.HttpRequestProcessorSelectorFactory selectorFactory,
+            WaitProcessor rescheduleContext,
+            @Nullable Runnable beforeLaunchFailureSignalForTesting
+    ) {
+        this.beforeLaunchFailureSignalForTesting = beforeLaunchFailureSignalForTesting;
         this.context = context;
         this.dispatcher = dispatcher;
         this.selectorFactory = selectorFactory;
         this.rescheduleContext = rescheduleContext;
     }
 
-    /**
-     * The {@link RescheduleContext} the step hands to the connection: called when
-     * request processing hits a busy writer ({@code scheduleRetry} or a new request
-     * inside a rerun's receive loop). Only stages the retry; {@link #onParked()}
-     * performs the {@link WaitProcessor} enqueue once the gate has reopened.
-     */
+    @TestOnly
+    public static HttpConnectionFiberTask createForTesting(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher
+    ) {
+        return createForTesting(context, dispatcher, null);
+    }
+
+    @TestOnly
+    public static HttpConnectionFiberTask createForTesting(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher,
+            @Nullable Runnable beforeLaunchFailureSignalForTesting
+    ) {
+        return new HttpConnectionFiberTask(
+                context,
+                dispatcher,
+                new HttpServer.HttpRequestProcessorSelectorFactory(1),
+                null,
+                beforeLaunchFailureSignalForTesting
+        );
+    }
+
+    @TestOnly
+    public void closeForTesting() {
+        selectorFactory.close();
+    }
+
+    @TestOnly
+    public LaunchResult launchForTesting(FiberRuntime runtime, int operation) {
+        return launch(runtime, operation);
+    }
+
     @Override
     public void reschedule(Retry retry) {
         assert retry == context : "foreign retry staged on connection task";
         isReschedulePending = true;
     }
 
-    /**
-     * Mirrors the inline path's queue-full handling ({@code retry.fail} in
-     * {@link WaitProcessor}): sends the error response and arms the follow-up.
-     * Runs from {@link #onParked()} with the gate IDLE; ownership is exclusive
-     * because the failed enqueue armed no trigger and the fd is unregistered.
-     */
-    private void failRetry(RetryFailedOperationException e) {
-        final HttpServer.HttpRequestProcessorSelectorImpl selector = selectorFactory.acquire();
-        try {
-            context.fail(selector, e);
-        } catch (PeerIsSlowToReadException slowToRead) {
-            dispatcher.registerChannel(context, IOOperation.WRITE);
-        } catch (ServerDisconnectException disconnect) {
-            dispatcher.disconnect(context, context.getDisconnectReason());
-        } finally {
-            selectorFactory.release(selector);
-        }
+    LaunchResult launch(FiberRuntime runtime, int operation) {
+        tryReopen();
+        final int eventAction = switch (operation) {
+            case IOOperation.READ -> EVENT_READ;
+            case IOOperation.WRITE -> EVENT_WRITE;
+            default -> throw new IllegalArgumentException("unsupported HTTP fiber operation [operation=" + operation + ']');
+        };
+        return launchEvent(runtime, null, getIncarnation(), eventAction);
+    }
+
+    LaunchResult launchRerun(FiberRuntime runtime, long taskIncarnation) {
+        return launchEvent(runtime, null, taskIncarnation, EVENT_RERUN);
+    }
+
+    LaunchResult launchRerunReserved(FiberRuntime runtime, Fiber fiber, long taskIncarnation) {
+        return launchEvent(runtime, fiber, taskIncarnation, EVENT_RERUN);
+    }
+
+    LaunchResult launchReserved(FiberRuntime runtime, Fiber fiber, int operation) {
+        tryReopen();
+        final int eventAction = switch (operation) {
+            case IOOperation.READ -> EVENT_READ;
+            case IOOperation.WRITE -> EVENT_WRITE;
+            default -> throw new IllegalArgumentException("unsupported HTTP fiber operation [operation=" + operation + ']');
+        };
+        return launchEvent(runtime, fiber, getIncarnation(), eventAction);
     }
 
     @Override
     protected void onAbandoned() {
-        // shutdown raced the launch: the step never ran, so nothing else will
-        // return this checked-out context; disconnect it here
-        isAbandoned = true;
+        abortPreparedReschedule();
+        stagedEvent = 0;
+        if (!isDisconnectPending) {
+            disconnectReason = IODispatcher.DISCONNECT_REASON_SERVER_SHUTDOWN;
+        }
+        isDisconnectPending = true;
     }
 
     @Override
     protected void onDone() {
-        if (isAbandoned) {
-            dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_SERVER_SHUTDOWN);
-        } else if (isDisconnectPending) {
-            dispatcher.disconnect(context, context.getDisconnectReason());
+        stagedEvent = 0;
+        if (isDisconnectPending) {
+            isDisconnectPending = false;
+            dispatcher.disconnect(context, disconnectReason);
         }
     }
 
     @Override
     protected void onError(Throwable th) {
-        // matches the direct path: no disconnect, the connection stays unregistered
+        abortPreparedReschedule();
         LOG.critical().$("internal error [ex=").$(th).$(']').$();
+        disconnectReason = IODispatcher.DISCONNECT_REASON_SERVER_ERROR;
+        isDisconnectPending = true;
     }
 
     @Override
     protected void onParked() {
-        if (isReschedulePending) {
-            // The staged retry owns the wakeup: no fd action is armed alongside it,
-            // so the due rerun's launch is the only trigger and cannot be refused.
+        if (preparedRescheduleCursor > -1) {
+            final long cursor = preparedRescheduleCursor;
+            preparedRescheduleCursor = -1;
+            isRescheduleNextAttempt = false;
             isReschedulePending = false;
-            try {
-                if (isRescheduleNextAttempt) {
-                    rescheduleContext.rescheduleNextAttempt(context);
-                } else {
-                    rescheduleContext.reschedule(context);
-                }
-            } catch (RetryFailedOperationException e) {
-                failRetry(e);
+            rescheduleContext.publishReschedule(cursor);
+            return;
+        }
+        if (isDisconnectPending) {
+            if (!signalAxisA(SIGNAL_DISCONNECT)) {
+                throw new IllegalStateException("HTTP task is not arming");
             }
             return;
         }
@@ -180,44 +232,41 @@ public final class HttpConnectionFiberTask extends QueryTask implements Reschedu
         }
     }
 
-    /**
-     * Stages the fd operation for the next step. The dispatch job calls this before
-     * launching; the launch's gate CAS publishes the write to the mounting fiber.
-     */
-    void prepare(int operation) {
-        this.operation = operation;
-        this.isAbandoned = false;
-        this.isDisconnectPending = false;
-        this.isRerun = false;
-        this.isRescheduleNextAttempt = false;
-        this.isReschedulePending = false;
-    }
-
-    /**
-     * Stages a due busy-writer retry for the next step. The dispatch job calls this
-     * from its {@link WaitProcessor.RetryLauncher} before launching.
-     */
-    void prepareRerun() {
-        this.isAbandoned = false;
-        this.isDisconnectPending = false;
-        this.isRerun = true;
-        this.isRescheduleNextAttempt = false;
-        this.isReschedulePending = false;
+    @Override
+    protected void onParkPrepare() {
+        if (isReschedulePending) {
+            try {
+                preparedRescheduleCursor = isRescheduleNextAttempt
+                        ? rescheduleContext.prepareRescheduleNextAttempt(context, getIncarnation())
+                        : rescheduleContext.prepareReschedule(context, getIncarnation());
+            } catch (RetryFailedOperationException e) {
+                isRescheduleNextAttempt = false;
+                isReschedulePending = false;
+                failRetry(e);
+            }
+        }
     }
 
     @Override
     protected boolean runStep() {
+        final int eventAction = takeEvent();
+        assert preparedRescheduleCursor == -1;
+        disconnectReason = IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
+        isDisconnectPending = false;
+        isRescheduleNextAttempt = false;
+        isReschedulePending = false;
+        nextAction = ACTION_NONE;
         final HttpServer.HttpRequestProcessorSelectorImpl selector = selectorFactory.acquire();
         try {
-            if (isRerun) {
+            if (eventAction == EVENT_RERUN) {
                 if (!context.tryRerun(selector, this)) {
-                    // still busy: stage the next backoff attempt, enqueued in onParked()
                     isReschedulePending = true;
                     isRescheduleNextAttempt = true;
                 }
                 nextAction = ACTION_NONE;
                 return false;
             }
+            final int operation = eventAction == EVENT_READ ? IOOperation.READ : IOOperation.WRITE;
             context.handleClientOperation(operation, selector, this);
             nextAction = ACTION_NONE;
             return false;
@@ -231,10 +280,176 @@ public final class HttpConnectionFiberTask extends QueryTask implements Reschedu
             nextAction = ACTION_READ;
             return false;
         } catch (ServerDisconnectException e) {
+            disconnectReason = context.getDisconnectReason();
             isDisconnectPending = true;
             return true;
         } finally {
             selectorFactory.release(selector);
+        }
+    }
+
+    private void abortPreparedReschedule() {
+        if (preparedRescheduleCursor > -1) {
+            rescheduleContext.abortPreparedReschedule(preparedRescheduleCursor);
+            preparedRescheduleCursor = -1;
+        }
+    }
+
+    private void failRetry(RetryFailedOperationException e) {
+        disconnectReason = IODispatcher.DISCONNECT_REASON_RETRY_FAILED;
+        isDisconnectPending = true;
+        nextAction = ACTION_NONE;
+        final HttpServer.HttpRequestProcessorSelectorImpl selector = selectorFactory.acquire();
+        try {
+            context.fail(selector, e);
+        } catch (PeerIsSlowToReadException slowToRead) {
+            isDisconnectPending = false;
+            nextAction = ACTION_WRITE;
+        } catch (ServerDisconnectException disconnect) {
+            disconnectReason = context.getDisconnectReason();
+            isDisconnectPending = true;
+        } finally {
+            selectorFactory.release(selector);
+        }
+    }
+
+    private LaunchResult launchEvent(
+            FiberRuntime runtime,
+            @Nullable Fiber fiber,
+            long taskIncarnation,
+            int eventAction
+    ) {
+        boolean isReservationConsumed = fiber == null;
+        try {
+            if (taskIncarnation < 1 || taskIncarnation > MAX_EVENT_INCARNATION) {
+                throw new IllegalStateException("HTTP task incarnation is out of range [incarnation=" + taskIncarnation + ']');
+            }
+            final long pendingEvent = (taskIncarnation << EVENT_SHIFT) | eventAction;
+            while (true) {
+                if (getIncarnation() != taskIncarnation) {
+                    return LaunchResult.STALE_INCARNATION;
+                }
+                final int state = getScheduleState();
+                if (state == STATE_OWNED) {
+                    return LaunchResult.ALREADY_OWNED;
+                }
+                if (state != STATE_IDLE && state != STATE_ARMING && state != STATE_ARMING_SIGNALLED) {
+                    return LaunchResult.TERMINAL;
+                }
+                final long currentEvent = stagedEvent;
+                if (currentEvent != 0) {
+                    if ((currentEvent >>> EVENT_SHIFT) != taskIncarnation) {
+                        if (getIncarnation() != taskIncarnation) {
+                            return LaunchResult.STALE_INCARNATION;
+                        }
+                        Unsafe.cas(this, STAGED_EVENT_OFFSET, currentEvent, 0L);
+                        continue;
+                    }
+                    return LaunchResult.ALREADY_OWNED;
+                }
+                if (Unsafe.cas(this, STAGED_EVENT_OFFSET, 0L, pendingEvent)) {
+                    break;
+                }
+            }
+
+            if (getIncarnation() != taskIncarnation) {
+                return Unsafe.cas(this, STAGED_EVENT_OFFSET, pendingEvent, 0L)
+                        ? LaunchResult.STALE_INCARNATION
+                        : LaunchResult.ALREADY_OWNED;
+            }
+            final int state = getScheduleState();
+            if (state == STATE_OWNED) {
+                Unsafe.cas(this, STAGED_EVENT_OFFSET, pendingEvent, 0L);
+                return LaunchResult.ALREADY_OWNED;
+            }
+            if (state != STATE_IDLE && state != STATE_ARMING && state != STATE_ARMING_SIGNALLED) {
+                Unsafe.cas(this, STAGED_EVENT_OFFSET, pendingEvent, 0L);
+                return LaunchResult.TERMINAL;
+            }
+
+            final long readyEvent = pendingEvent | EVENT_READY;
+            if (!Unsafe.cas(this, STAGED_EVENT_OFFSET, pendingEvent, readyEvent)) {
+                if (getIncarnation() != taskIncarnation) {
+                    return LaunchResult.STALE_INCARNATION;
+                }
+                return isDone() ? LaunchResult.TERMINAL : LaunchResult.ALREADY_OWNED;
+            }
+            final LaunchResult result;
+            if (fiber != null) {
+                isReservationConsumed = true;
+                result = runtime.launchReserved(fiber, this, taskIncarnation);
+            } else {
+                result = runtime.launch(this, taskIncarnation);
+            }
+            if (result != LaunchResult.LAUNCHED && result != LaunchResult.ALREADY_OWNED) {
+                return resolveLaunchFailure(result, taskIncarnation, readyEvent);
+            }
+            return result;
+        } finally {
+            if (fiber != null && !isReservationConsumed) {
+                runtime.releaseReservedFiber(fiber);
+            }
+        }
+    }
+
+    private LaunchResult resolveLaunchFailure(LaunchResult result, long taskIncarnation, long readyEvent) {
+        while (true) {
+            if (getIncarnation() != taskIncarnation) {
+                Unsafe.cas(this, STAGED_EVENT_OFFSET, readyEvent, 0L);
+                return LaunchResult.STALE_INCARNATION;
+            }
+            final int state = getScheduleState();
+            if (state == STATE_OWNED) {
+                return LaunchResult.ALREADY_OWNED;
+            }
+            if (state == STATE_ARMING || state == STATE_ARMING_SIGNALLED) {
+                final Runnable hook = beforeLaunchFailureSignalForTesting;
+                if (hook != null) {
+                    hook.run();
+                }
+                if (result == LaunchResult.RESOURCE_FAILURE
+                        && signalAxisA(taskIncarnation, SIGNAL_READY)) {
+                    return LaunchResult.ALREADY_OWNED;
+                }
+                if (result == LaunchResult.QUIESCING
+                        && signalAxisA(taskIncarnation, SIGNAL_DISCONNECT)) {
+                    Unsafe.cas(this, STAGED_EVENT_OFFSET, readyEvent, 0L);
+                    return LaunchResult.ALREADY_OWNED;
+                }
+                continue;
+            }
+            if (state != STATE_IDLE) {
+                Unsafe.cas(this, STAGED_EVENT_OFFSET, readyEvent, 0L);
+                return isDone() ? LaunchResult.TERMINAL : LaunchResult.ALREADY_OWNED;
+            }
+            if (!Unsafe.cas(this, STAGED_EVENT_OFFSET, readyEvent, 0L)) {
+                return getIncarnation() == taskIncarnation
+                        ? LaunchResult.ALREADY_OWNED
+                        : LaunchResult.STALE_INCARNATION;
+            }
+            if ((result == LaunchResult.QUIESCING || result == LaunchResult.RESOURCE_FAILURE)
+                    && !tryCancel(taskIncarnation)) {
+                return isDone() ? LaunchResult.TERMINAL : LaunchResult.ALREADY_OWNED;
+            }
+            return result;
+        }
+    }
+
+    private int takeEvent() {
+        while (true) {
+            final long event = stagedEvent;
+            if (event == 0) {
+                throw new IllegalStateException("HTTP fiber task has no staged event");
+            }
+            if ((event >>> EVENT_SHIFT) != getIncarnation()) {
+                throw new IllegalStateException("HTTP fiber task has a stale staged event");
+            }
+            if ((event & EVENT_READY) == 0) {
+                throw new IllegalStateException("HTTP fiber task has an unpublished staged event");
+            }
+            if (Unsafe.cas(this, STAGED_EVENT_OFFSET, event, 0L)) {
+                return (int) (event & EVENT_ACTION_MASK);
+            }
         }
     }
 }

@@ -25,12 +25,12 @@
 package io.questdb.mp;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.WorkerMetrics;
-import io.questdb.mp.continuation.ContinuationQueue;
-import io.questdb.mp.continuation.ContinuationSink;
+import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -49,36 +49,29 @@ public class WorkerPool implements Closeable {
     private static final Log LOG = LogFactory.getLog(WorkerPool.class);
     @TestOnly
     private volatile Runnable afterClosedSignalForTesting;
-    // Every Job instance the pool mints through assign() (blueprints and their
-    // gen-0 clones). halt() closeInstance()s each one. closeInstance() is a
-    // no-op default on caller-owned singletons and idempotent on recycled
-    // clones, so the pool needs no blueprint-vs-clone bookkeeping to free them.
+    // Every Job instance the pool mints through assign() (the blueprint and its
+    // per-worker clones). halt() closeInstance()s each one. closeInstance() is
+    // a no-op default on caller-owned singletons, so the pool needs no
+    // blueprint-vs-clone bookkeeping to free them.
     private final ObjList<Job> assignedJobs = new ObjList<>();
     @TestOnly
     private volatile Runnable beforeStartedSignalForTesting;
     @TestOnly
     private volatile Runnable beforeWorkerAddedForTesting;
     private final AtomicBoolean closed = new AtomicBoolean();
-    // Non-legacy pools own a ContinuationQueue. Workers drain it from their
-    // outer driver between continuation mounts, NOT as a regular job. It cannot
-    // be a regular job because resume requires the calling thread to not already
-    // be carrying a cont in the same scope, which holds in the outer driver but
-    // not inside a mounted worker-loop body. Null on legacy pools.
-    private final ContinuationQueue continuationQueue;
     private final boolean daemons;
-    private final ObjList<Job> freeOnExit = new ObjList<>();
-    private final boolean haltOnError;
+    private final int fiberMaxLiveCount;
+    private final int fiberMountBudget;
+    private final int fiberRetainedCount;
+    private final FiberRuntime fiberRuntime;
+    private final ObjList<Object> freeOnExit = new ObjList<>();
     private final SOCountDownLatch halted;
-    // Fiber-host pools run a plain loop (no WorkerContinuation wrapping, no
-    // handoff, no generation minting) and mount parked QueryFibers from the
-    // continuation queue directly. See WorkerPoolConfiguration.isFiberHost().
-    private final boolean isFiberHost;
-    // Legacy pools run their loop body directly (no WorkerContinuation
-    // wrapping) and accept per-worker Job assignment via
-    // {@link #assign(int, Job)}. Used today for the ILP TCP IO and writer
-    // Jobs which key per-worker state by workerId at construction time.
-    private final boolean legacy;
+    private final Object haltLock = new Object();
+    private final boolean haltOnError;
+    private boolean isHaltComplete;
+    private volatile boolean isStartAttempted;
     private final Metrics metrics;
+    private final WorkerPoolMode mode;
     private final long napThreshold;
     private final String poolName;
     private final int priority;
@@ -112,11 +105,11 @@ public class WorkerPool implements Closeable {
         this.halted = new SOCountDownLatch(workerCount);
         this.haltOnError = configuration.haltOnError();
         this.daemons = configuration.isDaemonPool();
-        this.legacy = configuration.isLegacy();
-        this.isFiberHost = configuration.isFiberHost();
-        if (legacy && isFiberHost) {
-            throw new IllegalArgumentException("worker pool cannot be both legacy and fiber-host [pool=" + configuration.getPoolName() + "]");
+        this.mode = configuration.getWorkerPoolMode();
+        if (mode == null) {
+            throw new IllegalArgumentException("worker pool mode is required [pool=" + configuration.getPoolName() + ']');
         }
+        final boolean isFiberHost = mode == WorkerPoolMode.FIBER_HOST;
         this.poolName = configuration.getPoolName();
         this.yieldThreshold = configuration.getYieldThreshold();
         this.napThreshold = configuration.getNapThreshold();
@@ -124,6 +117,12 @@ public class WorkerPool implements Closeable {
         this.sleepMs = configuration.getSleepTimeout();
         this.metrics = configuration.getMetrics();
         this.priority = configuration.workerPoolPriority();
+        this.fiberMaxLiveCount = isFiberHost ? configuration.getFiberMaxLiveCount() : 0;
+        this.fiberMountBudget = isFiberHost ? configuration.getFiberMountBudget() : 1;
+        this.fiberRetainedCount = isFiberHost ? configuration.getFiberRetainedCount() : 0;
+        if (fiberMountBudget < 1) {
+            throw new IllegalArgumentException("fiber mount budget must be positive [pool=" + poolName + ']');
+        }
 
         assert this.workerAffinity.length == workerCount;
 
@@ -134,10 +133,15 @@ public class WorkerPool implements Closeable {
             threadLocalCleaners.add(new ObjList<>());
         }
 
-        // Legacy pools skip the continuation queue entirely; workers do not
-        // wrap their loop body and no peer-cont remount path exists.
-        this.continuationQueue = legacy ? null : new ContinuationQueue();
-        // NOT assigned via assign(): drained by worker outer driver instead.
+        this.fiberRuntime = isFiberHost
+                ? new FiberRuntime(
+                        fiberRetainedCount,
+                        fiberMaxLiveCount
+                )
+                : null;
+        if (fiberRuntime != null) {
+            metrics.fiberMetrics().register(poolName, fiberRuntime);
+        }
     }
 
     /**
@@ -152,27 +156,23 @@ public class WorkerPool implements Closeable {
 
         // The blueprint is closeInstance()d at halt; with zero workers it is
         // never cloned, so this is also what frees its construction resources.
-        assignedJobs.add(job);
+        trackOwnedJob(job);
         for (int i = 0; i < workerCount; i++) {
             Job clone = i == 0 ? job : job.cloneInstance();
-            workerJobs.getQuick(i).add(clone);
             // A stateful Job mints a fresh clone per worker; a stateless one
             // returns the same singleton. Track only the fresh clones -- the
             // singleton is already tracked above and closeInstance() is a no-op
             // on it anyway.
             if (clone != job) {
-                assignedJobs.add(clone);
+                trackOwnedJob(clone);
             }
+            workerJobs.getQuick(i).add(clone);
         }
     }
 
     /**
      * Assigns a specific Job instance to a specific worker. Preferred on
-     * legacy pools (where workerId is stable identity). Permitted on
-     * non-legacy pools when the caller already constructs per-worker Job
-     * instances (e.g., HttpServer's per-worker selectors): per-worker state
-     * survives cont rotation because the captured frame holds a stable
-     * reference, and any state-sharing concerns are the caller's to manage.
+     * pools whose caller constructs per-worker Job instances.
      */
     public void assign(int worker, Job job) {
         assert worker > -1 && worker < workerCount && !running.get() && !closed.get();
@@ -191,19 +191,31 @@ public class WorkerPool implements Closeable {
 
     public void freeOnExit(Job job) {
         assert !running.get() && !closed.get();
-        freeOnExit.add(job);
+        try {
+            freeOnExit.add(job);
+        } catch (Throwable th) {
+            if (job instanceof Closeable closeable) {
+                Misc.free(closeable, th);
+            }
+            throw th;
+        }
     }
 
-    /**
-     * Returns the {@link ContinuationSink} for this pool. Continuations constructed
-     * with this sink will resume on workers of this pool. Non-null on non-legacy
-     * pools; throws on legacy pools, which do not run continuations.
-     */
-    public ContinuationSink getContinuationSink() {
-        if (legacy) {
-            throw new IllegalStateException("legacy worker pool does not host continuations");
+    public void freeResourceOnExit(Closeable resource) {
+        assert !running.get() && !closed.get();
+        try {
+            freeOnExit.add(resource);
+        } catch (Throwable th) {
+            Misc.free(resource, th);
+            throw th;
         }
-        return continuationQueue;
+    }
+
+    public FiberRuntime getFiberRuntime() {
+        if (fiberRuntime == null) {
+            throw new IllegalStateException("worker pool does not host fibers [pool=" + poolName + ']');
+        }
+        return fiberRuntime;
     }
 
     public String getPoolName() {
@@ -212,6 +224,10 @@ public class WorkerPool implements Closeable {
 
     public int getWorkerCount() {
         return workerCount;
+    }
+
+    public WorkerPoolMode getWorkerPoolMode() {
+        return mode;
     }
 
     public void halt() {
@@ -224,12 +240,9 @@ public class WorkerPool implements Closeable {
      * The unbounded variant of this wait could block the caller forever: if a worker is wedged
      * (GC-starvation, a stuck native job) it never reaches halted.countDown(), so a plain
      * halted.await() in the close path made server shutdown unkillable under SIGTERM. This variant
-     * waits at most timeoutNanos for started/halted and then logs a warning and proceeds, so the
-     * caller can finish closing.
+     * waits at most timeoutNanos for runtime drain, start, and halt.
      * <p>
-     * Tradeoff: proceeding while a worker is still running means that worker may touch state that
-     * later cleanup frees. Keep the timeout generous -- it is only a backstop against a truly
-     * wedged worker, not a normal-path tuning knob. Healthy pools count down well within it.
+     * Every pool retains its object graph when carrier shutdown misses the deadline.
      * <p>
      * Footgun: this overload takes a RELATIVE timeout (a nanosecond duration measured from now),
      * but {@link io.questdb.WorkerPoolManager#halt(long)} has the identical {@code (long)} signature
@@ -241,9 +254,11 @@ public class WorkerPool implements Closeable {
      * @param timeoutNanos upper bound on the combined wait for started and halted, a RELATIVE
      *                     duration in nanoseconds measured from the call (NOT an absolute
      *                     {@link System#nanoTime()} deadline, unlike {@link io.questdb.WorkerPoolManager#halt(long)})
+     * @return true when the pool released all owned resources, false when the pool retained its
+     * live object graph after the deadline
      */
-    public void halt(long timeoutNanos) {
-        halt(timeoutNanos, false);
+    public boolean halt(long timeoutNanos) {
+        return halt(timeoutNanos, false);
     }
 
     @TestOnly
@@ -251,85 +266,8 @@ public class WorkerPool implements Closeable {
         halt(timeoutNanos, true);
     }
 
-    public boolean isLegacy() {
-        return legacy;
-    }
-
-    private void halt(long timeoutNanos, boolean strict) {
-        if (closed.compareAndSet(false, true)) {
-            final Runnable afterClosed = afterClosedSignalForTesting;
-            if (afterClosed != null) {
-                afterClosed.run();
-            }
-            if (running.compareAndSet(true, false)) {
-                final long deadline = System.nanoTime() + timeoutNanos;
-                // Signal halt to every spawned worker UNCONDITIONALLY, before clearing or freeing.
-                // start() may have stalled between running=true and started.countDown() (e.g. an OOM
-                // mid-launch), so the start latch may never count down -- but the worker threads are
-                // already spawned and looping. Skipping the signal there (the old start-latch-timeout
-                // branch) left those workers looping on RUNNING against the freeOnExit resources this
-                // method then frees: a use-after-free plus an orphan thread leak. The per-worker halt
-                // flag is idempotent, so signalling unconditionally is safe on every branch. Iterate
-                // the live workers list (not workerCount) so a partially-spawned pool is covered.
-                //
-                // Read the list under workersLock so a concurrent start() still mid-add cannot present
-                // it torn (a half-published pos/buffer or a null slot). The monitor makes this pass see
-                // an empty-or-complete-and-consistent snapshot; the signal still runs UNCONDITIONALLY
-                // and BEFORE started.await() below, preserving the start-stall halt ordering.
-                boolean startCompleted = false;
-                synchronized (workersLock) {
-                    for (int i = 0, n = workers.size(); i < n; i++) {
-                        workers.getQuick(i).halt();
-                    }
-                }
-                if (started.await(remaining(deadline))) {
-                    startCompleted = true;
-                    // start() completed: every worker is now in the list. Re-signal to catch any
-                    // worker spawned after the first pass but before started counted down (the flag
-                    // is idempotent), then wait for them to exit.
-                    for (int i = 0, n = workers.size(); i < n; i++) {
-                        workers.getQuick(i).halt();
-                    }
-                    if (!halted.await(remaining(deadline))) {
-                        if (strict) {
-                            throw workerPoolHaltTimeout(timeoutNanos, true);
-                        }
-                        LOG.error().$("timed out waiting for worker pool to halt; proceeding with close [pool=").$(poolName)
-                                .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
-                    }
-                } else {
-                    if (strict) {
-                        throw workerPoolHaltTimeout(timeoutNanos, startCompleted);
-                    }
-                    LOG.error().$("timed out waiting for worker pool to start; proceeding with close [pool=").$(poolName)
-                            .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
-                }
-            }
-            // closeInstance() every Job instance the pool owns: the blueprints and gen-0 clones
-            // from assign(), plus the clones each worker minted during cont rotation (mintNextGen).
-            // A rotation clone whose cont is abandoned at shutdown is never recycled, so this is the
-            // only release of its per-cont native resources (e.g. an HTTP selector). closeInstance()
-            // is a no-op default on caller-owned singletons and idempotent on recycled clones, so
-            // blanket-closing is safe. assignedJobs is not touched by start(), so it needs no monitor.
-            closeInstances(assignedJobs);
-            // Read the per-worker owned-clone lists and clear the list under the monitor. The
-            // start-latch-timeout branch reaches here while start() may still be mid-add-loop (an
-            // OOM/SIGTERM-stalled launch): an unguarded read/clear() races start()'s
-            // workers.add(worker), so a worker added right after would loop on the freeOnExit
-            // resources this then frees -- a use-after-free plus an orphan. Guarding serializes
-            // against the add critical section so this pass sees a consistent (empty-or-complete)
-            // list, never torn.
-            synchronized (workersLock) {
-                for (int i = 0, n = workers.size(); i < n; i++) {
-                    closeInstances(workers.getQuick(i).getOwnedJobClones());
-                }
-                workers.clear(); // Worker is not closable
-            }
-            // Closeables the caller explicitly handed to the pool via freeOnExit() are closed here;
-            // the pool never close()d the jobs it minted itself -- those release through
-            // closeInstance() above.
-            Misc.freeObjListIfCloseable(freeOnExit);
-        }
+    public boolean isFiberHost() {
+        return mode == WorkerPoolMode.FIBER_HOST;
     }
 
     @TestOnly
@@ -387,69 +325,87 @@ public class WorkerPool implements Closeable {
 
     public void start(@Nullable Log log) {
         if (!closed.get() && running.compareAndSet(false, true)) {
-
-            // very common cleaner
-            // it is set up from start() to make sure it is called last
-            // some other thread local cleaners are liable to access thread local Path instances
-            setupPathCleaner();
-
-            for (int i = 0; i < workerCount; i++) {
-                final int index = i;
-                Worker worker = new Worker(
-                        poolName,
-                        i,
-                        workerAffinity[i],
-                        workerJobs.getQuick(i),
-                        halted,
-                        _ -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),
-                        haltOnError,
-                        yieldThreshold,
-                        napThreshold,
-                        sleepThreshold,
-                        sleepMs,
-                        metrics,
-                        continuationQueue,
-                        isFiberHost,
-                        log
-                );
-                worker.setPriority(priority);
-                worker.setDaemon(daemons);
-                // Add + spawn under workersLock so a concurrent halt() first pass never reads the list
-                // torn (ObjList.add mutates a non-volatile pos/buffer). The worker is spawned inside the
-                // monitor too, so halt() either has not yet seen this worker (it is not spawned) or sees
-                // it fully published -- never a spawned-but-invisible worker that would loop on freed
-                // resources.
-                synchronized (workersLock) {
-                    // Fire the test seam INSIDE the monitor so a test can hold the add critical section
-                    // open and prove a concurrent halt() first pass is held off (serialized), never
-                    // reading a half-built list. The seam is a strict no-op when unset.
-                    final Runnable beforeWorkerAdded = beforeWorkerAddedForTesting;
-                    if (beforeWorkerAdded != null) {
-                        beforeWorkerAdded.run();
-                    }
-                    // Re-check closed inside the critical section, before spawning. A concurrent
-                    // halt(long) sets closed and frees freeOnExit under this same monitor; if the seam
-                    // (or a real OOM-stalled launch) held the add open while halt() ran, freeOnExit is
-                    // already gone by the time this loop resumes. Spawning a worker now would loop it on
-                    // freed resources -- a use-after-free plus an orphan thread. Break instead: the
-                    // workers added so far will be halt-signalled once the add critical section releases,
-                    // and started.countDown() below still runs so a waiting halt() proceeds.
-                    if (closed.get()) {
-                        countDownUnstartedWorkers(i);
-                        break;
-                    }
-                    workers.add(worker);
-                    worker.start();
+            isStartAttempted = true;
+            int spawnedWorkerCount = 0;
+            try {
+                if (log != null && fiberRuntime != null) {
+                    log.info().$("fiber-host worker pool configured [pool=").$(poolName)
+                            .$(", workers=").$(workerCount)
+                            .$(", maxLive=").$(fiberMaxLiveCount)
+                            .$(", maxRetained=").$(fiberRetainedCount)
+                            .$(", mountBudget=").$(fiberMountBudget)
+                            .I$();
                 }
+                // very common cleaner
+                // it is set up from start() to make sure it is called last
+                // some other thread local cleaners are liable to access thread local Path instances
+                setupPathCleaner();
+
+                for (int i = 0; i < workerCount; i++) {
+                    final int index = i;
+                    Worker worker = new Worker(
+                            poolName,
+                            i,
+                            workerAffinity[i],
+                            workerJobs.getQuick(i),
+                            halted,
+                            _ -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),
+                            haltOnError,
+                            yieldThreshold,
+                            napThreshold,
+                            sleepThreshold,
+                            sleepMs,
+                            metrics,
+                            fiberRuntime,
+                            fiberMountBudget,
+                            log
+                    );
+                    worker.setPriority(priority);
+                    worker.setDaemon(daemons);
+                    // Add + spawn under workersLock so a concurrent halt() first pass never reads the list
+                    // torn (ObjList.add mutates a non-volatile pos/buffer). The worker is spawned inside the
+                    // monitor too, so halt() either has not yet seen this worker (it is not spawned) or sees
+                    // it fully published -- never a spawned-but-invisible worker that would loop on freed
+                    // resources.
+                    synchronized (workersLock) {
+                        // Fire the test seam INSIDE the monitor so a test can hold the add critical section
+                        // open and prove a concurrent halt() first pass is held off (serialized), never
+                        // reading a half-built list. The seam is a strict no-op when unset.
+                        final Runnable beforeWorkerAdded = beforeWorkerAddedForTesting;
+                        if (beforeWorkerAdded != null) {
+                            beforeWorkerAdded.run();
+                        }
+                        // Re-check closed inside the critical section, before spawning. A concurrent
+                        // halt(long) sets closed and frees freeOnExit under this same monitor; if the seam
+                        // (or a real OOM-stalled launch) held the add open while halt() ran, freeOnExit is
+                        // already gone by the time this loop resumes. Spawning a worker now would loop it on
+                        // freed resources -- a use-after-free plus an orphan thread. Break instead: the
+                        // workers added so far will be halt-signalled once the add critical section releases,
+                        // and started.countDown() below still runs so a waiting halt() proceeds.
+                        if (closed.get()) {
+                            break;
+                        }
+                        workers.add(worker);
+                        try {
+                            worker.start();
+                            spawnedWorkerCount++;
+                        } catch (Throwable th) {
+                            workers.popLast();
+                            throw th;
+                        }
+                    }
+                }
+                if (log != null) {
+                    log.debug().$("worker pool started [pool=").$(poolName).I$();
+                }
+                final Runnable beforeStarted = beforeStartedSignalForTesting;
+                if (beforeStarted != null) {
+                    beforeStarted.run();
+                }
+            } finally {
+                countDownUnstartedWorkers(spawnedWorkerCount);
+                started.countDown();
             }
-            if (log != null) {
-                log.debug().$("worker pool started [pool=").$(poolName).I$();
-            }
-            final Runnable beforeStarted = beforeStartedSignalForTesting;
-            if (beforeStarted != null) {
-                beforeStarted.run();
-            }
-            started.countDown();
         }
     }
 
@@ -482,27 +438,138 @@ public class WorkerPool implements Closeable {
         }
     }
 
-    private void countDownUnstartedWorkers(int firstUnstartedWorker) {
-        for (int i = firstUnstartedWorker; i < workerCount; i++) {
-            halted.countDown();
-        }
-    }
-
     private static long remaining(long deadline) {
         // Never hand SOCountDownLatch.await() a non-positive budget; parkNanos(<=0) returns
         // immediately, which is the intended behaviour once the overall deadline has passed.
         return Math.max(1, deadline - System.nanoTime());
     }
 
-    private AssertionError workerPoolHaltTimeout(long timeoutNanos, boolean startCompleted) {
+    private void countDownUnstartedWorkers(int firstUnstartedWorker) {
+        for (int i = firstUnstartedWorker; i < workerCount; i++) {
+            halted.countDown();
+        }
+    }
+
+    private AssertionError fiberRuntimeHaltTimeout(long timeoutNanos, FiberRuntime runtime) {
         return new AssertionError(
-                "WorkerPool timed out waiting for workers to halt before leak-sensitive test cleanup [pool="
+                "WorkerPool timed out waiting for fiber runtime to drain before leak-sensitive test cleanup [pool="
                         + poolName
                         + ", timeoutMs=" + (timeoutNanos / 1_000_000)
-                        + ", startCompleted=" + startCompleted
-                        + ", remainingHalted=" + halted.getCount()
+                        + ", state=" + runtime.state()
+                        + ", outstanding=" + runtime.getOutstandingTaskCount()
+                        + ", queued=" + runtime.getQueuedCount()
+                        + ", mounted=" + runtime.getMountedCount()
+                        + ", parked=" + runtime.getParkedFiberCount()
+                        + ", live=" + runtime.getLiveFiberCount()
+                        + ", retained=" + runtime.getRetainedFiberCount()
+                        + ", finalizing=" + runtime.getFinalizerCount()
+                        + ", budgetExhaustions=" + runtime.getBudgetExhaustionCount()
                         + ']'
         );
+    }
+
+    private boolean halt(long timeoutNanos, boolean isStrict) {
+        synchronized (haltLock) {
+            if (isHaltComplete) {
+                return true;
+            }
+            if (closed.compareAndSet(false, true)) {
+                final Runnable afterClosed = afterClosedSignalForTesting;
+                if (afterClosed != null) {
+                    afterClosed.run();
+                }
+            }
+            final long deadline = System.nanoTime() + timeoutNanos;
+            final boolean isRunning = running.compareAndSet(true, false);
+            if (isRunning) {
+                isStartAttempted = true;
+            }
+            final FiberRuntime runtime = fiberRuntime;
+            if (runtime != null) {
+                runtime.beginQuiesce();
+                if (!runtime.awaitClosed(deadline)) {
+                    if (isStrict) {
+                        throw fiberRuntimeHaltTimeout(timeoutNanos, runtime);
+                    }
+                    LOG.error().$("timed out waiting for fiber runtime to drain; retaining live pool resources [pool=").$(poolName)
+                            .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms")
+                            .$(", state=").$(runtime.state().name())
+                            .$(", outstanding=").$(runtime.getOutstandingTaskCount())
+                            .$(", queued=").$(runtime.getQueuedCount())
+                            .$(", mounted=").$(runtime.getMountedCount())
+                            .$(", parked=").$(runtime.getParkedFiberCount())
+                            .$(", live=").$(runtime.getLiveFiberCount())
+                            .$(", retained=").$(runtime.getRetainedFiberCount())
+                            .$(", finalizing=").$(runtime.getFinalizerCount())
+                            .$(", budgetExhaustions=").$(runtime.getBudgetExhaustionCount()).I$();
+                    return false;
+                }
+            }
+            boolean isWorkerHaltComplete = true;
+            if (isStartAttempted) {
+                // Signal halt to every spawned worker UNCONDITIONALLY, before clearing or freeing.
+                // start() may have stalled between running=true and started.countDown() (e.g. an OOM
+                // mid-launch), so the start latch may never count down -- but the worker threads are
+                // already spawned and looping. Skipping the signal there (the old start-latch-timeout
+                // branch) left those workers looping on RUNNING against the freeOnExit resources this
+                // method then frees: a use-after-free plus an orphan thread leak. The per-worker halt
+                // flag is idempotent, so signalling unconditionally is safe on every branch. Iterate
+                // the live workers list (not workerCount) so a partially-spawned pool is covered.
+                //
+                // Read the list under workersLock so a concurrent start() still mid-add cannot present
+                // it torn (a half-published pos/buffer or a null slot). The monitor makes this pass see
+                // an empty-or-complete-and-consistent snapshot; the signal still runs UNCONDITIONALLY
+                // and BEFORE started.await() below, preserving the start-stall halt ordering.
+                synchronized (workersLock) {
+                    for (int i = 0, n = workers.size(); i < n; i++) {
+                        workers.getQuick(i).halt();
+                    }
+                }
+                if (started.await(remaining(deadline))) {
+                    // start() completed: every worker is now in the list. Re-signal to catch any
+                    // worker spawned after the first pass but before started counted down (the flag
+                    // is idempotent), then wait for them to exit.
+                    for (int i = 0, n = workers.size(); i < n; i++) {
+                        workers.getQuick(i).halt();
+                    }
+                    if (!halted.await(remaining(deadline))) {
+                        isWorkerHaltComplete = false;
+                        if (isStrict) {
+                            throw workerPoolHaltTimeout(timeoutNanos, true);
+                        }
+                        LOG.error().$("timed out waiting for worker pool to halt; retaining live pool resources [pool=")
+                                .$(poolName)
+                                .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
+                    }
+                } else {
+                    isWorkerHaltComplete = false;
+                    if (isStrict) {
+                        throw workerPoolHaltTimeout(timeoutNanos, false);
+                    }
+                    LOG.error().$("timed out waiting for worker pool to start; retaining live pool resources [pool=")
+                            .$(poolName)
+                            .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
+                }
+            }
+            if (!isWorkerHaltComplete) {
+                return false;
+            }
+            if (runtime != null) {
+                runtime.closeAfterDrained();
+                metrics.fiberMetrics().unregister(runtime);
+            }
+            closeInstances(assignedJobs);
+            synchronized (workersLock) {
+                workers.clear(); // Worker is not closable
+            }
+            // Closeables the caller explicitly handed to the pool via freeOnExit() are closed here;
+            // the pool never close()d the jobs it minted itself -- those release through
+            // closeInstance() above.
+            final Throwable cleanupFailure = Misc.freeObjListIfCloseableBestEffort(null, freeOnExit);
+            isHaltComplete = true;
+            CairoException.rethrowCleanupFailure(cleanupFailure);
+            return true;
+        }
     }
 
     private void setupPathCleaner() {
@@ -511,5 +578,31 @@ public class WorkerPool implements Closeable {
             workerCleaners.add(Path.THREAD_LOCAL_CLEANER);
             workerCleaners.add(O3PartitionJob.THREAD_LOCAL_CLEANER);
         }
+    }
+
+    private void trackOwnedJob(Job job) {
+        try {
+            assignedJobs.add(job);
+        } catch (Throwable th) {
+            try {
+                job.closeInstance();
+            } catch (Throwable cleanupFailure) {
+                if (cleanupFailure != th) {
+                    th.addSuppressed(cleanupFailure);
+                }
+            }
+            throw th;
+        }
+    }
+
+    private AssertionError workerPoolHaltTimeout(long timeoutNanos, boolean isStartComplete) {
+        return new AssertionError(
+                "WorkerPool timed out waiting for workers to halt before leak-sensitive test cleanup [pool="
+                        + poolName
+                        + ", timeoutMs=" + (timeoutNanos / 1_000_000)
+                        + ", startCompleted=" + isStartComplete
+                        + ", remainingHalted=" + halted.getCount()
+                        + ']'
+        );
     }
 }

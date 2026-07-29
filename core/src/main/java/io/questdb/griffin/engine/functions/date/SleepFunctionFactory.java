@@ -39,10 +39,16 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionSuspension;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.mp.continuation.TimerCont;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberCancellationWaitRegistration;
+import io.questdb.mp.continuation.FiberTimerWaitRegistration;
+import io.questdb.mp.continuation.FiberWaitCoordinator;
+import io.questdb.mp.continuation.SourceRegistrationResult;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.mp.continuation.TimerShards;
-import io.questdb.mp.continuation.WorkerContinuation;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -56,16 +62,13 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
  * callers run {@code sleep(1)} as a top-level query, instead of wrapping it
  * in {@code SELECT sleep(1)}.
  *
- * <p>Implementation is built on {@link TimerCont}: the worker carrier is
- * freed for the duration of the sleep instead of being burned in
- * {@link Os#sleep(long)}. Falls back to {@code Os.sleep} if no continuation
- * is mounted.
+ * <p>A Fiber uses its token-qualified wait coordinator. Synchronous callers
+ * use {@link Os#sleep(long)}.
  *
  * <p>The sleep is paced by {@code griffin.query.continuation.wake.interval}:
- * the body wakes on each tick to probe the SQL circuit breaker (timeout,
- * cancel, broken connection) and then re-arms a fresh timer entry until total
- * elapsed time reaches the requested duration. Engine close drains the timer
- * shards, the body observes {@code isShuttingDown()}, and unwinds.
+ * the body wakes on each tick to probe timeout and connection state, while
+ * query cancellation signals the wait directly. The body re-arms a fresh
+ * timer entry until total elapsed time reaches the requested duration.
  */
 public class SleepFunctionFactory implements FunctionFactory {
     private static final long MAX_SLEEP_MILLIS = 24L * 60 * 60 * 1_000;
@@ -195,10 +198,14 @@ public class SleepFunctionFactory implements FunctionFactory {
             final long deadline = clock.getTicks() + sleepMillis;
             final TimerShards shards = executionContext.getCairoEngine().getTimerShards();
 
-            // Continuation path: park the carrier through the timer shard. Wakes every
-            // wakeIntervalMillis to probe the circuit breaker; re-arms a fresh entry
-            // until the total deadline is reached or the breaker trips.
-            if (WorkerContinuation.isMounted()) {
+            final Fiber fiber = SqlExecutionSuspension.currentFiber();
+            if (fiber != null) {
+                final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+                FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
+                if (cancellationSignal == null) {
+                    final Object cancelledFlag = executionContext.getCircuitBreaker().getCancelledFlag();
+                    cancellationSignal = cancelledFlag instanceof FiberCancellationSignal signal ? signal : null;
+                }
                 while (true) {
                     long now = clock.getTicks();
                     long remaining = deadline - now;
@@ -207,20 +214,48 @@ public class SleepFunctionFactory implements FunctionFactory {
                     }
                     executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
                     long chunk = Math.min(remaining, wakeIntervalMillis);
-                    TimerCont t = TimerCont.scheduleAfter(shards, clock, chunk);
-                    if (!WorkerContinuation.suspend()) {
-                        // Carrier pinned by a synchronized or native frame: cancel the
-                        // pending timer entry and fall back to the polling loop below.
-                        t.abortContinuation();
-                        break;
-                    }
-                    if (t.isShuttingDown()) {
-                        throw CairoException.nonCritical().put("sleep aborted, connection closing");
+                    long token = fiber.beginWaitBuild(cancellationSignal == null ? 1 : 2);
+                    FiberCancellationWaitRegistration cancellationRegistration = null;
+                    FiberTimerWaitRegistration registration = null;
+                    try {
+                        if (cancellationSignal != null) {
+                            cancellationRegistration = coordinator.acquireCancellation(token, cancellationSignal);
+                            if (cancellationRegistration.register() != SourceRegistrationResult.ACCEPTED
+                                    || !coordinator.tryAcceptSource(token)) {
+                                throw CairoException.nonCritical().put("sleep aborted, connection closing");
+                            }
+                        }
+                        registration = coordinator.acquireTimer(token, shards, clock, chunk);
+                        if (registration.register() != SourceRegistrationResult.ACCEPTED
+                                || !coordinator.tryAcceptSource(token)) {
+                            throw CairoException.nonCritical().put("sleep aborted, connection closing");
+                        }
+                        int reason = fiber.suspendWait(token);
+                        if (cancellationRegistration != null) {
+                            cancellationRegistration.cancel();
+                        }
+                        registration.cancel();
+                        if (reason == FiberWaitCoordinator.REASON_ABORTED) {
+                            throw new IllegalStateException("fiber refused sleep suspension");
+                        }
+                        if (reason == FiberWaitCoordinator.REASON_SHUTDOWN) {
+                            throw CairoException.nonCritical().put("sleep aborted, connection closing");
+                        }
+                    } catch (Throwable th) {
+                        if (cancellationRegistration != null) {
+                            cancellationRegistration.cancel();
+                        }
+                        if (registration != null) {
+                            registration.cancel();
+                        }
+                        coordinator.abort(token);
+                        coordinator.consume(token);
+                        throw th;
                     }
                 }
             }
 
-            // Legacy polling fallback: no continuation gateway, or yield refused.
+            // Legacy polling fallback.
             while (clock.getTicks() < deadline) {
                 executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
                 Os.sleep(1);

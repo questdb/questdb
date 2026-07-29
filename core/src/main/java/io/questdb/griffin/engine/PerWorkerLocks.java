@@ -28,6 +28,14 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberCancellationWaitRegistration;
+import io.questdb.mp.continuation.FiberSlotWaitQueue;
+import io.questdb.mp.continuation.FiberSlotWaitRegistration;
+import io.questdb.mp.continuation.FiberWaitCoordinator;
+import io.questdb.mp.continuation.SourceRegistrationResult;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
@@ -42,12 +50,13 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
  * <p>
  * Each slot uses the 0/1 protocol: acquire changes 0 to 1 with one CAS and release stores 0.
  */
-public class PerWorkerLocks {
+public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
     // Reserve extra int array elements to avoid false sharing. A cache line is assumed to take 64 bytes.
     private static final int INTS_PER_SLOT = 64 / Integer.BYTES;
     private final AtomicIntegerArray locks;
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
     private final Rnd rnd;
+    private final FiberSlotWaitQueue slotWaitQueue;
     private final int workerCount;
     // Test-only: null in production, in which case acquireSlot() reads it once per frame and skips
     // the count down. Volatile so that a reducer on any thread sees the latch a test installs on the
@@ -65,6 +74,7 @@ public class PerWorkerLocks {
         );
         this.workerCount = workerCount;
         locks = new AtomicIntegerArray(INTS_PER_SLOT * workerCount);
+        slotWaitQueue = new FiberSlotWaitQueue(this);
     }
 
     /**
@@ -79,22 +89,31 @@ public class PerWorkerLocks {
      * @throws io.questdb.cairo.CairoException when the circuit breaker has tripped
      */
     public int acquireSlot(int workerId, SqlExecutionCircuitBreaker sqlCircuitBreaker) {
-        // A shared pool has more workers than an atom has slots, so the incoming worker id can be
-        // >= workerCount. Folding it up front keeps i + workerId under 2 * workerCount, so the probe
-        // needs only a conditional subtraction, and the sum cannot overflow to a negative slot index.
-        workerId = workerId == -1
-                ? rnd.nextInt(workerCount)
-                : workerId >= workerCount ? workerId % workerCount : workerId;
+        workerId = normalizeSlotStart(workerId);
         while (true) {
-            for (int i = 0; i < workerCount; i++) {
-                int id = i + workerId;
-                if (id >= workerCount) {
-                    id -= workerCount;
-                }
-                if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
+            final int slot = tryAcquireSlot(workerId);
+            if (slot > -1) {
+                countDownTestAcquireLatch();
+                return slot;
+            }
+            final SuspensionScope.Mode mode = SuspensionScope.getMode();
+            if (mode == SuspensionScope.Mode.FIBER) {
+                final int fiberSlot = awaitSlot(workerId);
+                if (fiberSlot > -1) {
+                    try {
+                        sqlCircuitBreaker.statefulThrowExceptionIfTripped();
+                    } catch (Throwable th) {
+                        releaseSlot(fiberSlot);
+                        throw th;
+                    }
                     countDownTestAcquireLatch();
-                    return id;
+                    return fiberSlot;
                 }
+                sqlCircuitBreaker.statefulThrowExceptionIfTripped();
+                throw CairoException.nonCritical().put("query aborted").setInterruption(true);
+            }
+            if (mode == null || mode == SuspensionScope.Mode.FORBIDDEN) {
+                throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
             }
             sqlCircuitBreaker.statefulThrowExceptionIfTripped();
             Os.pause();
@@ -102,21 +121,31 @@ public class PerWorkerLocks {
     }
 
     public int acquireSlot(int carrierId, ExecutionCircuitBreaker circuitBreaker) {
-        // See acquireSlot(int, SqlExecutionCircuitBreaker): the fold hoists the wrap out of the
-        // probe and keeps i + carrierId from overflowing to a negative slot index.
-        carrierId = carrierId == -1
-                ? rnd.nextInt(workerCount)
-                : carrierId >= workerCount ? carrierId % workerCount : carrierId;
-        while (!circuitBreaker.checkIfTripped()) {
-            for (int i = 0; i < workerCount; i++) {
-                int id = i + carrierId;
-                if (id >= workerCount) {
-                    id -= workerCount;
-                }
-                if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
+        carrierId = normalizeSlotStart(carrierId);
+        while (true) {
+            final int slot = tryAcquireSlot(carrierId);
+            if (slot > -1) {
+                countDownTestAcquireLatch();
+                return slot;
+            }
+            final SuspensionScope.Mode mode = SuspensionScope.getMode();
+            if (mode == SuspensionScope.Mode.FIBER) {
+                final int fiberSlot = awaitSlot(carrierId);
+                if (fiberSlot > -1) {
+                    if (circuitBreaker.checkIfTripped()) {
+                        releaseSlot(fiberSlot);
+                        break;
+                    }
                     countDownTestAcquireLatch();
-                    return id;
+                    return fiberSlot;
                 }
+                break;
+            }
+            if (mode == null || mode == SuspensionScope.Mode.FORBIDDEN) {
+                throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
+            }
+            if (circuitBreaker.checkIfTripped()) {
+                break;
             }
             Os.pause();
         }
@@ -149,9 +178,12 @@ public class PerWorkerLocks {
         return testAcquireLatch;
     }
 
+    @Override
     public void releaseSlot(int slot) {
         if (slot > -1) {
-            locks.set(INTS_PER_SLOT * slot, 0);
+            if (!slotWaitQueue.transfer(slot)) {
+                locks.set(INTS_PER_SLOT * slot, 0);
+            }
         }
     }
 
@@ -170,5 +202,73 @@ public class PerWorkerLocks {
         if (latch != null) {
             latch.countDown();
         }
+    }
+
+    private int awaitSlot(int slotStart) {
+        final Fiber fiber = Fiber.current();
+        if (fiber == null || !Fiber.isMounted()) {
+            throw CairoException.nonCritical().put("reducer slot wait requires a mounted fiber");
+        }
+        final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+        final FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
+        final long token = fiber.beginWaitBuild(cancellationSignal == null ? 1 : 2);
+        FiberCancellationWaitRegistration cancellationRegistration = null;
+        FiberSlotWaitRegistration slotRegistration = null;
+        try {
+            slotRegistration = coordinator.acquireSlot(token);
+            if (slotRegistration.register(slotWaitQueue) != SourceRegistrationResult.ACCEPTED
+                    || !coordinator.tryAcceptSource(token)) {
+                throw new IllegalStateException("reducer slot wait registration failed");
+            }
+            if (cancellationSignal != null) {
+                cancellationRegistration = coordinator.acquireCancellation(token, cancellationSignal);
+                if (cancellationRegistration.register() != SourceRegistrationResult.ACCEPTED
+                        || !coordinator.tryAcceptSource(token)) {
+                    throw new IllegalStateException("reducer cancellation registration failed");
+                }
+            }
+
+            final int slot = tryAcquireSlot(slotStart);
+            if (slot > -1) {
+                return slot;
+            }
+
+            final int reason = fiber.suspendWait(token);
+            if (reason == FiberWaitCoordinator.REASON_SLOT) {
+                return slotRegistration.takeSlot();
+            }
+            if (reason == FiberWaitCoordinator.REASON_ABORTED) {
+                throw new IllegalStateException("fiber refused reducer slot suspension");
+            }
+            return -1;
+        } finally {
+            if (cancellationRegistration != null) {
+                cancellationRegistration.cancel();
+            }
+            if (slotRegistration != null) {
+                slotRegistration.cancel();
+            }
+            coordinator.abort(token);
+            coordinator.consume(token);
+        }
+    }
+
+    private int normalizeSlotStart(int workerId) {
+        return workerId == -1
+                ? rnd.nextInt(workerCount)
+                : workerId >= workerCount ? workerId % workerCount : workerId;
+    }
+
+    private int tryAcquireSlot(int slotStart) {
+        for (int i = 0; i < workerCount; i++) {
+            int slot = i + slotStart;
+            if (slot >= workerCount) {
+                slot -= workerCount;
+            }
+            if (locks.compareAndSet(INTS_PER_SLOT * slot, 0, 1)) {
+                return slot;
+            }
+        }
+        return -1;
     }
 }

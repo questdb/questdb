@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Rnd;
@@ -89,20 +90,22 @@ public interface PGConfiguration extends IODispatcherConfiguration, WorkerPoolCo
 
     String getServerVersion();
 
-    boolean isInsertCacheEnabled();
+    @Override
+    default WorkerPoolMode getWorkerPoolMode() {
+        return isFiberEnabled() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
+    }
 
     /**
      * When enabled (the default), connection operations (message parsing, query
-     * execution, result streaming) run as QueryTasks on pooled, non-completing
-     * fibers instead of inline in the network worker's job: a wait function inside
-     * a query (wait_wal_table / sleep) then freezes the pooled fiber, which is
-     * reused across parks, instead of freezing the worker's loop continuation,
-     * which is discarded per park. Ignored (direct dispatch) when the server's
-     * worker pool is legacy, which cannot host continuations.
+     * execution, result streaming) run as FiberTask instances on pooled fibers instead of
+     * inline in the network worker's job. The actual worker pool must use
+     * {@link WorkerPoolMode#FIBER_HOST}.
      */
-    default boolean isQueryFiberEnabled() {
+    default boolean isFiberEnabled() {
         return true;
     }
+
+    boolean isInsertCacheEnabled();
 
     boolean isReadOnlyUserEnabled();
 

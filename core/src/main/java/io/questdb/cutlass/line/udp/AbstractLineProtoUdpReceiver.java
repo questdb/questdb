@@ -39,7 +39,6 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements Closeable {
@@ -119,17 +118,8 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     public void close() {
         if (fd > -1) {
             if (running.compareAndSet(true, false)) {
-                // Bound started.await() so a ctor-on-throw close() does not deadlock if
-                // start() flipped the running CAS but the spawned thread never reached
-                // started.countDown() (e.g. OOM in new Thread(...) or Thread.start()). An
-                // unbounded await would block close() forever in that path; a finite
-                // timeout lets close() proceed to fd cleanup and rethrow the original ctor
-                // exception. 5s is long enough that healthy shutdowns never hit the timeout.
-                if (!started.await(TimeUnit.SECONDS.toNanos(5))) {
-                    LOG.error().$("timed out waiting for receiver thread to start; bailing out of started.await() to avoid close() deadlock").$();
-                } else {
-                    halted.await();
-                }
+                started.await();
+                halted.await();
             }
             if (nf.close(fd) != 0) {
                 LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
@@ -148,20 +138,42 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
 
     public void start() {
         if (configuration.ownThread() && running.compareAndSet(false, true)) {
-            new Thread(() -> {
-                started.countDown();
-                if (configuration.ownThreadAffinity() != -1) {
-                    Os.setCurrentThreadAffinity(configuration.ownThreadAffinity());
+            final Thread thread;
+            try {
+                thread = createThread(() -> {
+                    started.countDown();
+                    try {
+                        if (configuration.ownThreadAffinity() != -1) {
+                            Os.setCurrentThreadAffinity(configuration.ownThreadAffinity());
+                        }
+                        logStarted(configuration);
+                        while (running.get()) {
+                            runSerially();
+                        }
+                        LOG.info().$("shutdown").$();
+                    } finally {
+                        Path.clearThreadLocals();
+                        halted.countDown();
+                    }
+                });
+                thread.setName("line-udp-receiver");
+            } catch (Throwable th) {
+                resetFailedStart();
+                throw th;
+            }
+            try {
+                thread.start();
+            } catch (Throwable th) {
+                if (thread.getState() == Thread.State.NEW) {
+                    resetFailedStart();
                 }
-                logStarted(configuration);
-                while (running.get()) {
-                    runSerially();
-                }
-                LOG.info().$("shutdown").$();
-                Path.clearThreadLocals();
-                halted.countDown();
-            }).start();
+                throw th;
+            }
         }
+    }
+
+    protected Thread createThread(Runnable runnable) {
+        return new Thread(runnable);
     }
 
     private void bind(LineUdpReceiverConfiguration configuration) {
@@ -201,5 +213,11 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                     .$(", commitRate=").$(commitRate)
                     .I$();
         }
+    }
+
+    private void resetFailedStart() {
+        running.set(false);
+        started.countDown();
+        halted.countDown();
     }
 }

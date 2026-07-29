@@ -47,6 +47,8 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -72,12 +74,14 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
     private T atom;
     private final AtomicInteger cancelReason = new AtomicInteger(SqlExecutionCircuitBreaker.STATE_OK);
+    private final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final StringSink errorMsg = new StringSink();
     private PageFrameAddressCache frameAddressCache;
     private final LongList frameRowCounts = new LongList();
     private final AtomicBoolean isValid = new AtomicBoolean(true);
+    private final MessageBus messageBus;
     private final MPSequence reducePubSeq;
     private final RingQueue<UnorderedPageFrameReduceTask> reduceQueue;
     private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
@@ -118,6 +122,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         try {
             this.atom = atom;
             this.frameAddressCache = new PageFrameAddressCache();
+            this.messageBus = messageBus;
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
             this.workStealingStrategy = configuration.getFactoryProvider()
@@ -171,6 +176,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     public void cancel(int reason) {
         isValid.compareAndSet(true, false);
         cancelReason.set(reason);
+        cancellationSignal.cancel();
     }
 
     @Override
@@ -210,21 +216,47 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
 
         int queued = 0;
         int localCount = 0;
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
 
         // Phase 1: Dispatch all frames.
         // The try/finally ensures queuedCount is set even if reduceLocally() throws,
         // so that await() in close() properly drains in-flight tasks.
         try {
+            DISPATCH:
             for (int i = 0; i < frameCount; i++) {
                 while (true) {
-                    long cursor = reducePubSeq.next();
+                    final long cursor;
+                    if (dispatcher == null) {
+                        cursor = reducePubSeq.next();
+                        if (cursor > -1) {
+                            reduceQueue.get(cursor).of(this, i);
+                            reducePubSeq.done(cursor);
+                        }
+                    } else {
+                        if (!dispatcher.tryAcquirePublication()) {
+                            cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                            break DISPATCH;
+                        }
+                        try {
+                            cursor = reducePubSeq.next();
+                            if (cursor > -1) {
+                                reduceQueue.get(cursor).of(this, i);
+                                reducePubSeq.done(cursor);
+                            }
+                        } finally {
+                            dispatcher.releasePublication();
+                        }
+                    }
                     if (cursor > -1) {
-                        reduceQueue.get(cursor).of(this, i);
-                        reducePubSeq.done(cursor);
                         queued++;
                         break;
                     } else if (cursor == -1) {
-                        // Queue full.
+                        if (dispatcher != null) {
+                            if (!stealWork()) {
+                                Os.pause();
+                            }
+                            continue;
+                        }
                         if (workStealingStrategy.shouldSteal(localCount)) {
                             if (stealWork()) {
                                 workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
@@ -294,6 +326,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
 
     public int getCancelReason() {
         return cancelReason.get();
+    }
+
+    public FiberCancellationSignal getCancellationSignal() {
+        return cancellationSignal;
     }
 
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
@@ -384,6 +420,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
 
             id = ID_SEQ.incrementAndGet();
             isValid.set(true);
+            cancellationSignal.reset();
             cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
             doneLatch.reset();
             reduceStartedCounter.set(0);
@@ -517,6 +554,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     }
 
     private void reduceLocally(int frameIndex) {
+        final SuspensionScope.Mode previousMode = SuspensionScope.enter(
+                SuspensionScope.Mode.BLOCKING
+        );
         try {
             if (isActive()) {
                 localRecord.of(getSymbolTableSource());
@@ -539,6 +579,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             // thread and bypass the kind-aware rebuild, losing the original class.
             setError(th);
             cancel(interruptReason);
+        } finally {
+            SuspensionScope.restore(previousMode);
         }
     }
 
@@ -548,12 +590,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         // breaker wrapper for the foreign sequence. Callers must not assume their
         // state is preserved across this call and must re-init the wrapper when
         // this method returns true (a task was consumed).
-        return !UnorderedPageFrameReduceJob.consumeQueue(
-                reduceQueue,
-                reduceSubSeq,
-                localRecord,
-                workStealCircuitBreaker,
-                this
-        );
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        return !(dispatcher != null
+                ? dispatcher.consumeUnordered(-1, reduceQueue, reduceSubSeq, this)
+                : UnorderedPageFrameReduceJob.consumeQueue(
+                        reduceQueue,
+                        reduceSubSeq,
+                        localRecord,
+                        workStealCircuitBreaker,
+                        this
+                ));
     }
 }

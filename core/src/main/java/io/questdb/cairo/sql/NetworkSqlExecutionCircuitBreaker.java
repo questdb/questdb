@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -75,12 +76,21 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void cancel() {
+    public synchronized void cancel() {
         powerUpTime = Long.MIN_VALUE;
         // This call can be concurrent with the call to setCancelledFlag
         AtomicBoolean cf = cancelledFlag;
-        if (cf != null) {
+        if (cf instanceof FiberCancellationSignal cancellationSignal) {
+            cancellationSignal.cancel();
+        } else if (cf != null) {
             cf.set(true);
+        }
+    }
+
+    @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected) {
+        if (cancelledFlag == expected) {
+            cancelledFlag = null;
         }
     }
 
@@ -236,7 +246,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+    public synchronized void setCancelledFlag(AtomicBoolean cancelledFlag) {
         this.cancelledFlag = cancelledFlag;
     }
 

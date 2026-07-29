@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.ConcurrentIntHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
@@ -323,16 +324,21 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 TestUtils.drainWalQueue(serverMain.getEngine());
 
                 // Wait for WAL transactions to be applied
-                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
-                }, "select wait_wal_table('tracker_test1')")
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns("wait_wal_table('tracker_test1')\ntrue\n");
-                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
-                }, "select wait_wal_table('tracker_test2')")
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns("wait_wal_table('tracker_test2')\ntrue\n");
+                final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
+                try {
+                    new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                    }, "select wait_wal_table('tracker_test1')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("wait_wal_table('tracker_test1')\ntrue\n");
+                    new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                    }, "select wait_wal_table('tracker_test2')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("wait_wal_table('tracker_test2')\ntrue\n");
+                } finally {
+                    SuspensionScope.restore(previousMode);
+                }
             }
 
             // Second server: verify tracker is hydrated from existing tables
@@ -812,6 +818,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.net.accept.loop.timeout\tQDB_HTTP_MIN_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.affinity\tQDB_HTTP_MIN_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.count\tQDB_HTTP_MIN_WORKER_COUNT\t1\tdefault\tfalse\tfalse\n" +
+                                    "http.min.worker.fiber.enabled\tQDB_HTTP_MIN_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.haltOnError\tQDB_HTTP_MIN_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.sleep.threshold\tQDB_HTTP_MIN_WORKER_SLEEP_THRESHOLD\t100\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.sleep.timeout\tQDB_HTTP_MIN_WORKER_SLEEP_TIMEOUT\t50\tdefault\tfalse\tfalse\n" +
@@ -838,7 +845,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.query.cache.block.count\tQDB_HTTP_QUERY_CACHE_BLOCK_COUNT\t32\tdefault\tfalse\tfalse\n" +
                                     "http.query.cache.enabled\tQDB_HTTP_QUERY_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "http.query.cache.row.count\tQDB_HTTP_QUERY_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
-                                    "http.query.fiber.enabled\tQDB_HTTP_QUERY_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "http.fiber.enabled\tQDB_HTTP_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "http.request.header.buffer.size\tQDB_HTTP_REQUEST_HEADER_BUFFER_SIZE\t64448\tdefault\tfalse\ttrue\n" +
                                     "http.security.interrupt.on.closed.connection\tQDB_HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION\ttrue\tdefault\tfalse\tfalse\n" +
                                     "http.security.max.response.rows\tQDB_HTTP_SECURITY_MAX_RESPONSE_ROWS\t9223372036854775807\tdefault\tfalse\tfalse\n" +
@@ -885,6 +892,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.enabled\tQDB_LINE_TCP_ENABLED\ttrue\tconf\tfalse\tfalse\n" +
                                     "line.tcp.io.halt.on.error\tQDB_LINE_TCP_IO_HALT_ON_ERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.affinity\tQDB_LINE_TCP_IO_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.io.worker.fiber.enabled\tQDB_LINE_TCP_IO_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.sleep.threshold\tQDB_LINE_TCP_IO_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.nap.threshold\tQDB_LINE_TCP_IO_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.yield.threshold\tQDB_LINE_TCP_IO_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
@@ -913,6 +921,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.writer.queue.capacity\tQDB_LINE_TCP_WRITER_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.affinity\tQDB_LINE_TCP_WRITER_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.count\tQDB_LINE_TCP_WRITER_WORKER_COUNT\t0\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.writer.worker.fiber.enabled\tQDB_LINE_TCP_WRITER_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.sleep.threshold\tQDB_LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.nap.threshold\tQDB_LINE_TCP_WRITER_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.yield.threshold\tQDB_LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
@@ -947,17 +956,20 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.mat.view.refresh.memory.limit.bytes\tQDB_CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES\t0\tdefault\tfalse\ttrue\n" +
                                     "mat.view.refresh.worker.nap.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.affinity\tQDB_MAT_VIEW_REFRESH_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "mat.view.refresh.worker.fiber.enabled\tQDB_MAT_VIEW_REFRESH_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.sleep.timeout\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.haltOnError\tQDB_MAT_VIEW_REFRESH_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.yield.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.sleep.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "export.worker.nap.threshold\tQDB_EXPORT_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "export.worker.affinity\tQDB_EXPORT_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.fiber.enabled\tQDB_EXPORT_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "export.worker.sleep.timeout\tQDB_EXPORT_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "export.worker.haltOnError\tQDB_EXPORT_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "export.worker.yield.threshold\tQDB_EXPORT_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
                                     "export.worker.sleep.threshold\tQDB_EXPORT_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "view.compiler.worker.yield.threshold\tQDB_VIEW_COMPILER_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
+                                    "view.compiler.worker.fiber.enabled\tQDB_VIEW_COMPILER_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "view.compiler.worker.haltOnError\tQDB_VIEW_COMPILER_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "view.compiler.worker.sleep.threshold\tQDB_VIEW_COMPILER_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "view.compiler.worker.sleep.timeout\tQDB_VIEW_COMPILER_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
@@ -997,7 +1009,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.recv.buffer.size\tQDB_PG_RECV_BUFFER_SIZE\t1048576\tdefault\tfalse\ttrue\n" +
                                     "pg.security.readonly\tQDB_PG_SECURITY_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "pg.select.cache.block.count\tQDB_PG_SELECT_CACHE_BLOCK_COUNT\t32\tdefault\tfalse\tfalse\n" +
-                                    "pg.query.fiber.enabled\tQDB_PG_QUERY_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "pg.fiber.enabled\tQDB_PG_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "pg.select.cache.enabled\tQDB_PG_SELECT_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "pg.select.cache.row.count\tQDB_PG_SELECT_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.send.buffer.size\tQDB_PG_SEND_BUFFER_SIZE\t1048576\tdefault\tfalse\ttrue\n" +
@@ -1037,10 +1049,16 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "shared.worker.yield.threshold\tQDB_SHARED_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
                                     "shared.network.worker.affinity\tQDB_SHARED_NETWORK_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.network.worker.count\tQDB_SHARED_NETWORK_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.fiber.enabled\tQDB_SHARED_NETWORK_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "shared.query.worker.affinity\tQDB_SHARED_QUERY_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.query.worker.count\tQDB_SHARED_QUERY_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.fiber.enabled\tQDB_SHARED_QUERY_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "shared.write.worker.affinity\tQDB_SHARED_WRITE_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.write.worker.count\tQDB_SHARED_WRITE_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.fiber.enabled\tQDB_SHARED_WRITE_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "worker.fiber.max.live\tQDB_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\tfalse\n" +
+                                    "worker.fiber.max.retained\tQDB_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\tfalse\n" +
+                                    "worker.fiber.mount.budget\tQDB_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\tfalse\n" +
                                     "table.type.conversion.enabled\tQDB_TABLE_TYPE_CONVERSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "telemetry.disable.completely\tQDB_TELEMETRY_DISABLE_COMPLETELY\tfalse\tconf\tfalse\tfalse\n" +
                                     "telemetry.enabled\tQDB_TELEMETRY_ENABLED\ttrue\tconf\tfalse\tfalse\n" +
@@ -1049,6 +1067,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "telemetry.table.ttl.weeks\tQDB_TELEMETRY_TABLE_TTL_WEEKS\t4\tdefault\tfalse\tfalse\n" +
                                     "telemetry.event.throttle.interval\tQDB_TELEMETRY_EVENT_THROTTLE_INTERVAL\t60000000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.affinity\tQDB_WAL_APPLY_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "wal.apply.worker.fiber.enabled\tQDB_WAL_APPLY_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.haltOnError\tQDB_WAL_APPLY_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.sleep.threshold\tQDB_WAL_APPLY_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.sleep.timeout\tQDB_WAL_APPLY_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +

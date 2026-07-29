@@ -4901,6 +4901,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             updateColumnNames.add(updateMetadata.getColumnName(i));
         }
 
+        final int liveWalProgressPosition = functionParser.getExecutionRequirements().getPosition(
+                SqlExecutionRequirements.REQUIRES_LIVE_WAL_PROGRESS
+        );
+        if (metadata.isWalEnabled() && !executionContext.isWalApplication() && liveWalProgressPosition >= 0) {
+            recordCursorFactory.close();
+            throw SqlException.position(liveWalProgressPosition)
+                    .put("WAL UPDATE cannot require live WAL progress");
+        }
+
         if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
             return new UpdateOperation(
                     updateTableToken,
@@ -4908,7 +4917,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     selectQueryModel.getMetadataVersion(),
                     lexer.getPosition(),
                     recordCursorFactory,
-                    updateColumnNames
+                    updateColumnNames,
+                    liveWalProgressPosition
             );
         } else {
             recordCursorFactory.close();

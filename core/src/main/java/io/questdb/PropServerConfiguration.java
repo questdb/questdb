@@ -67,6 +67,7 @@ import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.EpollFacadeImpl;
 import io.questdb.network.KqueueFacade;
@@ -237,11 +238,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean devModeEnabled;
     private final Set<? extends ConfigPropertyKey> dynamicProperties;
     private final boolean enableTestFactories;
-    private final WorkerPoolConfiguration exportPoolConfiguration = new PropExportPoolConfiguration();
+    private final PropExportPoolConfiguration exportPoolConfiguration = new PropExportPoolConfiguration();
     private final int[] exportWorkerAffinity;
     private final int exportWorkerCount;
     private final boolean exportWorkerHaltOnError;
     private final long exportWorkerNapThreshold;
+    private final WorkerPoolMode exportWorkerPoolMode;
     private final long exportWorkerSleepThreshold;
     private final long exportWorkerSleepTimeout;
     private final long exportWorkerYieldThreshold;
@@ -261,6 +263,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final ObjHashSet<String> httpContextPathWarnings = new ObjHashSet<>();
     private final String httpContextWebConsole;
     private final long httpExportTimeout;
+    private final boolean httpFiberEnabled;
     private final boolean httpFrozenClock;
     private final PropHttpConcurrentCacheConfiguration httpMinConcurrentCacheConfiguration = new PropHttpConcurrentCacheConfiguration();
     private final PropHttpContextConfiguration httpMinContextConfiguration;
@@ -272,7 +275,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long httpRecvMaxBufferSize;
     private final int httpSendBufferSize;
     private final boolean httpServerEnabled;
-    private final boolean httpQueryFiberEnabled;
     private final boolean httpSettingsReadOnly;
     private final int httpSqlCacheBlockCount;
     private final boolean httpSqlCacheEnabled;
@@ -316,9 +318,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
     private final String lineTcpAuthDB;
     private final boolean lineTcpEnabled;
-    private final WorkerPoolConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
+    private final PropLineTcpIOWorkerPoolConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
-    private final WorkerPoolConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
+    private final PropLineTcpWriterWorkerPoolConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
     private final int lineUdpCommitMode;
     private final int lineUdpCommitRate;
     private final boolean lineUdpEnabled;
@@ -353,12 +355,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int matViewRefreshMaxClusters;
     private final long matViewRefreshMemoryLimitBytes;
     private final boolean matViewRefreshMissingWalFilesFatal;
-    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
+    private final PropMatViewsRefreshPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
     private final int[] matViewRefreshWorkerAffinity;
     private final int matViewRefreshWorkerCount;
     private final boolean matViewRefreshWorkerHaltOnError;
     private final long matViewRefreshWorkerNapThreshold;
+    private final WorkerPoolMode matViewRefreshWorkerPoolMode;
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
     private final long matViewRowsPerQueryEstimate;
@@ -415,7 +418,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetRowGroupSize;
     private final boolean partitionEncoderParquetStatisticsEnabled;
     private final int partitionEncoderParquetVersion;
-    private final PGConfiguration pgConfiguration = new PropPGConfiguration();
+    private final PropPGConfiguration pgConfiguration = new PropPGConfiguration();
     private final boolean pgEnabled;
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
     private final int poolSegmentSize;
@@ -597,12 +600,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int utf8SinkSize;
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
-    private final WorkerPoolConfiguration viewCompilerPoolConfiguration = new PropViewCompilerPoolConfiguration();
+    private final PropViewCompilerPoolConfiguration viewCompilerPoolConfiguration = new PropViewCompilerPoolConfiguration();
     private final long viewCompilerSleepTimeout;
     private final int[] viewCompilerWorkerAffinity;
     private final int viewCompilerWorkerCount;
     private final boolean viewCompilerWorkerHaltOnError;
     private final long viewCompilerWorkerNapThreshold;
+    private final WorkerPoolMode viewCompilerWorkerPoolMode;
     private final long viewCompilerWorkerSleepThreshold;
     private final long viewCompilerWorkerYieldThreshold;
     private final int viewWalWriterPoolMaxSegments;
@@ -610,7 +614,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
     private final long walApplyMemoryLimitBytes;
-    private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
+    private final PropWalApplyPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
     private final long walApplySleepTimeout;
     private final ObjHashSet<String> walApplySuspendedTables = new ObjHashSet<>();
     private final boolean walApplySuspendedWriteDenied;
@@ -619,6 +623,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int walApplyWorkerCount;
     private final boolean walApplyWorkerHaltOnError;
     private final long walApplyWorkerNapThreshold;
+    private final WorkerPoolMode walApplyWorkerPoolMode;
     private final long walApplyWorkerSleepThreshold;
     private final long walApplyWorkerYieldThreshold;
     private final boolean walEnabledDefault;
@@ -674,6 +679,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
     private long httpMinWorkerNapThreshold;
+    private WorkerPoolMode httpMinWorkerPoolMode = WorkerPoolMode.LEGACY;
     private int httpMinWorkerPoolPriority;
     private long httpMinWorkerSleepThreshold;
     private long httpMinWorkerSleepTimeout;
@@ -698,6 +704,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int[] lineTcpIOWorkerAffinity;
     private int lineTcpIOWorkerCount;
     private long lineTcpIOWorkerNapThreshold;
+    private WorkerPoolMode lineTcpIOWorkerPoolMode = WorkerPoolMode.LEGACY;
     private boolean lineTcpIOWorkerPoolHaltOnError;
     private long lineTcpIOWorkerSleepThreshold;
     private long lineTcpIOWorkerYieldThreshold;
@@ -719,6 +726,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int[] lineTcpWriterWorkerAffinity;
     private int lineTcpWriterWorkerCount;
     private long lineTcpWriterWorkerNapThreshold;
+    private WorkerPoolMode lineTcpWriterWorkerPoolMode = WorkerPoolMode.LEGACY;
     private boolean lineTcpWriterWorkerPoolHaltOnError;
     private long lineTcpWriterWorkerSleepThreshold;
     private long lineTcpWriterWorkerYieldThreshold;
@@ -733,6 +741,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgConnectionPoolInitialCapacity;
     private boolean pgDaemonPool;
     private DateLocale pgDefaultLocale;
+    private boolean pgFiberEnabled;
     private int pgForceRecvFragmentationChunkSize;
     private int pgForceSendFragmentationChunkSize;
     private boolean pgHaltOnError;
@@ -759,7 +768,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean pgReadOnlySecurityContext;
     private boolean pgReadOnlyUserEnabled;
     private String pgReadOnlyUsername;
-    private boolean pgQueryFiberEnabled;
     private int pgRecvBufferSize;
     private int pgSelectCacheBlockCount;
     private boolean pgSelectCacheEnabled;
@@ -1123,6 +1131,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (httpMinServerEnabled) {
                 this.httpMinWorkerHaltOnError = getBoolean(properties, env, PropertyKey.HTTP_MIN_WORKER_HALT_ON_ERROR, false);
                 this.httpMinWorkerCount = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_COUNT, 1);
+                this.httpMinWorkerPoolMode = readWorkerPoolMode(
+                        properties,
+                        env,
+                        PropertyKey.HTTP_MIN_WORKER_FIBER_ENABLED,
+                        false
+                );
 
                 final int httpMinWorkerPoolPriority = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_POOL_PRIORITY, Thread.MAX_PRIORITY - 2);
                 this.httpMinWorkerPoolPriority = Math.min(Thread.MAX_PRIORITY, Math.max(Thread.MIN_PRIORITY, httpMinWorkerPoolPriority));
@@ -1503,6 +1517,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerAffinity = getAffinity(properties, env, PropertyKey.WAL_APPLY_WORKER_AFFINITY, walApplyWorkerCount);
             this.walApplyWorkerHaltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
             this.walApplyWorkerNapThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_NAP_THRESHOLD, 7_000);
+            this.walApplyWorkerPoolMode = readWorkerPoolMode(
+                    properties,
+                    env,
+                    PropertyKey.WAL_APPLY_WORKER_FIBER_ENABLED,
+                    true
+            );
             this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10_000);
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
@@ -1518,6 +1538,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
             this.matViewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
+            this.matViewRefreshWorkerPoolMode = readWorkerPoolMode(
+                    properties,
+                    env,
+                    PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_ENABLED,
+                    true
+            );
             this.matViewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
             this.matViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
             this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
@@ -1529,12 +1555,24 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.viewCompilerWorkerAffinity = getAffinity(properties, env, PropertyKey.VIEW_COMPILER_WORKER_AFFINITY, viewCompilerWorkerCount);
             this.viewCompilerWorkerYieldThreshold = getLong(properties, env, PropertyKey.VIEW_COMPILER_WORKER_YIELD_THRESHOLD, 1000);
             this.viewCompilerWorkerHaltOnError = getBoolean(properties, env, PropertyKey.VIEW_COMPILER_WORKER_HALT_ON_ERROR, false);
+            this.viewCompilerWorkerPoolMode = readWorkerPoolMode(
+                    properties,
+                    env,
+                    PropertyKey.VIEW_COMPILER_WORKER_FIBER_ENABLED,
+                    true
+            );
 
             // Export pool configuration
             this.exportWorkerCount = getInt(properties, env, PropertyKey.EXPORT_WORKER_COUNT, cpuExportWorkers);
             this.exportWorkerAffinity = getAffinity(properties, env, PropertyKey.EXPORT_WORKER_AFFINITY, exportWorkerCount);
             this.exportWorkerHaltOnError = getBoolean(properties, env, PropertyKey.EXPORT_WORKER_HALT_ON_ERROR, false);
             this.exportWorkerNapThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_NAP_THRESHOLD, 7_000);
+            this.exportWorkerPoolMode = readWorkerPoolMode(
+                    properties,
+                    env,
+                    PropertyKey.EXPORT_WORKER_FIBER_ENABLED,
+                    true
+            );
             this.exportWorkerSleepThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_THRESHOLD, 10_000);
             this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
             this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
@@ -2059,6 +2097,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_WRITER_HALT_ON_ERROR, false);
                 this.lineTcpWriterWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD, 10);
                 this.lineTcpWriterWorkerNapThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_NAP_THRESHOLD, 7_000);
+                this.lineTcpWriterWorkerPoolMode = readWorkerPoolMode(
+                        properties,
+                        env,
+                        PropertyKey.LINE_TCP_WRITER_WORKER_FIBER_ENABLED,
+                        true
+                );
                 this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD, 10_000);
                 this.symbolCacheWaitBeforeReload = getMicros(properties, env, PropertyKey.LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD, 500_000);
                 this.lineTcpIOWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_IO_WORKER_COUNT, 0); // Use shared IO pool by default
@@ -2066,6 +2110,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_IO_HALT_ON_ERROR, false);
                 this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_YIELD_THRESHOLD, 10);
                 this.lineTcpIOWorkerNapThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_NAP_THRESHOLD, 7_000);
+                this.lineTcpIOWorkerPoolMode = readWorkerPoolMode(
+                        properties,
+                        env,
+                        PropertyKey.LINE_TCP_IO_WORKER_FIBER_ENABLED,
+                        false
+                );
                 this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_SLEEP_THRESHOLD, 10_000);
                 this.lineTcpMaintenanceInterval = getMillis(properties, env, PropertyKey.LINE_TCP_MAINTENANCE_JOB_INTERVAL, 1000);
                 this.lineTcpCommitIntervalFraction = getDouble(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION, "0.5");
@@ -2184,17 +2234,47 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // Now all worker counts are known, so we can set select cache capacity props.
             if (pgEnabled) {
-                this.pgQueryFiberEnabled = getBoolean(properties, env, PropertyKey.PG_QUERY_FIBER_ENABLED, true);
+                this.pgFiberEnabled = getBoolean(properties, env, PropertyKey.PG_FIBER_ENABLED, true);
                 this.pgSelectCacheEnabled = getBoolean(properties, env, PropertyKey.PG_SELECT_CACHE_ENABLED, true);
                 final int effectivePGWorkerCount = pgWorkerCount > 0 ? pgWorkerCount : networkPoolWorkerCount;
                 this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 32);
                 this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, Math.max(effectivePGWorkerCount, 4));
             }
             final int effectiveHttpWorkerCount = httpWorkerCount > 0 ? httpWorkerCount : networkPoolWorkerCount;
-            this.httpQueryFiberEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_FIBER_ENABLED, true);
+            this.httpFiberEnabled = getBoolean(properties, env, PropertyKey.HTTP_FIBER_ENABLED, true);
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 32);
             this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, Math.max(effectiveHttpWorkerCount, 4));
+            final boolean isSharedNetworkFiberHost =
+                    (pgEnabled && pgWorkerCount < 1 && pgFiberEnabled)
+                            || (httpServerEnabled && httpWorkerCount < 1 && httpFiberEnabled);
+            final boolean isSharedWriteFiberHost = !isReadOnlyInstance
+                    && ((lineTcpEnabled
+                            && lineTcpWriterWorkerCount < 1
+                            && lineTcpWriterWorkerPoolMode == WorkerPoolMode.FIBER_HOST)
+                            || (walSupported
+                                && walApplyEnabled
+                                && walApplyWorkerCount < 1
+                                && walApplyWorkerPoolMode == WorkerPoolMode.FIBER_HOST));
+            sharedWorkerPoolNetworkConfiguration.workerPoolMode = readWorkerPoolMode(
+                    properties,
+                    env,
+                    PropertyKey.SHARED_NETWORK_WORKER_FIBER_ENABLED,
+                    isSharedNetworkFiberHost
+            );
+            sharedWorkerPoolQueryConfiguration.workerPoolMode = readWorkerPoolMode(
+                    properties,
+                    env,
+                    PropertyKey.SHARED_QUERY_WORKER_FIBER_ENABLED,
+                    true
+            );
+            sharedWorkerPoolWriteConfiguration.workerPoolMode = readWorkerPoolMode(
+                    properties,
+                    env,
+                    PropertyKey.SHARED_WRITE_WORKER_FIBER_ENABLED,
+                    isSharedWriteFiberHost
+            );
+            configureFiberPools(properties, env);
             this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
             this.queryContinuationWakeIntervalMillis = Math.max(1, getMillis(properties, env, PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL, 1_000));
 
@@ -2492,6 +2572,75 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    private static void configureFiberPool(
+            PropFiberWorkerPoolConfiguration configuration,
+            int maxLiveCount,
+            int mountBudget,
+            int retainedCount
+    ) throws ServerConfigurationException {
+        configuration.configureFiber(maxLiveCount, mountBudget, retainedCount);
+        if (configuration.getFiberRetainedCount() > configuration.getFiberMaxLiveCount()) {
+            throw new ServerConfigurationException(
+                    PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath()
+                            + " must not exceed "
+                            + PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath()
+                            + " [pool=" + configuration.getPoolName()
+                            + ", retained=" + configuration.getFiberRetainedCount()
+                            + ", maxLive=" + configuration.getFiberMaxLiveCount()
+                            + ']'
+            );
+        }
+    }
+
+    private void configureFiberPools(
+            Properties properties,
+            @Nullable Map<String, String> env
+    ) throws ServerConfigurationException {
+        final int maxLiveCount = getInt(properties, env, PropertyKey.WORKER_FIBER_MAX_LIVE, 0);
+        if (maxLiveCount < 0 || maxLiveCount > 1 << 30) {
+            throw new ServerConfigurationException(
+                    PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath()
+                            + " must be 0 or between 1 and " + (1 << 30)
+            );
+        }
+        final int retainedCount = getInt(properties, env, PropertyKey.WORKER_FIBER_MAX_RETAINED, 0);
+        if (retainedCount < 0 || retainedCount > 1 << 30) {
+            throw new ServerConfigurationException(
+                    PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath()
+                            + " must be 0 or between 1 and " + (1 << 30)
+            );
+        }
+        final int mountBudget = getInt(properties, env, PropertyKey.WORKER_FIBER_MOUNT_BUDGET, 64);
+        if (mountBudget < 1) {
+            throw new ServerConfigurationException(
+                    PropertyKey.WORKER_FIBER_MOUNT_BUDGET.getPropertyPath() + " must be positive"
+            );
+        }
+
+        configureFiberPool(exportPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(
+                (PropFiberWorkerPoolConfiguration) httpMinServerConfiguration,
+                maxLiveCount,
+                mountBudget,
+                retainedCount
+        );
+        configureFiberPool(
+                (PropFiberWorkerPoolConfiguration) httpServerConfiguration,
+                maxLiveCount,
+                mountBudget,
+                retainedCount
+        );
+        configureFiberPool(lineTcpIOWorkerPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(lineTcpWriterWorkerPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(matViewRefreshPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(pgConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(sharedWorkerPoolNetworkConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(sharedWorkerPoolQueryConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(sharedWorkerPoolWriteConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(viewCompilerPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(walApplyPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
+    }
+
     private int configureSharedThreadPool(
             Properties properties,
             Map<String, String> env,
@@ -2762,6 +2911,17 @@ public class PropServerConfiguration implements ServerConfiguration {
                             + ((httpExportConnectionLimit > 0) ? PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath() + "=" + httpExportConnectionLimit + ", " : "")
                             + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
         }
+    }
+
+    private WorkerPoolMode readWorkerPoolMode(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey key,
+            boolean isFiberHostByDefault
+    ) {
+        return getBoolean(properties, env, key, isFiberHostByDefault)
+                ? WorkerPoolMode.FIBER_HOST
+                : WorkerPoolMode.LEGACY;
     }
 
     private void validateProperties(Properties properties, boolean configValidationStrict) throws ServerConfigurationException {
@@ -3275,7 +3435,38 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private static class PropWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    private abstract static class PropFiberWorkerPoolConfiguration implements WorkerPoolConfiguration {
+        private int fiberMaxLiveCount;
+        private int fiberMountBudget;
+        private int fiberRetainedCount;
+
+        @Override
+        public int getFiberMaxLiveCount() {
+            return fiberMaxLiveCount > 0
+                    ? fiberMaxLiveCount
+                    : WorkerPoolConfiguration.super.getFiberMaxLiveCount();
+        }
+
+        @Override
+        public int getFiberMountBudget() {
+            return fiberMountBudget;
+        }
+
+        @Override
+        public int getFiberRetainedCount() {
+            return fiberRetainedCount > 0
+                    ? fiberRetainedCount
+                    : WorkerPoolConfiguration.super.getFiberRetainedCount();
+        }
+
+        private void configureFiber(int maxLiveCount, int mountBudget, int retainedCount) {
+            this.fiberMaxLiveCount = maxLiveCount;
+            this.fiberMountBudget = mountBudget;
+            this.fiberRetainedCount = retainedCount;
+        }
+    }
+
+    private static class PropWorkerPoolConfiguration extends PropFiberWorkerPoolConfiguration {
         private final String name;
         public Metrics metrics;
         public int[] sharedWorkerAffinity;
@@ -3285,6 +3476,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         public long sharedWorkerSleepThreshold;
         public long sharedWorkerSleepTimeout;
         public long sharedWorkerYieldThreshold;
+        public WorkerPoolMode workerPoolMode = WorkerPoolMode.LEGACY;
         public int workerPoolPriority = Thread.NORM_PRIORITY;
 
         private PropWorkerPoolConfiguration(String name) {
@@ -3324,6 +3516,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return sharedWorkerCount;
+        }
+
+        @Override
+        public WorkerPoolMode getWorkerPoolMode() {
+            return workerPoolMode;
         }
 
         @Override
@@ -5441,7 +5638,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropExportPoolConfiguration implements WorkerPoolConfiguration {
+    private class PropExportPoolConfiguration extends PropFiberWorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;
@@ -5475,6 +5672,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return exportWorkerCount;
+        }
+
+        @Override
+        public WorkerPoolMode getWorkerPoolMode() {
+            return exportWorkerPoolMode;
         }
 
         @Override
@@ -5520,7 +5722,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public class PropHttpMinServerConfiguration implements HttpServerConfiguration {
+    public class PropHttpMinServerConfiguration extends PropFiberWorkerPoolConfiguration implements HttpServerConfiguration {
 
         @Override
         public long getAcceptLoopTimeout() {
@@ -5673,6 +5875,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public WorkerPoolMode getWorkerPoolMode() {
+            return httpMinWorkerPoolMode;
+        }
+
+        @Override
         public long getYieldThreshold() {
             return httpMinWorkerYieldThreshold;
         }
@@ -5708,7 +5915,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public class PropHttpServerConfiguration implements HttpFullFatServerConfiguration {
+    public class PropHttpServerConfiguration extends PropFiberWorkerPoolConfiguration implements HttpFullFatServerConfiguration {
 
         @Override
         public long getAcceptLoopTimeout() {
@@ -5964,6 +6171,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isFiberEnabled() {
+            return httpFiberEnabled;
+        }
+
+        @Override
         public boolean isPessimisticHealthCheckEnabled() {
             return httpPessimisticHealthCheckEnabled;
         }
@@ -5971,11 +6183,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isQueryCacheEnabled() {
             return httpSqlCacheEnabled;
-        }
-
-        @Override
-        public boolean isQueryFiberEnabled() {
-            return httpQueryFiberEnabled;
         }
 
         @Override
@@ -6135,7 +6342,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    private class PropLineTcpIOWorkerPoolConfiguration extends PropFiberWorkerPoolConfiguration {
 
         @Override
         public Metrics getMetrics() {
@@ -6165,6 +6372,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return lineTcpIOWorkerCount;
+        }
+
+        @Override
+        public WorkerPoolMode getWorkerPoolMode() {
+            return lineTcpIOWorkerPoolMode;
         }
 
         @Override
@@ -6445,7 +6657,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    private class PropLineTcpWriterWorkerPoolConfiguration extends PropFiberWorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;
@@ -6474,6 +6686,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return lineTcpWriterWorkerCount;
+        }
+
+        @Override
+        public WorkerPoolMode getWorkerPoolMode() {
+            return lineTcpWriterWorkerPoolMode;
         }
 
         @Override
@@ -6594,7 +6811,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropMatViewsRefreshPoolConfiguration implements WorkerPoolConfiguration {
+    private class PropMatViewsRefreshPoolConfiguration extends PropFiberWorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;
@@ -6631,6 +6848,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public WorkerPoolMode getWorkerPoolMode() {
+            return matViewRefreshWorkerPoolMode;
+        }
+
+        @Override
         public long getYieldThreshold() {
             return matViewRefreshWorkerYieldThreshold;
         }
@@ -6654,7 +6876,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropPGConfiguration implements PGConfiguration {
+    private class PropPGConfiguration extends PropFiberWorkerPoolConfiguration implements PGConfiguration {
 
         @Override
         public long getAcceptLoopTimeout() {
@@ -6917,6 +7139,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isFiberEnabled() {
+            return pgFiberEnabled;
+        }
+
+        @Override
         public boolean isInsertCacheEnabled() {
             return pgInsertCacheEnabled;
         }
@@ -6924,11 +7151,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isReadOnlyUserEnabled() {
             return pgReadOnlyUserEnabled;
-        }
-
-        @Override
-        public boolean isQueryFiberEnabled() {
-            return pgQueryFiberEnabled;
         }
 
         @Override
@@ -7293,7 +7515,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropViewCompilerPoolConfiguration implements WorkerPoolConfiguration {
+    private class PropViewCompilerPoolConfiguration extends PropFiberWorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;
@@ -7327,6 +7549,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return viewCompilerWorkerCount;
+        }
+
+        @Override
+        public WorkerPoolMode getWorkerPoolMode() {
+            return viewCompilerWorkerPoolMode;
         }
 
         @Override
@@ -7373,7 +7600,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropWalApplyPoolConfiguration implements WorkerPoolConfiguration {
+    private class PropWalApplyPoolConfiguration extends PropFiberWorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;
@@ -7407,6 +7634,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return walApplyWorkerCount;
+        }
+
+        @Override
+        public WorkerPoolMode getWorkerPoolMode() {
+            return walApplyWorkerPoolMode;
         }
 
         @Override

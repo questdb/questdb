@@ -41,6 +41,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.Job;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -161,15 +162,18 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
                 assignedTables[i] = new ObjList<>();
 
-                final LineTcpLegacyWriterJob lineTcpLegacyWriterJob = new LineTcpLegacyWriterJob(
+                final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
                         i,
                         q,
                         subSeq,
                         clock,
                         commitInterval, this, engine.getMetrics(), assignedTables[i]
                 );
-                sharedPoolWrite.assign(i, lineTcpLegacyWriterJob);
-                sharedPoolWrite.freeOnExit(lineTcpLegacyWriterJob);
+                final Job writerJob = sharedPoolWrite.isFiberHost()
+                        ? new LineTcpFiberWriterJob(sharedPoolWrite.getFiberRuntime(), lineTcpWriterJob)
+                        : lineTcpWriterJob;
+                sharedPoolWrite.assign(i, writerJob);
+                sharedPoolWrite.freeOnExit(writerJob);
             }
             this.tableStructureAdapter = new TableStructureAdapter(
                     cairoConfiguration,
@@ -189,35 +193,14 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 ));
             }
         } catch (Throwable t) {
-            close();
+            closeResources(t);
             throw t;
         }
     }
 
     @Override
     public void close() {
-        tableUpdateDetailsLock.writeLock().lock();
-        try {
-            closeLocals(tableUpdateDetailsUtf16);
-            closeLocals(idleTableUpdateDetailsUtf16);
-        } finally {
-            tableUpdateDetailsLock.writeLock().unlock();
-        }
-
-        Misc.free(path);
-        Misc.free(ddlMem);
-        for (int i = 0, n = assignedTables.length; i < n; i++) {
-            if (assignedTables[i] != null) {
-                Misc.freeObjList(assignedTables[i]);
-                assignedTables[i].clear();
-            }
-        }
-        //noinspection ForLoopReplaceableByForEach
-        for (int i = 0, n = queue.length; i < n; i++) {
-            Misc.free(queue[i]);
-        }
-        Misc.freeObjList(netIoJobs);
-        Misc.freeObjList(walAppenders);
+        CairoException.rethrowCleanupFailure(closeResources(null));
     }
 
     public boolean doMaintenance(
@@ -356,6 +339,16 @@ public class LineTcpMeasurementScheduler implements Closeable {
         return dispatchEvent(securityContext, netIoJob, parser, tud);
     }
 
+    private static Throwable chainFailure(Throwable primary, Throwable failure) {
+        if (primary == null) {
+            return failure;
+        }
+        if (failure != primary) {
+            primary.addSuppressed(failure);
+        }
+        return primary;
+    }
+
     private static long getEventSlotSize(int maxMeasurementSize) {
         return Numbers.ceilPow2((long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1));
     }
@@ -376,12 +369,74 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 .put(']');
     }
 
-    private void closeLocals(LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tudUtf16) {
-        ObjList<CharSequence> tableNames = tudUtf16.keys();
-        for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-            tudUtf16.get(tableNames.get(n)).closeLocals();
+    private Throwable closeLocals(
+            Throwable failure,
+            LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tudUtf16
+    ) {
+        if (tudUtf16 == null) {
+            return failure;
         }
-        tudUtf16.clear();
+        try {
+            final ObjList<CharSequence> tableNames = tudUtf16.keys();
+            for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+                try {
+                    final TableUpdateDetails tud = tudUtf16.get(tableNames.get(n));
+                    if (tud != null) {
+                        tud.closeLocals();
+                    }
+                } catch (Throwable th) {
+                    failure = chainFailure(failure, th);
+                }
+            }
+        } catch (Throwable th) {
+            failure = chainFailure(failure, th);
+        }
+        try {
+            tudUtf16.clear();
+        } catch (Throwable th) {
+            failure = chainFailure(failure, th);
+        }
+        return failure;
+    }
+
+    private Throwable closeResources(Throwable failure) {
+        boolean isLocked = false;
+        try {
+            tableUpdateDetailsLock.writeLock().lock();
+            isLocked = true;
+            failure = closeLocals(failure, tableUpdateDetailsUtf16);
+            failure = closeLocals(failure, idleTableUpdateDetailsUtf16);
+        } catch (Throwable th) {
+            failure = chainFailure(failure, th);
+        } finally {
+            if (isLocked) {
+                try {
+                    tableUpdateDetailsLock.writeLock().unlock();
+                } catch (Throwable th) {
+                    failure = chainFailure(failure, th);
+                }
+            }
+        }
+
+        failure = Misc.freeBestEffort(failure, path);
+        failure = Misc.freeBestEffort(failure, ddlMem);
+        if (assignedTables != null) {
+            for (int i = 0, n = assignedTables.length; i < n; i++) {
+                final ObjList<TableUpdateDetails> tables = assignedTables[i];
+                assignedTables[i] = null;
+                failure = Misc.freeObjListBestEffort(failure, tables);
+            }
+        }
+        if (queue != null) {
+            //noinspection ForLoopReplaceableByForEach
+            for (int i = 0, n = queue.length; i < n; i++) {
+                final RingQueue<LineTcpMeasurementEvent> q = queue[i];
+                queue[i] = null;
+                failure = Misc.freeBestEffort(failure, q);
+            }
+        }
+        failure = Misc.freeObjListBestEffort(failure, netIoJobs);
+        return Misc.freeObjListBestEffort(failure, walAppenders);
     }
 
     private boolean dispatchEvent(

@@ -29,10 +29,16 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class WaitWalTableFunctionFactory implements FunctionFactory {
+    @Override
+    public int getExecutionRequirements() {
+        return SqlExecutionRequirements.REQUIRES_LIVE_WAL_PROGRESS;
+    }
+
     @Override
     public String getSignature() {
         return "wait_wal_table(s)";

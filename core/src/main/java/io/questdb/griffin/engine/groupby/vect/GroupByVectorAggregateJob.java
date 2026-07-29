@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.tasks.VectorAggregateTask;
 
 public class GroupByVectorAggregateJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
@@ -40,10 +41,13 @@ public class GroupByVectorAggregateJob extends AbstractQueueConsumerJob<VectorAg
     @Override
     protected boolean doRun(long cursor, WorkerContext workerContext) {
         final VectorAggregateEntry entry = queue.get(cursor).entry;
+        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
         try {
             entry.run(workerContext.carrierId(), subSeq, cursor);
         } catch (Throwable th) {
             LOG.error().$("vectorized reduce error [ex=").$(th).I$();
+        } finally {
+            SuspensionScope.restore(previousMode);
         }
         return true;
     }

@@ -150,6 +150,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private static final int MATCH_NO_MATCH = 0;
     private static final int MATCH_PARTIAL_MATCH = 2;
     private final CairoConfiguration configuration;
+    private final SqlExecutionRequirements executionRequirements = new SqlExecutionRequirements();
     private final FunctionFactoryCache functionFactoryCache;
     private final ArrayDeque<Function> functionStack = new ArrayDeque<>();
     private final Long256Impl long256Sink = new Long256Impl();
@@ -222,6 +223,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     @Override
     public void clear() {
+        this.executionRequirements.clear();
         this.positionStack.clear();
         this.functionStack.clear();
         this.sqlExecutionContext = null;
@@ -268,6 +270,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         return false;
+    }
+
+    public SqlExecutionRequirements getExecutionRequirements() {
+        return executionRequirements;
     }
 
     public FunctionFactoryCache getFunctionFactoryCache() {
@@ -648,6 +654,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             Misc.freeObjList(args);
             throw SqlException.nonDeterministicColumn(node.position, node.token);
         }
+        executionRequirements.add(factory.getExecutionRequirements(), position);
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
         }

@@ -27,6 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.ObjHashSet;
 
@@ -137,21 +138,22 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
 
     boolean isAcceptingWrites();
 
-    boolean isQueryCacheEnabled();
+    @Override
+    default WorkerPoolMode getWorkerPoolMode() {
+        return isFiberEnabled() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
+    }
 
     /**
      * When enabled (the default), connection operations (request parsing, query
-     * execution, result streaming) run as QueryTasks on pooled, non-completing
-     * fibers instead of inline in the network worker's job: a wait function inside
-     * a query (wait_wal_table / sleep) then freezes the pooled fiber, which is
-     * reused across parks, instead of freezing the worker's loop continuation,
-     * which is discarded per park. Applies to the full-fat server only; the min
-     * server always dispatches inline. Ignored (direct dispatch) when the server's
-     * worker pool is legacy, which cannot host continuations.
+     * execution, result streaming) run as FiberTask instances on pooled fibers instead of
+     * inline in the network worker's job. Applies to the full-fat server only and
+     * requires the actual worker pool to use {@link WorkerPoolMode#FIBER_HOST}.
      */
-    default boolean isQueryFiberEnabled() {
+    default boolean isFiberEnabled() {
         return true;
     }
+
+    boolean isQueryCacheEnabled();
 
     boolean isSettingsReadOnly();
 }

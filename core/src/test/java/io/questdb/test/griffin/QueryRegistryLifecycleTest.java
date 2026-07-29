@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.QueryRegistry;
@@ -94,6 +95,47 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCancellationBindingSurvivesSiblingUnregister() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                context.setUseSimpleCircuitBreaker(true);
+                long queryIdA = -1;
+                long queryIdB = -1;
+                try {
+                    queryIdA = registry.register("portal A", context);
+                    final QueryRegistry.Entry entryA = registry.getEntry(queryIdA);
+                    queryIdB = registry.register("portal B", context);
+                    final QueryRegistry.Entry entryB = registry.getEntry(queryIdB);
+                    Assert.assertNotNull(entryA);
+                    Assert.assertNotNull(entryB);
+                    final AtomicBoolean cancelledA = entryA.getCancelled();
+                    final AtomicBoolean cancelledB = entryB.getCancelled();
+
+                    Assert.assertNotSame(cancelledA, cancelledB);
+                    context.setCancelledFlag(cancelledA);
+                    registry.unregister(queryIdB, context);
+                    Assert.assertSame(cancelledA, context.getCircuitBreaker().getCancelledFlag());
+
+                    Assert.assertTrue(registry.cancel(queryIdA, context));
+                    Assert.assertTrue(cancelledA.get());
+                    Assert.assertFalse(cancelledB.get());
+
+                    registry.unregister(queryIdA, context);
+                    Assert.assertNull(context.getCircuitBreaker().getCancelledFlag());
+                } finally {
+                    if (queryIdB > -1 && registry.getEntry(queryIdB) != null) {
+                        registry.unregister(queryIdB, context);
+                    }
+                    if (queryIdA > -1 && registry.getEntry(queryIdA) != null) {
+                        registry.unregister(queryIdA, context);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDeniedCrossUserCancelReactivatesEntry() throws Exception {
         assertMemoryLeak(() -> {
             final QueryRegistry registry = engine.getQueryRegistry();
@@ -122,6 +164,37 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                     }
                 }
                 Assert.assertNull(registry.getEntry(queryId));
+            }
+        });
+    }
+
+    @Test
+    public void testEntryReturnsToSharedPoolAcrossThreads() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = newSingleEntryRegistry();
+            final AtomicReference<Throwable> fault = new AtomicReference<>();
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                final long oldId = registry.register("SELECT old", context);
+                final QueryRegistry.Entry entry = registry.getEntry(oldId);
+                Assert.assertNotNull(entry);
+
+                final Thread unregisterThread = new Thread(() -> {
+                    try {
+                        registry.unregister(oldId, context);
+                    } catch (Throwable th) {
+                        fault.set(th);
+                    }
+                }, "query_registry_unregister_migrated");
+                unregisterThread.start();
+                unregisterThread.join(5_000);
+                Assert.assertFalse("unregister thread hung", unregisterThread.isAlive());
+                if (fault.get() != null) {
+                    throw new AssertionError("unregister failed", fault.get());
+                }
+
+                final long newId = registry.register("SELECT new", context);
+                Assert.assertSame(entry, registry.getEntry(newId));
+                registry.unregister(newId, context);
             }
         });
     }
@@ -183,14 +256,13 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
      * invariant the whole fix relies on: a stale canceller (or a
      * query_activity() snapshot) holding the recycled entry sees
      * isActiveLifecycle() return false for the old id and rejects it, while the
-     * new id is reported active. Single-threaded, so the recycle is
-     * deterministic - register() pops the very same entry back from the
-     * thread-local pool.
+     * new id is reported active. Single-threaded, so the shared pool returns
+     * the entry deterministically.
      */
     @Test
     public void testRecycledEntryReportsStaleLifecycle() throws Exception {
         assertMemoryLeak(() -> {
-            final QueryRegistry registry = engine.getQueryRegistry();
+            final QueryRegistry registry = newSingleEntryRegistry();
             try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
                 final long oldId = registry.register("SELECT old", context);
                 final QueryRegistry.Entry entry = registry.getEntry(oldId);
@@ -201,7 +273,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
 
                 final long newId = registry.register("SELECT new", context);
                 Assert.assertNotEquals(oldId, newId);
-                // the thread-local pool hands the very same Entry object back
+                // the pool hands the very same Entry object back
                 Assert.assertSame(entry, registry.getEntry(newId));
 
                 // the recycled entry is active for the new id and stale for the old one
@@ -216,7 +288,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
     @Test
     public void testRegisterRollbackRetiresEntryWhenListenerThrows() throws Exception {
         assertMemoryLeak(() -> {
-            final QueryRegistry registry = engine.getQueryRegistry();
+            final QueryRegistry registry = newSingleEntryRegistry();
             try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
                 final RuntimeException boom = new RuntimeException("listener boom");
                 final AtomicLong rolledBackId = new AtomicLong(-1);
@@ -249,7 +321,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 Assert.assertNull(context.getMemoryTracker());
 
                 // rollback retired the entry: the next register() pops the very same
-                // Entry back from the thread-local pool, now active for the new id only.
+                // Entry back from the pool, now active for the new id only.
                 final long newId = registry.register("SELECT after rollback", context);
                 Assert.assertNotEquals(oldId, newId);
                 Assert.assertSame(entry, registry.getEntry(newId));
@@ -485,6 +557,15 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         Assert.assertTrue(QueryRegistry.Entry.isActiveLifecycle(queryId, entry.getLifecycle()));
         Assert.assertEquals(QueryRegistry.Entry.State.ACTIVE, entry.getState());
         Assert.assertFalse(entry.getCancelled().get());
+    }
+
+    private QueryRegistry newSingleEntryRegistry() {
+        return new QueryRegistry(new CairoConfigurationWrapper(configuration) {
+            @Override
+            public int getQueryRegistryPoolSize() {
+                return 1;
+            }
+        });
     }
 
     private SqlExecutionContextImpl newWalContext(String principal) {

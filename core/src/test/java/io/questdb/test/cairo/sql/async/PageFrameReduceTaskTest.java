@@ -27,6 +27,7 @@ package io.questdb.test.cairo.sql.async;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -38,6 +39,77 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class PageFrameReduceTaskTest extends AbstractTest {
+
+    @Test
+    public void testAsyncQueryErrorStateCairoExceptionRoundTrip() {
+        final AsyncQueryErrorState error = new AsyncQueryErrorState();
+        error.setError(
+                CairoException.critical(42)
+                        .position(7)
+                        .put("disk on fire")
+                        .setCancellation(true)
+                        .setInterruption(true)
+                        .setOutOfMemory(true)
+        );
+
+        final RuntimeException exception = error.buildException();
+        Assert.assertTrue(exception instanceof CairoException);
+        final CairoException cairoException = (CairoException) exception;
+        Assert.assertEquals(42, cairoException.getErrno());
+        Assert.assertEquals(7, cairoException.getPosition());
+        Assert.assertTrue(cairoException.isCancellation());
+        Assert.assertTrue(cairoException.isCritical());
+        Assert.assertTrue(cairoException.isInterruption());
+        Assert.assertTrue(cairoException.isOutOfMemory());
+        TestUtils.assertContains(cairoException.getFlyweightMessage(), "disk on fire");
+    }
+
+    @Test
+    public void testAsyncQueryErrorStateFirstErrorWinsAndClearAllowsReuse() {
+        final AsyncQueryErrorState error = new AsyncQueryErrorState();
+        error.setError(CairoException.nonCritical().put("first"));
+        error.setError(CairoException.nonCritical().put("ignored"));
+
+        CairoException exception = (CairoException) error.buildException();
+        TestUtils.assertContains(exception.getFlyweightMessage(), "first");
+        TestUtils.assertNotContains(exception.getFlyweightMessage(), "ignored");
+
+        error.clear();
+        Assert.assertFalse(error.hasError());
+        error.setError(CairoException.nonCritical().put("second"));
+        exception = (CairoException) error.buildException();
+        TestUtils.assertContains(exception.getFlyweightMessage(), "second");
+    }
+
+    @Test
+    public void testAsyncQueryErrorStateFlyweightExceptionsRoundTrip() {
+        final AsyncQueryErrorState error = new AsyncQueryErrorState();
+        error.setError(ImplicitCastException.instance().position(11).put("bad cast"));
+
+        RuntimeException exception = error.buildException();
+        Assert.assertTrue(exception instanceof ImplicitCastException);
+        Assert.assertEquals(11, ((ImplicitCastException) exception).getPosition());
+        TestUtils.assertContains(((ImplicitCastException) exception).getFlyweightMessage(), "bad cast");
+
+        error.clear();
+        error.setError(NumericException.instance().position(13).put("bad number"));
+        exception = error.buildException();
+        Assert.assertTrue(exception instanceof NumericException);
+        Assert.assertEquals(13, ((NumericException) exception).getPosition());
+        TestUtils.assertContains(((NumericException) exception).getFlyweightMessage(), "bad number");
+    }
+
+    @Test
+    public void testAsyncQueryErrorStateUnexpectedExceptionBecomesCairoException() {
+        final AsyncQueryErrorState error = new AsyncQueryErrorState();
+        error.setError(new IllegalStateException("broken reducer"));
+
+        final RuntimeException exception = error.buildException();
+        Assert.assertTrue(exception instanceof CairoException);
+        final CairoException cairoException = (CairoException) exception;
+        Assert.assertFalse(cairoException.isCritical());
+        TestUtils.assertContains(cairoException.getFlyweightMessage(), "unexpected async query error: broken reducer");
+    }
 
     @Test
     public void testBuildErrorPreservesInterruptionForTimeout() throws Exception {

@@ -27,12 +27,89 @@ package io.questdb.test.griffin.engine.functions.table;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testAsyncUpdateRejectsLiveWalProgress() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE update_tab (v LONG)");
+            final String sql = "UPDATE update_tab SET v = v + 1 WHERE wait_wal_table('update_tab')";
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    UpdateOperation operation = compiler.compile(sql, sqlExecutionContext).getUpdateOperation()
+            ) {
+                try {
+                    operation.startAsync();
+                    Assert.fail();
+                } catch (CairoException e) {
+                    Assert.assertEquals(sql.indexOf("wait_wal_table"), e.getPosition());
+                    Assert.assertTrue(
+                            e.getFlyweightMessage().toString(),
+                            e.getFlyweightMessage().toString().contains(
+                                    "asynchronous UPDATE cannot require live WAL progress"
+                            )
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWaitFunctionDoesNotDisableParallelFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE notwal (v LONG)");
+            try (RecordCursorFactory factory = select("SELECT * FROM notwal WHERE wait_wal_table('notwal')")) {
+                Assert.assertTrue(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+                Assert.assertFalse(containsFactory(factory, FilteredRecordCursorFactory.class));
+            }
+        });
+    }
+
+    @Test
+    public void testWaitFunctionDoesNotDisableParallelGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE notwal (v LONG)");
+            try (RecordCursorFactory factory = select("SELECT first(wait_wal_table('notwal')) FROM notwal")) {
+                Assert.assertTrue(
+                        containsFactory(factory, AsyncGroupByNotKeyedRecordCursorFactory.class)
+                                || containsFactory(factory, AsyncGroupByRecordCursorFactory.class)
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testWaitFunctionInScalarSubQueryDoesNotDisableParallelFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE notwal (v INT)");
+            try (
+                    RecordCursorFactory factory = select("""
+                            SELECT *
+                            FROM notwal
+                            WHERE v = (
+                                SELECT CASE
+                                    WHEN wait_wal_table('notwal') THEN 1
+                                    ELSE 0
+                                END
+                            )
+                            """)
+            ) {
+                Assert.assertTrue(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+                Assert.assertFalse(containsFactory(factory, FilteredRecordCursorFactory.class));
+            }
+        });
+    }
 
     @Test
     public void testNonExistentTable() throws Exception {
@@ -120,5 +197,29 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
                             true
                             """);
         });
+    }
+
+    @Test
+    public void testWalUpdateRejectsLiveWalProgress() throws Exception {
+        execute("""
+                CREATE TABLE update_tab (ts TIMESTAMP, v LONG)
+                TIMESTAMP(ts) PARTITION BY DAY WAL
+                """);
+        final String sql = "UPDATE update_tab SET v = v + 1 WHERE wait_wal_table('update_tab')";
+        assertException(
+                sql,
+                sql.indexOf("wait_wal_table"),
+                "WAL UPDATE cannot require live WAL progress"
+        );
+    }
+
+    private static boolean containsFactory(RecordCursorFactory factory, Class<?> factoryClass) {
+        while (factory != null) {
+            if (factoryClass.isInstance(factory)) {
+                return true;
+            }
+            factory = factory.getBaseFactory();
+        }
+        return false;
     }
 }

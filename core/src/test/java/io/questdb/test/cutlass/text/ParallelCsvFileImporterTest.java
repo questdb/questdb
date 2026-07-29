@@ -42,8 +42,8 @@ import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
-import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
+import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.cutlass.text.TextImportException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -68,6 +68,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -3592,7 +3593,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         return queueCapacity;
                     }
                 };
-                WorkerPool pool = new WorkerPool(() -> workerCount);
+                WorkerPool pool = new TestWorkerPool(workerCount);
                 execute(pool, runnable, configuration1);
             } else {
                 // we need to create entire engine

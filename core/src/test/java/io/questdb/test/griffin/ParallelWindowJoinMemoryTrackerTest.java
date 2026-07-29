@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -122,7 +123,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // the combined per-worker reduce growth, far above the first chunk malloc.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -148,7 +149,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // per-query tracker, so nothing per-query-tracked allocates at open); the loop verifies reuse.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -175,7 +176,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // getCursor/close cycles, wrapped by assertMemoryLeak, would expose a malloc/free asymmetry
         // or a tracker imbalance from the close()-time unbinding.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -209,7 +210,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // the combined per-worker reduce growth, far above the first chunk malloc.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -237,7 +238,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // it); close() must free constructor-scoped resources regardless of isOpen, or this
         // assertMemoryLeak catches it.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -269,7 +270,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // Non-keyed variant of testKeyedWindowJoinOpenFailureReleasesAllocations.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -293,7 +294,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     public void testNotKeyedWindowJoinReleasesAllocations() throws Exception {
         // Non-keyed variant of testKeyedWindowJoinReleasesAllocations.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -357,7 +358,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // the gate engages for either master.
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {

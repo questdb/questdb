@@ -75,6 +75,7 @@ import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -99,6 +100,7 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Lock;
 import java.util.function.Consumer;
 
@@ -202,6 +204,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // not to be confused with prepared statements that come on the
     // PostgresSQL wire.
     private Utf8Sequence preparedStatementNameToDeallocate;
+    private AtomicBoolean queryCancelledFlag;
+    private MemoryTracker queryMemoryTracker;
     private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
@@ -271,6 +275,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (tas != null) {
             // close cursor in case it is open
             cursor = Misc.free(cursor);
+            queryCancelledFlag = null;
+            queryMemoryTracker = null;
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
@@ -351,6 +357,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         namedPortal = null;
         namedStatement = null;
         preparedStatementNameToDeallocate = null;
+        queryCancelledFlag = null;
+        queryMemoryTracker = null;
         sqlAffectedRowCount = 0;
         sqlReturnRowCount = 0;
         sqlReturnRowCountLimit = 0;
@@ -377,6 +385,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void closeSuspendedCursor() {
         cursor = Misc.free(cursor);
+        queryCancelledFlag = null;
+        queryMemoryTracker = null;
         stateSuspended = false;
     }
 
@@ -932,6 +942,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             switch (stateSync) {
                 case SYNC_DATA_EXHAUSTED:
                     cursor = Misc.free(cursor);
+                    queryCancelledFlag = null;
+                    queryMemoryTracker = null;
                     stateSuspended = false;
                     outCommandComplete(utf8Sink, sqlReturnRowCount);
                     break;
@@ -1674,6 +1686,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     if (factory != null) {
                         try {
                             cursor = factory.getCursor(sqlExecutionContext);
+                            queryCancelledFlag = sqlExecutionContext.getCircuitBreaker().getCancelledFlag();
+                            queryMemoryTracker = sqlExecutionContext.getMemoryTracker();
                             // when factory is not null, and we can obtain cursor without issues
                             // we would exit early
                             break;
@@ -2617,6 +2631,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink, int columnCount) {
+        sqlExecutionContext.setCancelledFlag(queryCancelledFlag);
+        sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
         if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
         }
