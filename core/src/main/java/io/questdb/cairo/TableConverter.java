@@ -124,8 +124,13 @@ public class TableConverter {
                                         tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
 
-                                    // Reset structure version in _meta and _txn files
-                                    metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+                                    // Reset structure version in _meta and _txn files. Through
+                                    // resetMetadataVersion, never a raw putLong: the metadataVersion is
+                                    // checksummed into the meta-format minor-version field, so rewriting it
+                                    // in place otherwise switches off every version-gated tail field and the
+                                    // converted table silently loses its TTL, table format and per-table
+                                    // commit mode.
+                                    TableUtils.resetMetadataVersion(metaMem, 0);
                                     path.trimTo(rootLen).concat(dirNameSink);
                                     txWriter.resetStructureVersionUnsafe();
                                 } else {

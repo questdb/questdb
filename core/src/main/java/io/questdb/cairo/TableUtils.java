@@ -599,6 +599,44 @@ public final class TableUtils {
         return isOlderThanTtl(timestampDriver, partitionCeiling, maxTimestamp, ttl);
     }
 
+    /**
+     * Rewrites {@code _meta}'s metadataVersion IN PLACE and re-stamps the meta-format minor-version field so
+     * its checksum still matches. Use this rather than writing {@link #META_OFFSET_METADATA_VERSION}
+     * directly: the two fields are coupled and the coupling is silent when broken.
+     *
+     * <p>{@link #isMetaFormatAtLeast} trusts the stored minor version only while the low short of
+     * {@link #META_OFFSET_META_FORMAT_MINOR_VERSION} matches a checksum over (metadataVersion, columnCount).
+     * A caller that resets the metadataVersion of a table it is cloning or converting — {@code REBASE WAL},
+     * {@code SET TYPE WAL} — invalidates that checksum, and every version-gated tail field then reads as
+     * absent: TTL becomes 0, the table format reverts to NATIVE, the per-table commit mode and the adaptive
+     * enrolment record revert to UNSET. Nothing fails; the table just quietly loses those properties.
+     *
+     * <p>The stored minor version is PRESERVED, never re-stamped to {@link #META_FORMAT_MINOR_VERSION_LATEST}.
+     * Claiming a newer format than the bytes actually carry would make the reader interpret never-written
+     * tail bytes as real values — a zero there would read as {@link CommitMode#ASYNC}, not "unset".
+     *
+     * <p>If the source's own checksum does not match, the gate was ALREADY off for that file and its tail
+     * fields were already being ignored. The field is then left exactly as it is: recomputing it would
+     * promote whatever those bytes happen to hold into a valid claim.
+     */
+    public static void resetMetadataVersion(MemoryMARW metaMem, long metadataVersion) {
+        final long previousMetadataVersion = metaMem.getLong(META_OFFSET_METADATA_VERSION);
+        final int minorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
+        final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+        metaMem.putLong(META_OFFSET_METADATA_VERSION, metadataVersion);
+        if (Numbers.decodeLowShort(minorVersionField)
+                != checksumForMetaFormatMinorVersionField(previousMetadataVersion, columnCount)) {
+            return;
+        }
+        metaMem.putInt(
+                META_OFFSET_META_FORMAT_MINOR_VERSION,
+                Numbers.encodeLowHighShorts(
+                        checksumForMetaFormatMinorVersionField(metadataVersion, columnCount),
+                        Numbers.decodeHighShort(minorVersionField)
+                )
+        );
+    }
+
     public static short checksumForMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
         int metaVersionInt = Numbers.decodeLowInt(metadataVersion) ^ Numbers.decodeHighInt(metadataVersion);
         int checksumInt = 13 * metaVersionInt + 37 * columnCount;

@@ -221,7 +221,11 @@ public class WalUtils {
             txWriter.resetLagValuesUnsafe();
             TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
             metaMem.putInt(TableUtils.META_OFFSET_TABLE_ID, newTableId);
-            metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+            // Through resetMetadataVersion, never a raw putLong: the metadataVersion is checksummed into the
+            // meta-format minor-version field, so rewriting it in place otherwise switches off every
+            // version-gated tail field and the clone silently loses its TTL, table format, per-table commit
+            // mode and adaptive enrolment record.
+            TableUtils.resetMetadataVersion(metaMem, 0);
             txWriter.resetStructureVersionUnsafe();
 
             TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);

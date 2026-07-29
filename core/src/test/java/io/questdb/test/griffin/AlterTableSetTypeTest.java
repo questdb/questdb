@@ -89,6 +89,45 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The conversion resets {@code _meta}'s metadataVersion in place. That field is checksummed into the
+     * meta-format minor-version word, so rewriting it without re-stamping the checksum switches off the
+     * version gate and every gated tail field then reads as absent -- TTL becomes 0, the table format
+     * reverts to NATIVE, the per-table commit mode reverts to UNSET. Nothing fails; the table quietly
+     * loses those properties.
+     *
+     * <p>The ADD COLUMN is what makes this reachable and is not decoration: it lifts metadataVersion off 0,
+     * so resetting it to 0 actually changes the value the checksum covers. Without it the reset is a no-op
+     * and the gate survives by luck.
+     */
+    @Test
+    public void testConvertToWalPreservesVersionGatedMetadata() throws Exception {
+        final String tableName = "table_ttl_convert";
+        assertMemoryLeak(() -> {
+            execute("create table " + tableName + " (ts TIMESTAMP, x long) timestamp(ts) PARTITION BY DAY TTL 3 DAYS BYPASS WAL");
+            execute("alter table " + tableName + " add column y long");
+
+            final TableToken before = engine.verifyTableName(tableName);
+            try (io.questdb.cairo.TableReaderMetadata md = new io.questdb.cairo.TableReaderMetadata(configuration, before)) {
+                md.loadMetadata();
+                assertEquals("precondition: TTL is set before the conversion", 72, md.getTtlHoursOrMonths());
+                Assert.assertTrue("precondition: metadataVersion must be off 0, or the reset changes nothing",
+                        md.getMetadataVersion() > 0);
+            }
+
+            execute("alter table " + tableName + " set type wal");
+            engine.load();
+            engine.reconcileTableNameRegistryState();
+
+            final TableToken after = engine.verifyTableName(tableName);
+            Assert.assertTrue("precondition: the table must actually have converted", engine.isWalTable(after));
+            try (io.questdb.cairo.TableReaderMetadata md = new io.questdb.cairo.TableReaderMetadata(configuration, after)) {
+                md.loadMetadata();
+                assertEquals("converting to WAL must not silently drop TTL", 72, md.getTtlHoursOrMonths());
+            }
+        });
+    }
+
     private void assertConvertFileContent(Path convertFilePath, byte expected) throws IOException {
         final byte[] fileContent = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(convertFilePath.toString()));
         assertEquals(1, fileContent.length);
