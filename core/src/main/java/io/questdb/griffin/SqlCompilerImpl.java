@@ -6034,12 +6034,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         // A view that other materialized views derive from must not gain an EXPIRE policy: those dependents
         // read this view's RAW rows on refresh (the read filter is disabled then), so they would copy rows
-        // this policy expires. Reject rather than leak expired rows downstream. (The forward direction —
-        // CREATE a view over an already-policied base — is rejected at create time.)
+        // this policy expires. Reject rather than leak expired rows downstream. (The forward direction --
+        // CREATE a view over an already-policied base -- is rejected at create time.)
+        // The rejection is WAL-recoverable: this same check re-runs when OperationExecutor recompiles the
+        // stored ALTER SQL at apply time, and a dependent that a concurrent CREATE registered after the
+        // statement-time check passed makes it fire then. A plain SqlException there is non-recoverable, so
+        // ApplyWal2TableJob would suspend the table (and the advanced watermark makes RESUME skip the ALTER).
+        // walRecoverable routes it through the recoverable branch instead: the apply skips the ALTER and
+        // moves on. At statement time the caller still sees the message; only WAL apply reads the error code.
         final ObjList<TableToken> dependents = new ObjList<>();
         engine.getMatViewGraph().getDependentViews(tableToken, dependents);
         if (dependents.size() > 0) {
-            throw SqlException.$(tableNamePosition, "cannot set an EXPIRE ROWS policy on '")
+            throw SqlException.walRecoverable(tableNamePosition).put("cannot set an EXPIRE ROWS policy on '")
                     .put(tableToken.getTableName())
                     .put("': it is the base of ").put(dependents.size())
                     .put(" materialized view(s), which would copy expired rows on refresh");

@@ -810,6 +810,68 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetExpireRaceWithDependentCreateSkipsAlterWithoutSuspending() throws Exception {
+        // The CREATE-vs-ALTER race, reproduced deterministically via committed-but-not-applied sequencing.
+        // ALTER a SET EXPIRE is sequenced while a has no dependents (so its statement-time dependents check
+        // passes), THEN a dependent view b is created over a, THEN the ALTER is applied. At apply time the
+        // stored ALTER SQL is recompiled and its dependents check now finds b. The rejection is
+        // WAL-recoverable, so ApplyWal2TableJob SKIPS the ALTER instead of suspending a (a non-recoverable
+        // rejection would suspend a, and the advanced watermark would make RESUME skip it anyway). The final
+        // topology is consistent: a keeps no policy, b survives, and both stay queryable.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            execute("create materialized view a as (select * from base)");
+            drainWalAndMatViewQueues();
+
+            final TableToken aToken = engine.verifyTableName("a");
+            final SeqTxnTracker aTracker = engine.getTableSequencerAPI().getTxnTracker(aToken);
+
+            // Sequence ALTER a SET EXPIRE while a has no dependents (statement-time check passes), but do NOT
+            // apply it: committed-but-not-applied, so a's _meta still carries no policy.
+            execute("alter materialized view a set expire rows when v < 2.0");
+            Assert.assertTrue(
+                    "precondition: SET EXPIRE must be sequenced but not applied",
+                    aTracker.getWriterTxn() < aTracker.getSeqTxn()
+            );
+
+            // Register a dependent over a. Both the create-time pre-check and the post-registration re-check
+            // read a's still-policy-free metadata (the pending SET EXPIRE is not applied), so b is created.
+            execute("create materialized view b as (select * from a)");
+            Assert.assertNotNull("dependent view b must be created", engine.getTableTokenIfExists("b"));
+            Assert.assertTrue(
+                    "creating b must not apply a's pending SET EXPIRE",
+                    aTracker.getWriterTxn() < aTracker.getSeqTxn()
+            );
+
+            // Apply the pending SET EXPIRE. The recompile's dependents check finds b and rejects; the
+            // WAL-recoverable rejection makes the apply skip rather than suspend a.
+            drainWalAndMatViewQueues();
+
+            Assert.assertFalse(
+                    "base must NOT be suspended by the apply-time dependents rejection",
+                    engine.getTableSequencerAPI().isSuspended(aToken)
+            );
+            Assert.assertNull("the racing SET EXPIRE must be skipped, leaving a policy-free", expiryPredicate("a"));
+            Assert.assertNotNull("dependent view b must survive the race", engine.getTableTokenIfExists("b"));
+
+            // a still refreshes after the skipped ALTER: base -> a propagation works.
+            execute("insert into base values ('A', 1.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertQuery("select sym, v from a order by sym").expectSize().noLeakCheck().returns("sym\tv\nA\t1.0\n");
+
+            // Once the dependent is dropped, a accepts an EXPIRE ROWS policy normally -- confirming the race
+            // left a's ALTER path healthy (not suspended, not stuck) and the topology consistent.
+            execute("drop materialized view b");
+            drainWalAndMatViewQueues();
+            execute("alter materialized view a set expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+            Assert.assertFalse("a must stay unsuspended", engine.getTableSequencerAPI().isSuspended(aToken));
+            Assert.assertNotNull("a must accept a policy once its dependent is gone", expiryPredicate("a"));
+        });
+    }
+
+    @Test
     public void testFailedCleanupRetriesOnNextGlobalTick() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(JAN_10);
