@@ -1435,6 +1435,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getWalApplyReorderWindow() {
+        return getDelegate().getWalApplyReorderWindow();
+    }
+
+    @Override
     public ObjHashSet<String> getWalApplySuspendedTables() {
         return getDelegate().getWalApplySuspendedTables();
     }

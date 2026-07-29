@@ -222,6 +222,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         return false;
     }
 
+    public void incrementStructureVersion() {
+        structureVersion.incrementAndGet();
+    }
+
     @Override
     public long getMetadataVersion() {
         return structureVersion.get();

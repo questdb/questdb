@@ -917,6 +917,15 @@ public interface CairoConfiguration {
     long getWalApplyMemoryLimitBytes();
 
     /**
+     * Fixed wall-clock interval, in microseconds, for which WAL apply may defer the first
+     * pending transaction of a table so later transactions can join the same apply batch.
+     * Zero disables the feature.
+     */
+    default long getWalApplyReorderWindow() {
+        return 0;
+    }
+
+    /**
      * Set of table directory names (e.g. {@code my_table~3}) whose WAL transactions must not be
      * applied by the ApplyWal2Table job ("hard suspended" tables). Directory names are matched, not
      * logical names, so the suspension binds to the physical table across a rename and a fresh table

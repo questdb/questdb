@@ -3548,6 +3548,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public void setMetaWalApplyReorderWindow(long walApplyReorderWindowUs) {
+        commit();
+        metadata.setWalApplyReorderWindow(walApplyReorderWindowUs);
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMetaStructureVersion();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
+    }
+
+    @Override
     public void setMetaTableFormat(int tableFormat) {
         if (tableFormat == TableUtils.TABLE_FORMAT_PARQUET) {
             if (!metadata.isWalEnabled()) {
@@ -13272,6 +13283,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getTableFormat());
+            ddlMem.jumpTo(TableUtils.META_OFFSET_WAL_APPLY_REORDER_WINDOW);
+            ddlMem.putLong(metadata.getWalApplyReorderWindow());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {

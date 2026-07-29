@@ -45,6 +45,7 @@ import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.cairo.wal.seq.WalApplyReorderTimer;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
@@ -644,6 +645,112 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
+    private boolean applyReorderPreflight(
+            TableToken tableToken,
+            TableWriter writer,
+            SeqTxnTracker tracker
+    ) {
+        final long nowMicros = microClock.getTicks();
+        int reorderState = tracker.getReorderState();
+        if (reorderState != SeqTxnTracker.REORDER_NONE) {
+            reorderState = tracker.promoteExpiredAndGetState(nowMicros);
+            return reorderState == SeqTxnTracker.REORDER_RELEASED;
+        }
+
+        final long reorderWindow = TableUtils.effectiveWalApplyReorderWindow(
+                writer.getMetadata().getWalApplyReorderWindow(),
+                tableToken.isMatView(),
+                config.getWalApplyReorderWindow()
+        );
+        if (reorderWindow == 0) {
+            return true;
+        }
+
+        final long appliedSeqTxn = writer.getAppliedSeqTxn();
+        try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, appliedSeqTxn)) {
+            if (!cursor.hasNext()) {
+                return true;
+            }
+
+            final long firstPendingTxn = cursor.getTxn();
+            final long firstPendingCommitTimestamp;
+            try {
+                firstPendingCommitTimestamp = cursor.getCommitTimestamp();
+            } catch (RuntimeException ex) {
+                LOG.info().$("could not read first pending WAL commit timestamp, applying without reorder delay [table=")
+                        .$(tableToken).$(", seqTxn=").$(firstPendingTxn).$(", error=").$(ex).I$();
+                tracker.markReorderReleased();
+                return true;
+            }
+
+            // The commit timestamp may originate from another host's clock (replicated or
+            // restored txnlog) or precede a local clock step backwards. Anchoring the deadline
+            // at no later than "now" bounds the deferral to the window on the local clock.
+            final long deadlineMicros = saturatingAdd(Math.min(firstPendingCommitTimestamp, nowMicros), reorderWindow);
+            if (deadlineMicros <= nowMicros) {
+                tracker.markReorderReleased();
+                return true;
+            }
+
+            final long generation = tracker.beginReorderWindow(firstPendingTxn, deadlineMicros);
+            if (generation < 0) {
+                return tracker.promoteExpiredAndGetState(nowMicros) == SeqTxnTracker.REORDER_RELEASED;
+            }
+
+            boolean forceRelease = tracker.getLastForceApplyTxn() > appliedSeqTxn;
+            if (!forceRelease) {
+                final long capturedSeqTxn = tracker.getSeqTxn();
+                do {
+                    final int walId = cursor.getWalId();
+                    if (walId == METADATA_WALID || walId == DROP_TABLE_WAL_ID
+                            || (cursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V2
+                            && cursor.getTxnRowCount() == 0)) {
+                        forceRelease = true;
+                        break;
+                    }
+                    if (cursor.getTxn() >= capturedSeqTxn) {
+                        break;
+                    }
+                } while (cursor.hasNext());
+            }
+
+            if (forceRelease || tracker.getReorderState() == SeqTxnTracker.REORDER_RELEASED) {
+                tracker.releaseReorderWindowFromPreflight(forceRelease);
+                LOG.debug().$("released WAL apply reorder window during preflight [table=").$(tableToken)
+                        .$(", fromTxn=").$(firstPendingTxn)
+                        .$(", force=").$(forceRelease)
+                        .I$();
+                return true;
+            }
+
+            final WalApplyReorderTimer timer = new WalApplyReorderTimer(
+                    engine,
+                    tableToken,
+                    tracker,
+                    generation,
+                    deadlineMicros
+            );
+            if (!tracker.installReorderTimer(generation, timer)) {
+                timer.cancel();
+                return tracker.promoteExpiredAndGetState(nowMicros) == SeqTxnTracker.REORDER_RELEASED;
+            }
+            timer.register();
+            LOG.debug().$("armed WAL apply reorder window [table=").$(tableToken)
+                    .$(", fromTxn=").$(firstPendingTxn)
+                    .$(", deadline=").$(deadlineMicros)
+                    .I$();
+            return false;
+        } catch (Throwable th) {
+            tracker.releaseReorderWindowFromPreflight(false);
+            throw th;
+        }
+    }
+
+    private static long saturatingAdd(long value, long positiveDelta) {
+        assert positiveDelta >= 0;
+        return value > Long.MAX_VALUE - positiveDelta ? Long.MAX_VALUE : value + positiveDelta;
+    }
+
     private void doStoreTelemetry(short event, short origin) {
         TelemetryTask.store(telemetry, origin, event);
     }
@@ -1035,6 +1142,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 try {
                     writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON);
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
+                    if (!applyReorderPreflight(tableToken, writer, txnTracker)) {
+                        return;
+                    }
                     if (!pressureControl.isReadyToProcess()) {
                         // rely on CheckWalTransactionsJob to notify us when to apply transactions
                         return;

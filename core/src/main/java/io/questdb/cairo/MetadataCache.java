@@ -577,6 +577,7 @@ public class MetadataCache implements QuietCloseable {
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
             table.setTableFormat(TableUtils.getTableFormat(metaMem));
+            table.setWalApplyReorderWindow(TableUtils.getWalApplyReorderWindow(metaMem));
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
@@ -1057,6 +1058,7 @@ public class MetadataCache implements QuietCloseable {
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
             table.setTableFormat(tableMetadata.getTableFormat());
+            table.setWalApplyReorderWindow(tableMetadata.getWalApplyReorderWindow());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 

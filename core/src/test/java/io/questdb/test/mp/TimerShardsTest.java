@@ -106,6 +106,30 @@ public class TimerShardsTest {
     }
 
     @Test
+    public void testUnregisterRemovesExactPendingEntry() {
+        TimerShards shards = new TimerShards(1, "test-timer", LOG);
+        shards.start();
+        AtomicInteger expired = new AtomicInteger();
+        AtomicInteger shutdown = new AtomicInteger();
+        TestEntry entry = new TestEntry(
+                System.currentTimeMillis() + 60_000,
+                expired::incrementAndGet,
+                shutdown::incrementAndGet
+        );
+        try {
+            shards.register(entry);
+            Assert.assertEquals(1, shards.size());
+            Assert.assertTrue(shards.unregister(entry));
+            Assert.assertEquals(0, shards.size());
+            Assert.assertFalse(shards.unregister(entry));
+        } finally {
+            shards.shutdown();
+        }
+        Assert.assertEquals(0, expired.get());
+        Assert.assertEquals(0, shutdown.get());
+    }
+
+    @Test
     public void testShardDistribution() {
         int shardCount = 4;
         TimerShards shards = new TimerShards(shardCount, "test-timer", LOG);

@@ -64,6 +64,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private TableReaderMetadataTransitionIndex transitionIndex;
     private MemoryMR transitionMeta;
     private int ttlHoursOrMonths;
+    private long walApplyReorderWindow = TableUtils.WAL_APPLY_REORDER_WINDOW_INHERIT;
     private boolean walEnabled;
     private int writerColumnCount;
 
@@ -129,6 +130,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         o3MaxLag = 0;
         ttlHoursOrMonths = 0;
         tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
+        walApplyReorderWindow = TableUtils.WAL_APPLY_REORDER_WINDOW_INHERIT;
         writerColumnCount = 0;
     }
 
@@ -228,6 +230,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return ttlHoursOrMonths;
     }
 
+    @Override
+    public long getWalApplyReorderWindow() {
+        return walApplyReorderWindow;
+    }
+
     public int getWriterColumnCount() {
         return writerColumnCount;
     }
@@ -323,6 +330,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
         this.tableFormat = TableUtils.getTableFormat(mem);
+        this.walApplyReorderWindow = TableUtils.getWalApplyReorderWindow(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
@@ -394,6 +402,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
         this.tableFormat = TableUtils.getTableFormat(newMetaMem);
+        this.walApplyReorderWindow = TableUtils.getWalApplyReorderWindow(newMetaMem);
 
         int shiftLeft = 0, existingIndex = 0;
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);

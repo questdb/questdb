@@ -119,10 +119,11 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 3;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
+    public static final short META_FORMAT_MINOR_VERSION_WAL_APPLY_REORDER_WINDOW = 3;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -138,6 +139,7 @@ public final class TableUtils {
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final long META_OFFSET_TABLE_FORMAT = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
+    public static final long META_OFFSET_WAL_APPLY_REORDER_WINDOW = 56; // LONG, 8-byte aligned
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -168,6 +170,7 @@ public final class TableUtils {
     public static final int TABLE_TYPE_MAT = 2;
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_VIEW = 3;
+    public static final long WAL_APPLY_REORDER_WINDOW_INHERIT = -1L;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     // Dot-prefixed db-root staging dir for ALTER TABLE ... REBASE WAL (mirrors ".download"/".checkpoint").
@@ -830,6 +833,12 @@ public final class TableUtils {
             }
             descriptorIndex++;
         }
+    }
+
+    public static long effectiveWalApplyReorderWindow(long storedWindow, boolean isMatView, long serverDefault) {
+        return storedWindow == WAL_APPLY_REORDER_WINDOW_INHERIT
+                ? (isMatView ? 0 : serverDefault)
+                : storedWindow;
     }
 
     public static long estimateAvgRecordSize(RecordMetadata metadata) {
@@ -2853,6 +2862,8 @@ public final class TableUtils {
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getTableFormat());
+        mem.jumpTo(TableUtils.META_OFFSET_WAL_APPLY_REORDER_WINDOW);
+        mem.putLong(tableStruct.getWalApplyReorderWindow());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -3098,6 +3109,12 @@ public final class TableUtils {
         return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_TTL)
                 ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS)
                 : 0;
+    }
+
+    static long getWalApplyReorderWindow(MemoryR metaMem) {
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_WAL_APPLY_REORDER_WINDOW)
+                ? metaMem.getLong(TableUtils.META_OFFSET_WAL_APPLY_REORDER_WINDOW)
+                : WAL_APPLY_REORDER_WINDOW_INHERIT;
     }
 
     static boolean isColumnCovering(MemoryR metaMem, int columnIndex) {

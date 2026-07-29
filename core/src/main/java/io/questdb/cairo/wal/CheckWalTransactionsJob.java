@@ -36,6 +36,7 @@ import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -48,6 +49,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final MillisecondClock millisecondClock;
+    private final MicrosecondClock microsecondClock;
     private final long spinLockTimeout;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     // Empty list means that all tables should be checked.
@@ -63,6 +65,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         txReader = new TxReader(engine.getConfiguration().getFilesFacade());
         dbRoot = engine.getConfiguration().getDbRoot();
         millisecondClock = engine.getConfiguration().getMillisecondClock();
+        microsecondClock = engine.getConfiguration().getMicrosecondClock();
         spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
         checkNotifyOutstandingTxnInWalRef = (tableId, token, txn) -> checkNotifyOutstandingTxnInWal(token, txn);
         checkInterval = engine.getConfiguration().getSequencerCheckInterval();
@@ -91,7 +94,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
             notificationQueueIsFull = !engine.notifyWalTxnCommitted(tableToken);
         } else {
             if (engine.getTableSequencerAPI().isTxnTrackerInitialised(tableToken)) {
-                if (engine.getTableSequencerAPI().notifyOnCheck(tableToken, seqTxn)) {
+                if (engine.getTableSequencerAPI().notifyOnCheck(tableToken, seqTxn, microsecondClock.getTicks())) {
                     notificationQueueIsFull = !engine.notifyWalTxnCommitted(tableToken);
                 }
             } else {
@@ -144,7 +147,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                 continue;
             }
             SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-            if (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
+            if (tracker.shouldRepublish(microsecondClock.getTicks())) {
                 if (!engine.notifyWalTxnCommitted(tableToken)) {
                     return false;
                 }

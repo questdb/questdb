@@ -46,6 +46,7 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -80,6 +81,7 @@ import org.junit.Assert;
 import org.junit.Before;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -90,6 +92,7 @@ public class FuzzRunner {
     public final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;
     protected static final Log LOG = LogFactory.getLog(AbstractFuzzTest.class);
     protected static final StringSink sink = new StringSink();
+    private static final long WAL_DRAIN_TIMEOUT_NANOS = TimeUnit.MINUTES.toNanos(5);
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
     protected int initialRowCount;
     protected int partitionCount;
@@ -1196,9 +1199,27 @@ public class FuzzRunner {
              TableReader rdr2 = getReaderHandleTableDropped(tableName)
         ) {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            while (walApplyJob.run() || checkWalTransactionsJob.run()) {
-                forceReleaseTableWriter(applyRnd);
-                purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
+            final long startNanos = System.nanoTime();
+            final PendingWalTransactions pendingWalTransactions = new PendingWalTransactions();
+            final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+            while (true) {
+                boolean useful = walApplyJob.run();
+                if (!useful) {
+                    useful = checkWalTransactionsJob.run();
+                }
+                if (useful) {
+                    forceReleaseTableWriter(applyRnd);
+                    purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
+                }
+                if (!hasPendingWalTransactions(tableTokenBucket, pendingWalTransactions)) {
+                    return;
+                }
+                if (System.nanoTime() - startNanos > WAL_DRAIN_TIMEOUT_NANOS) {
+                    Assert.fail("WAL fuzz drain timed out [table=" + tableName + ']');
+                }
+                if (!useful) {
+                    Os.sleep(1);
+                }
             }
         }
     }
@@ -1250,6 +1271,19 @@ public class FuzzRunner {
         }
     }
 
+    private boolean hasPendingWalTransactions(
+            ObjHashSet<TableToken> tableTokenBucket,
+            PendingWalTransactions pendingWalTransactions
+    ) {
+        pendingWalTransactions.pending = false;
+        engine.getTableSequencerAPI().forAllWalTables(
+                tableTokenBucket,
+                false,
+                pendingWalTransactions
+        );
+        return pendingWalTransactions.pending;
+    }
+
     /**
      * Picks an index type clause for fuzz table creation. Returns either
      * an empty string (BITMAP — the default), or one of the POSTING
@@ -1291,8 +1325,25 @@ public class FuzzRunner {
                     checkNoSuspendedTables(tableTokenBucket);
                     i++;
                 }
-                while (job.run() || checkJob.run()) {
-                    forceReleaseTableWriter(applyRnd);
+                final long startNanos = System.nanoTime();
+                final PendingWalTransactions pendingWalTransactions = new PendingWalTransactions();
+                while (true) {
+                    boolean useful = job.run();
+                    if (!useful) {
+                        useful = checkJob.run();
+                    }
+                    if (useful) {
+                        forceReleaseTableWriter(applyRnd);
+                    }
+                    if (!hasPendingWalTransactions(tableTokenBucket, pendingWalTransactions)) {
+                        break;
+                    }
+                    if (System.nanoTime() - startNanos > WAL_DRAIN_TIMEOUT_NANOS) {
+                        Assert.fail("WAL fuzz apply thread drain timed out");
+                    }
+                    if (!useful) {
+                        Os.sleep(1);
+                    }
                 }
                 i++;
             }
@@ -1554,6 +1605,18 @@ public class FuzzRunner {
         } finally {
             for (int i = 0, n = fuzzTransactions.size(); i < n; i++) {
                 Misc.freeObjListAndClear(fuzzTransactions.get(i));
+            }
+        }
+    }
+
+    private class PendingWalTransactions implements TableSequencerAPI.TableSequencerCallback {
+        private boolean pending;
+
+        @Override
+        public void onTable(int tableId, TableToken tableToken, long lastTxn) {
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            if (tracker.getWriterTxn() < lastTxn || tracker.getReorderState() != SeqTxnTracker.REORDER_NONE) {
+                pending = true;
             }
         }
     }

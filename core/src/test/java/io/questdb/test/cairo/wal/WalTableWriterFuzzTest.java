@@ -34,6 +34,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -41,6 +42,7 @@ import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.Files;
 import io.questdb.std.Hash;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -58,11 +60,13 @@ import org.junit.Test;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
 
 public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
+    private static final long WAL_DRAIN_TIMEOUT_NANOS = TimeUnit.MINUTES.toNanos(5);
 
     @Before
     public void setUp() {
@@ -212,6 +216,14 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
     @Test
     public void testRandomInOutOfOrderMultipleWalInserts() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final long walApplyReorderWindowMicros = (1L + rnd.nextInt(100)) * 1_000L;
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_REORDER_WINDOW, walApplyReorderWindowMicros);
+        setCurrentMicros(-1);
+        LOG.info().$("WAL table writer fuzz reorder window [windowMicros=")
+                .$(walApplyReorderWindowMicros)
+                .I$();
+
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             final String tableCopyName = tableName + "_copy";
@@ -220,7 +232,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             long tsIncrement;
             long now = Os.currentTimeMicros();
             LOG.info().$("now :").$(now).$();
-            Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
@@ -1185,6 +1196,34 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         execute("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows);
         if (tableId > 0) {
             drainWalQueue();
+        }
+    }
+
+    protected static void drainWalQueue() {
+        final boolean[] pending = new boolean[1];
+        final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+        final long startNanos = System.nanoTime();
+        while (true) {
+            TestUtils.drainWalQueue(engine);
+            pending[0] = false;
+            engine.getTableSequencerAPI().forAllWalTables(
+                    tableTokenBucket,
+                    false,
+                    (tableId, tableToken, lastTxn) -> {
+                        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                        if (tracker.getWriterTxn() < lastTxn
+                                || tracker.getReorderState() != SeqTxnTracker.REORDER_NONE) {
+                            pending[0] = true;
+                        }
+                    }
+            );
+            if (!pending[0]) {
+                return;
+            }
+            if (System.nanoTime() - startNanos > WAL_DRAIN_TIMEOUT_NANOS) {
+                Assert.fail("WAL table writer fuzz drain timed out");
+            }
+            Os.sleep(1);
         }
     }
 

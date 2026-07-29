@@ -1718,6 +1718,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(paramNamePosition, "o3MaxLag must be non negative");
             }
             compiledQuery.ofAlter(alterOperationBuilder.ofSetO3MaxLag(tableNamePosition, tableToken, tableId, o3MaxLag).build());
+        } else if (isWalApplyReorderWindowKeyword(paramName)) {
+            final long walApplyReorderWindow = SqlUtil.parseWalApplyReorderWindow(value, paramNamePosition);
+            compiledQuery.ofAlter(alterOperationBuilder.ofSetWalApplyReorderWindow(
+                    tableNamePosition,
+                    tableToken,
+                    tableId,
+                    walApplyReorderWindow
+            ).build());
         } else {
             throw SqlException.$(paramNamePosition, "unknown parameter '").put(paramName).put('\'');
         }
@@ -2121,12 +2129,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isSetKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || (!isTtlKeyword(tok) && !isRefreshKeyword(tok))) {
+                if (tok == null || (!isTtlKeyword(tok) && !isRefreshKeyword(tok) && !isParamKeyword(tok))) {
                     compileAlterMatViewSetExt(executionContext, tok, matViewToken, matViewNamePosition);
                     return;
                 }
                 if (isTtlKeyword(tok)) {
                     alterTableOrMatViewSetTtl(matViewToken, matViewNamePosition, tableMetadata);
+                } else if (isParamKeyword(tok)) {
+                    executionContext.getSecurityContext().authorizeAlterTableSetParam(matViewToken);
+                    final int paramNamePosition = lexer.getPosition();
+                    tok = expectToken(lexer, "'walApplyReorderWindow'");
+                    final CharSequence paramName = GenericLexer.immutableOf(tok);
+                    if (!isWalApplyReorderWindowKeyword(paramName)) {
+                        throw SqlException.$(paramNamePosition, "'walApplyReorderWindow' expected");
+                    }
+                    tok = expectToken(lexer, "'='");
+                    if (tok.length() != 1 || tok.charAt(0) != '=') {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
+                    }
+                    final CharSequence value = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
+                    alterTableSetParam(
+                            paramName,
+                            value,
+                            paramNamePosition,
+                            matViewToken,
+                            matViewNamePosition,
+                            tableMetadata.getTableId()
+                    );
                 } else if (isRefreshKeyword(tok)) {
                     tok = expectToken(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'limit'");
                     if (isLimitKeyword(tok)) {
@@ -2302,7 +2331,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'immediate' or 'manual' or 'period' or 'every' or 'limit' expected");
                     }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl', 'refresh' or 'param' expected");
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);

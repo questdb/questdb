@@ -2321,6 +2321,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             structureVersion++;
         }
 
+        @Override
+        public void setMetaWalApplyReorderWindow(long walApplyReorderWindowUs) {
+            structureVersion++;
+        }
+
         public void startAlterValidation() {
             structureVersion = getColumnStructureVersion();
         }
@@ -2567,6 +2572,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         @Override
         public TableToken getTableToken() {
             return tableToken;
+        }
+
+        @Override
+        public void setMetaWalApplyReorderWindow(long walApplyReorderWindowUs) {
+            // WAL segment metadata does not store table parameters, but it must still
+            // advance with every structural transaction.
+            metadata.incrementStructureVersion();
         }
 
         @Override

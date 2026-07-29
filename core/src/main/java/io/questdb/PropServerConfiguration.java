@@ -610,6 +610,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int walApplyLookAheadTransactionCount;
     private final long walApplyMemoryLimitBytes;
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
+    private final long walApplyReorderWindow;
     private final long walApplySleepTimeout;
     private final ObjHashSet<String> walApplySuspendedTables = new ObjHashSet<>();
     private final boolean walApplySuspendedWriteDenied;
@@ -934,6 +935,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.debugWalApplyBlockFailureNoRetry = getBoolean(properties, env, PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, false);
         this.walMaxLagSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 75 * Numbers.SIZE_1MB, 0);
         this.walMaxSegmentFileDescriptorsCache = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, 30);
+        this.walApplyReorderWindow = getMicros(properties, env, PropertyKey.CAIRO_WAL_APPLY_REORDER_WINDOW, 0);
+        if (walApplyReorderWindow < 0) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.CAIRO_WAL_APPLY_REORDER_WINDOW.getPropertyPath(),
+                    Long.toString(walApplyReorderWindow)
+            );
+        }
         this.walApplyTableTimeQuota = getMillis(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 200);
         final String walApplySuspendedTablesValue = getString(properties, env, PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
@@ -5066,6 +5074,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalApplyMemoryLimitBytes() {
             return walApplyMemoryLimitBytes;
+        }
+
+        @Override
+        public long getWalApplyReorderWindow() {
+            return walApplyReorderWindow;
         }
 
         @Override

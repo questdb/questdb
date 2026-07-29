@@ -311,10 +311,10 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public boolean notifyOnCheck(TableToken tableToken, long seqTxn) {
+    public boolean notifyOnCheck(TableToken tableToken, long seqTxn, long nowMicros) {
         // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
         // to run ApplyWal2TableJob for the table
-        return getSeqTxnTracker(tableToken).notifyOnCheck(seqTxn);
+        return getSeqTxnTracker(tableToken).notifyOnCheck(seqTxn, nowMicros);
     }
 
     public void notifySegmentClosed(TableToken tableToken, long txn, int walId, int segmentId) {
@@ -377,6 +377,9 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public boolean releaseAll() {
+        for (SeqTxnTracker tracker : seqTxnTrackers.values()) {
+            tracker.cancelReorderWindow();
+        }
         seqTxnTrackers.clear();
         return releaseAll(Long.MAX_VALUE);
     }

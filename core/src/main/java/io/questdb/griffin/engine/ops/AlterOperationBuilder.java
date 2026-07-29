@@ -309,6 +309,15 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofSetWalApplyReorderWindow(int tableNamePosition, TableToken tableToken, int tableId, long walApplyReorderWindow) {
+        this.command = SET_WAL_APPLY_REORDER_WINDOW;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.extraInfo.add(walApplyReorderWindow);
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofSetParquetEncoding(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int parquetEncodingConfig) {
         this.command = SET_PARQUET_ENCODING;
         this.tableNamePosition = tableNamePosition;

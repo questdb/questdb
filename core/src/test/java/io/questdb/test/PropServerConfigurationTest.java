@@ -494,6 +494,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(200, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getWalApplyReorderWindow());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
         Assert.assertEquals(200_000, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
         Assert.assertEquals(20.0d, configuration.getCairoConfiguration().getWalLagRowsMultiplier(), 0.00001);
@@ -544,6 +545,19 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.tcp.commit.interval.default", "1000");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
+    }
+
+    @Test
+    public void testWalApplyReorderWindowDurationAndNegativeRejection() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_WAL_APPLY_REORDER_WINDOW.getPropertyPath(), "25ms");
+        Assert.assertEquals(
+                25_000,
+                newPropServerConfiguration(properties).getCairoConfiguration().getWalApplyReorderWindow()
+        );
+
+        properties.setProperty(PropertyKey.CAIRO_WAL_APPLY_REORDER_WINDOW.getPropertyPath(), "-1us");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_WAL_APPLY_REORDER_WINDOW);
     }
 
     @Test

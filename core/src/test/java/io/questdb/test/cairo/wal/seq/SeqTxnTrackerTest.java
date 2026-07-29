@@ -109,7 +109,7 @@ public class SeqTxnTrackerTest {
                 new Thread(() -> {
                     try {
                         startBarrier.await();
-                        if (tracker.notifyOnCheck(2 + finalI)) {
+                        if (tracker.notifyOnCheck(2 + finalI, 0)) {
                             successes.incrementAndGet();
                         }
                         doneLatch.countDown();
@@ -151,7 +151,7 @@ public class SeqTxnTrackerTest {
                 new Thread(() -> {
                     try {
                         startBarrier.await();
-                        if (tracker.notifyOnCommit(2 + finalI)) {
+                        if (tracker.notifyOnCommit(2 + finalI, false)) {
                             successes.incrementAndGet();
                         }
                         doneLatch.countDown();
@@ -182,6 +182,102 @@ public class SeqTxnTrackerTest {
         assertEquals("memory pressure level after one OOM", 1, pressureControl.getMemoryPressureLevel());
         pressureControl.onOutOfMemory();
         assertEquals("memory pressure level after two OOMs", 2, pressureControl.getMemoryPressureLevel());
+    }
+
+    @Test
+    public void testReorderBarrierForceReleasesWindow() {
+        final SeqTxnTracker tracker = createSeqTracker();
+        tracker.initTxns(0, 1, false);
+
+        assertEquals(1, tracker.beginReorderWindow(1, 100));
+        assertFalse(tracker.notifyOnCommit(2, false));
+        assertEquals(100, tracker.getDeferredDeadlineMicros());
+
+        assertTrue(tracker.notifyOnCommit(3, true));
+        assertEquals(SeqTxnTracker.REORDER_RELEASED, tracker.getReorderState());
+        assertEquals(3, tracker.getLastForceApplyTxn());
+    }
+
+    @Test
+    public void testReorderDeadlineDoesNotSlideAndSweepReleases() {
+        final SeqTxnTracker tracker = createSeqTracker();
+        tracker.initTxns(0, 1, false);
+
+        assertEquals(1, tracker.beginReorderWindow(1, 100));
+        assertFalse(tracker.notifyOnCommit(2, false));
+        assertEquals(100, tracker.getDeferredDeadlineMicros());
+        assertFalse(tracker.notifyOnCheck(2, 99));
+        assertEquals(SeqTxnTracker.REORDER_DEFERRED, tracker.getReorderState());
+
+        assertTrue(tracker.notifyOnCheck(2, 100));
+        assertEquals(SeqTxnTracker.REORDER_RELEASED, tracker.getReorderState());
+        assertTrue(tracker.updateWriterTxns(1, 1));
+        assertEquals(SeqTxnTracker.REORDER_RELEASED, tracker.getReorderState());
+        assertFalse(tracker.updateWriterTxns(2, 2));
+        assertEquals(SeqTxnTracker.REORDER_NONE, tracker.getReorderState());
+    }
+
+    @Test
+    public void testReorderQueueResetPreservesState() {
+        final SeqTxnTracker tracker = createSeqTracker();
+        tracker.initTxns(0, 1, false);
+
+        final long generation = tracker.beginReorderWindow(1, 100);
+        assertFalse(tracker.updateWriterTxns(
+                SeqTxnTracker.UNINITIALIZED_TXN,
+                SeqTxnTracker.UNINITIALIZED_TXN
+        ));
+        assertEquals(SeqTxnTracker.REORDER_DEFERRED, tracker.getReorderState());
+        assertEquals(100, tracker.getDeferredDeadlineMicros());
+
+        assertTrue(tracker.releaseReorderWindow(generation));
+        assertEquals(SeqTxnTracker.REORDER_RELEASED, tracker.getReorderState());
+        assertTrue(tracker.updateWriterTxns(
+                SeqTxnTracker.UNINITIALIZED_TXN,
+                SeqTxnTracker.UNINITIALIZED_TXN
+        ));
+        assertEquals(SeqTxnTracker.REORDER_RELEASED, tracker.getReorderState());
+    }
+
+    @Test
+    public void testReorderStaleGenerationCannotReleaseLaterWindow() {
+        final SeqTxnTracker tracker = createSeqTracker();
+        tracker.initTxns(0, 1, false);
+
+        final long firstGeneration = tracker.beginReorderWindow(1, 100);
+        assertTrue(tracker.releaseReorderWindow(firstGeneration));
+        assertFalse(tracker.updateWriterTxns(1, 1));
+
+        assertTrue(tracker.notifyOnCommit(2, false));
+        final long secondGeneration = tracker.beginReorderWindow(2, 200);
+        assertTrue(secondGeneration > firstGeneration);
+        assertFalse(tracker.releaseReorderWindow(firstGeneration));
+        assertEquals(SeqTxnTracker.REORDER_DEFERRED, tracker.getReorderState());
+    }
+
+    @Test
+    public void testReorderSuspendedExpiryPublishesOnResume() {
+        final SeqTxnTracker tracker = createSeqTracker();
+        tracker.initTxns(0, 1, false);
+        tracker.beginReorderWindow(1, 100);
+        tracker.setSuspended(ErrorTag.NONE, "test");
+
+        assertFalse(tracker.notifyOnCheck(1, 100));
+        assertEquals(SeqTxnTracker.REORDER_RELEASED, tracker.getReorderState());
+        assertTrue(tracker.resume());
+    }
+
+    @Test
+    public void testReorderSuspendedForceReleaseIsRecordedAndPublishesOnResume() {
+        final SeqTxnTracker tracker = createSeqTracker();
+        tracker.initTxns(0, 1, false);
+        tracker.beginReorderWindow(1, 100);
+        tracker.setSuspended(ErrorTag.NONE, "test");
+
+        assertFalse(tracker.notifyOnCommit(2, true));
+        assertEquals(2, tracker.getLastForceApplyTxn());
+        assertEquals(SeqTxnTracker.REORDER_RELEASED, tracker.getReorderState());
+        assertTrue(tracker.resume());
     }
 
     @Test
@@ -339,6 +435,23 @@ public class SeqTxnTrackerTest {
 
             tracker.updateWriterTxns(7, 7);
             assertTrue(w2.isFired());
+        });
+    }
+
+    @Test
+    public void testWaiterIgnoresReorderWindowRelease() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(0, 1, false);
+            long generation = tracker.beginReorderWindow(1, 100);
+            TxnWaiter waiter = new TxnWaiter(1, dummyContinuation());
+            tracker.registerWaiter(waiter);
+
+            assertTrue(tracker.releaseReorderWindow(generation));
+            assertFalse(waiter.isFired());
+
+            tracker.updateWriterTxns(1, 1);
+            assertTrue(waiter.isFired());
         });
     }
 

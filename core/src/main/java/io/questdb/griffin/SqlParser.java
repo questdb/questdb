@@ -1763,6 +1763,7 @@ public class SqlParser {
 
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
         long o3MaxLag = configuration.getO3MaxLag();
+        long walApplyReorderWindow = TableUtils.WAL_APPLY_REORDER_WINDOW_INHERIT;
 
         if (tok != null && isWithKeyword(tok)) {
             ExpressionNode expr;
@@ -1777,6 +1778,11 @@ public class SqlParser {
                         }
                     } else if (isO3MaxLagKeyword(expr.lhs.token)) {
                         o3MaxLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
+                    } else if (isWalApplyReorderWindowKeyword(expr.lhs.token)) {
+                        walApplyReorderWindow = SqlUtil.parseWalApplyReorderWindow(
+                                expr.rhs.token,
+                                lexer.getPosition()
+                        );
                     } else {
                         throw SqlException.position(lexer.getPosition()).put(" unrecognized ")
                                 .put(expr.lhs.token).put(" after WITH");
@@ -1798,6 +1804,7 @@ public class SqlParser {
         }
         builder.setMaxUncommittedRows(maxUncommittedRows);
         builder.setO3MaxLag(o3MaxLag);
+        builder.setWalApplyReorderWindow(walApplyReorderWindow);
 
         if (tok != null && isInKeyword(tok)) {
             parseInVolume(lexer, builder);

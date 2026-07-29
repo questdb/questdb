@@ -49,9 +49,9 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
  * yield (the body is heap ops plus a single {@link Object#notify}).
  *
  * <p>API is the subset {@link TimerShards} actually uses: {@link #offer},
- * {@link #take}, {@link #toArray}, {@link #clear}, {@link #size}. Single-consumer is
- * assumed (one shard daemon per instance) - {@link #notify} not {@code notifyAll} is
- * used to wake waiters.
+ * {@link #removeIdentity}, {@link #take}, {@link #toArray}, {@link #clear},
+ * {@link #size}. Single-consumer is assumed (one shard daemon per instance) -
+ * {@link #notify} not {@code notifyAll} is used to wake waiters.
  */
 public class DelayHeap<E extends Delayed> {
 
@@ -67,6 +67,20 @@ public class DelayHeap<E extends Delayed> {
             notify();
         }
         return true;
+    }
+
+    public synchronized boolean removeIdentity(E target) {
+        final E oldHead = q.peek();
+        for (java.util.Iterator<E> iterator = q.iterator(); iterator.hasNext(); ) {
+            if (iterator.next() == target) {
+                iterator.remove();
+                if (oldHead == target) {
+                    notify();
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     public synchronized int size() {

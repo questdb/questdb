@@ -1429,6 +1429,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalApplyReorderWindow() {
+        return 0;
+    }
+
+    @Override
     public long getWalApplyTableTimeQuota() {
         return 1000L;
     }

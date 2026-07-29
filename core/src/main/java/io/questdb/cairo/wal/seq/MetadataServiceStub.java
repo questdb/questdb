@@ -165,6 +165,11 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default void setMetaWalApplyReorderWindow(long walApplyReorderWindowUs) {
+        throw CairoException.critical(0).put("change of WAL apply reorder window does not update sequencer metadata");
+    }
+
+    @Override
     default void setMetaTableFormat(int tableFormat) {
         throw CairoException.critical(0).put("change of table format does not update sequencer metadata");
     }

@@ -35,6 +35,11 @@ public class WalMetrics implements Mutable {
     private final Counter applyPhysicallyWrittenRowsCounter;
     private final LongGauge applyRowsWriteRateGauge;
     private final Counter applyRowsWrittenCounter;
+    private final Counter reorderForceReleasesCounter;
+    private final Counter reorderSweepReleasesCounter;
+    private final Counter reorderTransactionsCounter;
+    private final LongGauge reorderWaitingTablesGauge;
+    private final Counter reorderWindowsCounter;
     private final Counter rowsWrittenCounter;
     private final LongGauge seqTxnGauge;
     private final AtomicLong totalRowsWritten = new AtomicLong();
@@ -45,6 +50,11 @@ public class WalMetrics implements Mutable {
         this.applyPhysicallyWrittenRowsCounter = metricsRegistry.newCounter("wal_apply_physically_written_rows");
         this.applyRowsWriteRateGauge = metricsRegistry.newLongGauge("wal_apply_rows_per_second");
         this.applyRowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
+        this.reorderWaitingTablesGauge = metricsRegistry.newAtomicLongGauge("wal_apply_reorder_waiting_tables");
+        this.reorderWindowsCounter = metricsRegistry.newCounter("wal_apply_reorder_windows");
+        this.reorderTransactionsCounter = metricsRegistry.newCounter("wal_apply_reorder_transactions");
+        this.reorderForceReleasesCounter = metricsRegistry.newCounter("wal_apply_reorder_force_releases");
+        this.reorderSweepReleasesCounter = metricsRegistry.newCounter("wal_apply_reorder_sweep_releases");
         this.rowsWrittenCounter = metricsRegistry.newCounter("wal_written_rows");
         this.seqTxnGauge = metricsRegistry.newAtomicLongGauge("wal_apply_seq_txn");
         this.writerTxnGauge = metricsRegistry.newAtomicLongGauge("wal_apply_writer_txn");
@@ -71,11 +81,36 @@ public class WalMetrics implements Mutable {
         writerTxnGauge.add(txnDelta);
     }
 
+    public void onReorderWindowCancelled() {
+        reorderWaitingTablesGauge.dec();
+    }
+
+    public void onReorderWindowDeferred() {
+        reorderWaitingTablesGauge.inc();
+    }
+
+    public void onReorderWindowReleased(long transactionCount, boolean forceRelease, boolean sweepRelease) {
+        reorderWaitingTablesGauge.dec();
+        reorderWindowsCounter.inc();
+        reorderTransactionsCounter.add(transactionCount);
+        if (forceRelease) {
+            reorderForceReleasesCounter.inc();
+        }
+        if (sweepRelease) {
+            reorderSweepReleasesCounter.inc();
+        }
+    }
+
     @Override
     public void clear() {
         applyPhysicallyWrittenRowsCounter.reset();
         applyRowsWriteRateGauge.setValue(0);
         applyRowsWrittenCounter.reset();
+        reorderForceReleasesCounter.reset();
+        reorderSweepReleasesCounter.reset();
+        reorderTransactionsCounter.reset();
+        reorderWaitingTablesGauge.setValue(0);
+        reorderWindowsCounter.reset();
         rowsWrittenCounter.reset();
         seqTxnGauge.setValue(0);
         totalRowsWritten.set(0);

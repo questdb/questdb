@@ -106,6 +106,8 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int WAL_TX_SIZE_P50_COLUMN = 35;
     private static final int WAL_TX_SIZE_P90_COLUMN = 36;
     private static final int WAL_TX_SIZE_P99_COLUMN = 37;
+    private static final int WAL_APPLY_REORDER_WINDOW_COLUMN = 45;
+    private static final int WAL_APPLY_REORDER_WINDOW_EFFECTIVE_COLUMN = 46;
 
     public static String getTtlUnit(int ttl) {
         if (ttl == 0) {
@@ -171,7 +173,7 @@ public class TablesFunctionFactory implements FunctionFactory {
         public TablesCursorFactory(CairoConfiguration configuration) {
             super(METADATA);
             tableCache = DefaultLocalCacheSnapshotFactory.INSTANCE.newInstance(configuration);
-            cursor = new TablesRecordCursor(tableCache);
+            cursor = new TablesRecordCursor(tableCache, configuration.getWalApplyReorderWindow());
         }
 
         @Override
@@ -202,7 +204,7 @@ public class TablesFunctionFactory implements FunctionFactory {
         }
 
         private static class TablesRecordCursor implements NoRandomAccessRecordCursor {
-            private final TableListRecord record = new TableListRecord();
+            private final TableListRecord record;
             private final CharSequenceObjMap<CairoTable> tableCache;
             private SqlExecutionCircuitBreaker circuitBreaker;
             private int iteratorIdx = -1;
@@ -210,9 +212,10 @@ public class TablesFunctionFactory implements FunctionFactory {
             private RecentWriteTracker recentWriteTracker;
             private TableSequencerAPI tableSequencerAPI;
 
-            public TablesRecordCursor(CharSequenceObjMap<CairoTable> tableCache) {
+            public TablesRecordCursor(CharSequenceObjMap<CairoTable> tableCache, long serverWalApplyReorderWindow) {
                 this.tableCache = tableCache;
                 this.iteratorLim = tableCache.size() - 1;
+                this.record = new TableListRecord(serverWalApplyReorderWindow);
             }
 
             @Override
@@ -259,10 +262,15 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             private static class TableListRecord implements Record {
                 private StringSink lazyStringSink = null;
+                private final long serverWalApplyReorderWindow;
                 private CairoTable table;
                 private TableSequencerAPI tableSequencerAPI;
                 private TimestampDriver timestampDriver;
                 private RecentWriteTracker.WriteStats writeStats;
+
+                private TableListRecord(long serverWalApplyReorderWindow) {
+                    this.serverWalApplyReorderWindow = serverWalApplyReorderWindow;
+                }
 
                 @Override
                 public boolean getBool(int col) {
@@ -328,6 +336,22 @@ public class TablesFunctionFactory implements FunctionFactory {
                 public long getLong(int col) {
                     if (col == O3_MAX_LAG_COLUMN) {
                         return table.getO3MaxLag();
+                    }
+                    if (col == WAL_APPLY_REORDER_WINDOW_COLUMN) {
+                        final long stored = table.getWalApplyReorderWindow();
+                        return stored == TableUtils.WAL_APPLY_REORDER_WINDOW_INHERIT
+                                ? Numbers.LONG_NULL
+                                : stored;
+                    }
+                    if (col == WAL_APPLY_REORDER_WINDOW_EFFECTIVE_COLUMN) {
+                        if (!table.isWalEnabled()) {
+                            return 0;
+                        }
+                        return TableUtils.effectiveWalApplyReorderWindow(
+                                table.getWalApplyReorderWindow(),
+                                table.getTableToken().isMatView(),
+                                serverWalApplyReorderWindow
+                        );
                     }
                     if (writeStats == null) {
                         return col == WAL_PENDING_ROW_COUNT_COLUMN || col == WAL_DEDUP_ROW_COUNT_COLUMN
@@ -475,6 +499,8 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("replica_batch_size_p99", ColumnType.LONG));         // 42
         metadata.add(new TableColumnMetadata("replica_batch_size_max", ColumnType.LONG));         // 43
         metadata.add(new TableColumnMetadata("replica_more_pending", ColumnType.BOOLEAN));        // 44
+        metadata.add(new TableColumnMetadata("walApplyReorderWindow", ColumnType.LONG));          // 45
+        metadata.add(new TableColumnMetadata("walApplyReorderWindowEffective", ColumnType.LONG)); // 46
         METADATA = metadata;
     }
 }

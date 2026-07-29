@@ -1619,6 +1619,10 @@ public class SqlKeywords {
                 && (tok.charAt(7) | 32) == 'g';
     }
 
+    public static boolean isWalApplyReorderWindowKeyword(CharSequence tok) {
+        return Chars.equalsIgnoreCase(tok, "walApplyReorderWindow");
+    }
+
     public static boolean isObservationKeyword(CharSequence tok) {
         return tok.length() == 11
                 && (tok.charAt(0) | 32) == 'o'

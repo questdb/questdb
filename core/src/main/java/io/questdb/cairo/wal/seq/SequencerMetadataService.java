@@ -139,4 +139,9 @@ public class SequencerMetadataService implements MetadataServiceStub {
         metadata.renameTable(toTableName);
         tableToken = metadata.getTableToken();
     }
+
+    @Override
+    public void setMetaWalApplyReorderWindow(long walApplyReorderWindowUs) {
+        metadata.incrementStructureVersion();
+    }
 }

@@ -239,6 +239,8 @@ public interface MetadataService {
 
     void setMetaO3MaxLag(long o3MaxLagUs);
 
+    void setMetaWalApplyReorderWindow(long walApplyReorderWindowUs);
+
     /**
      * Sets the default storage format for new partitions of this table.
      * See {@link io.questdb.cairo.TableUtils#TABLE_FORMAT_NATIVE} and

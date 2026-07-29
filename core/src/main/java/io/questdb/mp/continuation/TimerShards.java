@@ -135,6 +135,13 @@ public final class TimerShards {
     }
 
     /**
+     * Removes the exact entry instance from its shard if it has not already been popped.
+     */
+    public boolean unregister(@NotNull DelayedFireable entry) {
+        return shards[shardFor(entry)].removeIdentity(entry);
+    }
+
+    /**
      * Drains every shard and invokes {@link DelayedFireable#shutdown()} on each entry.
      * Halts the timer threads. Idempotent. Must run while worker pools are still
      * RUNNING so that parked continuations have a carrier to remount on.

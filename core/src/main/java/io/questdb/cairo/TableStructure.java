@@ -80,6 +80,14 @@ public interface TableStructure {
         return 0; // TTL disabled by default
     }
 
+    /**
+     * Returns the table-level WAL apply reorder window override in microseconds, or
+     * {@link TableUtils#WAL_APPLY_REORDER_WINDOW_INHERIT} to use the server default.
+     */
+    default long getWalApplyReorderWindow() {
+        return TableUtils.WAL_APPLY_REORDER_WINDOW_INHERIT;
+    }
+
     default ViewDefinition getViewDefinition() {
         return null;
     }

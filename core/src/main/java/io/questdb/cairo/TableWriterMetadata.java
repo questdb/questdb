@@ -46,6 +46,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private TableToken tableToken;
     private int ttlHoursOrMonths;
     private TxReader txReader;
+    private long walApplyReorderWindow = TableUtils.WAL_APPLY_REORDER_WINDOW_INHERIT;
     private boolean walEnabled;
 
     public TableWriterMetadata(TableToken tableToken) {
@@ -141,6 +142,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public long getWalApplyReorderWindow() {
+        return walApplyReorderWindow;
+    }
+
+    @Override
     public boolean hasParquetPartitions() {
         return txReader != null && txReader.hasParquetPartitions();
     }
@@ -164,6 +170,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
         this.tableFormat = TableUtils.getTableFormat(metaMem);
+        this.walApplyReorderWindow = TableUtils.getWalApplyReorderWindow(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -243,6 +250,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
         this.ttlHoursOrMonths = ttlHoursOrMonths;
+    }
+
+    public void setWalApplyReorderWindow(long walApplyReorderWindow) {
+        this.walApplyReorderWindow = walApplyReorderWindow;
     }
 
     public void setTxReader(TxReader txReader) {

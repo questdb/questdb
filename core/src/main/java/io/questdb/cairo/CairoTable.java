@@ -51,6 +51,7 @@ public class CairoTable implements Sinkable {
     private int timestampType;
     private TableToken token;
     private int ttlHoursOrMonths;
+    private long walApplyReorderWindow = TableUtils.WAL_APPLY_REORDER_WINDOW_INHERIT;
 
     public CairoTable(@NotNull TableToken token) {
         this.token = token;
@@ -82,6 +83,7 @@ public class CairoTable implements Sinkable {
         matViewTimerStart = fromTab.getMatViewTimerStart();
         matViewTimerInterval = fromTab.getMatViewTimerInterval();
         matViewTimerUnit = fromTab.getMatViewTimerUnit();
+        walApplyReorderWindow = fromTab.getWalApplyReorderWindow();
     }
 
     public int getColumnCount() {
@@ -187,6 +189,10 @@ public class CairoTable implements Sinkable {
         return ttlHoursOrMonths;
     }
 
+    public long getWalApplyReorderWindow() {
+        return walApplyReorderWindow;
+    }
+
     public boolean hasDedup() {
         return dedup;
     }
@@ -249,6 +255,10 @@ public class CairoTable implements Sinkable {
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
         this.ttlHoursOrMonths = ttlHoursOrMonths;
+    }
+
+    public void setWalApplyReorderWindow(long walApplyReorderWindow) {
+        this.walApplyReorderWindow = walApplyReorderWindow;
     }
 
     @Override

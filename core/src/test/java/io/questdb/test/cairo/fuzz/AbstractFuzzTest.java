@@ -29,14 +29,20 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -45,14 +51,18 @@ import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
+
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
 public class AbstractFuzzTest extends AbstractCairoTest {
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL = 20000;
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN = 200;
+    private static final long WAL_DRAIN_TIMEOUT_NANOS = TimeUnit.MINUTES.toNanos(5);
     protected final FuzzRunner fuzzer = new FuzzRunner();
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, node1.getMetrics());
     private final Rnd setUpRnd = TestUtils.generateRandom(LOG);
@@ -80,6 +90,43 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         fuzzer.applyWal(transactions, tableName, walWriterCount, applyRnd);
     }
 
+    protected static void drainWalQueue() {
+        final boolean[] pending = new boolean[1];
+        final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+        final long startNanos = System.nanoTime();
+        final CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
+        try (ApplyWal2TableJob applyJob = new ApplyWal2TableJob(engine, 0)) {
+            while (true) {
+                boolean useful = applyJob.run();
+                if (!useful) {
+                    useful = checkJob.run();
+                }
+
+                pending[0] = false;
+                engine.getTableSequencerAPI().forAllWalTables(
+                        tableTokenBucket,
+                        false,
+                        (tableId, tableToken, lastTxn) -> {
+                            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                            if (tracker.getWriterTxn() < lastTxn
+                                    || tracker.getReorderState() != SeqTxnTracker.REORDER_NONE) {
+                                pending[0] = true;
+                            }
+                        }
+                );
+                if (!pending[0]) {
+                    return;
+                }
+                if (System.nanoTime() - startNanos > WAL_DRAIN_TIMEOUT_NANOS) {
+                    Assert.fail("WAL fuzz drain timed out");
+                }
+                if (!useful) {
+                    Os.sleep(1);
+                }
+            }
+        }
+    }
+
     public Rnd generateRandom(Log log) {
         return fuzzer.generateRandom(log);
     }
@@ -101,6 +148,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
+        currentMicros = -1;
+        testMicrosClock = defaultMicrosecondClock;
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(setUpRnd));
         super.setUp();
         fuzzer.withDb(engine, sqlExecutionContext);
@@ -404,6 +453,18 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         int txnCount = Math.max(10, fuzzer.getTransactionCount());
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, walChunk);
+
+        // Draw both values unconditionally so a seed keeps the same random sequence
+        // regardless of whether this run uses the disabled baseline or a live window.
+        boolean disableWalApplyReorderWindow = rnd.nextBoolean();
+        long walApplyReorderWindowMicros = (1L + rnd.nextInt(100)) * 1_000L;
+        node1.setProperty(
+                PropertyKey.CAIRO_WAL_APPLY_REORDER_WINDOW,
+                disableWalApplyReorderWindow ? 0 : walApplyReorderWindowMicros
+        );
+        LOG.info().$("WAL fuzz reorder window [windowMicros=")
+                .$(disableWalApplyReorderWindow ? 0 : walApplyReorderWindowMicros)
+                .I$();
 
         // Make call to move random even if it will not be used.
         // To avoid ZFS runs being very different to the non-ZFS

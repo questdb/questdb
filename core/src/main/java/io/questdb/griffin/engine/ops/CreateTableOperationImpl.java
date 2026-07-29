@@ -108,6 +108,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int ttlPosition;
     private String volumeAlias;
     private int volumePosition;
+    private long walApplyReorderWindow = TableUtils.WAL_APPLY_REORDER_WINDOW_INHERIT;
     private boolean walEnabled;
 
     public CreateTableOperationImpl(
@@ -483,6 +484,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return ttlHoursOrMonths;
     }
 
+    @Override
+    public long getWalApplyReorderWindow() {
+        return walApplyReorderWindow;
+    }
+
     public int getTtlPosition() {
         return ttlPosition;
     }
@@ -604,6 +610,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = timestampColumnNamePosition;
     }
 
+    public void setWalApplyReorderWindow(long walApplyReorderWindow) {
+        this.walApplyReorderWindow = walApplyReorderWindow;
+    }
+
     @Override
     public void updateFromLikeTableMetadata(TableMetadata likeTableMetadata) {
         this.maxUncommittedRows = likeTableMetadata.getMaxUncommittedRows();
@@ -613,6 +623,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.walEnabled = likeTableMetadata.isWalEnabled();
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
         this.tableFormat = likeTableMetadata.getTableFormat();
+        this.walApplyReorderWindow = likeTableMetadata.getWalApplyReorderWindow();
         columnNames.clear();
         columnBits.clear();
         coveringColumnIndicesList.clear();

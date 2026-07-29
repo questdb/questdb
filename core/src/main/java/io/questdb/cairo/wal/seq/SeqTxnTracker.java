@@ -28,6 +28,8 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.CountedConcurrentQueue;
 import io.questdb.mp.ValueHolder;
 import io.questdb.mp.continuation.TxnWaiter;
@@ -36,8 +38,12 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
+    public static final int REORDER_DEFERRED = 1;
+    public static final int REORDER_NONE = 0;
+    public static final int REORDER_RELEASED = 2;
     public static final long UNINITIALIZED_TXN = -1;
     private static final CarrierLocal<WaiterHolder> HOLDER = CarrierLocal.withInitial(WaiterHolder::new);
+    private static final Log LOG = LogFactory.getLog(SeqTxnTracker.class);
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WAITER_REGISTRATION_COUNT_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "waiterRegistrationCount");
@@ -45,6 +51,8 @@ public class SeqTxnTracker {
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
     private final CountedConcurrentQueue<WaiterHolder> waiters = CountedConcurrentQueue.create(WaiterHolder::new);
+    private volatile long deferredDeadlineMicros = Long.MIN_VALUE;
+    private volatile long deferredFromTxn = UNINITIALIZED_TXN;
     private volatile long dirtyWriterTxn;
     // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;
@@ -55,6 +63,10 @@ public class SeqTxnTracker {
     // cairo.wal.apply.suspended.tables config list is an additional source checked by the engine.
     private volatile boolean hardSuspended;
     private volatile ErrorTag errorTag = ErrorTag.NONE;
+    private volatile long lastForceApplyTxn = UNINITIALIZED_TXN;
+    private long reorderGeneration;
+    private volatile int reorderState = REORDER_NONE;
+    private WalApplyReorderTimer reorderTimer;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = UNINITIALIZED_TXN;
     // -1 suspended
@@ -74,6 +86,14 @@ public class SeqTxnTracker {
         return errorMessage;
     }
 
+    public long getDeferredDeadlineMicros() {
+        return deferredDeadlineMicros;
+    }
+
+    public long getDeferredFromTxn() {
+        return deferredFromTxn;
+    }
+
     public ErrorTag getErrorTag() {
         return errorTag;
     }
@@ -88,6 +108,19 @@ public class SeqTxnTracker {
 
     public long getSeqTxn() {
         return seqTxn;
+    }
+
+    public long getLastForceApplyTxn() {
+        return lastForceApplyTxn;
+    }
+
+    public int getReorderState() {
+        return reorderState;
+    }
+
+    @TestOnly
+    public synchronized WalApplyReorderTimer getReorderTimer() {
+        return reorderTimer;
     }
 
     @TestOnly
@@ -133,17 +166,67 @@ public class SeqTxnTracker {
         return suspendedState < 0;
     }
 
-    public boolean notifyOnCheck(long newSeqTxn) {
+    /**
+     * Installs the fixed deadline for a new reorder window. The caller owns the table writer,
+     * so another apply worker cannot concurrently open a second window.
+     *
+     * @return the generation assigned to the window, or {@code -1} if the tracker is no longer
+     * in {@link #REORDER_NONE}
+     */
+    public synchronized long beginReorderWindow(long fromTxn, long deadlineMicros) {
+        if (dropped || reorderState != REORDER_NONE) {
+            return -1;
+        }
+        reorderGeneration++;
+        deferredFromTxn = fromTxn;
+        deferredDeadlineMicros = deadlineMicros;
+        reorderState = REORDER_DEFERRED;
+        metrics.walMetrics().onReorderWindowDeferred();
+        return reorderGeneration;
+    }
+
+    synchronized void cancelReorderWindow() {
+        resetReorderLocked(true);
+    }
+
+    public synchronized void clearReorderTimerOnShutdown(long generation, WalApplyReorderTimer timer) {
+        if (reorderGeneration == generation && reorderTimer == timer) {
+            reorderTimer = null;
+        }
+    }
+
+    public synchronized boolean installReorderTimer(long generation, WalApplyReorderTimer timer) {
+        if (reorderState == REORDER_DEFERRED && reorderGeneration == generation && reorderTimer == null) {
+            reorderTimer = timer;
+            return true;
+        }
+        return false;
+    }
+
+    public synchronized void markReorderReleased() {
+        if (reorderState == REORDER_NONE) {
+            reorderGeneration++;
+            reorderState = REORDER_RELEASED;
+        }
+    }
+
+    public boolean notifyOnCheck(long newSeqTxn, long nowMicros) {
         // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
         // to run ApplyWal2TableJob for the table
         long stxn = seqTxn;
         while (newSeqTxn > stxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
             stxn = seqTxn;
         }
-        return writerTxn < seqTxn && suspendedState > 0 && pressureControl.isReadyToProcess();
+        synchronized (this) {
+            promoteExpiredReorderWindow(nowMicros, true);
+            return reorderState != REORDER_DEFERRED
+                    && writerTxn < seqTxn
+                    && suspendedState > 0
+                    && pressureControl.isReadyToProcess();
+        }
     }
 
-    public boolean notifyOnCommit(long newSeqTxn) {
+    public boolean notifyOnCommit(long newSeqTxn, boolean forceApply) {
         // Updates seqTxn and returns true if the commit should post notification
         // to run ApplyWal2TableJob for the table
         long stxn = seqTxn;
@@ -154,11 +237,47 @@ public class SeqTxnTracker {
             }
             stxn = seqTxn;
         }
+        if (forceApply || reorderState == REORDER_DEFERRED) {
+            synchronized (this) {
+                if (forceApply) {
+                    lastForceApplyTxn = Math.max(lastForceApplyTxn, newSeqTxn);
+                    if (reorderState == REORDER_DEFERRED) {
+                        releaseReorderWindowLocked(true, false);
+                        return suspendedState >= 0;
+                    }
+                } else if (reorderState == REORDER_DEFERRED) {
+                    return false;
+                }
+            }
+        }
         // Return that Apply job notification is needed
         // when there is some new work for ApplyWal2Table job
         // Notify on transactions that are first move seqTxn from -1 or 0
         // or when writerTxn is behind seqTxn by 1 and not suspended
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
+    }
+
+    public synchronized boolean releaseReorderWindow(long generation) {
+        if (reorderState != REORDER_DEFERRED || reorderGeneration != generation) {
+            return false;
+        }
+        releaseReorderWindowLocked(false, false);
+        return suspendedState > 0 && !dropped;
+    }
+
+    public synchronized boolean releaseReorderWindowFromPreflight(boolean forceRelease) {
+        if (reorderState == REORDER_DEFERRED) {
+            releaseReorderWindowLocked(forceRelease, false);
+        }
+        return reorderState == REORDER_RELEASED;
+    }
+
+    public synchronized boolean shouldRepublish(long nowMicros) {
+        promoteExpiredReorderWindow(nowMicros, true);
+        return reorderState != REORDER_DEFERRED
+                && !dropped
+                && suspendedState > 0
+                && writerTxn < seqTxn;
     }
 
     public void notifyOnDrop() {
@@ -167,10 +286,19 @@ public class SeqTxnTracker {
                 return;
             }
             dropped = true;
+            resetReorderLocked(true);
         }
         metrics.walMetrics().addSeqTxn(-seqTxn);
         metrics.walMetrics().addWriterTxn(-writerTxn);
         fireWaiters();
+    }
+
+    /**
+     * Promotes an expired duplicate notification before apply preflight.
+     */
+    public synchronized int promoteExpiredAndGetState(long nowMicros) {
+        promoteExpiredReorderWindow(nowMicros, false);
+        return reorderState;
     }
 
     /**
@@ -206,7 +334,8 @@ public class SeqTxnTracker {
         fireWaiters();
     }
 
-    public void setUnsuspended() {
+    public synchronized boolean resume() {
+        final boolean wasSuspended = suspendedState < 0;
         // should be the first one to be set
         // no error details should be read when table is not suspended
         this.suspendedState = 1;
@@ -214,7 +343,11 @@ public class SeqTxnTracker {
         this.errorTag = ErrorTag.NONE;
         this.errorMessage = "";
 
-        metrics.tableWriterMetrics().decSuspendedTables();
+        if (wasSuspended) {
+            metrics.tableWriterMetrics().decSuspendedTables();
+        }
+        // Resume is a dedicated wake-up and deliberately bypasses young-DEFERRED suppression.
+        return !dropped && writerTxn < seqTxn;
     }
 
     /**
@@ -242,17 +375,70 @@ public class SeqTxnTracker {
             } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
                 suspendedState = 1;
             }
+            if (reorderState == REORDER_RELEASED && writerTxn >= seqTxn) {
+                resetReorderLocked(false);
+            }
         }
         if (progressMade) {
             fireWaiters();
         }
-        return writerTxn < seqTxn;
+        return reorderState != REORDER_DEFERRED && writerTxn < seqTxn;
     }
 
     private void enqueueHolder(WaiterHolder holder, TxnWaiter waiter) {
         holder.waiter = waiter;
         waiters.enqueue(holder);
         holder.waiter = null;
+    }
+
+    private void promoteExpiredReorderWindow(long nowMicros, boolean sweepRelease) {
+        if (reorderState == REORDER_DEFERRED && nowMicros >= deferredDeadlineMicros) {
+            releaseReorderWindowLocked(false, sweepRelease);
+        }
+    }
+
+    private void releaseReorderWindowLocked(boolean forceRelease, boolean sweepRelease) {
+        assert reorderState == REORDER_DEFERRED;
+        final long pendingTxnCount;
+        if (seqTxn < deferredFromTxn) {
+            pendingTxnCount = 0;
+        } else {
+            final long delta = seqTxn - deferredFromTxn;
+            pendingTxnCount = delta == Long.MAX_VALUE ? Long.MAX_VALUE : delta + 1;
+        }
+        reorderState = REORDER_RELEASED;
+        metrics.walMetrics().onReorderWindowReleased(pendingTxnCount, forceRelease, sweepRelease);
+        LOG.debug().$("released WAL apply reorder window [fromTxn=").$(deferredFromTxn)
+                .$(", deadline=").$(deferredDeadlineMicros)
+                .$(", seqTxn=").$(seqTxn)
+                .$(", transactions=").$(pendingTxnCount)
+                .$(", force=").$(forceRelease)
+                .$(", sweep=").$(sweepRelease)
+                .I$();
+        final WalApplyReorderTimer timer = reorderTimer;
+        reorderTimer = null;
+        if (timer != null) {
+            timer.cancel();
+        }
+    }
+
+    private void resetReorderLocked(boolean cancelled) {
+        if (cancelled) {
+            if (reorderState == REORDER_DEFERRED) {
+                metrics.walMetrics().onReorderWindowCancelled();
+            }
+        } else {
+            assert reorderState == REORDER_RELEASED;
+        }
+        reorderState = REORDER_NONE;
+        deferredFromTxn = UNINITIALIZED_TXN;
+        deferredDeadlineMicros = Long.MIN_VALUE;
+        reorderGeneration++;
+        final WalApplyReorderTimer timer = reorderTimer;
+        reorderTimer = null;
+        if (cancelled && timer != null) {
+            timer.cancel();
+        }
     }
 
     /**

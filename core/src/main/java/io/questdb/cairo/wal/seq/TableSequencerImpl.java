@@ -228,7 +228,7 @@ public class TableSequencerImpl implements TableSequencer {
                 0, 0, timestamp, 0, 0, 0
         );
         metadata.dropTable();
-        notifyTxnCommitted(Long.MAX_VALUE);
+        notifyTxnCommitted(txn, true);
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
     }
 
@@ -381,8 +381,8 @@ public class TableSequencerImpl implements TableSequencer {
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
 
+                notifyTxnCommitted(txn, true);
                 if (!seqTxnTracker.isSuspended()) {
-                    notifyTxnCommitted(txn);
                     if (!tableToken.equals(oldTableToken)) {
                         engine.getWalListener().tableRenamed(tableToken, txn, timestamp, oldTableToken);
                     } else {
@@ -433,7 +433,7 @@ public class TableSequencerImpl implements TableSequencer {
             throw th;
         }
 
-        notifyTxnCommitted(txn);
+        notifyTxnCommitted(txn, txnRowCount == 0);
         engine.getWalListener().dataTxnCommitted(tableToken, txn, timestamp, walId, segmentId, segmentTxn);
         return txn;
     }
@@ -456,14 +456,15 @@ public class TableSequencerImpl implements TableSequencer {
                 .$("reloaded table sequencer [table=").$(tableToken)
                 .$(", lastTxn=").$(lastTxn)
                 .I$();
-        seqTxnTracker.notifyOnCommit(lastTxn);
+        seqTxnTracker.notifyOnCommit(lastTxn, false);
         return tableToken = metadata.getTableToken();
     }
 
     @Override
     public void resumeTable() {
-        notifyTxnCommitted(Long.MAX_VALUE);
-        seqTxnTracker.setUnsuspended();
+        if (seqTxnTracker.resume()) {
+            engine.notifyWalTxnCommitted(tableToken);
+        }
     }
 
     @TestOnly
@@ -550,8 +551,8 @@ public class TableSequencerImpl implements TableSequencer {
         );
     }
 
-    private void notifyTxnCommitted(long txn) {
-        if (txn == Long.MAX_VALUE || seqTxnTracker.notifyOnCommit(txn)) {
+    private void notifyTxnCommitted(long txn, boolean forceApply) {
+        if (seqTxnTracker.notifyOnCommit(txn, forceApply)) {
             engine.notifyWalTxnCommitted(tableToken);
         }
     }

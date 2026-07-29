@@ -1849,6 +1849,20 @@ public class SqlUtil {
         return TableUtils.packParquetConfig(encoding, packedCompression, packedLevel, bloomFilter);
     }
 
+    public static long parseWalApplyReorderWindow(CharSequence value, int position) throws SqlException {
+        if (Chars.equalsIgnoreCase(value, "default")) {
+            return TableUtils.WAL_APPLY_REORDER_WINDOW_INHERIT;
+        }
+        if (Chars.equals(value, "0")) {
+            return 0;
+        }
+        final long walApplyReorderWindow = expectMicros(value, position);
+        if (walApplyReorderWindow < 0) {
+            throw SqlException.$(position, "walApplyReorderWindow must be non negative");
+        }
+        return walApplyReorderWindow;
+    }
+
     /**
      * Inverse of {@link #toColumnName(CharSequence)}: takes a clean, unquoted display name and
      * returns the compiler-internal alias, wrapping it in protective double quotes only when the

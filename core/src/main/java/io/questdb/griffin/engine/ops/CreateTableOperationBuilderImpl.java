@@ -76,6 +76,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private Sinkable ttlToSinkOverride;
     private CharSequence volumeAlias;
     private int volumePosition;
+    private long walApplyReorderWindow = TableUtils.WAL_APPLY_REORDER_WINDOW_INHERIT;
     private boolean walEnabled;
 
     public void addColumnModel(CharSequence columnName, CreateTableColumnModel model) throws SqlException {
@@ -95,7 +96,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     ) throws SqlException {
         boolean autoIncludeTs = compiler.getEngine().getConfiguration().isPostingIndexAutoIncludeTimestamp();
         if (selectText != null) {
-            return new CreateTableOperationImpl(
+            return withWalApplyReorderWindow(new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
@@ -120,7 +121,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     batchO3MaxLag,
                     tableKind,
                     autoIncludeTs
-            );
+            ));
         }
 
         if (likeTableNameExpr != null) {
@@ -128,7 +129,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             if (likeTableNameToken == null) {
                 throw SqlException.tableDoesNotExist(likeTableNameExpr.position, likeTableNameExpr.token);
             }
-            return new CreateTableOperationImpl(
+            return withWalApplyReorderWindow(new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
@@ -139,10 +140,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     likeTableNameToken.getTableName(),
                     likeTableNameExpr.position,
                     ignoreIfExists
-            );
+            ));
         }
 
-        return new CreateTableOperationImpl(
+        return withWalApplyReorderWindow(new CreateTableOperationImpl(
                 Chars.toString(sqlText),
                 Chars.toString(tableNameExpr.token),
                 tableNameExpr.position,
@@ -161,7 +162,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 tableFormat,
                 walEnabled,
                 autoIncludeTs
-        );
+        ));
     }
 
     @Override
@@ -189,6 +190,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         volumePosition = 0;
         ttlHoursOrMonths = 0;
         ttlPosition = 0;
+        walApplyReorderWindow = TableUtils.WAL_APPLY_REORDER_WINDOW_INHERIT;
         walEnabled = false;
         tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     }
@@ -349,8 +351,17 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.volumePosition = volumePosition;
     }
 
+    public void setWalApplyReorderWindow(long walApplyReorderWindow) {
+        this.walApplyReorderWindow = walApplyReorderWindow;
+    }
+
     public void setWalEnabled(boolean walEnabled) {
         this.walEnabled = walEnabled;
+    }
+
+    private CreateTableOperationImpl withWalApplyReorderWindow(CreateTableOperationImpl operation) {
+        operation.setWalApplyReorderWindow(walApplyReorderWindow);
+        return operation;
     }
 
     @Override
